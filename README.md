@@ -1,4 +1,4 @@
-# Shob — Run multiple CLI agents across sessions within a single project
+# Shob - Run multiple CLI agents across sessions within a single project
 
 <img width="1919" height="1040" alt="Screenshot 2026-04-04 164510" src="https://github.com/user-attachments/assets/ab29fd05-b5c1-445a-a66d-6675f8cdb352" />
 
