@@ -1,92 +1,82 @@
-# React + TypeScript + Vite
+# Shob — Run multiple CLI agents across sessions within a single project
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+![Shob Cover](https://picsum.photos/seed/shob-cover/1400/500)
 
-Currently, two official plugins are available:
+Shob is a desktop app for running and organizing multiple CLI agents in one workspace.
+It helps you keep parallel sessions focused, persistent, and easy to switch between.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Why Shob
 
-## React Compiler
+- Run multiple CLI sessions side by side.
+- Keep session context inside the same project.
+- Switch quickly between tasks without losing flow.
+- Use a desktop-first experience powered by Tauri.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Tech Stack
 
-## Expanding the ESLint configuration
+- React 19 + TypeScript
+- Vite
+- Tauri v2 (Rust backend + desktop packaging)
+- pnpm
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Project Structure
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+- `src/`: React UI and client logic
+- `src/components/`: UI components and app views
+- `src-tauri/`: Tauri config and Rust source
+- `.github/workflows/tauri-build.yml`: Build and release workflow
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+## Requirements
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+- Node.js 22+
+- pnpm
+- Rust toolchain (stable)
+- Tauri system dependencies (platform-specific)
+
+## Quick Start
+
+```bash
+pnpm install
+pnpm dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+To run as a desktop app during development:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+pnpm tauri dev
 ```
 
-## Tauri GitHub build pipeline
+## Build
 
-This repo now includes a GitHub Actions workflow at `.github/workflows/tauri-build.yml` that builds Tauri installers for:
+```bash
+pnpm build
+pnpm tauri build
+```
 
-- Linux (`.deb` and other Linux bundles)
-- Windows (`.exe` installers)
-- macOS (`.dmg`)
+## Scripts
 
-How to use it:
+- `pnpm dev`: Start Vite dev server
+- `pnpm build`: Type-check and build frontend
+- `pnpm lint`: Run ESLint
+- `pnpm preview`: Preview production frontend build
+- `pnpm tauri`: Run Tauri CLI commands
 
-1. Push a tag like `v0.1.0` to trigger a release build automatically.
-2. Or run the workflow manually from the GitHub Actions tab (`workflow_dispatch`).
-3. Artifacts are uploaded to a draft GitHub Release created by the workflow.
+## Release
 
-Notes:
+GitHub Actions builds desktop installers when you push a version tag.
 
-- The workflow uses `GITHUB_TOKEN` (provided by GitHub Actions by default).
-- If you add updater/code-signing later, also add the relevant signing secrets in the repository settings.
+```bash
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+Workflow output includes platform builds for Windows, macOS, and Linux.
+
+## Notes
+
+- Replace the cover image URL with your own branding when ready.
+- Keep frontend and Tauri versions aligned in `package.json` and `src-tauri/tauri.conf.json`.
+
+## License
+
+Proprietary or internal use by default unless you add a license file.
