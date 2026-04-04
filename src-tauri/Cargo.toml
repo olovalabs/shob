@@ -1,6 +1,6 @@
 [package]
 name = "shob"
-version = "0.4.16"
+version = "0.0.1"
 description = "A Tauri-based terminal emulator"
 authors = ["you"]
 edition = "2021"

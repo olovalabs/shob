@@ -1,7 +1,7 @@
 {
   "name": "shob",
   "private": true,
-  "version": "0.4.16",
+  "version": "0.0.1",
   "type": "module",
   "scripts": {
     "dev": "vite",

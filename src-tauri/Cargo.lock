@@ -749,7 +749,7 @@ dependencies = [
 name = "dtoa"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c3cf4824e2d5f025c7b531afcb2325364084a16806f6d47fbc1f5fbd9960590"
+checksum = "4c3cf4824e2d5f025c7b531afcb23253640.0.1806f6d47fbc1f5fbd9960590"
 
 [[package]]
 name = "dtoa-short"
@@ -3537,7 +3537,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shob"
-version = "0.4.16"
+version = "0.0.1"
 dependencies = [
  "base64 0.22.1",
  "dirs 5.0.1",
@@ -3762,7 +3762,7 @@ dependencies = [
 name = "sys-locale"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
+checksum = "8eab9a99a0.0.19fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
 dependencies = [
  "libc",
 ]
