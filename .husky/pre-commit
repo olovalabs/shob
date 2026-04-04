@@ -1,0 +1,1 @@
+echo "Husky pre-commit hook active"

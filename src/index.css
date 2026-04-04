@@ -1,0 +1,755 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ═══════════════════════════════════════════════════
+   DESIGN TOKENS
+   ═══════════════════════════════════════════════════ */
+:root,
+.dark {
+  color-scheme: dark;
+
+  /* Surface hierarchy */
+  --background: #09090b;
+  --foreground: #f4f4f6;
+  --card: #101012;
+  --card-foreground: #f4f4f6;
+  --popover: #101012;
+  --popover-foreground: #f4f4f6;
+
+  /* Interactive */
+  --primary: #f4f4f6;
+  --primary-foreground: #101012;
+  --secondary: #18191e;
+  --secondary-foreground: #f4f4f6;
+
+  /* Neutral fill */
+  --muted: #16171b;
+  --muted-foreground: #9192a0;
+  --accent: #1c1d22;
+  --accent-foreground: #f4f4f6;
+
+  /* Semantic */
+  --destructive: #ef4444;
+  --border: #222429;
+  --input: #1e2027;
+  --ring: #3b82f6;
+  --radius: 0.625rem;
+
+  /* Chart palette */
+  --chart-1: #3b82f6;
+  --chart-2: #22c55e;
+  --chart-3: #eab308;
+  --chart-4: #a855f7;
+  --chart-5: #06b6d4;
+
+  /* Sidebar */
+  --sidebar: #0e0f12;
+  --sidebar-foreground: #f4f4f6;
+  --sidebar-primary: #1d4ed8;
+  --sidebar-primary-foreground: #f4f4f6;
+  --sidebar-accent: #18191e;
+  --sidebar-accent-foreground: #f4f4f6;
+  --sidebar-border: #20222a;
+  --sidebar-ring: #3b82f6;
+
+  /* ── Tab chrome ────────────────────────────────── */
+  --tab-strip-bg: color-mix(in oklch, var(--background) 72%, var(--muted) 28%);
+  --tab-active-bg: color-mix(in oklch, var(--card) 90%, var(--background) 10%);
+  --tab-active-border: color-mix(in oklch, var(--border) 60%, var(--foreground) 40%);
+  --tab-inactive-text: color-mix(in oklch, var(--muted-foreground) 85%, var(--foreground) 15%);
+  --tab-hover-text: color-mix(in oklch, var(--foreground) 88%, var(--muted-foreground) 12%);
+  --tab-hover-bg: color-mix(in oklch, var(--accent) 80%, var(--card) 20%);
+  --tab-divider: color-mix(in oklch, var(--border) 55%, transparent);
+  --tab-toolbar-divider: color-mix(in oklch, var(--border) 78%, transparent);
+  --tab-button-hover-bg: color-mix(in oklch, var(--accent) 78%, var(--card) 22%);
+  --tab-button-active-bg: color-mix(in oklch, var(--accent) 90%, var(--background) 10%);
+
+  /* ── Terminal surface ───────────────────────────── */
+  --term-bg: #09090b;
+  --term-scrollbar: rgba(255 255 255 / 0.18);
+  --term-scrollbar-hover: rgba(255 255 255 / 0.32);
+  --term-scrollbar-active: rgba(255 255 255 / 0.46);
+  --term-glow-color: rgba(59, 130, 246, 0.04);
+
+  /* ── Motion timing ──────────────────────────────── */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-snappy: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 260ms;
+}
+
+/* ═══════════════════════════════════════════════════
+   RESET & BASE
+   ═══════════════════════════════════════════════════ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body {
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  -webkit-app-region: no-drag;
+}
+
+::selection {
+  background: rgba(233, 199, 74, 0.22);
+  color: #fff9e0;
+}
+
+/* ═══════════════════════════════════════════════════
+   THEME BRIDGE (Tailwind v4)
+   ═══════════════════════════════════════════════════ */
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: 'Geist Variable', sans-serif;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+
+  html {
+    @apply font-sans;
+  }
+}
+
+/* ═══════════════════════════════════════════════════
+   SCROLLBAR UTILITIES
+   ═══════════════════════════════════════════════════ */
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.thin-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(160, 161, 171, 0.4) transparent;
+}
+
+.thin-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.thin-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(160, 161, 171, 0.38);
+  border-radius: 999px;
+  transition: background var(--duration-fast) ease;
+}
+
+.thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(160, 161, 171, 0.62);
+}
+
+.thin-scrollbar::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ═══════════════════════════════════════════════════
+   WORKSPACE DIVIDER — expand line
+   ═══════════════════════════════════════════════════ */
+.workspace-divider {
+  position: relative;
+  cursor: col-resize;
+  /* default: invisible rail */
+  background: transparent;
+  transition: background var(--duration-base) var(--ease-snappy);
+}
+
+/* wider invisible grab zone */
+.workspace-divider::before {
+  content: '';
+  position: absolute;
+  inset: 0 -4px;
+  z-index: 1;
+}
+
+/* the visible "expand line" — 1 px centered stripe */
+.workspace-divider::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--tab-toolbar-divider);
+  transition:
+    width var(--duration-base) var(--ease-out-expo),
+    background var(--duration-base) ease,
+    border-radius var(--duration-base) ease;
+  border-radius: 999px;
+}
+
+/* hover: line glows and fattens to 2 px */
+.workspace-divider:hover::after {
+  width: 2px;
+  background: rgba(255, 255, 255, 0.28);
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.12);
+}
+
+/* dragging: full bright line */
+.workspace-divider:active::after {
+  width: 2px;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.18);
+}
+
+/* ═══════════════════════════════════════════════════
+   CHROME-STYLE TAB BAR
+   ═══════════════════════════════════════════════════ */
+.chrome-tabbar {
+  background: var(--tab-strip-bg);
+  border-bottom: 1px solid var(--tab-toolbar-divider);
+  /* subtle top inset to lift from the void */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.024);
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
+.chrome-tabbar-inner {
+  display: flex;
+  height: 43px;
+  align-items: flex-end;
+  padding: 0 8px;
+  -webkit-app-region: no-drag;
+}
+
+/* Tabs list */
+.chrome-tabs {
+  min-width: 0;
+}
+
+.chrome-tabs [data-slot="tabs-trigger"]::after {
+  display: none;
+  /* kill the Radix/shadcn underline indicator */
+}
+
+.chrome-tabs-list {
+  gap: 0;
+}
+
+/* Individual tab trigger */
+.chrome-tab-trigger {
+  position: relative;
+  z-index: 0;
+  margin: 0;
+  height: 34px;
+  flex: 0 0 auto;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+  background: transparent;
+  color: var(--tab-inactive-text);
+  box-shadow: none;
+  cursor: default;
+  transition:
+    background var(--duration-fast) var(--ease-snappy),
+    border-color var(--duration-fast) var(--ease-snappy),
+    color var(--duration-fast) var(--ease-snappy),
+    height var(--duration-fast) var(--ease-out-quart),
+    transform var(--duration-fast) var(--ease-out-quart);
+  /* prevent text shimmer on hover */
+  -webkit-font-smoothing: subpixel-antialiased;
+}
+
+.chrome-tab-trigger:hover {
+  background: var(--tab-hover-bg);
+  color: var(--tab-hover-text);
+}
+
+.chrome-tab-trigger[data-state="active"] {
+  z-index: 2;
+  height: 36px;
+  transform: translateY(1px);
+  border-color: var(--tab-active-border);
+  background: var(--tab-active-bg);
+  color: var(--foreground);
+  /* soft top glow to signal focus */
+  box-shadow:
+    0 -1px 0 0 rgba(255, 255, 255, 0.06) inset,
+    0 1px 6px rgba(0, 0, 0, 0.35);
+}
+
+.chrome-tab-trigger[data-state="active"]:hover {
+  background: var(--tab-active-bg);
+  color: var(--foreground);
+}
+
+/* Separator between inactive tabs */
+.chrome-tab-divider {
+  position: absolute;
+  left: -1px;
+  top: 9px;
+  height: 16px;
+  width: 1px;
+  background: var(--tab-divider);
+  transition: opacity var(--duration-fast) ease;
+}
+
+.chrome-tab-trigger:first-child .chrome-tab-divider {
+  display: none;
+}
+
+.chrome-tab-trigger:hover .chrome-tab-divider,
+.chrome-tab-trigger[data-state="active"] .chrome-tab-divider,
+.chrome-tab-trigger:hover+.chrome-tab-trigger .chrome-tab-divider {
+  opacity: 0;
+}
+
+/* Tab close & new-tab buttons */
+.chrome-tab-close {
+  color: var(--muted-foreground);
+  border-radius: 4px;
+  transition:
+    background var(--duration-fast) ease,
+    color var(--duration-fast) ease,
+    opacity var(--duration-fast) ease;
+}
+
+.chrome-tab-close:hover {
+  background: var(--tab-button-hover-bg);
+  color: var(--foreground);
+}
+
+.chrome-tab-close:active {
+  background: var(--tab-button-active-bg);
+}
+
+.chrome-tab-new-button {
+  color: var(--muted-foreground);
+  border-radius: 6px;
+  transition:
+    background var(--duration-fast) ease,
+    color var(--duration-fast) ease,
+    transform 80ms ease;
+}
+
+.chrome-tab-new-button:hover {
+  background: var(--tab-button-hover-bg);
+  color: var(--foreground);
+}
+
+.chrome-tab-new-button:active {
+  background: var(--tab-button-active-bg);
+  transform: scale(0.93);
+}
+
+/* ═══════════════════════════════════════════════════
+   TERMINAL CONTAINER
+   ═══════════════════════════════════════════════════ */
+.terminal-container {
+  /* Stacking context isolation */
+  isolation: isolate;
+  contain: layout size style paint;
+
+  /* Surface */
+  background-color: var(--term-bg) !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+
+  /* GPU layer */
+  transform: translateZ(0);
+  transition: box-shadow var(--duration-slow) var(--ease-snappy);
+}
+
+/* Active terminal gets a very subtle ambient glow along the top edge */
+.terminal-container[data-active="true"] {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 0 0 1px rgba(255, 255, 255, 0.015);
+}
+
+/* ── Inner wrapper (receives the fade-in) ──────────── */
+.terminal-container .terminal-wrapper {
+  background-color: var(--term-bg) !important;
+  min-height: 0 !important;
+  height: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  cursor: text;
+  backface-visibility: hidden;
+}
+
+/* Stable xterm rendering overrides:
+   avoid aggressive canvas/compositing tweaks that can distort glyphs */
+.terminal-container .terminal-wrapper .xterm {
+  contain: layout style !important;
+}
+
+.terminal-container .terminal-wrapper .xterm-screen canvas {
+  transform: none !important;
+  image-rendering: auto !important;
+}
+
+.terminal-container .terminal-wrapper .xterm .xterm-helper-textarea {
+  left: 0 !important;
+  top: 0 !important;
+  width: 1px !important;
+  height: 1px !important;
+}
+
+/* ── xterm core ────────────────────────────────────── */
+/*
+ * CURSOR STRATEGY
+ * ───────────────
+ * 1. Set cursor:text on the entire terminal surface as the baseline.
+ * 2. Set cursor:default on non-interactive chrome (overview ruler, etc).
+ * 3. Set cursor:pointer ONLY on actual links / clickable decorations.
+ * 4. The hidden textarea that captures keystrokes keeps cursor:text.
+ *
+ * This means the shell prompt area, the input line, the output text —
+ * all show a text cursor, just like a real terminal emulator.
+ */
+
+/* — Root xterm element: text cursor, zero left gap — */
+.terminal-container .terminal-wrapper .xterm {
+  background-color: var(--term-bg) !important;
+  height: 100% !important;
+  /* No margin or padding — content must touch left edge */
+  margin: 0 !important;
+  padding: 0 !important;
+  contain: strict;
+  cursor: text;
+}
+
+/* — Screen: strict zero left offset — */
+.terminal-container .terminal-wrapper .xterm-screen {
+  background-color: var(--term-bg) !important;
+  height: 100% !important;
+  /* pin hard to (0,0) — no gap */
+  position: relative !important;
+  left: 0 !important;
+  top: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  cursor: text;
+}
+
+/* — Canvas layers: text cursor, GPU composited, pixel-crisp — */
+.terminal-container .terminal-wrapper .xterm-screen canvas {
+  background-color: var(--term-bg) !important;
+  left: 0 !important;
+  top: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  transform: translateZ(0);
+  /* own composite layer */
+  image-rendering: pixelated;
+  /* crisp glyphs at any DPR */
+  cursor: text;
+}
+
+/* — Text rows: zero left padding so prompt is flush — */
+.terminal-container .terminal-wrapper .xterm-rows {
+  margin: 0 !important;
+  padding: 0 !important;
+  /* each row spans the full width, no indent */
+  padding-left: 0 !important;
+}
+
+/* individual row spans: text cursor */
+.terminal-container .terminal-wrapper .xterm-rows>div {
+  cursor: text !important;
+}
+
+/* ── Cursor targets — explicit overrides ────────────── */
+
+/* The hidden textarea that receives keyboard input */
+.terminal-container .terminal-wrapper .xterm .xterm-helper-textarea {
+  cursor: text;
+  /* fully transparent & off-screen — must not affect layout */
+  opacity: 0;
+  position: absolute;
+  left: -9999em;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+/* The canvas cursor layer — text (the blinking bar lives here) */
+.terminal-container .terminal-wrapper .xterm .xterm-cursor-layer {
+  cursor: text;
+}
+
+/* Non-interactive chrome: neutral cursor */
+.terminal-container .terminal-wrapper .xterm .xterm-decoration-overview-ruler {
+  cursor: default;
+}
+
+/* Decoration container itself is neutral; only its <a> children are clickable */
+.terminal-container .terminal-wrapper .xterm .xterm-decoration-container {
+  cursor: default;
+}
+
+/* Only real links / interactive decorations get pointer */
+.terminal-container .terminal-wrapper .xterm a,
+.terminal-container .terminal-wrapper .xterm [data-link],
+.terminal-container .terminal-wrapper .xterm .xterm-decoration-container a {
+  cursor: pointer;
+}
+
+/* ── DOM cursor beam (when xterm renders cursor as DOM element) ─── */
+/*
+ * When xterm uses the DOM renderer or renders a DOM cursor overlay,
+ * the cursor element gets .xterm-cursor. We style it as a sharp
+ * vertical bar that "expands" in on first render via a scale animation.
+ * The blinking is handled by xterm's own blink class.
+ */
+.terminal-container .terminal-wrapper .xterm .xterm-cursor-layer .xterm-cursor {
+  /* Beam cursor: 2 px wide, full cell height */
+  border-left: 2px solid #e2e2e8 !important;
+  border-bottom: none !important;
+  background: transparent !important;
+  /* GPU layer so it doesn't repaint the canvas */
+  transform: translateZ(0);
+  /* Entry: expand from center outward */
+  animation: cursor-expand 120ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  transform-origin: center top;
+}
+
+/* Block cursor variant */
+.terminal-container .terminal-wrapper .xterm .xterm-cursor-layer .xterm-cursor.xterm-cursor-block {
+  border-left: none !important;
+  background: rgba(226, 226, 232, 0.82) !important;
+  animation: cursor-expand 120ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Underline cursor variant */
+.terminal-container .terminal-wrapper .xterm .xterm-cursor-layer .xterm-cursor.xterm-cursor-underline {
+  border-left: none !important;
+  border-bottom: 2px solid #e2e2e8 !important;
+  background: transparent !important;
+}
+
+/* Cursor blink: xterm toggles .xterm-cursor-blink-hide */
+.terminal-container .terminal-wrapper .xterm .xterm-cursor-layer .xterm-cursor.xterm-cursor-blink-hide {
+  opacity: 0;
+  transition: opacity 80ms ease;
+}
+
+/* Expand-in animation for the cursor beam */
+@keyframes cursor-expand {
+  from {
+    transform: scaleY(0.2) translateZ(0);
+    opacity: 0.4;
+  }
+
+  to {
+    transform: scaleY(1) translateZ(0);
+    opacity: 1;
+  }
+}
+
+/* ── Viewport / scrollbar ───────────────────────────── */
+.terminal-container .terminal-wrapper .xterm-viewport {
+  background-color: var(--term-bg) !important;
+  overflow-x: hidden !important;
+  overflow-y: scroll !important;
+  overscroll-behavior: contain;
+  /* Zero out all sides — especially left, which xterm can inject gap on */
+  margin: 0 !important;
+  padding: 0 !important;
+  padding-left: 0 !important;
+  left: 0 !important;
+  cursor: text;
+
+  /* Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: var(--term-scrollbar) transparent;
+}
+
+/* WebKit — full custom track + thumb */
+.terminal-container .terminal-wrapper .xterm-viewport::-webkit-scrollbar {
+  width: 10px;
+}
+
+.terminal-container .terminal-wrapper .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal-container .terminal-wrapper .xterm-viewport::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.terminal-container .terminal-wrapper .xterm-viewport::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  /* 2 px transparent border = inner padding that keeps thumb off the edge */
+  border: 2.5px solid transparent;
+  background-clip: padding-box;
+  background-color: var(--term-scrollbar);
+  transition: background-color var(--duration-base) ease;
+}
+
+/* Reveal a brighter thumb on hover / focus */
+.terminal-container:hover .terminal-wrapper .xterm-viewport::-webkit-scrollbar-thumb,
+.terminal-container .terminal-wrapper:focus-within .xterm-viewport::-webkit-scrollbar-thumb {
+  background-color: var(--term-scrollbar-hover);
+}
+
+.terminal-container .terminal-wrapper .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background-color: var(--term-scrollbar-active);
+}
+
+.terminal-container .terminal-wrapper .xterm-viewport::-webkit-scrollbar-thumb:active {
+  background-color: rgba(255, 255, 255, 0.58);
+  border-width: 2px;
+}
+
+/* ═══════════════════════════════════════════════════
+   STARTUP SPLASH
+   ═══════════════════════════════════════════════════ */
+.startup-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  opacity: 1;
+  transition: opacity 360ms var(--ease-out-expo);
+  pointer-events: all;
+}
+
+.boot-splash-hidden,
+.startup-splash-leave {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.startup-splash-logo {
+  width: clamp(72px, 12vw, 124px);
+  height: clamp(72px, 12vw, 124px);
+  object-fit: contain;
+  animation: splash-breathe 1500ms var(--ease-out-expo) infinite;
+  will-change: opacity, transform;
+}
+
+@keyframes splash-breathe {
+  0% {
+    opacity: 0.22;
+    transform: scale(0.94);
+  }
+
+  50% {
+    opacity: 1.00;
+    transform: scale(1.00);
+  }
+
+  100% {
+    opacity: 0.22;
+    transform: scale(0.94);
+  }
+}
+/* xterm clarity tweaks to avoid "double cursor" visual confusion on long lines */
+.terminal-wrapper .xterm-viewport {
+  scrollbar-width: thin;
+}
+
+.terminal-wrapper .xterm-helper-textarea {
+  caret-color: transparent;
+}
+
+.terminal-wrapper .xterm-cursor-layer .xterm-cursor.xterm-cursor-block {
+  outline: none;
+}
+
+/* Safety overrides: keep xterm rendering semantics intact for full-screen CLIs
+   (Qwen/Claude/interactive TUIs) and avoid clipping/cutoff artifacts. */
+.terminal-container .terminal-wrapper .xterm {
+  contain: layout style !important;
+}
+
+.terminal-container .terminal-wrapper .xterm-screen canvas {
+  transform: none !important;
+  image-rendering: auto !important;
+}
+
+.terminal-container .terminal-wrapper .xterm .xterm-helper-textarea {
+  left: 0 !important;
+  top: 0 !important;
+  width: 1px !important;
+  height: 1px !important;
+  opacity: 0 !important;
+}

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/src/assets/icon/shob.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>shob</title>
+    <style>
+      html, body, #root {
+        height: 100%;
+      }
+
+      html, body {
+        margin: 0;
+        background: #000;
+        overflow: hidden;
+      }
+
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 99999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #000;
+        opacity: 1;
+        transition: opacity 320ms ease;
+      }
+
+      #boot-splash.boot-splash-hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      #boot-splash img {
+        width: clamp(72px, 12vw, 124px);
+        height: clamp(72px, 12vw, 124px);
+        object-fit: contain;
+        animation: boot-splash-pulse 1400ms ease-in-out infinite;
+      }
+
+      @keyframes boot-splash-pulse {
+        0% {
+          opacity: 0.28;
+          transform: scale(0.96);
+        }
+        50% {
+          opacity: 1;
+          transform: scale(1);
+        }
+        100% {
+          opacity: 0.28;
+          transform: scale(0.96);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="boot-splash" aria-hidden="true">
+      <img src="/src/assets/icon/shob.png" alt="" />
+    </div>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
