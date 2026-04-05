@@ -25,6 +25,8 @@ interface TerminalHostInfo {
   windowsBuildNumber?: number | null
 }
 
+type TerminalOs = TerminalHostInfo["os"]
+
 const launchedPendingCommandKeys = new Set<string>()
 const ACTIVITY_THROTTLE_MS = 15_000
 const FIT_SETTLE_DELAYS_MS = [0, 50, 150] as const
@@ -71,6 +73,31 @@ function decodePtyChunk(chunk: unknown, decoder: TextDecoder): string {
   if (chunk instanceof Uint8Array) return decoder.decode(chunk, { stream: true })
   if (Array.isArray(chunk)) return decoder.decode(Uint8Array.from(chunk), { stream: true })
   return ""
+}
+
+function supportsClipboardRead() {
+  return typeof navigator !== "undefined" && typeof navigator.clipboard?.readText === "function"
+}
+
+function isPasteShortcut(event: KeyboardEvent, os: TerminalOs): boolean {
+  if (event.repeat) return false
+  if (event.altKey) return false
+
+  if (event.key === "Insert") {
+    return event.shiftKey && !event.ctrlKey && !event.metaKey
+  }
+
+  if (event.key.toLowerCase() !== "v") return false
+
+  if (os === "macos") {
+    return event.metaKey && !event.ctrlKey
+  }
+
+  if (os === "linux") {
+    return event.ctrlKey && event.shiftKey && !event.metaKey
+  }
+
+  return event.ctrlKey && !event.metaKey
 }
 
 function getShadcnTerminalTheme() {
@@ -295,6 +322,20 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
       scheduleTerminalFlush()
     }
 
+    const pasteFromClipboard = async () => {
+      if (!term || !supportsClipboardRead()) return
+
+      try {
+        const text = await navigator.clipboard.readText()
+        if (!text) return
+        term.focus()
+        term.paste(text)
+        term.scrollToBottom()
+      } catch (error) {
+        console.error("Failed to paste clipboard text into terminal", error)
+      }
+    }
+
     const bootTerminal = async () => {
       try {
         if (cancelled || !terminalRef.current) return
@@ -374,6 +415,16 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         term.onKey(() => {
           term?.scrollToBottom()
         })
+        term.attachCustomKeyEventHandler((event) => {
+          if (event.type !== "keydown") return true
+          if (!supportsClipboardRead()) return true
+          if (!isPasteShortcut(event, hostInfo.os)) return true
+
+          event.preventDefault()
+          event.stopPropagation()
+          void pasteFromClipboard()
+          return false
+        })
         term.attachCustomWheelEventHandler((event) => {
           term?.focus()
           event.stopPropagation()
@@ -381,6 +432,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         })
 
         term.element?.addEventListener("pointerdown", handlePointerDown)
+        term.element?.addEventListener("contextmenu", handleContextMenu, true)
       } catch (err) {
         if (!cancelled) {
           if (terminalRef.current) {
@@ -511,6 +563,16 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
       if (event.button !== 0) return
       if ((event.target as HTMLElement | null)?.closest("a")) return
       term?.focus()
+    }
+
+    const handleContextMenu = (event: MouseEvent) => {
+      if ((event.target as HTMLElement | null)?.closest("a")) return
+      if (!supportsClipboardRead()) return
+
+      event.preventDefault()
+      event.stopPropagation()
+      term?.focus()
+      void pasteFromClipboard()
     }
 
     const extractNamingInput = (rawInput: string) => {
@@ -686,6 +748,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
       }
       pendingWriteChunks.length = 0
       term?.element?.removeEventListener("pointerdown", handlePointerDown)
+      term?.element?.removeEventListener("contextmenu", handleContextMenu, true)
       spawnInFlightRef.current = false
       ptyRef.current?.kill()
       ptyRef.current = null
