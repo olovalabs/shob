@@ -39,6 +39,7 @@ const BRACKETED_PASTE_WRAPPER = /\x1b\[(?:200|201)~/g
 const OSC_COLOR_FRAGMENT = /(?:^|\s)(?:\d+;(?:rgb:[0-9a-f]+\/[0-9a-f]+\/[0-9a-f]+|\d+;))+/gi
 const LEADING_GARBAGE_FRAGMENT = /^(?:\s|;|(?:\d+;)+(?:rgb:[0-9a-f]+\/[0-9a-f]+\/[0-9a-f]+)?)+/i
 type CaptureMode = "text" | "escape" | "csi" | "osc" | "dcs" | "string"
+const MAX_NAMING_CAPTURE_CHARS = 2048
 
 function stripOptionalWrappingQuotes(value: string): string {
   const trimmed = value.trim()
@@ -98,6 +99,13 @@ function isPasteShortcut(event: KeyboardEvent, os: TerminalOs): boolean {
   }
 
   return event.ctrlKey && !event.metaKey
+}
+
+function sanitizeClipboardPasteText(input: string): string {
+  return input
+    .replace(BRACKETED_PASTE_WRAPPER, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/[\r\n]+$/g, "")
 }
 
 function getShadcnTerminalTheme() {
@@ -283,7 +291,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
 
   useEffect(() => {
     if (!terminalRef.current || !session || !shouldBoot) return
-    
+
     const bootSession = session
     const bootProjectId = sessionProjectId
     const bootProjectPath = sessionProjectPath
@@ -292,15 +300,16 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
     const fitTimeouts: number[] = []
     let term: XTerm | null = null
     let fitAddon: FitAddon | null = null
-    let writeFlushRaf: number | null = null
+    let writeFlushScheduled = false
     let isWriteInFlight = false
     const pendingWriteChunks: string[] = []
 
     const scheduleTerminalFlush = () => {
-      if (writeFlushRaf !== null || isWriteInFlight) return
+      if (writeFlushScheduled || isWriteInFlight) return
+      writeFlushScheduled = true
 
-      writeFlushRaf = requestAnimationFrame(() => {
-        writeFlushRaf = null
+      queueMicrotask(() => {
+        writeFlushScheduled = false
         if (!term || isWriteInFlight || pendingWriteChunks.length === 0) return
 
         isWriteInFlight = true
@@ -328,8 +337,15 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
       try {
         const text = await navigator.clipboard.readText()
         if (!text) return
+        const safePasteText = sanitizeClipboardPasteText(text)
+        if (!safePasteText) return
         term.focus()
-        term.paste(text)
+        const pty = ptyRef.current
+        if (pty) {
+          pty.write(safePasteText)
+        } else {
+          term.paste(safePasteText)
+        }
         term.scrollToBottom()
       } catch (error) {
         console.error("Failed to paste clipboard text into terminal", error)
@@ -349,9 +365,9 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         const windowsPtyOptions =
           isWindows && windowsBuildNumber
             ? {
-                backend: "conpty" as const,
-                buildNumber: windowsBuildNumber,
-              }
+              backend: "conpty" as const,
+              buildNumber: windowsBuildNumber,
+            }
             : undefined
 
         term = new XTerm({
@@ -447,7 +463,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         .then(() => {
           if (!cancelled) fitTerminal()
         })
-        .catch(() => {})
+        .catch(() => { })
     }
 
     const handleWindowResize = () => fitTerminal()
@@ -457,7 +473,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
       fitTerminal()
     })
     resizeObserver.observe(terminalRef.current)
-    
+
     const initPty = async () => {
       if (!term || spawnInFlightRef.current) return
 
@@ -529,7 +545,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
           window.dispatchEvent(
             new CustomEvent("gg-pty-data", {
               detail: { sessionId, data },
-          }),
+            }),
           )
           queueTerminalWrite(data)
         })
@@ -558,7 +574,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         spawnInFlightRef.current = false
       }
     }
-    
+
     const handlePointerDown = (event: PointerEvent) => {
       if (event.button !== 0) return
       if ((event.target as HTMLElement | null)?.closest("a")) return
@@ -649,7 +665,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
 
       return output
     }
-    
+
     const commitBufferedInput = (rawInput: string) => {
       const currentSession = latestSessionRef.current
       const currentProjectId = latestSessionProjectIdRef.current
@@ -697,8 +713,14 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         }
       }
 
-      if (currentProjectId && currentSession) {
-        const normalizedData = extractNamingInput(data)
+      const shouldCaptureForNaming =
+        Boolean(currentProjectId) &&
+        Boolean(currentSession) &&
+        (!hasNamedFromPromptRef.current || awaitingPromptTitleRef.current || Boolean(currentSession?.cliTool))
+
+      if (shouldCaptureForNaming) {
+        const cappedData = data.length > MAX_NAMING_CAPTURE_CHARS ? data.slice(0, MAX_NAMING_CAPTURE_CHARS) : data
+        const normalizedData = extractNamingInput(cappedData)
 
         for (let index = 0; index < normalizedData.length; index += 1) {
           const char = normalizedData[index]
@@ -731,7 +753,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
     }
 
     void bootTerminal()
-    
+
     return () => {
       cancelled = true
       for (const timeoutId of fitTimeouts) {
@@ -743,9 +765,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         cancelAnimationFrame(fitRafRef.current)
         fitRafRef.current = null
       }
-      if (writeFlushRaf !== null) {
-        cancelAnimationFrame(writeFlushRaf)
-      }
+      writeFlushScheduled = false
       pendingWriteChunks.length = 0
       term?.element?.removeEventListener("pointerdown", handlePointerDown)
       term?.element?.removeEventListener("contextmenu", handleContextMenu, true)
@@ -856,7 +876,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
     window.addEventListener("gg-rerun-cli-current-session", handleRerunCurrentCli as EventListener)
     return () => window.removeEventListener("gg-rerun-cli-current-session", handleRerunCurrentCli as EventListener)
   }, [sessionId])
-  
+
   return (
     <Card
       className="terminal-container absolute inset-0 h-full w-full min-h-0 min-w-0 overflow-hidden rounded-none border-0 bg-background p-0"
