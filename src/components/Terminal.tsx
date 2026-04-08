@@ -4,6 +4,8 @@ import { FitAddon } from "@xterm/addon-fit"
 import { WebLinksAddon } from "@xterm/addon-web-links"
 import { SearchAddon } from "@xterm/addon-search"
 import { SerializeAddon } from "@xterm/addon-serialize"
+import { Unicode11Addon } from "@xterm/addon-unicode11"
+import { WebglAddon } from "@xterm/addon-webgl"
 import { invoke } from "@tauri-apps/api/core"
 import { spawn, type IPty } from "tauri-pty"
 import { Search, X, ArrowUp, ArrowDown, Save, Trash2 } from "lucide-react"
@@ -409,12 +411,27 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         fitAddon = new FitAddon()
         const searchAddon = new SearchAddon()
         const serializeAddon = new SerializeAddon()
+        const unicode11Addon = new Unicode11Addon()
 
         term.loadAddon(fitAddon)
         term.loadAddon(new WebLinksAddon())
         term.loadAddon(searchAddon)
         term.loadAddon(serializeAddon)
+        term.loadAddon(unicode11Addon)
+
+        // Use Unicode 11 for proper TUI box drawing characters
+        term.unicode.activeVersion = '11'
+
         term.open(terminalRef.current)
+
+        // Try to load the WebGL renderer for native-like performance and sharp TUIs
+        try {
+          const webglAddon = new WebglAddon()
+          webglAddon.onContextLoss(() => webglAddon.dispose())
+          term.loadAddon(webglAddon)
+        } catch (e) {
+          console.warn("WebGL addon could not be loaded. Falling back to canvas renderer.", e)
+        }
 
         const helperTextarea = terminalRef.current.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")
         helperTextarea?.setAttribute("autocomplete", "off")
@@ -850,7 +867,18 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         const term = xtermRef.current
         if (!term) return
 
-        fitTerminal()
+        // Force a resize calculation when the tab becomes active to ensure TUIs re-render correctly
+        if (fitAddonRef.current) {
+          fitAddonRef.current.fit()
+          const nextSize = { rows: term.rows, cols: term.cols }
+          const lastSize = lastPtySizeRef.current
+
+          if (!lastSize || lastSize.rows !== nextSize.rows || lastSize.cols !== nextSize.cols) {
+            lastPtySizeRef.current = nextSize
+            ptyRef.current?.resize(nextSize.cols, nextSize.rows)
+          }
+        }
+
         term.scrollToBottom()
         term.focus()
       })
