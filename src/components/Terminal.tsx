@@ -547,8 +547,8 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
       try {
         ptyRef.current?.kill()
         fitAddonRef.current?.fit()
-        const spawnRows = Math.max(2, term.rows)
-        const spawnCols = Math.max(2, term.cols)
+        const spawnRows = Math.max(24, term.rows || 24)
+        const spawnCols = Math.max(80, term.cols || 80)
         spawnStartedAtRef.current = Date.now()
         const pty = spawn(resolvedShell, [], {
           cwd: bootProjectPath || undefined,
@@ -915,8 +915,8 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         try {
           ptyRef.current?.kill()
           fitAddonRef.current?.fit()
-          const spawnRows = Math.max(2, term.rows)
-          const spawnCols = Math.max(2, term.cols)
+          const spawnRows = Math.max(24, term.rows || 24)
+          const spawnCols = Math.max(80, term.cols || 80)
           const pty = spawn(resolvedShell, [], {
             cwd: currentProjectPath || undefined,
             rows: spawnRows,
