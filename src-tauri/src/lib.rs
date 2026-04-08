@@ -173,6 +173,13 @@ fn get_projects_path() -> PathBuf {
     path
 }
 
+fn get_sessions_dir() -> PathBuf {
+    let mut path = get_data_dir();
+    path.push("sessions");
+    std::fs::create_dir_all(&path).ok();
+    path
+}
+
 fn load_projects() -> Vec<Project> {
     let path = get_projects_path();
     if path.exists() {
@@ -487,6 +494,24 @@ fn delete_project(project_id: String) -> Result<(), String> {
     projects.retain(|p| p.id != project_id);
     save_projects(&projects);
     Ok(())
+}
+
+#[tauri::command]
+fn save_session_output(session_id: String, output: String) -> Result<(), String> {
+    let mut path = get_sessions_dir();
+    path.push(format!("{}.log", session_id));
+    std::fs::write(path, output).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn load_session_output(session_id: String) -> Result<String, String> {
+    let mut path = get_sessions_dir();
+    path.push(format!("{}.log", session_id));
+    if path.exists() {
+        std::fs::read_to_string(path).map_err(|e| e.to_string())
+    } else {
+        Ok(String::new())
+    }
 }
 
 #[tauri::command]
@@ -967,6 +992,8 @@ pub fn run() {
             get_projects,
             save_project,
             delete_project,
+            save_session_output,
+            load_session_output,
             read_image_data_url,
             get_available_shells,
             get_terminal_host_info,

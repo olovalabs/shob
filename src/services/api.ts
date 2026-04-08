@@ -8,6 +8,10 @@ export const api = {
   saveProject: (project: Project) => invoke<Project>('save_project', { project }),
   
   deleteProject: (projectId: string) => invoke('delete_project', { projectId }),
+
+  saveSessionOutput: (sessionId: string, output: string) => invoke<void>('save_session_output', { sessionId, output }),
+
+  loadSessionOutput: (sessionId: string) => invoke<string>('load_session_output', { sessionId }),
   
   getAvailableShells: () => invoke<string[]>('get_available_shells'),
   

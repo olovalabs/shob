@@ -9,6 +9,7 @@ import { spawn, type IPty } from "tauri-pty"
 import { Search, X, ArrowUp, ArrowDown, Save, Trash2 } from "lucide-react"
 import { CLI_ALIAS_TO_ID } from "../config/check"
 import { useStore } from "../store"
+import { api } from "../services/api"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import "@xterm/xterm/css/xterm.css"
@@ -503,6 +504,18 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
     const initPty = async () => {
       if (!term || spawnInFlightRef.current) return
 
+      try {
+        const savedOutput = await api.loadSessionOutput(sessionId)
+        if (savedOutput && !cancelled) {
+          term.write(savedOutput)
+        }
+      } catch (err) {
+        console.error('Failed to load session output', err)
+      }
+
+      if (cancelled) return
+
+
       const resolvedShell = resolveAllowlistedShell(bootSession.shell)
       if (!resolvedShell) {
         term.writeln("\x1b[31mTerminal launch blocked: unsupported shell.\x1b[0m")
@@ -780,8 +793,24 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
 
     void bootTerminal()
 
+    const handleBeforeUnload = () => {
+      if (serializeAddonRef.current) {
+        const currentOutput = serializeAddonRef.current.serialize()
+        if (currentOutput) {
+          api.saveSessionOutput(sessionId, currentOutput).catch(console.error)
+        }
+      }
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload)
+
     return () => {
       cancelled = true
+
+      // Save session output on unmount
+      handleBeforeUnload()
+      window.removeEventListener("beforeunload", handleBeforeUnload)
+
       for (const timeoutId of fitTimeouts) {
         clearTimeout(timeoutId)
       }
