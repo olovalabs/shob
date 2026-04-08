@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::LazyLock;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 const MAX_EDITOR_PREVIEW_BYTES: u64 = 512 * 1024;
@@ -131,9 +132,17 @@ struct ProjectWatcher {
 static PROJECT_WATCHER: LazyLock<Mutex<Option<ProjectWatcher>>> =
     LazyLock::new(|| Mutex::new(None));
 
+static LAST_WATCHER_OPERATION: LazyLock<Mutex<Instant>> =
+    LazyLock::new(|| Mutex::new(Instant::now() - Duration::from_secs(10)));
+
 fn clear_project_watcher() {
     let mut manager = PROJECT_WATCHER.lock();
+    if let Some(watcher) = manager.take() {
+        drop(watcher);
+    }
     *manager = None;
+    std::thread::sleep(Duration::from_millis(100));
+    *LAST_WATCHER_OPERATION.lock() = Instant::now();
 }
 
 fn should_forward_project_watch_path(path: &Path) -> bool {
@@ -170,6 +179,13 @@ fn get_data_dir() -> PathBuf {
 fn get_projects_path() -> PathBuf {
     let mut path = get_data_dir();
     path.push("projects.json");
+    path
+}
+
+fn get_sessions_dir() -> PathBuf {
+    let mut path = get_data_dir();
+    path.push("sessions");
+    std::fs::create_dir_all(&path).ok();
     path
 }
 
@@ -490,6 +506,24 @@ fn delete_project(project_id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn save_session_output(session_id: String, output: String) -> Result<(), String> {
+    let mut path = get_sessions_dir();
+    path.push(format!("{}.log", session_id));
+    std::fs::write(path, output).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn load_session_output(session_id: String) -> Result<String, String> {
+    let mut path = get_sessions_dir();
+    path.push(format!("{}.log", session_id));
+    if path.exists() {
+        std::fs::read_to_string(path).map_err(|e| e.to_string())
+    } else {
+        Ok(String::new())
+    }
+}
+
+#[tauri::command]
 fn read_image_data_url(path: String) -> Result<String, String> {
     let image_path = PathBuf::from(&path);
     if !image_path.exists() || !image_path.is_file() {
@@ -549,16 +583,28 @@ fn probe_cli_tools(items: Vec<CliProbeRequestItem>) -> Vec<CliProbeResult> {
 fn set_project_watch(app: AppHandle, path: Option<String>) -> Result<(), String> {
     let mut manager = PROJECT_WATCHER.lock();
 
-    *manager = None;
+    if let Some(watcher) = manager.take() {
+        drop(watcher);
+    }
 
     let Some(path) = path else {
         info!("Cleared project watcher");
+        *LAST_WATCHER_OPERATION.lock() = Instant::now();
         return Ok(());
     };
 
     let watch_root = PathBuf::from(&path);
     if !watch_root.exists() || !watch_root.is_dir() {
         return Err("Project watch path is invalid".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let last_op = *LAST_WATCHER_OPERATION.lock();
+        let elapsed = last_op.elapsed();
+        if elapsed < Duration::from_millis(200) {
+            std::thread::sleep(Duration::from_millis(200) - elapsed);
+        }
     }
 
     let project_path = watch_root.to_string_lossy().to_string();
@@ -589,17 +635,18 @@ fn set_project_watch(app: AppHandle, path: Option<String>) -> Result<(), String>
         },
         Config::default(),
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| format!("Failed to create file watcher: {}", e))?;
 
     watcher
         .watch(&watch_root, RecursiveMode::Recursive)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("Failed to watch directory: {}", e))?;
 
     *manager = Some(ProjectWatcher {
         _root_path: project_path.clone(),
         _watcher: watcher,
     });
 
+    *LAST_WATCHER_OPERATION.lock() = Instant::now();
     info!("Watching project path: {}", project_path);
     Ok(())
 }
@@ -953,6 +1000,68 @@ fn close_window(app: AppHandle) -> Result<(), String> {
     window.close().map_err(|err| err.to_string())
 }
 
+#[tauri::command]
+fn reveal_in_finder(path: String) -> Result<(), String> {
+    let target = PathBuf::from(&path);
+    if !target.exists() {
+        return Err("Path does not exist".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        let result = if target.is_dir() {
+            Command::new("explorer")
+                .raw_arg(format!("/select,\"{}\"", target.to_string_lossy()))
+                .creation_flags(0x00000010)
+                .spawn()
+        } else if target.parent().is_some() {
+            Command::new("explorer")
+                .raw_arg(format!("/select,\"{}\"", target.to_string_lossy()))
+                .creation_flags(0x00000010)
+                .spawn()
+        } else {
+            Command::new("explorer")
+                .raw_arg(format!("/root,\"{}\"", target.to_string_lossy()))
+                .creation_flags(0x00000010)
+                .spawn()
+        };
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => Err(format!("Failed to open file explorer: {}", e)),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let result = if target.is_dir() {
+            Command::new("open").arg(&target).spawn()
+        } else {
+            Command::new("open")
+                .args(["-R", &target.to_string_lossy()])
+                .spawn()
+        };
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => Err(format!("Failed to open Finder: {}", e)),
+        }
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let result = Command::new("xdg-open")
+            .arg(target.parent().unwrap_or(&target))
+            .spawn();
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => Err(format!("Failed to open file manager: {}", e)),
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -967,6 +1076,8 @@ pub fn run() {
             get_projects,
             save_project,
             delete_project,
+            save_session_output,
+            load_session_output,
             read_image_data_url,
             get_available_shells,
             get_terminal_host_info,
@@ -985,6 +1096,7 @@ pub fn run() {
             toggle_maximize_window,
             is_window_maximized,
             close_window,
+            reveal_in_finder,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

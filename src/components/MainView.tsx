@@ -30,16 +30,10 @@ export function MainView() {
   const [isFileTreeVisible, setIsFileTreeVisible] = useState(false)
   const [bootedSessionIds, setBootedSessionIds] = useState<Set<string>>(new Set())
   const projectSessions = useMemo(() => currentProject?.sessions ?? [], [currentProject])
+  const allSessions = useMemo(() => projects.flatMap((p) => p.sessions), [projects])
 
   useEffect(() => {
     setActiveFilePath(null)
-  }, [currentProjectId])
-
-  useEffect(() => {
-    setBootedSessionIds(() => {
-      if (!activeSessionId) return new Set()
-      return new Set([activeSessionId])
-    })
   }, [currentProjectId])
 
   useEffect(() => {
@@ -110,18 +104,23 @@ export function MainView() {
       <div className="min-w-0 flex-1 flex flex-col bg-background">
         <TabBar />
         <div className="min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
-          {projectSessions.length > 0 ? (
-            <div className="relative h-full w-full min-h-0 min-w-0 overflow-hidden">
-                {projectSessions.map((session) => (
-                  <Terminal
-                    key={session.id}
-                    sessionId={session.id}
-                    isActive={session.id === activeSessionId}
-                    shouldBoot={bootedSessionIds.has(session.id)}
-                  />
-                ))}
-            </div>
-          ) : (
+          <div className="relative h-full w-full min-h-0 min-w-0 overflow-hidden" style={{ display: projectSessions.length > 0 ? "block" : "none" }}>
+            {allSessions.map((session) => {
+              const shouldBoot = bootedSessionIds.has(session.id)
+              if (!shouldBoot) return null
+
+              return (
+                <Terminal
+                  key={session.id}
+                  sessionId={session.id}
+                  isActive={session.id === activeSessionId}
+                  shouldBoot={shouldBoot}
+                />
+              )
+            })}
+          </div>
+
+          {projectSessions.length === 0 && (
             <WelcomeScreen
               projects={projects}
               currentProject={currentProject}
