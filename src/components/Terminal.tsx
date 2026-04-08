@@ -5,7 +5,6 @@ import { WebLinksAddon } from "@xterm/addon-web-links"
 import { SearchAddon } from "@xterm/addon-search"
 import { SerializeAddon } from "@xterm/addon-serialize"
 import { Unicode11Addon } from "@xterm/addon-unicode11"
-import { WebglAddon } from "@xterm/addon-webgl"
 import { invoke } from "@tauri-apps/api/core"
 import { spawn, type IPty } from "tauri-pty"
 import { Search, X, ArrowUp, ArrowDown, Save, Trash2 } from "lucide-react"
@@ -204,6 +203,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
   const searchAddonRef = useRef<SearchAddon | null>(null)
   const serializeAddonRef = useRef<SerializeAddon | null>(null)
   const ptyRef = useRef<IPty | null>(null)
+  const ptyKilledRef = useRef(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [showSearch, setShowSearch] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
@@ -273,7 +273,15 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         }
 
         lastPtySizeRef.current = nextSize
-        ptyRef.current?.resize(nextSize.cols, nextSize.rows)
+        // Guard against resizing killed PTY (causes Windows OS errors)
+        const pty = ptyRef.current
+        if (pty && !ptyKilledRef.current) {
+          try {
+            pty.resize(nextSize.cols, nextSize.rows)
+          } catch (e) {
+            console.warn("PTY resize failed:", e)
+          }
+        }
       }
     })
   }, [])
@@ -290,6 +298,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
     lastPtySizeRef.current = null
     lastPersistedActivityAtRef.current = session?.lastActiveAt ?? 0
     startupDurationMsRef.current = typeof session?.startupDurationMs === "number" ? session.startupDurationMs : null
+    ptyKilledRef.current = false
   }, [sessionId])
 
   useEffect(() => {
@@ -353,8 +362,8 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         if (!safePasteText) return
         term.focus()
         const pty = ptyRef.current
-        if (pty) {
-          pty.write(safePasteText)
+        if (pty && !ptyKilledRef.current) {
+          try { pty.write(safePasteText) } catch { /* ignore */ }
         } else {
           term.paste(safePasteText)
         }
@@ -365,10 +374,15 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
     }
 
     const bootTerminal = async () => {
+      console.log("[Terminal] bootTerminal starting...", { sessionId, cancelled, hasTermRef: !!terminalRef.current })
       try {
-        if (cancelled || !terminalRef.current) return
+        if (cancelled || !terminalRef.current) {
+          console.log("[Terminal] bootTerminal early exit - cancelled or no ref")
+          return
+        }
 
         const hostInfo = await invoke<TerminalHostInfo>("get_terminal_host_info")
+        console.log("[Terminal] hostInfo:", hostInfo)
         const isWindows = hostInfo.os === "windows"
         const windowsBuildNumber =
           typeof hostInfo.windowsBuildNumber === "number" && hostInfo.windowsBuildNumber > 0
@@ -425,15 +439,6 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
 
         term.open(terminalRef.current)
 
-        // Try to load the WebGL renderer for native-like performance and sharp TUIs
-        try {
-          const webglAddon = new WebglAddon()
-          webglAddon.onContextLoss(() => webglAddon.dispose())
-          term.loadAddon(webglAddon)
-        } catch (e) {
-          console.warn("WebGL addon could not be loaded. Falling back to canvas renderer.", e)
-        }
-
         const helperTextarea = terminalRef.current.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")
         helperTextarea?.setAttribute("autocomplete", "off")
         helperTextarea?.setAttribute("autocorrect", "off")
@@ -459,7 +464,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
           ),
         )
 
-        initPty()
+        initPty(isWindows, windowsBuildNumber)
 
         term.onData(handleData)
         term.onBinary(handleBinaryData)
@@ -519,8 +524,12 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
     })
     resizeObserver.observe(terminalRef.current)
 
-    const initPty = async () => {
-      if (!term || spawnInFlightRef.current) return
+    const initPty = async (ptyIsWindows: boolean, ptyWindowsBuildNumber: number | null) => {
+      console.log("[Terminal] initPty starting...", { sessionId, ptyIsWindows, ptyWindowsBuildNumber, hasTerm: !!term, spawnInFlight: spawnInFlightRef.current })
+      if (!term || spawnInFlightRef.current) {
+        console.log("[Terminal] initPty early exit - no term or spawn in flight")
+        return
+      }
 
       try {
         const savedOutput = await api.loadSessionOutput(sessionId)
@@ -545,16 +554,38 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
 
       spawnInFlightRef.current = true
       try {
-        ptyRef.current?.kill()
+        // Kill existing PTY safely
+        const existingPty = ptyRef.current
+        if (existingPty && !ptyKilledRef.current) {
+          ptyKilledRef.current = true
+          try { existingPty.kill() } catch { /* ignore */ }
+        }
+        ptyRef.current = null
+        
+        // Small delay to let ConPTY cleanup on Windows (prevents OS error 87)
+        if (ptyIsWindows) {
+          await new Promise(resolve => window.setTimeout(resolve, 100))
+        }
+        
         fitAddonRef.current?.fit()
         const spawnRows = Math.max(24, term.rows || 24)
         const spawnCols = Math.max(80, term.cols || 80)
+        
+        // Ensure we have valid dimensions
+        if (spawnRows === 0 || spawnCols === 0) {
+          throw new Error("Invalid terminal dimensions")
+        }
+        
         spawnStartedAtRef.current = Date.now()
+        
+        // Only use ConPTY on Windows 10 1809+ (build 17763+)
+        const useConpty: boolean = Boolean(ptyIsWindows && ptyWindowsBuildNumber && ptyWindowsBuildNumber >= 17763)
+        
         const pty = spawn(resolvedShell, [], {
           cwd: bootProjectPath || undefined,
           rows: spawnRows,
           cols: spawnCols,
-          useConpty: true,
+          useConpty,
           env: {
             TERM: "xterm-256color",
             COLORTERM: "truecolor",
@@ -563,11 +594,18 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         })
         const initPromise = (pty as IPty & { _init?: Promise<unknown> })._init
         if (initPromise) {
-          await initPromise
+          try {
+            await initPromise
+          } catch (initErr) {
+            console.error("PTY init failed:", initErr)
+            throw initErr
+          }
         }
 
         ptyRef.current = pty
+        ptyKilledRef.current = false
         lastPtySizeRef.current = { rows: spawnRows, cols: spawnCols }
+        console.log("[Terminal] PTY spawned successfully", { sessionId, rows: spawnRows, cols: spawnCols, useConpty })
         fitTerminal()
         fitTimeouts.push(
           ...FIT_SETTLE_DELAYS_MS.map((delay) =>
@@ -623,9 +661,12 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
           if (bootProjectId) {
             await updateSession(bootProjectId, sessionId, { pendingLaunchCommand: null })
           }
-          pty.write(`${bootSession.pendingLaunchCommand}\r`)
+          if (!ptyKilledRef.current) {
+            try { pty.write(`${bootSession.pendingLaunchCommand}\r`) } catch { /* ignore */ }
+          }
         }
       } catch (err) {
+        console.error("[Terminal] initPty error:", err)
         term?.writeln(`\x1b[31mError: ${err}\x1b[0m`)
       } finally {
         spawnInFlightRef.current = false
@@ -801,12 +842,18 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         }
       }
 
-      ptyRef.current?.write(data)
+      const pty = ptyRef.current
+      if (pty && !ptyKilledRef.current) {
+        try { pty.write(data) } catch { /* ignore */ }
+      }
     }
 
     const handleBinaryData = (data: string) => {
       if (!data) return
-      ptyRef.current?.write(data)
+      const pty = ptyRef.current
+      if (pty && !ptyKilledRef.current) {
+        try { pty.write(data) } catch { /* ignore */ }
+      }
     }
 
     void bootTerminal()
@@ -843,7 +890,12 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
       term?.element?.removeEventListener("pointerdown", handlePointerDown)
       term?.element?.removeEventListener("contextmenu", handleContextMenu, true)
       spawnInFlightRef.current = false
-      ptyRef.current?.kill()
+      // Kill PTY safely to avoid Windows OS errors
+      const pty = ptyRef.current
+      if (pty && !ptyKilledRef.current) {
+        ptyKilledRef.current = true
+        try { pty.kill() } catch { /* ignore */ }
+      }
       ptyRef.current = null
       term?.dispose()
     }
@@ -876,7 +928,15 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
 
           if (!lastSize || lastSize.rows !== nextSize.rows || lastSize.cols !== nextSize.cols) {
             lastPtySizeRef.current = nextSize
-            ptyRef.current?.resize(nextSize.cols, nextSize.rows)
+            // Guard against resizing killed PTY (causes Windows OS errors)
+            const pty = ptyRef.current
+            if (pty && !ptyKilledRef.current) {
+              try {
+                pty.resize(nextSize.cols, nextSize.rows)
+              } catch (e) {
+                console.warn("PTY resize failed:", e)
+              }
+            }
           }
         }
 
@@ -911,17 +971,46 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
           return
         }
 
+        // Fetch host info for Windows ConPTY check
+        const hostInfo = await invoke<TerminalHostInfo>("get_terminal_host_info")
+        const isWindows = hostInfo.os === "windows"
+        const windowsBuildNumber =
+          typeof hostInfo.windowsBuildNumber === "number" && hostInfo.windowsBuildNumber > 0
+            ? hostInfo.windowsBuildNumber
+            : null
+
         spawnInFlightRef.current = true
         try {
-          ptyRef.current?.kill()
+          // Kill existing PTY safely
+          const existingPty = ptyRef.current
+          if (existingPty && !ptyKilledRef.current) {
+            ptyKilledRef.current = true
+            try { existingPty.kill() } catch { /* ignore */ }
+          }
+          ptyRef.current = null
+          
+          // Small delay to let ConPTY cleanup on Windows (prevents OS error 87)
+          if (isWindows) {
+            await new Promise(resolve => window.setTimeout(resolve, 100))
+          }
+          
           fitAddonRef.current?.fit()
           const spawnRows = Math.max(24, term.rows || 24)
           const spawnCols = Math.max(80, term.cols || 80)
+          
+          // Ensure we have valid dimensions
+          if (spawnRows === 0 || spawnCols === 0) {
+            throw new Error("Invalid terminal dimensions")
+          }
+          
+          // Only use ConPTY on Windows 10 1809+ (build 17763+)
+          const useConpty: boolean = Boolean(isWindows && windowsBuildNumber && windowsBuildNumber >= 17763)
+          
           const pty = spawn(resolvedShell, [], {
             cwd: currentProjectPath || undefined,
             rows: spawnRows,
             cols: spawnCols,
-            useConpty: true,
+            useConpty,
             env: {
               TERM: "xterm-256color",
               COLORTERM: "truecolor",
@@ -930,9 +1019,15 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
           })
           const initPromise = (pty as IPty & { _init?: Promise<unknown> })._init
           if (initPromise) {
-            await initPromise
+            try {
+              await initPromise
+            } catch (initErr) {
+              console.error("PTY init failed:", initErr)
+              throw initErr
+            }
           }
           ptyRef.current = pty
+          ptyKilledRef.current = false
           lastPtySizeRef.current = { rows: spawnRows, cols: spawnCols }
           fitTerminal()
           pty.onData((chunk) => {
@@ -945,7 +1040,9 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
             )
             xtermRef.current?.write(data)
           })
-          pty.write(`${detail.command}\r`)
+          if (!ptyKilledRef.current) {
+            try { pty.write(`${detail.command}\r`) } catch { /* ignore */ }
+          }
           awaitingPromptTitleRef.current = true
         } catch (error) {
           term.writeln(`\x1b[31mError: ${error}\x1b[0m`)

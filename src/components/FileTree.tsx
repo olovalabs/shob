@@ -867,10 +867,25 @@ export function FileTree({ selectedFilePath, onFileSelect }: FileTreeProps) {
     void loadGitStatus()
   }, [loadGitStatus])
 
-  // Start/stop filesystem watch
+  // Start/stop filesystem watch (debounced to prevent OS errors on rapid changes)
   useEffect(() => {
-    void invoke("set_project_watch", { path: currentProject?.path ?? null }).catch(console.error)
-    return () => { void invoke("set_project_watch", { path: null }).catch(console.error) }
+    let timeoutId: number | null = null
+    let isCancelled = false
+
+    const setupWatcher = async () => {
+      // Small delay to batch rapid path changes
+      await new Promise(resolve => { timeoutId = window.setTimeout(resolve, 50) })
+      if (isCancelled) return
+      void invoke("set_project_watch", { path: currentProject?.path ?? null }).catch(console.error)
+    }
+
+    void setupWatcher()
+
+    return () => {
+      isCancelled = true
+      if (timeoutId) window.clearTimeout(timeoutId)
+      void invoke("set_project_watch", { path: null }).catch(console.error)
+    }
   }, [currentProject?.path])
 
   // Listen for FS events and debounce refresh
