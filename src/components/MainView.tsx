@@ -5,6 +5,7 @@ import { TabBar } from "./TabBar"
 import { Terminal } from "./Terminal"
 import { WelcomeScreen } from "./WelcomeScreen"
 import { useStore } from "../store"
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
 
 const FileTree = lazy(async () => {
   const module = await import("./FileTree")
@@ -107,37 +108,48 @@ export function MainView() {
   return (
     <div className="flex min-h-0 flex-1 bg-background text-foreground">
       <Sidebar />
-      <div className="min-w-0 flex-1 flex flex-col bg-background">
-        <TabBar />
-        <div className="min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
-          {projectSessions.length > 0 ? (
-            <div className="relative h-full w-full min-h-0 min-w-0 overflow-hidden">
-                {projectSessions.map((session) => (
-                  <Terminal
-                    key={session.id}
-                    sessionId={session.id}
-                    isActive={session.id === activeSessionId}
-                    shouldBoot={bootedSessionIds.has(session.id)}
-                  />
-                ))}
-            </div>
-          ) : (
-            <WelcomeScreen
-              projects={projects}
-              currentProject={currentProject}
-              onOpenFolder={handleOpenFolder}
-              onCreateSession={handleCreateSession}
-              onSelectProject={setCurrentProject}
-              onToggleFileTree={handleToggleFileTree}
-            />
-          )}
-        </div>
-      </div>
-      {isFileTreeVisible && (
-        <Suspense fallback={null}>
-          <FileTree selectedFilePath={activeFilePath} onFileSelect={handleFileSelect} />
-        </Suspense>
-      )}
+      <ResizablePanelGroup orientation="horizontal" className="min-w-0 flex-1 bg-background">
+        <ResizablePanel defaultSize={75} minSize={30} className="flex flex-col min-w-0 bg-background">
+          <TabBar />
+          <div className="min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+            {projectSessions.length > 0 ? (
+              <div className="relative h-full w-full min-h-0 min-w-0 overflow-hidden">
+                <ResizablePanelGroup orientation="vertical" className="h-full w-full">
+                  <ResizablePanel defaultSize={100} className="min-h-0 min-w-0 relative h-full w-full">
+                    {projectSessions.map((session) => (
+                      <Terminal
+                        key={session.id}
+                        sessionId={session.id}
+                        isActive={session.id === activeSessionId}
+                        shouldBoot={bootedSessionIds.has(session.id)}
+                      />
+                    ))}
+                  </ResizablePanel>
+                </ResizablePanelGroup>
+              </div>
+            ) : (
+              <WelcomeScreen
+                projects={projects}
+                currentProject={currentProject}
+                onOpenFolder={handleOpenFolder}
+                onCreateSession={handleCreateSession}
+                onSelectProject={setCurrentProject}
+                onToggleFileTree={handleToggleFileTree}
+              />
+            )}
+          </div>
+        </ResizablePanel>
+        {isFileTreeVisible && (
+          <>
+            <ResizableHandle withHandle />
+            <ResizablePanel defaultSize={25} minSize={15} className="min-w-0 flex flex-col">
+              <Suspense fallback={null}>
+                <FileTree selectedFilePath={activeFilePath} onFileSelect={handleFileSelect} />
+              </Suspense>
+            </ResizablePanel>
+          </>
+        )}
+      </ResizablePanelGroup>
     </div>
   )
 }
