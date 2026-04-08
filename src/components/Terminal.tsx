@@ -406,6 +406,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
           scrollSensitivity: 1.15,
           windowsPty: windowsPtyOptions,
           documentOverride: terminalRef.current.ownerDocument,
+          allowProposedApi: true,
         })
 
         fitAddon = new FitAddon()
