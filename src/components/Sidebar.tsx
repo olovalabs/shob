@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from "react"
 import { nativeApi } from "../services/native"
 import {
   Boxes,
-  FolderPlus,
-  MoreHorizontal,
+  Folder,
   Palette,
+  PencilLine,
   Plus,
   SlidersHorizontal,
   Settings,
@@ -66,6 +66,9 @@ const getShellLabel = (shell: string) => {
 
 const formatSessionLabel = (index: number) => `Session ${index + 1}`
 const getProjectBadge = (name: string) => name.trim().charAt(0).toUpperCase() || "P"
+const VISIBLE_SESSIONS_PER_PROJECT = 5
+const SIDEBAR_MENU_CLASS = "rounded-md border border-white/[0.08] bg-[#1c1c1c] p-1 text-[#d7d7d7] shadow-xl ring-0"
+const SIDEBAR_MENU_ITEM_CLASS = "rounded-[5px] px-2.5 py-1.5 text-[13px] focus:bg-white/[0.07] focus:text-white"
 
 const getProjectTheme = (project?: Pick<Project, "color"> | null) => {
   const color = project?.color ?? "#62285d"
@@ -100,35 +103,6 @@ const formatRelativeSessionTime = (createdAt?: number | null) => {
 
   const years = Math.floor(days / 365)
   return `${years}y`
-}
-
-const formatCommandCount = (count?: number | null) => {
-  if (typeof count !== "number" || !Number.isFinite(count) || count <= 0) return ""
-  if (count < 1000) return `${Math.floor(count)} cmd`
-  return `${(count / 1000).toFixed(1)}k cmd`
-}
-
-type SessionStatusTone = "active" | "running" | "idle"
-
-const getSessionStatus = (options: {
-  isActiveSession: boolean
-  isRunningSession: boolean
-}) => {
-  if (options.isActiveSession) {
-    return { label: "Active", tone: "active" as SessionStatusTone, title: "Session is active" }
-  }
-
-  if (options.isRunningSession) {
-    return { label: "Running", tone: "running" as SessionStatusTone, title: "Session is running" }
-  }
-
-  return { label: "Idle", tone: "idle" as SessionStatusTone, title: "Session is idle" }
-}
-
-const SESSION_STATUS_STYLES: Record<SessionStatusTone, string> = {
-  active: "bg-sky-400 shadow-[0_0_0_1px_rgba(2,132,199,0.45)]",
-  running: "bg-emerald-400 animate-pulse shadow-[0_0_0_1px_rgba(22,163,74,0.45)]",
-  idle: "bg-zinc-500 shadow-[0_0_0_1px_rgba(113,113,122,0.45)]",
 }
 
 export function Sidebar() {
@@ -166,10 +140,6 @@ export function Sidebar() {
   const [projectLogoUrls, setProjectLogoUrls] = useState<Record<string, string>>({})
   const [draftProjectLogoUrl, setDraftProjectLogoUrl] = useState<string | null>(null)
 
-  const currentProject = useMemo(
-    () => projects.find((project) => project.id === currentProjectId) ?? null,
-    [projects, currentProjectId],
-  )
   const editingProject = useMemo(
     () => projects.find((project) => project.id === editingProjectId) ?? null,
     [projects, editingProjectId],
@@ -178,26 +148,6 @@ export function Sidebar() {
     () => projects.map((project) => `${project.id}:${project.logoPath ?? ""}`).join("|"),
     [projects],
   )
-  useEffect(() => {
-    setExpandedProjects((current) => {
-      const next = { ...current }
-
-      for (const project of projects) {
-        if (!(project.id in next)) {
-          next[project.id] = true
-        }
-      }
-
-      for (const projectId of Object.keys(next)) {
-        if (!projects.some((project) => project.id === projectId)) {
-          delete next[projectId]
-        }
-      }
-
-      return next
-    })
-  }, [projects])
-
   useEffect(() => {
     window.dispatchEvent(
       new CustomEvent("gg-sidebar-state", {
@@ -247,7 +197,7 @@ export function Sidebar() {
       isDisposed = true
       window.clearTimeout(startTimer)
     }
-  }, [logoSignature])
+  }, [logoSignature, projects])
 
   useEffect(() => {
     let isDisposed = false
@@ -319,7 +269,6 @@ export function Sidebar() {
     }
   }, [activeSessionId])
 
-  const filteredCurrentSessions = useMemo(() => currentProject?.sessions ?? [], [currentProject])
   const installedCliTools = useMemo(() => cliTools.filter((tool) => tool.installed), [cliTools])
   const filteredCliTools = useMemo(() => {
     const query = cliToolSearchQuery.trim().toLowerCase()
@@ -456,210 +405,245 @@ export function Sidebar() {
 
   return (
     <>
-      <aside className={`relative flex h-full shrink-0 border-r bg-background text-foreground ${isSessionPaneVisible ? "w-[392px]" : "w-[52px]"}`}>
-        <div className="flex w-[52px] flex-col items-center border-r bg-muted/30 px-2 py-3">
-          <div className="flex w-full flex-col items-center gap-4">
-            {projects.map((project) => {
-              const isActive = project.id === currentProjectId
+      <aside
+        className={`relative flex h-full shrink-0 border-r border-[#242424] bg-[#171717] text-[#dedede] transition-[width] duration-150 ${
+          isSessionPaneVisible ? "w-[304px]" : "w-[52px]"
+        }`}
+      >
+        {!isSessionPaneVisible ? (
+          <div className="flex w-full flex-col items-center px-2 py-3">
+            <div className="flex w-full flex-col items-center gap-2">
+              {projects.map((project) => {
+                const isActive = project.id === currentProjectId
 
-              return (
-                <div key={project.id} className="group relative">
+                return (
                   <button
+                    key={project.id}
                     type="button"
                     onClick={() => setCurrentProject(project.id)}
-                    className={`relative rounded-[10px] p-0.5 transition-colors ${isActive ? "bg-accent/70" : "hover:bg-accent/55"}`}
+                    className={`relative rounded-[8px] p-1 transition-colors ${
+                      isActive ? "bg-[#2b2b2b]" : "hover:bg-white/[0.06]"
+                    }`}
+                    title={project.name}
+                    aria-label={project.name}
                   >
-                    {renderProjectMark(project, "md")}
-                    {isActive && <span className="pointer-events-none absolute inset-0 rounded-[10px] ring-1 ring-ring/40" />}
+                    {renderProjectMark(project, "sm")}
                   </button>
-                </div>
-              )
-            })}
+                )
+              })}
+
+              <button
+                type="button"
+                onClick={handleAddProject}
+                className="flex h-8 w-8 items-center justify-center rounded-[8px] text-[#8b8b8b] transition-colors hover:bg-white/[0.06] hover:text-white"
+                title="Add project"
+                aria-label="Add project"
+              >
+                <Plus className="h-4 w-4" strokeWidth={1.9} />
+              </button>
+            </div>
 
             <button
               type="button"
-              onClick={handleAddProject}
-              className="group relative rounded-[10px] p-0.5 transition-colors hover:bg-accent/55"
-              title="Add project"
-            >
-              <span className="flex h-10 w-10 items-center justify-center rounded-[8px] bg-muted/45 text-muted-foreground transition-colors group-hover:bg-muted/60 group-hover:text-foreground">
-                <Plus className="h-4 w-4" strokeWidth={2} />
-              </span>
-            </button>
-          </div>
-
-          <div className="mt-auto flex w-full flex-col items-center gap-3">
-            <Button
-              type="button"
               onClick={() => setIsSettingsOpen((current) => !current)}
-              variant="ghost"
-              size="icon-sm"
-              className="h-8 w-8"
+              className="mt-auto flex h-8 w-8 items-center justify-center rounded-[8px] text-[#8b8b8b] transition-colors hover:bg-white/[0.06] hover:text-white"
               title="Settings"
+              aria-label="Settings"
               aria-pressed={isSettingsOpen}
             >
               <Settings className="h-4 w-4" strokeWidth={1.9} />
-            </Button>
+            </button>
           </div>
-        </div>
-
-        {isSessionPaneVisible && (
-        <div className="flex min-w-0 flex-1 flex-col bg-background">
-          <div className="border-b px-4 py-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate text-[28px] leading-none font-semibold text-foreground">{currentProject?.name ?? "Workspace"}</p>
-                <p className="mt-1 truncate text-[14px] text-muted-foreground">
-                  {currentProject?.path ? currentProject.path.replace(/^([A-Za-z]):\\Users\\[^\\]+/, "~") : "Add a project to get started"}
-                </p>
+        ) : (
+          <div className="flex min-w-0 flex-1 flex-col bg-[#171717]">
+            <div className="group/sidebar flex h-10 shrink-0 items-center justify-between px-4">
+              <p className="text-[13px] font-medium text-[#858585]">Projects</p>
+              <div className="flex items-center gap-1 opacity-70 transition-opacity group-hover/sidebar:opacity-100">
+                <button
+                  type="button"
+                  onClick={handleAddProject}
+                  className="flex h-7 w-7 items-center justify-center rounded-[7px] text-[#8f8f8f] transition-colors hover:bg-white/[0.06] hover:text-white"
+                  title="Add project"
+                  aria-label="Add project"
+                >
+                  <Plus className="h-3.5 w-3.5" strokeWidth={1.9} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsSettingsOpen((current) => !current)}
+                  className="flex h-7 w-7 items-center justify-center rounded-[7px] text-[#8f8f8f] transition-colors hover:bg-white/[0.06] hover:text-white"
+                  title="Settings"
+                  aria-label="Settings"
+                  aria-pressed={isSettingsOpen}
+                >
+                  <Settings className="h-3.5 w-3.5" strokeWidth={1.9} />
+                </button>
               </div>
-              {currentProject && (
-                <div className="relative">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        className="h-8 w-8 shrink-0"
-                        title="Project options"
-                      >
-                        <MoreHorizontal className="h-4 w-4" strokeWidth={2} />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-[136px] rounded-[8px] p-1">
-                      <DropdownMenuItem className="px-3 py-1.5 text-[13px]" onClick={() => openEditProject(currentProject)}>
-                        Edit
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        className="px-3 py-1.5 text-[13px]"
-                        variant="destructive"
-                        onClick={() => handleDeleteProject(currentProject.id)}
-                      >
-                        Close
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-              )}
             </div>
 
-            {currentProject && (
-              <div className="mt-5">
-                <Button
-                  type="button"
-                  onClick={() => handleCreateSession(currentProject.id)}
-                  variant="outline"
-                  className="h-10 w-full text-[15px] font-semibold"
-                >
-                  <FolderPlus className="mr-2 h-4 w-4" strokeWidth={1.9} />
-                  New session
-                </Button>
-              </div>
-            )}
-          </div>
+            <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-5">
+              {projects.length === 0 ? (
+                <div className="px-2 pt-4">
+                  <button
+                    type="button"
+                    onClick={handleAddProject}
+                    className="flex h-8 w-full items-center rounded-[8px] px-2 text-left text-[13px] font-medium text-[#9a9a9a] transition-colors hover:bg-white/[0.06] hover:text-white"
+                  >
+                    Add your first project
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {projects.map((project) => {
+                    const isActiveProject = project.id === currentProjectId
+                    const showAllSessions = expandedProjects[project.id] ?? false
+                    const sortedSessions = [...project.sessions].sort((left, right) => {
+                      const leftActivity = left.lastActiveAt ?? left.createdAt ?? 0
+                      const rightActivity = right.lastActiveAt ?? right.createdAt ?? 0
+                      return rightActivity - leftActivity
+                    })
+                    const visibleSessions = showAllSessions
+                      ? sortedSessions
+                      : sortedSessions.slice(0, VISIBLE_SESSIONS_PER_PROJECT)
 
-          <div className="hide-scrollbar flex-1 overflow-y-auto px-3 py-4">
-            {!currentProject ? (
-              <p className="px-3 py-4 text-sm text-muted-foreground">Select or add a project to view sessions.</p>
-            ) : (
-              <section>
-                {(expandedProjects[currentProject.id] ?? true) && (
-                  <div className="space-y-0.5">
-                    {filteredCurrentSessions.length === 0 ? (
-                      <Button
-                        type="button"
-                        onClick={() => handleCreateSession(currentProject.id)}
-                        variant="ghost"
-                        className="w-full justify-start px-3 py-3 h-auto"
-                      >
-                        Create your first session
-                      </Button>
-                    ) : (
-                      filteredCurrentSessions.map((session, index) => {
-                        const isActiveSession = activeSessionId === session.id
-                        const isRunningSession = Boolean(busySessions[session.id] || session.pendingLaunchCommand)
-                        const sessionStatus = getSessionStatus({
-                          isActiveSession,
-                          isRunningSession,
-                        })
-                        const projectAgeLabel = formatRelativeSessionTime(session.lastActiveAt ?? session.createdAt)
-                        const commandCountLabel = formatCommandCount(session.commandCount)
-
-                        return (
-                          <div
-                            key={session.id}
-                            className={`group flex items-center gap-2 rounded-lg px-2 py-1.5 transition ${
-                              isActiveSession
-                                ? "bg-accent text-accent-foreground"
-                                : "text-foreground/84 hover:bg-accent/50"
+                    return (
+                      <section key={project.id} className="group/project min-w-0">
+                        <div className="mb-1 flex h-7 items-center gap-1 px-2">
+                          <button
+                            type="button"
+                            onClick={() => setCurrentProject(project.id)}
+                            className={`flex min-w-0 flex-1 items-center gap-2 text-left text-[13px] font-semibold transition-colors ${
+                              isActiveProject ? "text-[#c9c9c9]" : "text-[#a0a0a0] hover:text-white"
                             }`}
+                            title={project.path}
                           >
+                            <Folder className="h-4 w-4 shrink-0" strokeWidth={1.7} />
+                            <span className="truncate">{project.name}</span>
+                          </button>
+
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                type="button"
+                                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] text-[#929292] opacity-80 transition-colors hover:bg-white/[0.06] hover:text-white group-hover/project:opacity-100"
+                                title="Project options"
+                                aria-label={`${project.name} options`}
+                              >
+                                <PencilLine className="h-3.5 w-3.5" strokeWidth={1.8} />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className={`w-[146px] ${SIDEBAR_MENU_CLASS}`}>
+                              <DropdownMenuItem
+                                className={SIDEBAR_MENU_ITEM_CLASS}
+                                onClick={() => void handleCreateSession(project.id)}
+                              >
+                                New session
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className={SIDEBAR_MENU_ITEM_CLASS}
+                                onClick={() => openEditProject(project)}
+                              >
+                                Edit
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className={SIDEBAR_MENU_ITEM_CLASS}
+                                variant="destructive"
+                                onClick={() => handleDeleteProject(project.id)}
+                              >
+                                Close
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+
+                        <div className="space-y-0.5">
+                          {visibleSessions.length === 0 ? (
+                            <button
+                              type="button"
+                              onClick={() => void handleCreateSession(project.id)}
+                              className="ml-7 flex h-8 w-[calc(100%-1.75rem)] items-center rounded-[8px] px-2 text-left text-[13px] font-medium text-[#848484] transition-colors hover:bg-white/[0.06] hover:text-white"
+                            >
+                              Create session
+                            </button>
+                          ) : (
+                            visibleSessions.map((session, index) => {
+                              const isActiveSession = activeSessionId === session.id
+                              const isRunningSession = Boolean(busySessions[session.id] || session.pendingLaunchCommand)
+                              const projectAgeLabel = formatRelativeSessionTime(session.lastActiveAt ?? session.createdAt)
+
+                              return (
+                                <div key={session.id} className="group/session relative">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setCurrentProject(project.id)
+                                      setActiveSession(session.id)
+                                    }}
+                                    className={`flex h-8 w-full min-w-0 items-center rounded-[8px] pl-8 pr-3 text-left transition-colors ${
+                                      isActiveSession
+                                        ? "bg-[#2b2b2b] text-white"
+                                        : "text-[#e2e2e2] hover:bg-white/[0.045] hover:text-white"
+                                    }`}
+                                  >
+                                    {isRunningSession && (
+                                      <span className="mr-1.5 inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                                        <Spinner className="h-3 w-3 text-[#bdbdbd]" />
+                                      </span>
+                                    )}
+                                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-none">
+                                      {session.name || formatSessionLabel(index)}
+                                    </span>
+                                    {projectAgeLabel && (
+                                      <span className="ml-3 shrink-0 text-[12px] leading-none text-[#929292] group-hover/session:opacity-0">
+                                        {projectAgeLabel}
+                                      </span>
+                                    )}
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onPointerDown={(event) => {
+                                      event.preventDefault()
+                                      event.stopPropagation()
+                                    }}
+                                    onClick={(event) => {
+                                      event.stopPropagation()
+                                      void removeSession(project.id, session.id)
+                                    }}
+                                    className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-[5px] text-[15px] leading-none text-[#9c9c9c] opacity-0 transition hover:bg-white/[0.08] hover:text-white group-hover/session:opacity-100"
+                                    title="Close session"
+                                    aria-label={`Close ${session.name || formatSessionLabel(index)}`}
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              )
+                            })
+                          )}
+
+                          {project.sessions.length > VISIBLE_SESSIONS_PER_PROJECT && (
                             <button
                               type="button"
                               onClick={() => {
-                                setCurrentProject(currentProject.id)
-                                setActiveSession(session.id)
+                                setExpandedProjects((current) => ({
+                                  ...current,
+                                  [project.id]: !showAllSessions,
+                                }))
                               }}
-                              className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                              className="ml-7 flex h-8 items-center px-2 text-left text-[13px] font-medium text-[#878787] transition-colors hover:text-white"
                             >
-                              {isRunningSession && (
-                                <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center">
-                                  <Spinner className="h-3.5 w-3.5 text-[#00BF63]" />
-                                </span>
-                              )}
-                              <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-foreground">
-                                {session.name || formatSessionLabel(index)}
-                              </span>
-                              {commandCountLabel && (
-                                <span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                                  {commandCountLabel}
-                                </span>
-                              )}
-                              {projectAgeLabel && (
-                                <span className="shrink-0 text-[12px] text-muted-foreground">{projectAgeLabel}</span>
-                              )}
+                              {showAllSessions ? "Show less" : "Show more"}
                             </button>
-
-                            <div className="flex items-center gap-1">
-                              <span className="relative inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-muted/50">
-                                <CliAvatar cliId={session.cliTool} label={session.name} size="sm" className="opacity-80" />
-                                <span
-                                  className={`pointer-events-none absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border border-background ${SESSION_STATUS_STYLES[sessionStatus.tone]}`}
-                                  title={sessionStatus.title}
-                                  aria-label={sessionStatus.label}
-                                />
-                              </span>
-                              <Button
-                                type="button"
-                                onPointerDown={(event) => {
-                                  event.preventDefault()
-                                  event.stopPropagation()
-                                }}
-                                onClick={(event) => {
-                                  event.stopPropagation()
-                                  void removeSession(currentProject.id, session.id)
-                                }}
-                                variant="ghost"
-                                size="icon-xs"
-                                className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity"
-                                title="Close session"
-                              >
-                                <span className="text-xs leading-none">×</span>
-                              </Button>
-                            </div>
-                          </div>
-                        )
-                      })
-                    )}
-                  </div>
-                )}
-              </section>
-            )}
+                          )}
+                        </div>
+                      </section>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
         )}
-
       </aside>
 
       <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
