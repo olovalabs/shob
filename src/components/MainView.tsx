@@ -104,39 +104,44 @@ export function MainView() {
       <div className="min-w-0 flex-1 flex flex-col bg-background">
         <TabBar />
         <div className="min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
-          <div className="relative h-full w-full min-h-0 min-w-0 overflow-hidden" style={{ display: projectSessions.length > 0 ? "block" : "none" }}>
-            {allSessions.map((session) => {
-              const shouldBoot = bootedSessionIds.has(session.id)
-              if (!shouldBoot) return null
+          <div className="flex h-full min-h-0 min-w-0">
+            <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+              <div className="relative h-full w-full min-h-0 min-w-0 overflow-hidden" style={{ display: projectSessions.length > 0 ? "block" : "none" }}>
+                {allSessions.map((session) => {
+                  const shouldBoot = bootedSessionIds.has(session.id)
+                  if (!shouldBoot) return null
 
-              return (
-                <Terminal
-                  key={session.id}
-                  sessionId={session.id}
-                  isActive={session.id === activeSessionId}
-                  shouldBoot={shouldBoot}
+                  return (
+                    <Terminal
+                      key={session.id}
+                      sessionId={session.id}
+                      isActive={session.id === activeSessionId}
+                      shouldBoot={shouldBoot}
+                    />
+                  )
+                })}
+              </div>
+
+              {projectSessions.length === 0 && (
+                <WelcomeScreen
+                  projects={projects}
+                  currentProject={currentProject}
+                  onOpenFolder={handleOpenFolder}
+                  onCreateSession={handleCreateSession}
+                  onSelectProject={setCurrentProject}
+                  onToggleFileTree={handleToggleFileTree}
                 />
-              )
-            })}
-          </div>
+              )}
+            </div>
 
-          {projectSessions.length === 0 && (
-            <WelcomeScreen
-              projects={projects}
-              currentProject={currentProject}
-              onOpenFolder={handleOpenFolder}
-              onCreateSession={handleCreateSession}
-              onSelectProject={setCurrentProject}
-              onToggleFileTree={handleToggleFileTree}
-            />
-          )}
+            {isFileTreeVisible && (
+              <Suspense fallback={null}>
+                <FileTree selectedFilePath={activeFilePath} onFileSelect={handleFileSelect} />
+              </Suspense>
+            )}
+          </div>
         </div>
       </div>
-      {isFileTreeVisible && (
-        <Suspense fallback={null}>
-          <FileTree selectedFilePath={activeFilePath} onFileSelect={handleFileSelect} />
-        </Suspense>
-      )}
     </div>
   )
 }
