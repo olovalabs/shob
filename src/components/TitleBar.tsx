@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { nativeApi } from "../services/native"
-import { ArrowLeft, ArrowRight, ChevronDown, GitBranch, Play } from "lucide-react"
+import { ChevronDown, Folder, GitBranch, Play } from "lucide-react"
 import { CliAvatar } from "./CliAvatar"
 import { useStore } from "../store"
 import { Button } from "@/components/ui/button"
@@ -251,6 +251,7 @@ export function TitleBar() {
   } = useStore()
   const [isLauncherOpen, setIsLauncherOpen] = useState(false)
   const [isSidebarVisible, setIsSidebarVisible] = useState(true)
+  const [isFileTreeVisible, setIsFileTreeVisible] = useState(false)
   const [branchInfo, setBranchInfo] = useState<GitBranchInfo | null>(null)
   const launcherRef = useRef<HTMLDivElement>(null)
   const branchRefreshTimeoutRef = useRef<number | null>(null)
@@ -349,6 +350,17 @@ export function TitleBar() {
   }, [])
 
   useEffect(() => {
+    const handleFileTreeState = (event: Event) => {
+      const detail = (event as CustomEvent<{ isFileTreeVisible: boolean }>).detail
+      if (!detail) return
+      setIsFileTreeVisible(Boolean(detail.isFileTreeVisible))
+    }
+
+    window.addEventListener("gg-file-tree-state", handleFileTreeState as EventListener)
+    return () => window.removeEventListener("gg-file-tree-state", handleFileTreeState as EventListener)
+  }, [])
+
+  useEffect(() => {
     void loadBranchInfo(currentProject?.path)
   }, [currentProject?.path, loadBranchInfo])
 
@@ -421,6 +433,10 @@ export function TitleBar() {
     window.dispatchEvent(new Event("gg-toggle-sidebar"))
   }
 
+  const handleToggleFileTree = () => {
+    window.dispatchEvent(new Event("gg-toggle-file-tree"))
+  }
+
   const headerClass = "border-white/[0.06] bg-[#121212] text-white"
   const navButtonClass = "text-[#6f6f6f] hover:bg-white/[0.05] hover:text-white"
 
@@ -444,37 +460,6 @@ export function TitleBar() {
               <span className="h-full w-[1px] bg-current opacity-80" />
             </span>
           </Button>
-
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            className={`h-6 w-6 rounded-md ${navButtonClass}`}
-            title="Back"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.8} />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            className={`h-6 w-6 rounded-md ${navButtonClass}`}
-            title="Forward"
-          >
-            <ArrowRight className="h-3.5 w-3.5" strokeWidth={1.8} />
-          </Button>
-
-          <nav className="ml-2 hidden items-center gap-1 text-[13px] font-medium text-white/50 md:flex">
-            {["File", "Edit", "View", "Window", "Help"].map((item) => (
-              <button
-                key={item}
-                type="button"
-                className="rounded-[5px] px-2 py-1 transition-colors hover:bg-white/[0.05] hover:text-white/82"
-              >
-                {item}
-              </button>
-            ))}
-          </nav>
 
           {branchInfo?.head && (
             <div className="ml-1 hidden items-center gap-2 rounded-md bg-white/[0.03] px-2 py-1 text-xs text-current/65 lg:flex">
@@ -534,6 +519,21 @@ export function TitleBar() {
           </DropdownMenu>
         </div>
 
+        <Button
+          type="button"
+          onClick={handleToggleFileTree}
+          variant="ghost"
+          size="icon-sm"
+          className={`h-7 w-7 ${
+            isFileTreeVisible
+              ? "bg-[#1e2a1f] text-[#9bdd9f]"
+              : "text-current/65 hover:bg-white/[0.05] hover:text-current"
+          }`}
+          title={isFileTreeVisible ? "Hide file tree" : "Show file tree"}
+          aria-pressed={isFileTreeVisible}
+        >
+          <Folder className="h-4 w-4" strokeWidth={1.9} />
+        </Button>
       </div>
 
       {(osPlatform === "windows" || osPlatform === "chromeos") && (

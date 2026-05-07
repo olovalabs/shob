@@ -810,7 +810,7 @@ export function FileTree({ selectedFilePath, onFileSelect }: FileTreeProps) {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <aside className="flex h-full w-[332px] flex-col border-l bg-background text-foreground">
+    <aside className="flex h-full w-full flex-col bg-background text-foreground">
       <div className="min-h-0 flex-1 overflow-y-auto px-[10px] py-2">
         {!currentProject ? (
           <p className="px-2 py-3 text-sm text-muted-foreground">Select a project to see its files.</p>

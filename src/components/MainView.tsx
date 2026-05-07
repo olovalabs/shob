@@ -1,7 +1,17 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react"
-import { FolderTree, Maximize2, MoreHorizontal, PanelRight, PanelTop, Plus } from "lucide-react"
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react"
+import { FolderTree, PanelRight, PanelTop, Plus } from "lucide-react"
 import { nativeApi } from "../services/native"
 import { Sidebar } from "./Sidebar"
+import { TabBar } from "./TabBar"
 import { Terminal } from "./Terminal"
 import { WelcomeScreen } from "./WelcomeScreen"
 import { useStore } from "../store"
@@ -12,12 +22,41 @@ const FileTree = lazy(async () => {
   return { default: module.FileTree }
 })
 
+const RIGHT_PANEL_MIN_WIDTH = 320
+const RIGHT_PANEL_DEFAULT_WIDTH = 520
+const RIGHT_PANEL_MAX_WIDTH = 760
+const MAIN_CONTENT_MIN_WIDTH = 520
+
 const folderNameFromPath = (path: string) => {
   const parts = path.split(/[\\/]/).filter(Boolean)
   return parts[parts.length - 1] || path
 }
 
-type RightPanelMode = "review" | "file-tree" | "section"
+const clampRightPanelWidth = (width: number, workspaceWidth?: number) => {
+  const dynamicMax = workspaceWidth
+    ? Math.max(RIGHT_PANEL_MIN_WIDTH, Math.min(RIGHT_PANEL_MAX_WIDTH, workspaceWidth - MAIN_CONTENT_MIN_WIDTH))
+    : RIGHT_PANEL_MAX_WIDTH
+
+  return Math.round(Math.min(Math.max(width, RIGHT_PANEL_MIN_WIDTH), dynamicMax))
+}
+
+const getInitialRightPanelWidth = () => {
+  if (typeof window === "undefined") return RIGHT_PANEL_DEFAULT_WIDTH
+  return clampRightPanelWidth(Math.round(window.innerWidth * 0.34), window.innerWidth)
+}
+
+type RightPanelMode = "review" | "file-tree"
+
+function ReviewEmptyState() {
+  return (
+    <div className="flex h-full w-full items-center justify-center px-6">
+      <div className="text-center">
+        <p className="text-sm font-semibold text-foreground">No unstaged changes</p>
+        <p className="mt-2 text-sm text-muted-foreground">Code changes will appear here</p>
+      </div>
+    </div>
+  )
+}
 
 export function MainView() {
   const projects = useStore((state) => state.projects)
@@ -29,17 +68,15 @@ export function MainView() {
   const addProject = useStore((state) => state.addProject)
   const setCurrentProject = useStore((state) => state.setCurrentProject)
   const launchCliSession = useStore((state) => state.launchCliSession)
+  const workspaceRef = useRef<HTMLDivElement>(null)
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null)
-  const [isRightPanelVisible, setIsRightPanelVisible] = useState(true)
   const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>("file-tree")
+  const [isRightPanelVisible, setIsRightPanelVisible] = useState(true)
+  const [rightPanelWidth, setRightPanelWidth] = useState(getInitialRightPanelWidth)
   const [isAddPanelMenuOpen, setIsAddPanelMenuOpen] = useState(false)
   const [bootedSessionIds, setBootedSessionIds] = useState<Set<string>>(new Set())
   const projectSessions = useMemo(() => currentProject?.sessions ?? [], [currentProject])
   const allSessions = useMemo(() => projects.flatMap((p) => p.sessions), [projects])
-  const activeSession = useMemo(
-    () => allSessions.find((session) => session.id === activeSessionId) ?? null,
-    [activeSessionId, allSessions],
-  )
   const isFileTreeVisible = isRightPanelVisible && rightPanelMode === "file-tree"
 
   useEffect(() => {
@@ -67,17 +104,70 @@ export function MainView() {
   }, [isFileTreeVisible])
 
   useEffect(() => {
-    const handleFileTreeToggleRequest = () => {
-      setIsRightPanelVisible((current) => {
-        if (current && rightPanelMode === "file-tree") return false
-        return true
-      })
-      setRightPanelMode("file-tree")
+    const handleResize = () => {
+      const workspaceWidth = workspaceRef.current?.getBoundingClientRect().width
+      setRightPanelWidth((current) => clampRightPanelWidth(current, workspaceWidth))
     }
 
-    window.addEventListener("gg-toggle-file-tree", handleFileTreeToggleRequest)
-    return () => window.removeEventListener("gg-toggle-file-tree", handleFileTreeToggleRequest)
-  }, [rightPanelMode])
+    window.addEventListener("resize", handleResize)
+    return () => window.removeEventListener("resize", handleResize)
+  }, [])
+
+  const showFileTree = useCallback(() => {
+    setRightPanelMode("file-tree")
+    setIsRightPanelVisible(true)
+    setIsAddPanelMenuOpen(false)
+  }, [])
+
+  const showReviewPanel = useCallback(() => {
+    setRightPanelMode("review")
+    setIsRightPanelVisible(true)
+    setIsAddPanelMenuOpen(false)
+  }, [])
+
+  const handleToggleFileTree = useCallback(() => {
+    if (!isRightPanelVisible || rightPanelMode !== "file-tree") {
+      showFileTree()
+      return
+    }
+
+    showReviewPanel()
+  }, [isRightPanelVisible, rightPanelMode, showFileTree, showReviewPanel])
+
+  useEffect(() => {
+    window.addEventListener("gg-toggle-file-tree", handleToggleFileTree)
+    return () => window.removeEventListener("gg-toggle-file-tree", handleToggleFileTree)
+  }, [handleToggleFileTree])
+
+  const handleRightPanelResizeStart = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
+
+    const workspaceRect = workspaceRef.current?.getBoundingClientRect()
+    if (!workspaceRect) return
+
+    const previousCursor = document.body.style.cursor
+    const previousUserSelect = document.body.style.userSelect
+    document.body.style.cursor = "col-resize"
+    document.body.style.userSelect = "none"
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const nextWidth = workspaceRect.right - moveEvent.clientX
+      setRightPanelWidth(clampRightPanelWidth(nextWidth, workspaceRect.width))
+    }
+
+    const cleanup = () => {
+      window.removeEventListener("pointermove", handlePointerMove)
+      window.removeEventListener("pointerup", cleanup)
+      window.removeEventListener("pointercancel", cleanup)
+      document.body.style.cursor = previousCursor
+      document.body.style.userSelect = previousUserSelect
+    }
+
+    window.addEventListener("pointermove", handlePointerMove)
+    window.addEventListener("pointerup", cleanup)
+    window.addEventListener("pointercancel", cleanup)
+  }, [])
 
   const handleFileSelect = (filePath: string | null) => {
     setActiveFilePath(filePath)
@@ -107,63 +197,17 @@ export function MainView() {
     await launchCliSession(currentProjectId)
   }
 
-  const handleToggleFileTree = () => {
-    if (isRightPanelVisible && rightPanelMode === "file-tree") {
-      setIsRightPanelVisible(false)
-      return
-    }
-
-    setRightPanelMode("file-tree")
-    setIsRightPanelVisible(true)
-  }
-
-  const handleShowReview = () => {
-    setRightPanelMode("review")
-    setIsRightPanelVisible(true)
-  }
-
-  const handleAddSection = () => {
-    setRightPanelMode("section")
-    setIsRightPanelVisible(true)
-    setIsAddPanelMenuOpen(false)
-  }
-
-  const centerTitle = activeSession?.name || currentProject?.name || "Welcome"
-  const centerSubtitle = currentProject?.path ?? "Open a project to start working"
-
   return (
-    <div className="flex min-h-0 flex-1 bg-[#181818] text-foreground">
+    <div className="flex min-h-0 flex-1 bg-background text-foreground">
       <Sidebar />
-
-      <div className="flex min-w-0 flex-1 overflow-hidden bg-[#151515]">
-        <section
-          className={`flex min-w-0 flex-col overflow-hidden rounded-tl-[14px] border border-b-0 border-r-0 border-white/[0.08] bg-[#101010] ${
-            isRightPanelVisible ? "flex-[3_1_0%]" : "flex-1"
-          }`}
-        >
-          <header className="flex h-12 shrink-0 items-center justify-between border-b border-white/[0.07] px-4">
-            <div className="min-w-0">
-              <div className="flex min-w-0 items-center gap-2">
-                <p className="truncate text-[13px] font-semibold text-white">{centerTitle}</p>
-                <Button type="button" variant="ghost" size="icon-xs" className="h-6 w-6 text-white/45 hover:text-white">
-                  <MoreHorizontal className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-              <p className="mt-0.5 truncate text-[11px] text-white/45">{centerSubtitle}</p>
-            </div>
-
-            <div className="flex items-center gap-1 text-white/45">
-              <Button type="button" variant="ghost" size="icon-xs" className="h-7 w-7 hover:text-white" title="Run">
-                <PanelTop className="h-3.5 w-3.5" />
-              </Button>
-              <Button type="button" variant="ghost" size="icon-xs" className="h-7 w-7 hover:text-white" title="Expand">
-                <Maximize2 className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          </header>
-
-          <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-[#111111]">
-            <div className="relative h-full w-full min-h-0 min-w-0 overflow-hidden" style={{ display: projectSessions.length > 0 ? "block" : "none" }}>
+      <div className="flex min-w-0 flex-1 flex-col bg-background">
+        <TabBar />
+        <div ref={workspaceRef} className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+          <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
+            <div
+              className="relative h-full min-h-0 w-full min-w-0 overflow-hidden"
+              style={{ display: projectSessions.length > 0 ? "block" : "none" }}
+            >
               {allSessions.map((session) => {
                 const shouldBoot = bootedSessionIds.has(session.id)
                 if (!shouldBoot) return null
@@ -189,107 +233,105 @@ export function MainView() {
                 onToggleFileTree={handleToggleFileTree}
               />
             )}
-          </div>
-        </section>
+          </main>
 
-        {isRightPanelVisible && (
-          <aside className="flex min-w-[320px] flex-[1_1_0%] flex-col overflow-hidden border-l border-white/[0.08] bg-[#111111]">
-            <header className="flex h-12 shrink-0 items-center justify-between border-b border-white/[0.07] px-3">
-              <div className="relative flex min-w-0 items-center gap-1">
-                <button
-                  type="button"
-                  onClick={handleShowReview}
-                  className={`flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] px-2.5 text-[12px] font-medium transition-colors ${
-                    rightPanelMode === "review"
-                      ? "bg-white/[0.08] text-white"
-                      : "text-white/58 hover:bg-white/[0.05] hover:text-white"
-                  }`}
-                >
-                  <PanelTop className="h-3.5 w-3.5 shrink-0" strokeWidth={1.8} />
-                  <span>Review</span>
-                </button>
+          {isRightPanelVisible && (
+            <>
+              <div
+                className="workspace-divider h-full w-[5px] shrink-0"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize review panel"
+                onPointerDown={handleRightPanelResizeStart}
+              />
 
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="h-7 w-7 shrink-0 text-white/45 hover:bg-white/[0.05] hover:text-white"
-                  onClick={() => setIsAddPanelMenuOpen((current) => !current)}
-                  title="Open panel"
-                >
-                  <Plus className="h-4 w-4" />
-                </Button>
-
-                {isAddPanelMenuOpen && (
-                  <div className="absolute left-0 top-9 z-30 w-[220px] rounded-[8px] border border-white/[0.08] bg-[#1d1d1d] p-1.5 shadow-2xl">
+              <aside
+                className="flex h-full shrink-0 flex-col border-l border-border bg-background"
+                style={{ width: rightPanelWidth }}
+              >
+                <div className="flex h-10 shrink-0 items-center border-b border-border px-3">
+                  <div className="relative flex min-w-0 items-center gap-1">
                     <button
                       type="button"
-                      onClick={handleAddSection}
-                      className="flex w-full flex-col items-start rounded-[6px] px-2.5 py-2 text-left hover:bg-white/[0.06]"
+                      onClick={showReviewPanel}
+                      className={`flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium transition-colors ${
+                        rightPanelMode === "review"
+                          ? "bg-accent/75 text-foreground"
+                          : "text-foreground/70 hover:bg-muted/45 hover:text-foreground"
+                      }`}
                     >
-                      <span className="text-[12px] font-medium text-white">New Section</span>
-                      <span className="mt-0.5 text-[11px] text-white/45">Open an empty right-side panel</span>
+                      <PanelTop className="h-3.5 w-3.5 shrink-0" />
+                      <span>Review</span>
                     </button>
+
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      className="h-7 w-7 text-foreground/55 hover:text-foreground"
+                      onClick={() => setIsAddPanelMenuOpen((current) => !current)}
+                      title="Open in panel"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </Button>
+
+                    {isAddPanelMenuOpen && (
+                      <div className="absolute left-0 top-8 z-20 w-[190px] rounded-md border border-border bg-popover p-1 shadow-lg">
+                        <button
+                          type="button"
+                          onClick={showFileTree}
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-popover-foreground hover:bg-accent"
+                        >
+                          <FolderTree className="h-3.5 w-3.5" />
+                          <span>File Tree</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
 
-              <div className="ml-2 flex items-center gap-1">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className={`h-7 w-7 ${
-                    rightPanelMode === "file-tree"
-                      ? "bg-white/[0.08] text-white"
-                      : "text-white/45 hover:bg-white/[0.05] hover:text-white"
-                  }`}
-                  onClick={handleToggleFileTree}
-                  title="File tree"
-                  aria-pressed={rightPanelMode === "file-tree"}
-                >
-                  <FolderTree className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="h-7 w-7 text-white/45 hover:bg-white/[0.05] hover:text-white"
-                  onClick={() => setIsRightPanelVisible(false)}
-                  title="Hide right panel"
-                >
-                  <PanelRight className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            </header>
+                  <div className="ml-auto flex items-center gap-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      className={`h-7 w-7 ${
+                        rightPanelMode === "file-tree"
+                          ? "bg-accent/75 text-foreground"
+                          : "text-foreground/60 hover:text-foreground"
+                      }`}
+                      onClick={handleToggleFileTree}
+                      title={isFileTreeVisible ? "Show review" : "Show file tree"}
+                      aria-pressed={isFileTreeVisible}
+                    >
+                      <FolderTree className="h-3.5 w-3.5" />
+                    </Button>
 
-            <div className="min-h-0 flex-1 overflow-hidden">
-              {rightPanelMode === "file-tree" && (
-                <Suspense fallback={null}>
-                  <FileTree selectedFilePath={activeFilePath} onFileSelect={handleFileSelect} />
-                </Suspense>
-              )}
-
-              {rightPanelMode === "review" && (
-                <div className="flex h-full items-center justify-center px-6 text-center">
-                  <div>
-                    <p className="text-[13px] font-semibold text-white">No unstaged changes</p>
-                    <p className="mt-2 text-[13px] text-white/45">Code changes will appear here</p>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      className="h-7 w-7 text-foreground/60 hover:text-foreground"
+                      onClick={() => setIsRightPanelVisible(false)}
+                      title="Hide review panel"
+                    >
+                      <PanelRight className="h-3.5 w-3.5" />
+                    </Button>
                   </div>
                 </div>
-              )}
 
-              {rightPanelMode === "section" && (
-                <div className="flex h-full items-center justify-center px-6 text-center">
-                  <div>
-                    <p className="text-[13px] font-semibold text-white">New section</p>
-                    <p className="mt-2 text-[13px] text-white/45">This right-side panel is ready for your next tool.</p>
-                  </div>
+                <div className="min-h-0 flex-1 overflow-hidden">
+                  {rightPanelMode === "review" ? (
+                    <ReviewEmptyState />
+                  ) : (
+                    <Suspense fallback={null}>
+                      <FileTree selectedFilePath={activeFilePath} onFileSelect={handleFileSelect} />
+                    </Suspense>
+                  )}
                 </div>
-              )}
-            </div>
-          </aside>
-        )}
+              </aside>
+            </>
+          )}
+        </div>
       </div>
     </div>
   )

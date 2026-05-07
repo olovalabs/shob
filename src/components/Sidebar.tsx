@@ -2,13 +2,10 @@ import { useEffect, useMemo, useState } from "react"
 import { nativeApi } from "../services/native"
 import {
   Boxes,
-  Clock3,
-  Folder,
-  MessageSquarePlus,
+  FolderPlus,
   MoreHorizontal,
   Palette,
   Plus,
-  Search,
   SlidersHorizontal,
   Settings,
   Terminal,
@@ -134,13 +131,6 @@ const SESSION_STATUS_STYLES: Record<SessionStatusTone, string> = {
   idle: "bg-zinc-500 shadow-[0_0_0_1px_rgba(113,113,122,0.45)]",
 }
 
-const SIDEBAR_DEFAULT_WIDTH = 300
-const SIDEBAR_MIN_WIDTH = 240
-const SIDEBAR_MAX_WIDTH = 440
-
-const clampSidebarWidth = (value: number) =>
-  Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, value))
-
 export function Sidebar() {
   const {
     projects,
@@ -165,7 +155,6 @@ export function Sidebar() {
   } = useStore()
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({})
   const [isSessionPaneVisible, setIsSessionPaneVisible] = useState(true)
-  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH)
   const [busySessions, setBusySessions] = useState<Record<string, boolean>>({})
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [activeSettingsSection, setActiveSettingsSection] = useState<"general" | "providers" | "cli-tools">("general")
@@ -330,6 +319,7 @@ export function Sidebar() {
     }
   }, [activeSessionId])
 
+  const filteredCurrentSessions = useMemo(() => currentProject?.sessions ?? [], [currentProject])
   const installedCliTools = useMemo(() => cliTools.filter((tool) => tool.installed), [cliTools])
   const filteredCliTools = useMemo(() => {
     const query = cliToolSearchQuery.trim().toLowerCase()
@@ -464,291 +454,212 @@ export function Sidebar() {
     )
   }
 
-  const handleNewChat = async () => {
-    if (currentProject) {
-      await handleCreateSession(currentProject.id)
-      return
-    }
-
-    await handleAddProject()
-  }
-
-  const openSettingsSection = (section: "general" | "providers" | "cli-tools") => {
-    setActiveSettingsSection(section)
-    setIsSettingsOpen(true)
-  }
-
-  const navItems = [
-    {
-      label: "New chat",
-      icon: MessageSquarePlus,
-      action: () => void handleNewChat(),
-    },
-    {
-      label: "Search",
-      icon: Search,
-      action: () => undefined,
-    },
-    {
-      label: "Plugins",
-      icon: Boxes,
-      action: () => openSettingsSection("providers"),
-    },
-    {
-      label: "Automations",
-      icon: Clock3,
-      action: () => openSettingsSection("general"),
-    },
-  ] as const
-
-  const handleSidebarResizeStart = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!isSessionPaneVisible) return
-
-    event.preventDefault()
-    const startX = event.clientX
-    const startWidth = sidebarWidth
-    const previousCursor = document.body.style.cursor
-    const previousUserSelect = document.body.style.userSelect
-
-    document.body.style.cursor = "col-resize"
-    document.body.style.userSelect = "none"
-
-    const handlePointerMove = (moveEvent: PointerEvent) => {
-      const nextWidth = clampSidebarWidth(startWidth + moveEvent.clientX - startX)
-      setSidebarWidth(nextWidth)
-    }
-
-    const handlePointerUp = () => {
-      document.body.style.cursor = previousCursor
-      document.body.style.userSelect = previousUserSelect
-      window.removeEventListener("pointermove", handlePointerMove)
-      window.removeEventListener("pointerup", handlePointerUp)
-    }
-
-    window.addEventListener("pointermove", handlePointerMove)
-    window.addEventListener("pointerup", handlePointerUp, { once: true })
-  }
-
   return (
     <>
-      <aside
-        className={`relative flex h-full shrink-0 flex-col border-r border-white/[0.06] bg-[#181818] text-[#e8e8e8] ${
-          isSessionPaneVisible ? "" : "overflow-hidden border-r-0"
-        }`}
-        style={{ width: isSessionPaneVisible ? sidebarWidth : 0 }}
-      >
-        <div className="flex min-h-0 flex-1 flex-col px-2 py-3">
-          <nav className="space-y-1">
-            {navItems.map((item) => {
-              const Icon = item.icon
+      <aside className={`relative flex h-full shrink-0 border-r bg-background text-foreground ${isSessionPaneVisible ? "w-[392px]" : "w-[52px]"}`}>
+        <div className="flex w-[52px] flex-col items-center border-r bg-muted/30 px-2 py-3">
+          <div className="flex w-full flex-col items-center gap-4">
+            {projects.map((project) => {
+              const isActive = project.id === currentProjectId
 
               return (
-                <button
-                  key={item.label}
-                  type="button"
-                  onClick={item.action}
-                  className="flex h-8 w-full items-center gap-2 rounded-[7px] px-2 text-left text-[14px] font-medium text-white/82 transition-colors hover:bg-white/[0.07] hover:text-white"
-                >
-                  <Icon className="h-4 w-4 shrink-0 text-white/72" strokeWidth={1.8} />
-                  <span className="truncate">{item.label}</span>
-                </button>
+                <div key={project.id} className="group relative">
+                  <button
+                    type="button"
+                    onClick={() => setCurrentProject(project.id)}
+                    className={`relative rounded-[10px] p-0.5 transition-colors ${isActive ? "bg-accent/70" : "hover:bg-accent/55"}`}
+                  >
+                    {renderProjectMark(project, "md")}
+                    {isActive && <span className="pointer-events-none absolute inset-0 rounded-[10px] ring-1 ring-ring/40" />}
+                  </button>
+                </div>
               )
             })}
-          </nav>
 
-          <div className="mt-7 min-h-0 flex-1 overflow-hidden">
-            <div className="mb-3 flex items-center justify-between px-1">
-              <p className="text-[13px] text-white/42">Projects</p>
-              <Button
-                type="button"
-                onClick={handleAddProject}
-                variant="ghost"
-                size="icon-xs"
-                className="h-6 w-6 text-white/45 hover:bg-white/[0.07] hover:text-white"
-                title="Add project"
-              >
-                <Plus className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-
-            <div className="thin-scrollbar h-full overflow-y-auto pr-1">
-              {projects.length === 0 ? (
-                <button
-                  type="button"
-                  onClick={handleAddProject}
-                  className="w-full rounded-[8px] px-2 py-3 text-left text-[13px] text-white/55 hover:bg-white/[0.05]"
-                >
-                  Add a project to get started
-                </button>
-              ) : (
-                <div className="space-y-4">
-                  {projects.map((project) => {
-                    const isCurrentProject = project.id === currentProjectId
-                    const isExpanded = expandedProjects[project.id] ?? true
-
-                    return (
-                      <section key={project.id}>
-                        <div className="group flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setCurrentProject(project.id)
-                              setExpandedProjects((current) => ({ ...current, [project.id]: !isExpanded }))
-                            }}
-                            className={`flex h-7 min-w-0 flex-1 items-center gap-2 rounded-[7px] px-1.5 text-left text-[13px] font-semibold transition-colors ${
-                              isCurrentProject ? "text-white" : "text-white/62 hover:bg-white/[0.05] hover:text-white/86"
-                            }`}
-                          >
-                            <Folder className="h-4 w-4 shrink-0 text-white/50" strokeWidth={1.8} />
-                            <span className="truncate">{project.name}</span>
-                          </button>
-
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon-xs"
-                                className="h-6 w-6 opacity-0 text-white/45 hover:bg-white/[0.07] hover:text-white group-hover:opacity-100"
-                                title="Project options"
-                              >
-                                <MoreHorizontal className="h-3.5 w-3.5" strokeWidth={2} />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-[136px] rounded-[8px] p-1">
-                              <DropdownMenuItem className="px-3 py-1.5 text-[13px]" onClick={() => openEditProject(project)}>
-                                Edit
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                className="px-3 py-1.5 text-[13px]"
-                                onClick={() => void handleCreateSession(project.id)}
-                              >
-                                New chat
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                className="px-3 py-1.5 text-[13px]"
-                                variant="destructive"
-                                onClick={() => handleDeleteProject(project.id)}
-                              >
-                                Close
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </div>
-
-                        {isExpanded && (
-                          <div className="mt-1 space-y-0.5 pl-7">
-                            {project.sessions.length === 0 ? (
-                              <button
-                                type="button"
-                                onClick={() => void handleCreateSession(project.id)}
-                                className="flex h-7 w-full items-center rounded-[7px] px-1.5 text-left text-[13px] text-white/45 transition-colors hover:bg-white/[0.05] hover:text-white/75"
-                              >
-                                Start a chat
-                              </button>
-                            ) : (
-                              project.sessions.map((session, index) => {
-                                const isActiveSession = activeSessionId === session.id
-                                const isRunningSession = Boolean(busySessions[session.id] || session.pendingLaunchCommand)
-                                const sessionStatus = getSessionStatus({
-                                  isActiveSession,
-                                  isRunningSession,
-                                })
-                                const projectAgeLabel = formatRelativeSessionTime(session.lastActiveAt ?? session.createdAt)
-                                const commandCountLabel = formatCommandCount(session.commandCount)
-
-                                return (
-                                  <div
-                                    key={session.id}
-                                    className={`group/session flex h-8 items-center gap-1 rounded-[7px] px-1.5 transition-colors ${
-                                      isActiveSession
-                                        ? "bg-white/[0.09] text-white"
-                                        : "text-white/74 hover:bg-white/[0.055] hover:text-white"
-                                    }`}
-                                  >
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setCurrentProject(project.id)
-                                        setActiveSession(session.id)
-                                      }}
-                                      className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-                                    >
-                                      {isRunningSession ? (
-                                        <Spinner className="h-3.5 w-3.5 shrink-0 text-[#00BF63]" />
-                                      ) : (
-                                        <span
-                                          className={`h-2 w-2 shrink-0 rounded-full ${SESSION_STATUS_STYLES[sessionStatus.tone]}`}
-                                          title={sessionStatus.title}
-                                          aria-label={sessionStatus.label}
-                                        />
-                                      )}
-                                      <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
-                                        {session.name || formatSessionLabel(index)}
-                                      </span>
-                                      {commandCountLabel && (
-                                        <span className="shrink-0 rounded-[4px] bg-white/[0.06] px-1 text-[10px] text-white/42">
-                                          {commandCountLabel}
-                                        </span>
-                                      )}
-                                      {projectAgeLabel && (
-                                        <span className="shrink-0 text-[12px] text-white/42">{projectAgeLabel}</span>
-                                      )}
-                                    </button>
-
-                                    <Button
-                                      type="button"
-                                      onPointerDown={(event) => {
-                                        event.preventDefault()
-                                        event.stopPropagation()
-                                      }}
-                                      onClick={(event) => {
-                                        event.stopPropagation()
-                                        void removeSession(project.id, session.id)
-                                      }}
-                                      variant="ghost"
-                                      size="icon-xs"
-                                      className="h-5 w-5 opacity-0 text-white/40 transition-opacity hover:bg-white/[0.07] hover:text-white group-hover/session:opacity-100"
-                                      title="Close session"
-                                    >
-                                      <span className="text-xs leading-none">×</span>
-                                    </Button>
-                                  </div>
-                                )
-                              })
-                            )}
-                          </div>
-                        )}
-                      </section>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="mt-3 border-t border-white/[0.06] pt-2">
             <button
               type="button"
-              onClick={() => openSettingsSection("general")}
-              className="flex h-8 w-full items-center gap-2 rounded-[7px] px-2 text-left text-[14px] font-medium text-white/82 transition-colors hover:bg-white/[0.07] hover:text-white"
+              onClick={handleAddProject}
+              className="group relative rounded-[10px] p-0.5 transition-colors hover:bg-accent/55"
+              title="Add project"
             >
-              <Settings className="h-4 w-4 shrink-0 text-white/72" strokeWidth={1.8} />
-              <span>Settings</span>
+              <span className="flex h-10 w-10 items-center justify-center rounded-[8px] bg-muted/45 text-muted-foreground transition-colors group-hover:bg-muted/60 group-hover:text-foreground">
+                <Plus className="h-4 w-4" strokeWidth={2} />
+              </span>
             </button>
+          </div>
+
+          <div className="mt-auto flex w-full flex-col items-center gap-3">
+            <Button
+              type="button"
+              onClick={() => setIsSettingsOpen((current) => !current)}
+              variant="ghost"
+              size="icon-sm"
+              className="h-8 w-8"
+              title="Settings"
+              aria-pressed={isSettingsOpen}
+            >
+              <Settings className="h-4 w-4" strokeWidth={1.9} />
+            </Button>
           </div>
         </div>
 
         {isSessionPaneVisible && (
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Resize sidebar"
-            tabIndex={0}
-            onPointerDown={handleSidebarResizeStart}
-            className="absolute -right-1 top-0 z-20 h-full w-2 cursor-col-resize bg-transparent transition-colors hover:bg-white/[0.08] active:bg-white/[0.14]"
-          />
+        <div className="flex min-w-0 flex-1 flex-col bg-background">
+          <div className="border-b px-4 py-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-[28px] leading-none font-semibold text-foreground">{currentProject?.name ?? "Workspace"}</p>
+                <p className="mt-1 truncate text-[14px] text-muted-foreground">
+                  {currentProject?.path ? currentProject.path.replace(/^([A-Za-z]):\\Users\\[^\\]+/, "~") : "Add a project to get started"}
+                </p>
+              </div>
+              {currentProject && (
+                <div className="relative">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        className="h-8 w-8 shrink-0"
+                        title="Project options"
+                      >
+                        <MoreHorizontal className="h-4 w-4" strokeWidth={2} />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-[136px] rounded-[8px] p-1">
+                      <DropdownMenuItem className="px-3 py-1.5 text-[13px]" onClick={() => openEditProject(currentProject)}>
+                        Edit
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="px-3 py-1.5 text-[13px]"
+                        variant="destructive"
+                        onClick={() => handleDeleteProject(currentProject.id)}
+                      >
+                        Close
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              )}
+            </div>
+
+            {currentProject && (
+              <div className="mt-5">
+                <Button
+                  type="button"
+                  onClick={() => handleCreateSession(currentProject.id)}
+                  variant="outline"
+                  className="h-10 w-full text-[15px] font-semibold"
+                >
+                  <FolderPlus className="mr-2 h-4 w-4" strokeWidth={1.9} />
+                  New session
+                </Button>
+              </div>
+            )}
+          </div>
+
+          <div className="hide-scrollbar flex-1 overflow-y-auto px-3 py-4">
+            {!currentProject ? (
+              <p className="px-3 py-4 text-sm text-muted-foreground">Select or add a project to view sessions.</p>
+            ) : (
+              <section>
+                {(expandedProjects[currentProject.id] ?? true) && (
+                  <div className="space-y-0.5">
+                    {filteredCurrentSessions.length === 0 ? (
+                      <Button
+                        type="button"
+                        onClick={() => handleCreateSession(currentProject.id)}
+                        variant="ghost"
+                        className="w-full justify-start px-3 py-3 h-auto"
+                      >
+                        Create your first session
+                      </Button>
+                    ) : (
+                      filteredCurrentSessions.map((session, index) => {
+                        const isActiveSession = activeSessionId === session.id
+                        const isRunningSession = Boolean(busySessions[session.id] || session.pendingLaunchCommand)
+                        const sessionStatus = getSessionStatus({
+                          isActiveSession,
+                          isRunningSession,
+                        })
+                        const projectAgeLabel = formatRelativeSessionTime(session.lastActiveAt ?? session.createdAt)
+                        const commandCountLabel = formatCommandCount(session.commandCount)
+
+                        return (
+                          <div
+                            key={session.id}
+                            className={`group flex items-center gap-2 rounded-lg px-2 py-1.5 transition ${
+                              isActiveSession
+                                ? "bg-accent text-accent-foreground"
+                                : "text-foreground/84 hover:bg-accent/50"
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCurrentProject(currentProject.id)
+                                setActiveSession(session.id)
+                              }}
+                              className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                            >
+                              {isRunningSession && (
+                                <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center">
+                                  <Spinner className="h-3.5 w-3.5 text-[#00BF63]" />
+                                </span>
+                              )}
+                              <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-foreground">
+                                {session.name || formatSessionLabel(index)}
+                              </span>
+                              {commandCountLabel && (
+                                <span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                  {commandCountLabel}
+                                </span>
+                              )}
+                              {projectAgeLabel && (
+                                <span className="shrink-0 text-[12px] text-muted-foreground">{projectAgeLabel}</span>
+                              )}
+                            </button>
+
+                            <div className="flex items-center gap-1">
+                              <span className="relative inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-muted/50">
+                                <CliAvatar cliId={session.cliTool} label={session.name} size="sm" className="opacity-80" />
+                                <span
+                                  className={`pointer-events-none absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border border-background ${SESSION_STATUS_STYLES[sessionStatus.tone]}`}
+                                  title={sessionStatus.title}
+                                  aria-label={sessionStatus.label}
+                                />
+                              </span>
+                              <Button
+                                type="button"
+                                onPointerDown={(event) => {
+                                  event.preventDefault()
+                                  event.stopPropagation()
+                                }}
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  void removeSession(currentProject.id, session.id)
+                                }}
+                                variant="ghost"
+                                size="icon-xs"
+                                className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity"
+                                title="Close session"
+                              >
+                                <span className="text-xs leading-none">×</span>
+                              </Button>
+                            </div>
+                          </div>
+                        )
+                      })
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
+          </div>
+        </div>
         )}
+
       </aside>
 
       <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
