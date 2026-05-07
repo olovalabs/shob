@@ -1,8 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react"
-import { FolderTree, Globe, PanelTop, Plus, X } from "lucide-react"
+import { FolderTree, Maximize2, MoreHorizontal, PanelRight, PanelTop, Plus } from "lucide-react"
 import { nativeApi } from "../services/native"
 import { Sidebar } from "./Sidebar"
-import { TabBar } from "./TabBar"
 import { Terminal } from "./Terminal"
 import { WelcomeScreen } from "./WelcomeScreen"
 import { useStore } from "../store"
@@ -18,18 +17,7 @@ const folderNameFromPath = (path: string) => {
   return parts[parts.length - 1] || path
 }
 
-type WorkspaceTabType = "review" | "browser" | "section"
-
-interface WorkspaceTab {
-  id: string
-  title: string
-  type: WorkspaceTabType
-}
-interface AddTabOption {
-  type: Exclude<WorkspaceTabType, "review">
-  title: string
-  description: string
-}
+type RightPanelMode = "review" | "file-tree" | "section"
 
 export function MainView() {
   const projects = useStore((state) => state.projects)
@@ -42,26 +30,17 @@ export function MainView() {
   const setCurrentProject = useStore((state) => state.setCurrentProject)
   const launchCliSession = useStore((state) => state.launchCliSession)
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null)
-  const [isFileTreeVisible, setIsFileTreeVisible] = useState(false)
-  const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceTab[]>([
-    { id: "review", title: "Review", type: "review" },
-  ])
-  const [activeWorkspaceTabId, setActiveWorkspaceTabId] = useState("review")
-  const [isAddTabMenuOpen, setIsAddTabMenuOpen] = useState(false)
+  const [isRightPanelVisible, setIsRightPanelVisible] = useState(true)
+  const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>("file-tree")
+  const [isAddPanelMenuOpen, setIsAddPanelMenuOpen] = useState(false)
   const [bootedSessionIds, setBootedSessionIds] = useState<Set<string>>(new Set())
   const projectSessions = useMemo(() => currentProject?.sessions ?? [], [currentProject])
   const allSessions = useMemo(() => projects.flatMap((p) => p.sessions), [projects])
-  const activeWorkspaceTab = useMemo(
-    () => workspaceTabs.find((tab) => tab.id === activeWorkspaceTabId) ?? workspaceTabs[0] ?? null,
-    [workspaceTabs, activeWorkspaceTabId],
+  const activeSession = useMemo(
+    () => allSessions.find((session) => session.id === activeSessionId) ?? null,
+    [activeSessionId, allSessions],
   )
-  const addTabOptions = useMemo<AddTabOption[]>(
-    () => [
-      { type: "browser", title: "Browser", description: "Open a web panel in this workspace" },
-      { type: "section", title: "New Section", description: "Create an empty split content panel" },
-    ],
-    [],
-  )
+  const isFileTreeVisible = isRightPanelVisible && rightPanelMode === "file-tree"
 
   useEffect(() => {
     setActiveFilePath(null)
@@ -89,12 +68,16 @@ export function MainView() {
 
   useEffect(() => {
     const handleFileTreeToggleRequest = () => {
-      setIsFileTreeVisible((current) => !current)
+      setIsRightPanelVisible((current) => {
+        if (current && rightPanelMode === "file-tree") return false
+        return true
+      })
+      setRightPanelMode("file-tree")
     }
 
     window.addEventListener("gg-toggle-file-tree", handleFileTreeToggleRequest)
     return () => window.removeEventListener("gg-toggle-file-tree", handleFileTreeToggleRequest)
-  }, [])
+  }, [rightPanelMode])
 
   const handleFileSelect = (filePath: string | null) => {
     setActiveFilePath(filePath)
@@ -125,203 +108,188 @@ export function MainView() {
   }
 
   const handleToggleFileTree = () => {
-    if (!currentProject) return
-    setIsFileTreeVisible((current) => !current)
-  }
-
-  const handleActivateWorkspaceTab = (tabId: string) => {
-    setActiveWorkspaceTabId(tabId)
-  }
-
-  const handleCloseWorkspaceTab = (tabId: string) => {
-    setWorkspaceTabs((current) => {
-      const next = current.filter((tab) => tab.id !== tabId)
-      if (next.length === 0) return [{ id: "review", title: "Review", type: "review" }]
-
-      if (activeWorkspaceTabId === tabId) {
-        const fallback = next[next.length - 1]
-        if (fallback) setActiveWorkspaceTabId(fallback.id)
-      }
-
-      return next
-    })
-  }
-
-  const handleAddWorkspaceTab = (type: AddTabOption["type"]) => {
-    const nextCount = workspaceTabs.filter((tab) => tab.type === type).length + 1
-    const id = `${type}-${Date.now()}`
-    const nextTab: WorkspaceTab = {
-      id,
-      title: type === "browser" ? (nextCount === 1 ? "Browser" : `Browser ${nextCount}`) : `Section ${nextCount}`,
-      type,
+    if (isRightPanelVisible && rightPanelMode === "file-tree") {
+      setIsRightPanelVisible(false)
+      return
     }
-    setWorkspaceTabs((current) => [...current, nextTab])
-    setActiveWorkspaceTabId(id)
-    setIsAddTabMenuOpen(false)
+
+    setRightPanelMode("file-tree")
+    setIsRightPanelVisible(true)
   }
-  
+
+  const handleShowReview = () => {
+    setRightPanelMode("review")
+    setIsRightPanelVisible(true)
+  }
+
+  const handleAddSection = () => {
+    setRightPanelMode("section")
+    setIsRightPanelVisible(true)
+    setIsAddPanelMenuOpen(false)
+  }
+
+  const centerTitle = activeSession?.name || currentProject?.name || "Welcome"
+  const centerSubtitle = currentProject?.path ?? "Open a project to start working"
+
   return (
-    <div className="flex min-h-0 flex-1 bg-background text-foreground">
+    <div className="flex min-h-0 flex-1 bg-[#181818] text-foreground">
       <Sidebar />
-      <div className="min-w-0 flex-1 flex flex-col bg-background">
-        <TabBar />
-        <div className="min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
-          <div className="flex h-10 items-center justify-between border-b border-border px-3">
-            <div className="relative flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
-              <div className="flex min-w-0 items-center gap-1 overflow-x-auto thin-scrollbar">
-                {workspaceTabs.map((tab) => {
-                  const isActive = tab.id === activeWorkspaceTab?.id
-                  const showClose = tab.type !== "review"
 
-                  return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      onClick={() => handleActivateWorkspaceTab(tab.id)}
-                      className={`group flex h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-[12px] font-medium transition-colors ${
-                        isActive
-                          ? "border-border bg-accent/75 text-accent-foreground"
-                          : "border-transparent text-foreground/70 hover:bg-muted/45 hover:text-foreground"
-                      }`}
-                    >
-                      {tab.type === "review" && <PanelTop className="h-3.5 w-3.5 shrink-0" />}
-                      {tab.type === "browser" && <Globe className="h-3.5 w-3.5 shrink-0" />}
-                      <span className="truncate">{tab.title}</span>
-                      {showClose && (
-                        <span
-                          role="button"
-                          tabIndex={0}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleCloseWorkspaceTab(tab.id)
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key !== "Enter" && e.key !== " ") return
-                            e.preventDefault()
-                            e.stopPropagation()
-                            handleCloseWorkspaceTab(tab.id)
-                          }}
-                          className="inline-flex h-4 w-4 items-center justify-center rounded-sm text-foreground/55 hover:bg-muted hover:text-foreground"
-                        >
-                          <X className="h-3 w-3" />
-                        </span>
-                      )}
-                    </button>
-                  )
-                })}
+      <div className="flex min-w-0 flex-1 overflow-hidden bg-[#151515]">
+        <section
+          className={`flex min-w-0 flex-col overflow-hidden rounded-tl-[14px] border border-b-0 border-r-0 border-white/[0.08] bg-[#101010] ${
+            isRightPanelVisible ? "flex-[3_1_0%]" : "flex-1"
+          }`}
+        >
+          <header className="flex h-12 shrink-0 items-center justify-between border-b border-white/[0.07] px-4">
+            <div className="min-w-0">
+              <div className="flex min-w-0 items-center gap-2">
+                <p className="truncate text-[13px] font-semibold text-white">{centerTitle}</p>
+                <Button type="button" variant="ghost" size="icon-xs" className="h-6 w-6 text-white/45 hover:text-white">
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </Button>
               </div>
+              <p className="mt-0.5 truncate text-[11px] text-white/45">{centerSubtitle}</p>
+            </div>
 
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                className="h-6 w-6 shrink-0"
-                onClick={() => setIsAddTabMenuOpen((current) => !current)}
-                title="Open panel"
-              >
-                <Plus className="h-3.5 w-3.5" />
+            <div className="flex items-center gap-1 text-white/45">
+              <Button type="button" variant="ghost" size="icon-xs" className="h-7 w-7 hover:text-white" title="Run">
+                <PanelTop className="h-3.5 w-3.5" />
               </Button>
+              <Button type="button" variant="ghost" size="icon-xs" className="h-7 w-7 hover:text-white" title="Expand">
+                <Maximize2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </header>
 
-              {isAddTabMenuOpen && (
-                <div className="absolute left-0 top-8 z-20 w-[260px] rounded-md border border-border bg-background p-1.5 shadow-lg">
-                  {addTabOptions.map((option) => (
-                    <button
-                      key={option.type}
-                      type="button"
-                      onClick={() => handleAddWorkspaceTab(option.type)}
-                      className="flex w-full flex-col items-start gap-0.5 rounded-md px-2 py-2 text-left hover:bg-muted"
-                    >
-                      <span className="text-xs font-medium text-foreground">{option.title}</span>
-                      <span className="text-[11px] text-muted-foreground">{option.description}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
+          <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-[#111111]">
+            <div className="relative h-full w-full min-h-0 min-w-0 overflow-hidden" style={{ display: projectSessions.length > 0 ? "block" : "none" }}>
+              {allSessions.map((session) => {
+                const shouldBoot = bootedSessionIds.has(session.id)
+                if (!shouldBoot) return null
+
+                return (
+                  <Terminal
+                    key={session.id}
+                    sessionId={session.id}
+                    isActive={session.id === activeSessionId}
+                    shouldBoot={shouldBoot}
+                  />
+                )
+              })}
             </div>
 
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              className="h-7 w-7 shrink-0"
-              onClick={handleToggleFileTree}
-              title="Toggle file tree"
-            >
-              <FolderTree className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-
-          <div className="flex h-full min-h-0 min-w-0">
-            <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
-              {activeWorkspaceTab?.type === "review" && (
-                <>
-                  <div className="relative h-full w-full min-h-0 min-w-0 overflow-hidden" style={{ display: projectSessions.length > 0 ? "block" : "none" }}>
-                    {allSessions.map((session) => {
-                      const shouldBoot = bootedSessionIds.has(session.id)
-                      if (!shouldBoot) return null
-
-                      return (
-                        <Terminal
-                          key={session.id}
-                          sessionId={session.id}
-                          isActive={session.id === activeSessionId}
-                          shouldBoot={shouldBoot}
-                        />
-                      )
-                    })}
-                  </div>
-
-                  {projectSessions.length === 0 && (
-                    <WelcomeScreen
-                      projects={projects}
-                      currentProject={currentProject}
-                      onOpenFolder={handleOpenFolder}
-                      onCreateSession={handleCreateSession}
-                      onSelectProject={setCurrentProject}
-                      onToggleFileTree={handleToggleFileTree}
-                    />
-                  )}
-                </>
-              )}
-
-              {activeWorkspaceTab?.type === "browser" && (
-                <div className="flex h-full w-full items-center justify-center px-6">
-                  <div className="w-full max-w-xl rounded-lg border border-border bg-card p-4">
-                    <p className="text-sm font-medium text-foreground">Browser panel</p>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      This is ready for embedding web content in the tabbed workspace.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {activeWorkspaceTab?.type === "section" && (
-                <div className="flex h-full w-full items-center justify-center px-6">
-                  <div className="w-full max-w-xl rounded-lg border border-border bg-card p-4">
-                    <p className="text-sm font-medium text-foreground">New section</p>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Add your custom tool content to this panel section.
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {isFileTreeVisible && (
-              <aside className="flex h-full w-[360px] flex-col border-l border-border bg-background">
-                <div className="flex h-10 items-center border-b border-border px-3">
-                  <FolderTree className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="ml-2 text-xs font-medium text-foreground">File Tree</span>
-                </div>
-                <div className="min-h-0 flex-1 overflow-hidden">
-                  <Suspense fallback={null}>
-                    <FileTree selectedFilePath={activeFilePath} onFileSelect={handleFileSelect} />
-                  </Suspense>
-                </div>
-              </aside>
+            {projectSessions.length === 0 && (
+              <WelcomeScreen
+                projects={projects}
+                currentProject={currentProject}
+                onOpenFolder={handleOpenFolder}
+                onCreateSession={handleCreateSession}
+                onSelectProject={setCurrentProject}
+                onToggleFileTree={handleToggleFileTree}
+              />
             )}
           </div>
-        </div>
+        </section>
+
+        {isRightPanelVisible && (
+          <aside className="flex min-w-[320px] flex-[1_1_0%] flex-col overflow-hidden border-l border-white/[0.08] bg-[#111111]">
+            <header className="flex h-12 shrink-0 items-center justify-between border-b border-white/[0.07] px-3">
+              <div className="relative flex min-w-0 items-center gap-1">
+                <button
+                  type="button"
+                  onClick={handleShowReview}
+                  className={`flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] px-2.5 text-[12px] font-medium transition-colors ${
+                    rightPanelMode === "review"
+                      ? "bg-white/[0.08] text-white"
+                      : "text-white/58 hover:bg-white/[0.05] hover:text-white"
+                  }`}
+                >
+                  <PanelTop className="h-3.5 w-3.5 shrink-0" strokeWidth={1.8} />
+                  <span>Review</span>
+                </button>
+
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  className="h-7 w-7 shrink-0 text-white/45 hover:bg-white/[0.05] hover:text-white"
+                  onClick={() => setIsAddPanelMenuOpen((current) => !current)}
+                  title="Open panel"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+
+                {isAddPanelMenuOpen && (
+                  <div className="absolute left-0 top-9 z-30 w-[220px] rounded-[8px] border border-white/[0.08] bg-[#1d1d1d] p-1.5 shadow-2xl">
+                    <button
+                      type="button"
+                      onClick={handleAddSection}
+                      className="flex w-full flex-col items-start rounded-[6px] px-2.5 py-2 text-left hover:bg-white/[0.06]"
+                    >
+                      <span className="text-[12px] font-medium text-white">New Section</span>
+                      <span className="mt-0.5 text-[11px] text-white/45">Open an empty right-side panel</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="ml-2 flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  className={`h-7 w-7 ${
+                    rightPanelMode === "file-tree"
+                      ? "bg-white/[0.08] text-white"
+                      : "text-white/45 hover:bg-white/[0.05] hover:text-white"
+                  }`}
+                  onClick={handleToggleFileTree}
+                  title="File tree"
+                  aria-pressed={rightPanelMode === "file-tree"}
+                >
+                  <FolderTree className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  className="h-7 w-7 text-white/45 hover:bg-white/[0.05] hover:text-white"
+                  onClick={() => setIsRightPanelVisible(false)}
+                  title="Hide right panel"
+                >
+                  <PanelRight className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </header>
+
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {rightPanelMode === "file-tree" && (
+                <Suspense fallback={null}>
+                  <FileTree selectedFilePath={activeFilePath} onFileSelect={handleFileSelect} />
+                </Suspense>
+              )}
+
+              {rightPanelMode === "review" && (
+                <div className="flex h-full items-center justify-center px-6 text-center">
+                  <div>
+                    <p className="text-[13px] font-semibold text-white">No unstaged changes</p>
+                    <p className="mt-2 text-[13px] text-white/45">Code changes will appear here</p>
+                  </div>
+                </div>
+              )}
+
+              {rightPanelMode === "section" && (
+                <div className="flex h-full items-center justify-center px-6 text-center">
+                  <div>
+                    <p className="text-[13px] font-semibold text-white">New section</p>
+                    <p className="mt-2 text-[13px] text-white/45">This right-side panel is ready for your next tool.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </aside>
+        )}
       </div>
     </div>
   )
