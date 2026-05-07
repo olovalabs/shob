@@ -1,24 +1,29 @@
-const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
-const path = require("node:path");
-const fs = require("node:fs/promises");
-const fsSync = require("node:fs");
-const os = require("node:os");
-const { spawn: spawnProcess, execFile } = require("node:child_process");
-const { promisify } = require("node:util");
-const pty = require("@lydell/node-pty");
-const chokidar = require("chokidar");
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import path from "node:path";
+import fs from "node:fs/promises";
+import fsSync from "node:fs";
+import os from "node:os";
+import { spawn as spawnProcess, execFile } from "node:child_process";
+import { promisify } from "node:util";
+import pty from "@lydell/node-pty";
+import chokidar from "chokidar";
+import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 const execFileAsync = promisify(execFile);
 const isDev = !app.isPackaged;
 const MAX_EDITOR_PREVIEW_BYTES = 512 * 1024;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-let mainWindow = null;
-let projectWatcher = null;
+type ProjectWatcher = Awaited<ReturnType<typeof chokidar.watch>> | null;
+let mainWindow: BrowserWindow | null = null;
+let projectWatcher: ProjectWatcher = null;
 let lastWatcherOperationAt = 0;
-const ptyProcesses = new Map();
-const ptyOutputQueues = new Map();
+const ptyProcesses = new Map<string, any>();
+const ptyOutputQueues = new Map<string, { chunks: string[]; scheduled: boolean }>();
 
-function userDataPath(...parts) {
+function userDataPath(...parts: string[]) {
   return path.join(app.getPath("userData"), ...parts);
 }
 
@@ -26,7 +31,7 @@ async function ensureDataDirs() {
   await fs.mkdir(userDataPath("sessions"), { recursive: true });
 }
 
-async function readJson(filePath, fallback) {
+async function readJson<T>(filePath: string, fallback: T): Promise<T> {
   try {
     return JSON.parse(await fs.readFile(filePath, "utf8"));
   } catch {
@@ -34,7 +39,7 @@ async function readJson(filePath, fallback) {
   }
 }
 
-async function writeJsonAtomic(filePath, value) {
+async function writeJsonAtomic(filePath: string, value: unknown) {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   const tempPath = `${filePath}.${process.pid}.tmp`;
   await fs.writeFile(tempPath, JSON.stringify(value, null, 2));
@@ -49,11 +54,11 @@ async function loadProjects() {
   return readJson(projectsPath(), []);
 }
 
-async function saveProjects(projects) {
+async function saveProjects(projects: unknown[]) {
   await writeJsonAtomic(projectsPath(), projects);
 }
 
-function sessionOutputPath(sessionId) {
+function sessionOutputPath(sessionId: string) {
   const safeId = String(sessionId).replace(/[^a-zA-Z0-9._-]/g, "_");
   return userDataPath("sessions", `${safeId}.log`);
 }
@@ -65,7 +70,7 @@ function normalizeOs() {
   return process.platform;
 }
 
-function getImageMimeType(filePath) {
+function getImageMimeType(filePath: string) {
   switch (path.extname(filePath).toLowerCase()) {
     case ".png": return "image/png";
     case ".jpg":
@@ -86,7 +91,7 @@ function splitPathEntries() {
     .filter(Boolean);
 }
 
-function resolveCommand(command) {
+function resolveCommand(command: string) {
   const direct = path.resolve(command);
   if (path.isAbsolute(command) && fsSync.existsSync(command)) return command;
   if (fsSync.existsSync(direct) && path.isAbsolute(command)) return direct;
@@ -113,7 +118,7 @@ function resolveCommand(command) {
 }
 
 function detectShells() {
-  const shells = [];
+  const shells: string[] = [];
   if (process.platform === "win32") {
     for (const command of ["pwsh.exe", "powershell.exe", "cmd.exe"]) {
       shells.push(resolveCommand(command) || command);
@@ -145,19 +150,19 @@ async function detectWindowsBuildNumber() {
   }
 }
 
-async function gitOutput(args, cwd) {
+async function gitOutput(args: string[], cwd: string) {
   const { stdout } = await execFileAsync("git", args, { cwd, windowsHide: true, maxBuffer: 20 * 1024 * 1024 });
   return stdout;
 }
 
-function parseRepoNameFromRemoteUrl(remoteUrl) {
+function parseRepoNameFromRemoteUrl(remoteUrl: string) {
   const trimmed = remoteUrl.trim().replace(/\/$/, "");
   if (!trimmed) return null;
-  const tail = trimmed.split(/[/:]/).pop().replace(/\.git$/, "").trim();
+  const tail = trimmed.split(/[/:]/).pop()?.replace(/\.git$/, "").trim();
   return tail || null;
 }
 
-async function listDirectory(directoryPath) {
+async function listDirectory(directoryPath: string) {
   const entries = await fs.readdir(directoryPath, { withFileTypes: true });
   return entries
     .map((entry) => ({
@@ -171,7 +176,7 @@ async function listDirectory(directoryPath) {
     });
 }
 
-function shouldForwardProjectWatchPath(changedPath) {
+function shouldForwardProjectWatchPath(changedPath: string) {
   const normalized = changedPath.replace(/\\/g, "/").toLowerCase();
   if (/\/(node_modules|dist|target|\.next|\.turbo|\.cache|coverage)\//.test(normalized)) return false;
   if (normalized.includes("/.git/")) {
@@ -183,7 +188,7 @@ function shouldForwardProjectWatchPath(changedPath) {
   return true;
 }
 
-function emitProjectFsEvent(projectPath, paths) {
+function emitProjectFsEvent(projectPath: string, paths: string[]) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send("shob:event", {
     channel: "project-fs-event",
@@ -191,7 +196,7 @@ function emitProjectFsEvent(projectPath, paths) {
   });
 }
 
-async function setProjectWatch(watchPath) {
+async function setProjectWatch(watchPath: string | null) {
   if (projectWatcher) {
     await projectWatcher.close();
     projectWatcher = null;
@@ -210,8 +215,8 @@ async function setProjectWatch(watchPath) {
     if (elapsed < 200) await new Promise((resolve) => setTimeout(resolve, 200 - elapsed));
   }
 
-  const pendingPaths = new Set();
-  let flushTimer = null;
+  const pendingPaths = new Set<string>();
+  let flushTimer: NodeJS.Timeout | null = null;
   const scheduleFlush = () => {
     if (flushTimer) return;
     flushTimer = setTimeout(() => {
@@ -229,7 +234,7 @@ async function setProjectWatch(watchPath) {
     ignored: /(^|[\\/])(node_modules|dist|target|\.next|\.turbo|\.cache|coverage)([\\/]|$)/,
   });
 
-  projectWatcher.on("all", (_event, changedPath) => {
+  projectWatcher.on("all", (_event: string, changedPath: string) => {
     if (!shouldForwardProjectWatchPath(changedPath)) return;
     pendingPaths.add(changedPath);
     scheduleFlush();
@@ -238,7 +243,7 @@ async function setProjectWatch(watchPath) {
   lastWatcherOperationAt = Date.now();
 }
 
-function queuePtyOutput(id, data) {
+function queuePtyOutput(id: string, data: string) {
   const item = ptyOutputQueues.get(id);
   if (!item) return;
   item.chunks.push(data);
@@ -253,7 +258,7 @@ function queuePtyOutput(id, data) {
   });
 }
 
-function killPty(id) {
+function killPty(id: string) {
   const proc = ptyProcesses.get(id);
   if (!proc) return;
   ptyProcesses.delete(id);
@@ -269,12 +274,12 @@ function killAllPtys() {
   for (const id of [...ptyProcesses.keys()]) killPty(id);
 }
 
-async function revealInFinder(targetPath) {
+async function revealInFinder(targetPath: string) {
   if (!fsSync.existsSync(targetPath)) throw new Error("Path does not exist");
   shell.showItemInFolder(targetPath);
 }
 
-async function getGitStatus(cwd) {
+async function getGitStatus(cwd: string) {
   const repoRoot = (await gitOutput(["rev-parse", "--show-toplevel"], cwd)).trim();
   const statusOutput = await gitOutput(["status", "--porcelain"], cwd);
   let numstatOutput = "";
@@ -284,7 +289,7 @@ async function getGitStatus(cwd) {
     numstatOutput = "";
   }
 
-  const counts = new Map();
+  const counts = new Map<string, [number, number]>();
   for (const line of numstatOutput.split(/\r?\n/)) {
     const [additions, deletions, filePath] = line.split("\t");
     if (filePath) counts.set(filePath, [Number(additions) || 0, Number(deletions) || 0]);
@@ -305,7 +310,7 @@ async function getGitStatus(cwd) {
   return { repoRoot, changedFiles };
 }
 
-function countFileLines(filePath) {
+function countFileLines(filePath: string) {
   try {
     return fsSync.readFileSync(filePath, "utf8").split(/\r?\n/).length;
   } catch {
@@ -313,7 +318,7 @@ function countFileLines(filePath) {
   }
 }
 
-async function readTextFileWithLimit(filePath, maxBytes) {
+async function readTextFileWithLimit(filePath: string, maxBytes: number) {
   let size = 0;
   try {
     size = (await fs.stat(filePath)).size;
@@ -328,10 +333,10 @@ async function readTextFileWithLimit(filePath, maxBytes) {
   }
 }
 
-async function getGitFileState(filePath) {
+async function getGitFileState(filePath: string) {
   const current = await readTextFileWithLimit(filePath, MAX_EDITOR_PREVIEW_BYTES);
   const cwd = path.dirname(filePath);
-  let repoRoot = null;
+  let repoRoot: string | null = null;
   try {
     repoRoot = (await gitOutput(["rev-parse", "--show-toplevel"], cwd)).trim();
   } catch {
@@ -372,10 +377,10 @@ async function getGitFileState(filePath) {
       maxBuffer: MAX_EDITOR_PREVIEW_BYTES + 1,
       encoding: "buffer",
     });
-    if (stdout.length > MAX_EDITOR_PREVIEW_BYTES) {
+    if ((stdout as Buffer).length > MAX_EDITOR_PREVIEW_BYTES) {
       baseIsLarge = true;
     } else {
-      baseContent = stdout.toString("utf8");
+      baseContent = (stdout as Buffer).toString("utf8");
     }
   } catch {
     baseContent = "";
@@ -394,11 +399,11 @@ async function getGitFileState(filePath) {
   };
 }
 
-const handlers = {
+const handlers: Record<string, (payload?: any) => Promise<any> | any> = {
   get_projects: async () => loadProjects(),
   save_project: async ({ project }) => {
     const projects = await loadProjects();
-    const index = projects.findIndex((item) => item.id === project.id);
+    const index = projects.findIndex((item: any) => item.id === project.id);
     if (index >= 0) projects[index] = project;
     else projects.push(project);
     await saveProjects(projects);
@@ -406,7 +411,7 @@ const handlers = {
   },
   delete_project: async ({ projectId }) => {
     const projects = await loadProjects();
-    await saveProjects(projects.filter((project) => project.id !== projectId));
+    await saveProjects(projects.filter((project: any) => project.id !== projectId));
   },
   save_session_output: async ({ sessionId, output }) => {
     await fs.writeFile(sessionOutputPath(sessionId), output || "");
@@ -427,9 +432,9 @@ const handlers = {
     os: normalizeOs(),
     windowsBuildNumber: await detectWindowsBuildNumber(),
   }),
-  probe_cli_tools: async ({ items }) => items.map((item) => {
-    let resolvedPath = null;
-    let matchedCommand = null;
+  probe_cli_tools: async ({ items }) => items.map((item: any) => {
+    let resolvedPath: string | null = null;
+    let matchedCommand: string | null = null;
     for (const command of item.commands || []) {
       resolvedPath = resolveCommand(command);
       if (resolvedPath) {
@@ -487,12 +492,12 @@ const handlers = {
   close_window: async () => mainWindow?.close(),
   reveal_in_finder: async ({ path: targetPath }) => revealInFinder(targetPath),
   show_open_dialog: async (options) => {
-    const result = await dialog.showOpenDialog(mainWindow, {
+    const result = await dialog.showOpenDialog(mainWindow!, {
       title: options?.title,
       properties: [
         options?.directory ? "openDirectory" : "openFile",
         options?.multiple ? "multiSelections" : null,
-      ].filter(Boolean),
+      ].filter(Boolean) as ("openDirectory" | "openFile" | "multiSelections")[],
       filters: options?.filters,
     });
     if (result.canceled) return options?.multiple ? [] : null;
@@ -520,7 +525,7 @@ function registerIpc() {
 
     ptyProcesses.set(id, proc);
     ptyOutputQueues.set(id, { chunks: [], scheduled: false });
-    proc.onData((data) => queuePtyOutput(id, data));
+    proc.onData((data: string) => queuePtyOutput(id, data));
     proc.onExit(() => {
       ptyProcesses.delete(id);
       ptyOutputQueues.delete(id);
@@ -556,15 +561,15 @@ async function createWindow() {
     titleBarStyle: "hidden",
     backgroundColor: "#09090b",
     webPreferences: {
-      preload: path.join(__dirname, "preload.cjs"),
+      preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
     },
   });
 
-  mainWindow.on("maximize", () => mainWindow.webContents.send("shob:window-state", { maximized: true }));
-  mainWindow.on("unmaximize", () => mainWindow.webContents.send("shob:window-state", { maximized: false }));
+  mainWindow.on("maximize", () => mainWindow?.webContents.send("shob:window-state", { maximized: true }));
+  mainWindow.on("unmaximize", () => mainWindow?.webContents.send("shob:window-state", { maximized: false }));
   mainWindow.on("closed", () => {
     mainWindow = null;
   });

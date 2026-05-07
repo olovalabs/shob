@@ -3,24 +3,28 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "main": "electron/main.cjs",
+  "main": "electron-dist/main.js",
   "scripts": {
-    "dev": "vite",
-    "electron": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
-    "build": "tsc -b && vite build",
-    "build:electron": "npm run build && electron-builder",
+    "dev": "node scripts/dev-electron.mjs",
+    "electron": "node scripts/dev-electron.mjs",
+    "build": "pnpm run build:renderer && pnpm run build:electron:tsc",
+    "build:electron": "pnpm run build && electron-builder",
     "lint": "eslint .",
     "preview": "vite preview",
     "prepare": "husky",
     "commit": "git-cz",
-    "commit:retry": "git-cz --retry"
+    "commit:retry": "git-cz --retry",
+    "dev:electron:tsc": "tsc -p tsconfig.electron.json --watch --preserveWatchOutput",
+    "build:renderer": "tsc -b && vite build",
+    "build:electron:tsc": "tsc -p tsconfig.electron.json"
   },
   "build": {
     "appId": "app.shob.desktop",
     "productName": "shob",
     "files": [
       "dist-renderer/**",
-      "electron/**",
+      "electron-dist/**",
+      "electron/icons/**",
       "package.json"
     ],
     "directories": {

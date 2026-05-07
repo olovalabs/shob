@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require("electron");
+import { contextBridge, ipcRenderer } from "electron";
 
 const allowedCommands = new Set([
   "get_projects",
@@ -28,9 +28,9 @@ const allowedCommands = new Set([
   "show_open_dialog",
 ]);
 
-const eventSubscriptions = new Map();
-const terminalDataSubscriptions = new Map();
-const terminalExitSubscriptions = new Map();
+const eventSubscriptions = new Map<string, Set<(data: any) => void>>();
+const terminalDataSubscriptions = new Map<string, Set<(data: string) => void>>();
+const terminalExitSubscriptions = new Map<string, Set<() => void>>();
 
 ipcRenderer.on("shob:event", (_event, message) => {
   const listeners = eventSubscriptions.get(message.channel);
@@ -50,7 +50,7 @@ ipcRenderer.on("shob:terminal-exit", (_event, message) => {
   for (const listener of listeners) listener();
 });
 
-function subscribe(map, key, callback) {
+function subscribe<T>(map: Map<string, Set<(value: T) => void>>, key: string, callback: (value: T) => void) {
   const listeners = map.get(key) || new Set();
   listeners.add(callback);
   map.set(key, listeners);
@@ -62,13 +62,13 @@ function subscribe(map, key, callback) {
 
 contextBridge.exposeInMainWorld("shob", {
   platform: process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : process.platform,
-  invoke(command, payload) {
+  invoke(command: string, payload: unknown) {
     if (!allowedCommands.has(command)) {
       return Promise.reject(new Error(`IPC command is not allowed: ${command}`));
     }
     return ipcRenderer.invoke("shob:invoke", command, payload);
   },
-  listen(channel, callback) {
+  listen(channel: string, callback: (message: unknown) => void) {
     return Promise.resolve(subscribe(eventSubscriptions, channel, callback));
   },
   window: {
@@ -76,18 +76,18 @@ contextBridge.exposeInMainWorld("shob", {
     toggleMaximize: () => ipcRenderer.invoke("shob:invoke", "toggle_maximize_window", {}),
     isMaximized: () => ipcRenderer.invoke("shob:invoke", "is_window_maximized", {}),
     close: () => ipcRenderer.invoke("shob:invoke", "close_window", {}),
-    onResized: (callback) => {
+    onResized: (callback: () => void) => {
       const listener = () => callback();
       ipcRenderer.on("shob:window-state", listener);
       return Promise.resolve(() => ipcRenderer.removeListener("shob:window-state", listener));
     },
   },
   terminal: {
-    spawn: (options) => ipcRenderer.invoke("shob:terminal-spawn", options),
-    write: (id, data) => ipcRenderer.invoke("shob:terminal-write", id, data),
-    resize: (id, cols, rows) => ipcRenderer.invoke("shob:terminal-resize", id, cols, rows),
-    kill: (id) => ipcRenderer.invoke("shob:terminal-kill", id),
-    onData: (id, callback) => subscribe(terminalDataSubscriptions, id, callback),
-    onExit: (id, callback) => subscribe(terminalExitSubscriptions, id, callback),
+    spawn: (options: unknown) => ipcRenderer.invoke("shob:terminal-spawn", options),
+    write: (id: string, data: string) => ipcRenderer.invoke("shob:terminal-write", id, data),
+    resize: (id: string, cols: number, rows: number) => ipcRenderer.invoke("shob:terminal-resize", id, cols, rows),
+    kill: (id: string) => ipcRenderer.invoke("shob:terminal-kill", id),
+    onData: (id: string, callback: (data: string) => void) => subscribe(terminalDataSubscriptions, id, callback),
+    onExit: (id: string, callback: () => void) => subscribe(terminalExitSubscriptions, id, callback),
   },
 });
