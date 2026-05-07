@@ -19,6 +19,7 @@ import {
 import { nativeApi } from "../services/native"
 import { BottomTerminalPanel } from "./BottomTerminalPanel"
 import { Sidebar } from "./Sidebar"
+import { SettingsPage } from "./SettingsPage"
 import { TabBar } from "./TabBar"
 import { Terminal } from "./Terminal"
 import { WelcomeScreen } from "./WelcomeScreen"
@@ -82,6 +83,7 @@ function ReviewEmptyState() {
 
 export function MainView() {
   const projects = useStore((state) => state.projects)
+  const activePage = useStore((state) => state.activePage)
   const currentProject = useStore((state) =>
     state.projects.find((project) => project.id === state.currentProjectId) ?? null,
   )
@@ -102,6 +104,7 @@ export function MainView() {
   const projectSessions = useMemo(() => currentProject?.sessions ?? [], [currentProject])
   const allSessions = useMemo(() => projects.flatMap((p) => p.sessions), [projects])
   const isFileTreeVisible = isRightPanelVisible && rightPanelMode === "file-tree"
+  const isWorkspacePage = activePage === "workspace"
 
   useEffect(() => {
     setActiveFilePath(null)
@@ -264,39 +267,45 @@ export function MainView() {
         <div ref={workspaceRef} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
           <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
             <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-              <TabBar />
-              <div
-                className="relative h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden"
-                style={{ display: projectSessions.length > 0 ? "block" : "none" }}
-              >
-                {allSessions.map((session) => {
-                  const shouldBoot = bootedSessionIds.has(session.id)
-                  if (!shouldBoot) return null
+              {isWorkspacePage ? (
+                <>
+                  <TabBar />
+                  <div
+                    className="relative h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden"
+                    style={{ display: projectSessions.length > 0 ? "block" : "none" }}
+                  >
+                    {allSessions.map((session) => {
+                      const shouldBoot = bootedSessionIds.has(session.id)
+                      if (!shouldBoot) return null
 
-                  return (
-                    <Terminal
-                      key={session.id}
-                      sessionId={session.id}
-                      isActive={session.id === activeSessionId}
-                      shouldBoot={shouldBoot}
+                      return (
+                        <Terminal
+                          key={session.id}
+                          sessionId={session.id}
+                          isActive={session.id === activeSessionId}
+                          shouldBoot={shouldBoot}
+                        />
+                      )
+                    })}
+                  </div>
+
+                  {projectSessions.length === 0 && (
+                    <WelcomeScreen
+                      projects={projects}
+                      currentProject={currentProject}
+                      onOpenFolder={handleOpenFolder}
+                      onCreateSession={handleCreateSession}
+                      onSelectProject={setCurrentProject}
+                      onToggleFileTree={handleToggleFileTree}
                     />
-                  )
-                })}
-              </div>
-
-              {projectSessions.length === 0 && (
-                <WelcomeScreen
-                  projects={projects}
-                  currentProject={currentProject}
-                  onOpenFolder={handleOpenFolder}
-                  onCreateSession={handleCreateSession}
-                  onSelectProject={setCurrentProject}
-                  onToggleFileTree={handleToggleFileTree}
-                />
+                  )}
+                </>
+              ) : (
+                <SettingsPage />
               )}
             </main>
 
-            {isRightPanelVisible && (
+            {isWorkspacePage && isRightPanelVisible && (
               <>
                 <div
                   className="workspace-divider h-full w-[5px] shrink-0"
@@ -433,7 +442,7 @@ export function MainView() {
             )}
           </div>
 
-          {isBottomTerminalVisible && (
+          {isWorkspacePage && isBottomTerminalVisible && (
             <BottomTerminalPanel
               projectPath={currentProject?.path}
               height={bottomTerminalHeight}

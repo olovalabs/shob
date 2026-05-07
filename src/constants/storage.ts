@@ -4,4 +4,6 @@ export const STORAGE_KEYS = {
   preferredCliId: 'shob.preferredCliId',
   preferredShell: 'shob.preferredShell',
   cliLaunchMode: 'shob.cliLaunchMode',
+  appearanceThemeId: 'shob.appearance.themeId',
+  colorScheme: 'shob.appearance.colorScheme',
 } as const;

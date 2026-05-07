@@ -1,9 +1,9 @@
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { applyStoredAppearanceTheme } from './theme'
 
-document.documentElement.classList.add('dark')
-document.documentElement.style.colorScheme = 'dark'
+applyStoredAppearanceTheme()
 
 createRoot(document.getElementById('root')!).render(
   <App />,

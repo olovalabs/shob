@@ -1,17 +1,13 @@
 import { useEffect, useMemo, useState } from "react"
 import { nativeApi } from "../services/native"
 import {
-  Boxes,
   Folder,
   Palette,
   PencilLine,
   Plus,
-  SlidersHorizontal,
   Settings,
-  Terminal,
   Upload,
 } from "lucide-react"
-import { CliAvatar } from "./CliAvatar"
 import { useStore } from "../store"
 import type { Project } from "../types"
 import { Button } from "@/components/ui/button"
@@ -29,15 +25,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 
 interface PtyDataEvent {
@@ -59,16 +47,11 @@ const folderNameFromPath = (path: string) => {
   return parts[parts.length - 1] || path
 }
 
-const getShellLabel = (shell: string) => {
-  const name = shell.split(/[\\/]/).pop()
-  return name || shell
-}
-
 const formatSessionLabel = (index: number) => `Session ${index + 1}`
 const getProjectBadge = (name: string) => name.trim().charAt(0).toUpperCase() || "P"
 const VISIBLE_SESSIONS_PER_PROJECT = 5
-const SIDEBAR_MENU_CLASS = "rounded-md border border-white/[0.08] bg-[#1c1c1c] p-1 text-[#d7d7d7] shadow-xl ring-0"
-const SIDEBAR_MENU_ITEM_CLASS = "rounded-[5px] px-2.5 py-1.5 text-[13px] focus:bg-white/[0.07] focus:text-white"
+const SIDEBAR_MENU_CLASS = "rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-xl ring-0"
+const SIDEBAR_MENU_ITEM_CLASS = "rounded-[5px] px-2.5 py-1.5 text-[13px] focus:bg-accent focus:text-accent-foreground"
 
 const getProjectTheme = (project?: Pick<Project, "color"> | null) => {
   const color = project?.color ?? "#62285d"
@@ -110,11 +93,7 @@ export function Sidebar() {
     projects,
     currentProjectId,
     activeSessionId,
-    preferredCliId,
-    preferredShell,
-    cliLaunchMode,
-    cliTools,
-    availableShells,
+    activePage,
     setCurrentProject,
     setActiveSession,
     addProject,
@@ -122,17 +101,11 @@ export function Sidebar() {
     deleteProject,
     launchCliSession,
     removeSession,
-    setPreferredCliTool,
-    setPreferredShell,
-    setCliLaunchMode,
-    installCliTool,
+    setActivePage,
   } = useStore()
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({})
   const [isSessionPaneVisible, setIsSessionPaneVisible] = useState(true)
   const [busySessions, setBusySessions] = useState<Record<string, boolean>>({})
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
-  const [activeSettingsSection, setActiveSettingsSection] = useState<"general" | "providers" | "cli-tools">("general")
-  const [cliToolSearchQuery, setCliToolSearchQuery] = useState("")
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null)
   const [draftProjectName, setDraftProjectName] = useState("")
   const [draftProjectColor, setDraftProjectColor] = useState<string>(PROJECT_COLOR_OPTIONS[0].value)
@@ -269,25 +242,6 @@ export function Sidebar() {
     }
   }, [activeSessionId])
 
-  const installedCliTools = useMemo(() => cliTools.filter((tool) => tool.installed), [cliTools])
-  const filteredCliTools = useMemo(() => {
-    const query = cliToolSearchQuery.trim().toLowerCase()
-    if (!query) return cliTools
-
-    return cliTools.filter((tool) => {
-      const haystack = [
-        tool.label,
-        tool.id,
-        tool.installCommand,
-        tool.matchedCommand ?? "",
-        tool.resolvedPath ?? "",
-        tool.installed ? "installed" : "not installed",
-      ]
-
-      return haystack.some((value) => value.toLowerCase().includes(query))
-    })
-  }, [cliTools, cliToolSearchQuery])
-
   const openEditProject = (project: Project) => {
     setEditingProjectId(project.id)
     setDraftProjectName(project.name)
@@ -406,7 +360,7 @@ export function Sidebar() {
   return (
     <>
       <aside
-        className={`relative flex h-full shrink-0 border-r border-[#242424] bg-[#171717] text-[#dedede] transition-[width] duration-150 ${
+        className={`relative flex h-full shrink-0 border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width] duration-150 ${
           isSessionPaneVisible ? "w-[304px]" : "w-[52px]"
         }`}
       >
@@ -422,7 +376,7 @@ export function Sidebar() {
                     type="button"
                     onClick={() => setCurrentProject(project.id)}
                     className={`relative rounded-[8px] p-1 transition-colors ${
-                      isActive ? "bg-[#2b2b2b]" : "hover:bg-white/[0.06]"
+                      isActive ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/70"
                     }`}
                     title={project.name}
                     aria-label={project.name}
@@ -435,7 +389,7 @@ export function Sidebar() {
               <button
                 type="button"
                 onClick={handleAddProject}
-                className="flex h-8 w-8 items-center justify-center rounded-[8px] text-[#8b8b8b] transition-colors hover:bg-white/[0.06] hover:text-white"
+                className="flex h-8 w-8 items-center justify-center rounded-[8px] text-sidebar-foreground/55 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
                 title="Add project"
                 aria-label="Add project"
               >
@@ -445,24 +399,28 @@ export function Sidebar() {
 
             <button
               type="button"
-              onClick={() => setIsSettingsOpen((current) => !current)}
-              className="mt-auto flex h-8 w-8 items-center justify-center rounded-[8px] text-[#8b8b8b] transition-colors hover:bg-white/[0.06] hover:text-white"
+              onClick={() => setActivePage(activePage === "settings" ? "workspace" : "settings")}
+              className={`mt-auto flex h-8 w-8 items-center justify-center rounded-[8px] transition-colors ${
+                activePage === "settings"
+                  ? "bg-sidebar-accent text-sidebar-foreground"
+                  : "text-sidebar-foreground/55 hover:bg-sidebar-accent hover:text-sidebar-foreground"
+              }`}
               title="Settings"
               aria-label="Settings"
-              aria-pressed={isSettingsOpen}
+              aria-pressed={activePage === "settings"}
             >
               <Settings className="h-4 w-4" strokeWidth={1.9} />
             </button>
           </div>
         ) : (
-          <div className="flex min-w-0 flex-1 flex-col bg-[#171717]">
+          <div className="flex min-w-0 flex-1 flex-col bg-sidebar">
             <div className="group/sidebar flex h-10 shrink-0 items-center justify-between px-4">
-              <p className="text-[13px] font-medium text-[#858585]">Projects</p>
+              <p className="text-[13px] font-medium text-sidebar-foreground/55">Projects</p>
               <div className="flex items-center gap-1 opacity-70 transition-opacity group-hover/sidebar:opacity-100">
                 <button
                   type="button"
                   onClick={handleAddProject}
-                  className="flex h-7 w-7 items-center justify-center rounded-[7px] text-[#8f8f8f] transition-colors hover:bg-white/[0.06] hover:text-white"
+                  className="flex h-7 w-7 items-center justify-center rounded-[7px] text-sidebar-foreground/55 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
                   title="Add project"
                   aria-label="Add project"
                 >
@@ -470,11 +428,15 @@ export function Sidebar() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setIsSettingsOpen((current) => !current)}
-                  className="flex h-7 w-7 items-center justify-center rounded-[7px] text-[#8f8f8f] transition-colors hover:bg-white/[0.06] hover:text-white"
+                  onClick={() => setActivePage(activePage === "settings" ? "workspace" : "settings")}
+                  className={`flex h-7 w-7 items-center justify-center rounded-[7px] transition-colors ${
+                    activePage === "settings"
+                      ? "bg-sidebar-accent text-sidebar-foreground"
+                      : "text-sidebar-foreground/55 hover:bg-sidebar-accent hover:text-sidebar-foreground"
+                  }`}
                   title="Settings"
                   aria-label="Settings"
-                  aria-pressed={isSettingsOpen}
+                  aria-pressed={activePage === "settings"}
                 >
                   <Settings className="h-3.5 w-3.5" strokeWidth={1.9} />
                 </button>
@@ -487,7 +449,7 @@ export function Sidebar() {
                   <button
                     type="button"
                     onClick={handleAddProject}
-                    className="flex h-8 w-full items-center rounded-[8px] px-2 text-left text-[13px] font-medium text-[#9a9a9a] transition-colors hover:bg-white/[0.06] hover:text-white"
+                    className="flex h-8 w-full items-center rounded-[8px] px-2 text-left text-[13px] font-medium text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
                   >
                     Add your first project
                   </button>
@@ -513,7 +475,7 @@ export function Sidebar() {
                             type="button"
                             onClick={() => setCurrentProject(project.id)}
                             className={`flex min-w-0 flex-1 items-center gap-2 text-left text-[13px] font-semibold transition-colors ${
-                              isActiveProject ? "text-[#c9c9c9]" : "text-[#a0a0a0] hover:text-white"
+                              isActiveProject ? "text-sidebar-foreground" : "text-sidebar-foreground/65 hover:text-sidebar-foreground"
                             }`}
                             title={project.path}
                           >
@@ -525,7 +487,7 @@ export function Sidebar() {
                             <DropdownMenuTrigger asChild>
                               <button
                                 type="button"
-                                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] text-[#929292] opacity-80 transition-colors hover:bg-white/[0.06] hover:text-white group-hover/project:opacity-100"
+                                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] text-sidebar-foreground/55 opacity-80 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground group-hover/project:opacity-100"
                                 title="Project options"
                                 aria-label={`${project.name} options`}
                               >
@@ -561,7 +523,7 @@ export function Sidebar() {
                             <button
                               type="button"
                               onClick={() => void handleCreateSession(project.id)}
-                              className="ml-7 flex h-8 w-[calc(100%-1.75rem)] items-center rounded-[8px] px-2 text-left text-[13px] font-medium text-[#848484] transition-colors hover:bg-white/[0.06] hover:text-white"
+                              className="ml-7 flex h-8 w-[calc(100%-1.75rem)] items-center rounded-[8px] px-2 text-left text-[13px] font-medium text-sidebar-foreground/55 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
                             >
                               Create session
                             </button>
@@ -581,20 +543,20 @@ export function Sidebar() {
                                     }}
                                     className={`flex h-8 w-full min-w-0 items-center rounded-[8px] pl-8 pr-3 text-left transition-colors ${
                                       isActiveSession
-                                        ? "bg-[#2b2b2b] text-white"
-                                        : "text-[#e2e2e2] hover:bg-white/[0.045] hover:text-white"
+                                        ? "bg-sidebar-accent text-sidebar-foreground"
+                                        : "text-sidebar-foreground/82 hover:bg-sidebar-accent/80 hover:text-sidebar-foreground"
                                     }`}
                                   >
                                     {isRunningSession && (
                                       <span className="mr-1.5 inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-                                        <Spinner className="h-3 w-3 text-[#bdbdbd]" />
+                                        <Spinner className="h-3 w-3 text-sidebar-foreground/70" />
                                       </span>
                                     )}
                                     <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-none">
                                       {session.name || formatSessionLabel(index)}
                                     </span>
                                     {projectAgeLabel && (
-                                      <span className="ml-3 shrink-0 text-[12px] leading-none text-[#929292] group-hover/session:opacity-0">
+                                      <span className="ml-3 shrink-0 text-[12px] leading-none text-sidebar-foreground/55 group-hover/session:opacity-0">
                                         {projectAgeLabel}
                                       </span>
                                     )}
@@ -610,7 +572,7 @@ export function Sidebar() {
                                       event.stopPropagation()
                                       void removeSession(project.id, session.id)
                                     }}
-                                    className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-[5px] text-[15px] leading-none text-[#9c9c9c] opacity-0 transition hover:bg-white/[0.08] hover:text-white group-hover/session:opacity-100"
+                                    className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-[5px] text-[15px] leading-none text-sidebar-foreground/55 opacity-0 transition hover:bg-sidebar-accent hover:text-sidebar-foreground group-hover/session:opacity-100"
                                     title="Close session"
                                     aria-label={`Close ${session.name || formatSessionLabel(index)}`}
                                   >
@@ -630,7 +592,7 @@ export function Sidebar() {
                                   [project.id]: !showAllSessions,
                                 }))
                               }}
-                              className="ml-7 flex h-8 items-center px-2 text-left text-[13px] font-medium text-[#878787] transition-colors hover:text-white"
+                              className="ml-7 flex h-8 items-center px-2 text-left text-[13px] font-medium text-sidebar-foreground/55 transition-colors hover:text-sidebar-foreground"
                             >
                               {showAllSessions ? "Show less" : "Show more"}
                             </button>
@@ -645,240 +607,6 @@ export function Sidebar() {
           </div>
         )}
       </aside>
-
-      <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
-        <DialogContent
-          className="!h-[640px] !w-[980px] !max-w-none sm:!max-w-none gap-0 overflow-hidden border p-0"
-          style={{ width: 980, height: 640, maxWidth: "none" }}
-        >
-          <div className="flex h-full flex-row">
-            <aside className="w-[190px] border-r bg-card px-3 py-5">
-              <div className="thin-scrollbar max-h-full overflow-y-auto pr-1">
-                <div className="grid grid-cols-1 gap-1.5">
-                  <Button
-                    type="button"
-                    onClick={() => setActiveSettingsSection("general")}
-                    variant={activeSettingsSection === "general" ? "secondary" : "ghost"}
-                    className="justify-start gap-2.5 px-3 py-2 h-auto"
-                  >
-                    <SlidersHorizontal className="h-4 w-4" strokeWidth={1.9} />
-                    <span className="font-medium">General</span>
-                  </Button>
-                  <Button
-                    type="button"
-                    onClick={() => setActiveSettingsSection("providers")}
-                    variant={activeSettingsSection === "providers" ? "secondary" : "ghost"}
-                    className="justify-start gap-2.5 px-3 py-2 h-auto"
-                  >
-                    <Boxes className="h-4 w-4" strokeWidth={1.9} />
-                    <span className="font-medium">Providers</span>
-                  </Button>
-                  <Button
-                    type="button"
-                    onClick={() => setActiveSettingsSection("cli-tools")}
-                    variant={activeSettingsSection === "cli-tools" ? "secondary" : "ghost"}
-                    className="justify-start gap-2.5 px-3 py-2 h-auto"
-                  >
-                    <Terminal className="h-4 w-4" strokeWidth={1.9} />
-                    <span className="font-medium">CLI Tools</span>
-                  </Button>
-                </div>
-              </div>
-            </aside>
-
-            <div className="relative min-w-0 flex-1 overflow-hidden">
-              <div className="thin-scrollbar h-full overflow-y-auto p-6">
-                {activeSettingsSection === "general" && (
-                  <section className="space-y-4">
-                    <p className="text-lg font-semibold">General</p>
-                    <div className="overflow-hidden rounded-xl border">
-                      <div className="flex flex-col gap-3 border-b px-4 py-4 md:flex-row md:items-center md:justify-between md:gap-6 md:px-5">
-                        <div>
-                          <label className="text-sm font-semibold" htmlFor="default-cli">
-                            Default CLI
-                          </label>
-                          <p className="mt-1 text-xs text-muted-foreground">Used when you create a new session.</p>
-                        </div>
-                        <div className="flex w-full items-center gap-2 md:w-[310px]">
-                          <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted/50">
-                            <CliAvatar
-                              cliId={preferredCliId ?? installedCliTools[0]?.id ?? null}
-                              label="Default CLI"
-                              size="sm"
-                            />
-                          </span>
-                          <Select
-                            value={preferredCliId ?? installedCliTools[0]?.id ?? ""}
-                            onValueChange={(value) => setPreferredCliTool(value || null)}
-                          >
-                            <SelectTrigger className="h-10 w-full">
-                              <SelectValue placeholder="Select CLI" />
-                            </SelectTrigger>
-                            <SelectContent className="p-1">
-                              {installedCliTools.length === 0 ? (
-                                <SelectItem className="py-1" value="" disabled>No CLI tools detected</SelectItem>
-                              ) : (
-                                installedCliTools.map((tool) => (
-                                  <SelectItem className="py-1" key={tool.id} value={tool.id}>
-                                    {tool.label}
-                                  </SelectItem>
-                                ))
-                              )}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-
-                      <div className="flex flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between md:gap-6 md:px-5">
-                        <div>
-                          <label className="text-sm font-semibold" htmlFor="default-shell">
-                            Default Shell
-                          </label>
-                          <p className="mt-1 text-xs text-muted-foreground">Used when you open a new terminal.</p>
-                        </div>
-                        <div className="w-full md:w-[310px]">
-                          <Select
-                            value={preferredShell ?? availableShells[0] ?? ""}
-                            onValueChange={(value) => setPreferredShell(value || null)}
-                          >
-                            <SelectTrigger className="h-10 w-full">
-                              <SelectValue placeholder="Select shell" />
-                            </SelectTrigger>
-                            <SelectContent className="p-1">
-                              {availableShells.length === 0 ? (
-                                <SelectItem className="py-1" value="" disabled>No shells detected</SelectItem>
-                              ) : (
-                                availableShells.map((shell) => (
-                                  <SelectItem className="py-1" key={shell} value={shell}>
-                                    {getShellLabel(shell)}
-                                  </SelectItem>
-                                ))
-                              )}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-                    </div>
-                  </section>
-                )}
-
-                {activeSettingsSection === "providers" && (
-                  <section className="space-y-4">
-                    <p className="text-lg font-semibold">Providers</p>
-                    <div className="overflow-hidden rounded-xl border">
-                      <div className="flex flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between md:gap-6 md:px-5">
-                        <div>
-                          <label className="text-sm font-semibold" htmlFor="cli-launch-mode">
-                            Provider Switch Mode
-                          </label>
-                          <p className="mt-1 text-xs text-muted-foreground">Choose whether provider changes open a new tab or replace the current one.</p>
-                        </div>
-                        <div className="w-full md:w-[310px]">
-                          <Select
-                            value={cliLaunchMode}
-                            onValueChange={(value) =>
-                              setCliLaunchMode(value === "replace-current" ? "replace-current" : "new-tab")
-                            }
-                          >
-                            <SelectTrigger className="h-10 w-full">
-                              <SelectValue placeholder="Select mode" />
-                            </SelectTrigger>
-                            <SelectContent className="p-1">
-                              <SelectItem className="py-1" value="new-tab">Open in new tab</SelectItem>
-                              <SelectItem className="py-1" value="replace-current">Replace current tab</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-                    </div>
-                  </section>
-                )}
-
-                {activeSettingsSection === "cli-tools" && (
-                  <section className="flex h-full min-h-0 flex-col gap-4">
-                    <p className="text-lg font-semibold">CLI Tools</p>
-                    <div className="flex items-center gap-2">
-                      <input
-                        value={cliToolSearchQuery}
-                        onChange={(event) => setCliToolSearchQuery(event.target.value)}
-                        placeholder="Search tools, status, command..."
-                        className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
-                      />
-                      {cliToolSearchQuery.trim() ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setCliToolSearchQuery("")}
-                        >
-                          Clear
-                        </Button>
-                      ) : null}
-                    </div>
-                    <div className="min-h-0 flex-1 overflow-hidden rounded-xl border">
-                      <div className="thin-scrollbar h-full max-h-[460px] overflow-y-auto">
-                        <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead className="w-[56%]">Tool</TableHead>
-                            <TableHead className="w-[24%]">Status</TableHead>
-                            <TableHead className="w-[20%] text-right">Action</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {filteredCliTools.map((tool) => (
-                            <TableRow key={tool.id}>
-                              <TableCell className="whitespace-normal">
-                                <div className="flex items-center gap-2">
-                                  <CliAvatar cliId={tool.id} label={tool.label} size="sm" />
-                                  <span className="font-medium">{tool.label}</span>
-                                </div>
-                              </TableCell>
-                              <TableCell className="whitespace-normal">
-                                {tool.installed ? (
-                                  <span className="text-green-500">Installed</span>
-                                ) : (
-                                  <span className="text-muted-foreground">Not installed</span>
-                                )}
-                              </TableCell>
-                              <TableCell className="text-right">
-                                {tool.installed ? (
-                                  <span className="text-sm text-muted-foreground">Ready</span>
-                                ) : (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => {
-                                      installCliTool(tool.id, tool.installCommand)
-                                      setIsSettingsOpen(false)
-                                    }}
-                                  >
-                                    Install
-                                  </Button>
-                                )}
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                          {filteredCliTools.length === 0 && (
-                            <TableRow>
-                              <TableCell colSpan={3} className="py-8 text-center text-sm text-muted-foreground">
-                                No tools found for "{cliToolSearchQuery.trim()}".
-                              </TableCell>
-                            </TableRow>
-                          )}
-                        </TableBody>
-                      </Table>
-                      </div>
-                    </div>
-                  </section>
-                )}
-
-                
-              </div>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={!!editingProject} onOpenChange={(open) => !open && setEditingProjectId(null)}>
         <DialogContent className="w-[420px] max-w-[calc(100vw-2rem)] overflow-hidden">

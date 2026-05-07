@@ -249,9 +249,9 @@ const isChangedPath = (entryPath: string, changeMap: Record<string, GitFileChang
 }
 
 const getStatusTone = (statusCode: string) => {
-  if (statusCode === "A" || statusCode === "?") return "text-[#8bd5a3]"
-  if (statusCode === "D") return "text-[#ef7d7d]"
-  if (statusCode) return "text-[#f3d56b]"
+  if (statusCode === "A" || statusCode === "?") return "text-success"
+  if (statusCode === "D") return "text-destructive"
+  if (statusCode) return "text-warning"
   return ""
 }
 
@@ -440,8 +440,8 @@ const TreeNode = memo(function TreeNode({
           </span>
           {hasDiffCounts && (
             <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-[11px]">
-              {additions > 0 && <span className="text-[#22c55e]">+{additions}</span>}
-              {deletions > 0 && <span className="text-[#ef4444]">-{deletions}</span>}
+              {additions > 0 && <span className="text-success">+{additions}</span>}
+              {deletions > 0 && <span className="text-destructive">-{deletions}</span>}
             </span>
           )}
         </Button>
@@ -505,8 +505,8 @@ const TreeNode = memo(function TreeNode({
       <span className={`min-w-0 flex-1 truncate ${changedTextClass || "text-inherit"}`}>{entry.name}</span>
       {hasDiffCounts && (
         <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-[11px]">
-          {additions > 0 && <span className="text-[#22c55e]">+{additions}</span>}
-          {deletions > 0 && <span className="text-[#ef4444]">-{deletions}</span>}
+              {additions > 0 && <span className="text-success">+{additions}</span>}
+              {deletions > 0 && <span className="text-destructive">-{deletions}</span>}
         </span>
       )}
     </Button>

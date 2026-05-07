@@ -5,6 +5,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links"
 import { Plus, SquareTerminal, X } from "lucide-react"
 import { nativeApi } from "../services/native"
 import { useStore } from "../store"
+import { getTerminalTheme, THEME_CHANGED_EVENT } from "../theme"
 import { Button } from "@/components/ui/button"
 
 interface BottomTerminalPanelProps {
@@ -18,30 +19,6 @@ const getShellName = (shell: string) => {
   const name = shell.split(/[\\/]/).pop() ?? shell
   return name.replace(/\.(exe|cmd|bat|ps1)$/i, "")
 }
-
-const getTerminalTheme = () => ({
-  background: "#0c0c0c",
-  foreground: "#f4f4f5",
-  cursor: "#f4f4f5",
-  cursorAccent: "#0c0c0c",
-  selectionBackground: "rgba(255, 255, 255, 0.16)",
-  black: "#09090b",
-  brightBlack: "#71717a",
-  red: "#ef4444",
-  brightRed: "#f87171",
-  green: "#22c55e",
-  brightGreen: "#4ade80",
-  yellow: "#eab308",
-  brightYellow: "#facc15",
-  blue: "#3b82f6",
-  brightBlue: "#60a5fa",
-  magenta: "#a855f7",
-  brightMagenta: "#c084fc",
-  cyan: "#06b6d4",
-  brightCyan: "#22d3ee",
-  white: "#fafafa",
-  brightWhite: "#ffffff",
-})
 
 export function BottomTerminalPanel({
   projectPath,
@@ -143,12 +120,17 @@ export function BottomTerminalPanel({
     const resizeObserver = new ResizeObserver(fitTerminal)
     resizeObserver.observe(host)
     window.addEventListener("resize", fitTerminal)
+    const handleThemeChange = () => {
+      term.options.theme = getTerminalTheme()
+    }
+    window.addEventListener(THEME_CHANGED_EVENT, handleThemeChange)
     void boot()
 
     return () => {
       disposed = true
       resizeObserver.disconnect()
       window.removeEventListener("resize", fitTerminal)
+      window.removeEventListener(THEME_CHANGED_EVENT, handleThemeChange)
       offData?.()
       offExit?.()
       void terminal.kill(terminalId)
@@ -160,7 +142,7 @@ export function BottomTerminalPanel({
 
   return (
     <section
-      className="relative flex shrink-0 flex-col border-t border-border bg-[#0c0c0c]"
+      className="relative flex shrink-0 flex-col border-t border-border bg-term-bg"
       style={{ height }}
     >
       <div
@@ -173,7 +155,7 @@ export function BottomTerminalPanel({
         <span className="mx-auto mt-[3px] block h-px w-full bg-border/80" />
       </div>
 
-      <div className="flex h-9 shrink-0 items-center border-b border-border bg-[#111111] px-3">
+      <div className="flex h-9 shrink-0 items-center border-b border-border bg-card px-3">
         <div className="flex h-7 items-center gap-2 rounded-md bg-muted/60 px-2 text-xs font-medium text-foreground">
           <SquareTerminal className="h-3.5 w-3.5" />
           <span className="max-w-[180px] truncate">{projectPath ?? title}</span>

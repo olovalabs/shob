@@ -13,6 +13,15 @@ import {
 } from '../utils';
 import { CLI_CATALOG, DEFAULT_CLI_ID, type CliProbeResult } from '../config/check';
 import type { Project, Session, CliTool } from '../types';
+import {
+  DEFAULT_APPEARANCE_THEME_ID,
+  DEFAULT_COLOR_SCHEME,
+  normalizeAppearanceThemeId,
+  normalizeColorScheme,
+  persistAppearanceTheme,
+  type AppearanceThemeId,
+  type ColorScheme,
+} from '../theme';
 
 const SESSION_CLEANUP_IDLE_MS = 1000 * 60 * 60 * 24 * 30;
 const SESSION_CLEANUP_MAX_PER_PROJECT = 40;
@@ -74,17 +83,26 @@ const findProjectBySessionId = (projects: Project[], sessionId: string | null) =
 };
 
 export type CliLaunchMode = 'new-tab' | 'replace-current';
+export type AppPage = 'workspace' | 'settings';
+export type SettingsSection = 'general' | 'appearance' | 'providers' | 'cli-tools';
 
 interface AppState {
+  activePage: AppPage;
+  activeSettingsSection: SettingsSection;
   projects: Project[];
   currentProjectId: string | null;
   activeSessionId: string | null;
   preferredCliId: string | null;
   preferredShell: string | null;
   cliLaunchMode: CliLaunchMode;
+  appearanceThemeId: AppearanceThemeId;
+  colorScheme: ColorScheme;
   cliTools: CliTool[];
   availableShells: string[];
   isLoading: boolean;
+
+  setActivePage: (page: AppPage) => void;
+  setActiveSettingsSection: (section: SettingsSection) => void;
   
   loadProjects: () => Promise<void>;
   addProject: (name: string, path: string) => Promise<Project>;
@@ -109,19 +127,33 @@ interface AppState {
   setPreferredCliTool: (cliId: string | null) => void;
   setPreferredShell: (shell: string | null) => void;
   setCliLaunchMode: (mode: CliLaunchMode) => void;
+  setAppearanceTheme: (themeId: AppearanceThemeId) => void;
+  setColorScheme: (colorScheme: ColorScheme) => void;
   installCliTool: (cliId: string, installCommand?: string | null) => Promise<Session>;
 }
 
 export const useStore = create<AppState>((set, get) => ({
+  activePage: 'workspace',
+  activeSettingsSection: 'appearance',
   projects: [],
   currentProjectId: getStoredValue(STORAGE_KEYS.currentProjectId),
   activeSessionId: getStoredValue(STORAGE_KEYS.activeSessionId),
   preferredCliId: getStoredValue(STORAGE_KEYS.preferredCliId),
   preferredShell: getStoredValue(STORAGE_KEYS.preferredShell),
   cliLaunchMode: getStoredValue(STORAGE_KEYS.cliLaunchMode) === 'replace-current' ? 'replace-current' : 'new-tab',
+  appearanceThemeId: normalizeAppearanceThemeId(getStoredValue(STORAGE_KEYS.appearanceThemeId) ?? DEFAULT_APPEARANCE_THEME_ID),
+  colorScheme: normalizeColorScheme(getStoredValue(STORAGE_KEYS.colorScheme) ?? DEFAULT_COLOR_SCHEME),
   cliTools: buildCatalogCliTools(),
   availableShells: [],
   isLoading: true,
+
+  setActivePage: (page) => {
+    set({ activePage: page });
+  },
+
+  setActiveSettingsSection: (section) => {
+    set({ activeSettingsSection: section, activePage: 'settings' });
+  },
   
   loadProjects: async () => {
     try {
@@ -220,6 +252,7 @@ export const useStore = create<AppState>((set, get) => ({
       projects: [...state.projects, saved],
       currentProjectId: saved.id,
       activeSessionId: null,
+      activePage: 'workspace',
     }));
     return saved;
   },
@@ -242,6 +275,7 @@ export const useStore = create<AppState>((set, get) => ({
         projects,
         currentProjectId,
         activeSessionId,
+        activePage: 'workspace',
       };
     });
   },
@@ -272,7 +306,7 @@ export const useStore = create<AppState>((set, get) => ({
     const nextSessionId = project?.sessions[0]?.id ?? null;
     setStoredValue(STORAGE_KEYS.currentProjectId, id);
     setStoredValue(STORAGE_KEYS.activeSessionId, nextSessionId);
-    set({ currentProjectId: id, activeSessionId: nextSessionId });
+    set({ currentProjectId: id, activeSessionId: nextSessionId, activePage: 'workspace' });
   },
   
   addSession: async (projectId: string, shell: string) => {
@@ -308,6 +342,7 @@ export const useStore = create<AppState>((set, get) => ({
       ),
       currentProjectId: projectId,
       activeSessionId: session.id,
+      activePage: 'workspace',
     }));
     
     return session;
@@ -359,6 +394,7 @@ export const useStore = create<AppState>((set, get) => ({
       currentProjectId: projectId,
       activeSessionId: session.id,
       preferredCliId: selectedCli?.id ?? currentState.preferredCliId,
+      activePage: 'workspace',
     }));
 
     return session;
@@ -468,6 +504,7 @@ export const useStore = create<AppState>((set, get) => ({
     set({
       activeSessionId: resolvedSessionId,
       preferredCliId: activeSession?.cliTool ?? state.preferredCliId,
+      activePage: 'workspace',
     });
   },
 
@@ -632,6 +669,18 @@ export const useStore = create<AppState>((set, get) => ({
     set({ cliLaunchMode: mode });
   },
 
+  setAppearanceTheme: (themeId) => {
+    const colorScheme = get().colorScheme;
+    persistAppearanceTheme(themeId, colorScheme);
+    set({ appearanceThemeId: themeId });
+  },
+
+  setColorScheme: (colorScheme) => {
+    const appearanceThemeId = get().appearanceThemeId;
+    persistAppearanceTheme(appearanceThemeId, colorScheme);
+    set({ colorScheme });
+  },
+
   installCliTool: async (cliId: string, installCommand?: string | null) => {
     const state = get();
     const catalogItem = CLI_CATALOG.find((item) => item.id === cliId);
@@ -700,6 +749,7 @@ export const useStore = create<AppState>((set, get) => ({
       projects: currentState.projects.map((p) => (p.id === projectId ? updatedProject : p)),
       currentProjectId: projectId,
       activeSessionId: session.id,
+      activePage: 'workspace',
     }));
 
     return session;

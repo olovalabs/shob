@@ -53,6 +53,20 @@
   --sidebar-border: #20222a;
   --sidebar-ring: #3b82f6;
 
+  /* App chrome */
+  --chrome: #121212;
+  --chrome-foreground: #f4f4f6;
+  --chrome-muted: #8f8f8f;
+  --chrome-border: #242424;
+  --chrome-border-hover: #3a3a3a;
+  --chrome-button: #1a1a1a;
+  --chrome-button-hover: #222222;
+
+  /* Shared semantic accents */
+  --success: #22c55e;
+  --warning: #eab308;
+  --info: #06b6d4;
+
   /* ── Tab chrome ────────────────────────────────── */
   --tab-strip-bg: color-mix(in oklch, var(--background) 72%, var(--muted) 28%);
   --tab-active-bg: color-mix(in oklch, var(--card) 90%, var(--background) 10%);
@@ -67,10 +81,33 @@
 
   /* ── Terminal surface ───────────────────────────── */
   --term-bg: #09090b;
+  --term-foreground: #fafafa;
+  --term-cursor: #fafafa;
+  --term-cursor-accent: #09090b;
+  --term-selection: rgba(255, 255, 255, 0.15);
+  --term-selection-foreground: #fafafa;
   --term-scrollbar: rgba(255 255 255 / 0.18);
   --term-scrollbar-hover: rgba(255 255 255 / 0.32);
   --term-scrollbar-active: rgba(255 255 255 / 0.46);
   --term-glow-color: rgba(59, 130, 246, 0.04);
+
+  /* xterm ANSI palette */
+  --ansi-black: #09090b;
+  --ansi-bright-black: #71717a;
+  --ansi-red: #ef4444;
+  --ansi-bright-red: #f87171;
+  --ansi-green: #22c55e;
+  --ansi-bright-green: #4ade80;
+  --ansi-yellow: #eab308;
+  --ansi-bright-yellow: #facc15;
+  --ansi-blue: #3b82f6;
+  --ansi-bright-blue: #60a5fa;
+  --ansi-magenta: #a855f7;
+  --ansi-bright-magenta: #c084fc;
+  --ansi-cyan: #06b6d4;
+  --ansi-bright-cyan: #22d3ee;
+  --ansi-white: #fafafa;
+  --ansi-bright-white: #ffffff;
 
   /* ── Motion timing ──────────────────────────────── */
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
@@ -117,8 +154,8 @@ button {
 }
 
 ::selection {
-  background: rgba(233, 199, 74, 0.22);
-  color: #fff9e0;
+  background: color-mix(in oklch, var(--ring) 28%, transparent);
+  color: var(--foreground);
 }
 
 /* ═══════════════════════════════════════════════════
@@ -161,6 +198,18 @@ button {
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-chrome: var(--chrome);
+  --color-chrome-foreground: var(--chrome-foreground);
+  --color-chrome-muted: var(--chrome-muted);
+  --color-chrome-border: var(--chrome-border);
+  --color-chrome-border-hover: var(--chrome-border-hover);
+  --color-chrome-button: var(--chrome-button);
+  --color-chrome-button-hover: var(--chrome-button-hover);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-term-bg: var(--term-bg);
+  --color-term-foreground: var(--term-foreground);
 
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -578,7 +627,7 @@ button {
  */
 .terminal-container .terminal-wrapper .xterm .xterm-cursor-layer .xterm-cursor {
   /* Beam cursor: 2 px wide, full cell height */
-  border-left: 2px solid #e2e2e8 !important;
+  border-left: 2px solid var(--term-cursor) !important;
   border-bottom: none !important;
   background: transparent !important;
   /* GPU layer so it doesn't repaint the canvas */
@@ -591,14 +640,14 @@ button {
 /* Block cursor variant */
 .terminal-container .terminal-wrapper .xterm .xterm-cursor-layer .xterm-cursor.xterm-cursor-block {
   border-left: none !important;
-  background: rgba(226, 226, 232, 0.82) !important;
+  background: color-mix(in oklch, var(--term-cursor) 82%, transparent) !important;
   animation: cursor-expand 120ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 /* Underline cursor variant */
 .terminal-container .terminal-wrapper .xterm .xterm-cursor-layer .xterm-cursor.xterm-cursor-underline {
   border-left: none !important;
-  border-bottom: 2px solid #e2e2e8 !important;
+  border-bottom: 2px solid var(--term-cursor) !important;
   background: transparent !important;
 }
 

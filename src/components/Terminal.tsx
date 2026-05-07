@@ -10,6 +10,7 @@ import { Search, X, ArrowUp, ArrowDown, Save, Trash2 } from "lucide-react"
 import { CLI_ALIAS_TO_ID } from "../config/check"
 import { useStore } from "../store"
 import { api } from "../services/api"
+import { getTerminalTheme, THEME_CHANGED_EVENT } from "../theme"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import "@xterm/xterm/css/xterm.css"
@@ -164,33 +165,6 @@ function sanitizeClipboardPasteText(input: string): string {
     .replace(BRACKETED_PASTE_WRAPPER, "")
     .replace(/\r\n/g, "\n")
     .replace(/[\r\n]+$/g, "")
-}
-
-function getShadcnTerminalTheme() {
-  return {
-    background: "#09090b",
-    foreground: "#fafafa",
-    cursor: "#fafafa",
-    cursorAccent: "#09090b",
-    selectionBackground: "rgba(255, 255, 255, 0.15)",
-    selectionForeground: "#fafafa",
-    black: "#09090b",
-    brightBlack: "#71717a",
-    red: "#ef4444",
-    brightRed: "#f87171",
-    green: "#22c55e",
-    brightGreen: "#4ade80",
-    yellow: "#eab308",
-    brightYellow: "#facc15",
-    blue: "#3b82f6",
-    brightBlue: "#60a5fa",
-    magenta: "#a855f7",
-    brightMagenta: "#c084fc",
-    cyan: "#06b6d4",
-    brightCyan: "#22d3ee",
-    white: "#fafafa",
-    brightWhite: "#ffffff",
-  }
 }
 
 function toSessionTitle(input: string) {
@@ -463,7 +437,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
           letterSpacing: 0,
           customGlyphs: true,
           rescaleOverlappingGlyphs: true,
-          theme: getShadcnTerminalTheme(),
+          theme: getTerminalTheme(),
           scrollback: 10000,
           smoothScrollDuration: 0,
           convertEol: false,
@@ -570,6 +544,12 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
 
     const handleWindowResize = () => fitTerminal()
     window.addEventListener("resize", handleWindowResize)
+    const handleThemeChange = () => {
+      if (xtermRef.current) {
+        xtermRef.current.options.theme = getTerminalTheme()
+      }
+    }
+    window.addEventListener(THEME_CHANGED_EVENT, handleThemeChange)
 
     const resizeObserver = new ResizeObserver(() => {
       fitTerminal()
@@ -924,6 +904,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         clearTimeout(timeoutId)
       }
       window.removeEventListener("resize", handleWindowResize)
+      window.removeEventListener(THEME_CHANGED_EVENT, handleThemeChange)
       resizeObserver.disconnect()
       if (fitRafRef.current !== null) {
         cancelAnimationFrame(fitRafRef.current)
@@ -1225,7 +1206,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         ref={terminalRef}
         className="terminal-wrapper h-full w-full min-h-0 min-w-0 overflow-hidden"
         style={{
-          backgroundColor: "#09090b",
+          backgroundColor: "var(--term-bg)",
         }}
       />
     </Card>

@@ -4,6 +4,7 @@ import { nativeApi } from './services/native';
 import { TitleBar } from './components/TitleBar';
 import { MainView } from './components/MainView';
 import { useStore } from './store';
+import { applyAppearanceTheme } from './theme';
 
 class StartupErrorBoundary extends Component<
   { children: ReactNode; fallback?: ReactNode },
@@ -23,7 +24,7 @@ class StartupErrorBoundary extends Component<
     if (this.state.hasError) {
       return (
         this.props.fallback ?? (
-          <div className="flex flex-1 items-center justify-center bg-black text-sm text-zinc-300">
+          <div className="flex flex-1 items-center justify-center bg-background text-sm text-muted-foreground">
             Startup failed to render. Please restart the app.
           </div>
         )
@@ -35,8 +36,26 @@ class StartupErrorBoundary extends Component<
 }
 
 function App() {
-  const { loadProjects, loadCliTools, loadAvailableShells } = useStore();
+  const { loadProjects, loadCliTools, loadAvailableShells, appearanceThemeId, colorScheme } = useStore();
   const [isBooting, setIsBooting] = useState(true);
+
+  useEffect(() => {
+    applyAppearanceTheme(appearanceThemeId, colorScheme);
+
+    if (colorScheme !== 'system') {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleSystemThemeChange = () => {
+      applyAppearanceTheme(appearanceThemeId, colorScheme);
+    };
+
+    mediaQuery.addEventListener('change', handleSystemThemeChange);
+    return () => {
+      mediaQuery.removeEventListener('change', handleSystemThemeChange);
+    };
+  }, [appearanceThemeId, colorScheme]);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,11 +146,11 @@ function App() {
   return (
     <>
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        <StartupErrorBoundary fallback={<div className="h-[40px] shrink-0 bg-[#121212]" />}>
+        <StartupErrorBoundary fallback={<div className="h-[40px] shrink-0 bg-chrome" />}>
           <TitleBar />
         </StartupErrorBoundary>
         {isBooting ? (
-          <div className="flex-1 bg-black" />
+          <div className="flex-1 bg-background" />
         ) : (
           <StartupErrorBoundary>
             <MainView />

@@ -119,8 +119,8 @@ function WindowsControls({
   isMaximized: boolean
   setIsMaximized: React.Dispatch<React.SetStateAction<boolean>>
 }) {
-  const baseButtonClass = "bg-transparent text-foreground/90 hover:bg-white/[0.06] active:bg-white/[0.04]"
-  const closeButtonClass = "bg-transparent text-foreground/90 hover:bg-[#c42b1c] hover:text-white active:bg-[#a1261b]"
+  const baseButtonClass = "bg-transparent text-chrome-foreground/90 hover:bg-chrome-button-hover active:bg-chrome-button"
+  const closeButtonClass = "bg-transparent text-chrome-foreground/90 hover:bg-destructive hover:text-primary-foreground active:bg-destructive/85"
 
   return (
     <div className="flex h-8" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
@@ -206,7 +206,7 @@ function GnomeControls({
       <TitlebarButton
         label="Minimize"
         onClick={() => runWindowAction("minimize", () => currentWindow().minimize())}
-        className="flex h-6 w-6 items-center justify-center rounded-full bg-[#373737] p-0 text-white hover:bg-[#424242] active:bg-[#565656]"
+        className="flex h-6 w-6 items-center justify-center rounded-full bg-chrome-button p-0 text-chrome-foreground hover:bg-chrome-button-hover active:bg-accent"
       >
         <svg width="10" height="1" viewBox="0 0 10 1" fill="none" xmlns="http://www.w3.org/2000/svg" className="h-[9px] w-[9px]">
           <path d="M0 0.5h10" stroke="currentColor" strokeWidth="1" />
@@ -222,7 +222,7 @@ function GnomeControls({
             setIsMaximized(next)
           })
         }}
-        className="flex h-6 w-6 items-center justify-center rounded-full bg-[#373737] p-0 text-white hover:bg-[#424242] active:bg-[#565656]"
+        className="flex h-6 w-6 items-center justify-center rounded-full bg-chrome-button p-0 text-chrome-foreground hover:bg-chrome-button-hover active:bg-accent"
       >
         {isMaximized ? (
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg" className="h-[9px] w-[9px]">
@@ -237,7 +237,7 @@ function GnomeControls({
       <TitlebarButton
         label="Close"
         onClick={() => runWindowAction("close", () => currentWindow().close())}
-        className="flex h-6 w-6 items-center justify-center rounded-full bg-[#373737] p-0 text-white hover:bg-[#424242] active:bg-[#565656]"
+        className="flex h-6 w-6 items-center justify-center rounded-full bg-chrome-button p-0 text-chrome-foreground hover:bg-chrome-button-hover active:bg-accent"
       >
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg" className="h-2 w-2">
           <path d="M1 1l8 8M9 1 1 9" stroke="currentColor" strokeWidth="1.2" />
@@ -449,14 +449,14 @@ export function TitleBar() {
     })
   }
 
-  const headerClass = "border-white/[0.06] bg-[#121212] text-white"
-  const navButtonClass = "text-[#6f6f6f] hover:bg-white/[0.05] hover:text-white"
+  const headerClass = "border-chrome-border bg-chrome text-chrome-foreground"
+  const navButtonClass = "text-chrome-muted hover:bg-chrome-button-hover hover:text-chrome-foreground"
   const toolbarButtonClass =
-    "border-white/[0.08] bg-[#1a1a1a] text-[#a9a9a9] shadow-none hover:border-white/[0.14] hover:bg-[#222222] hover:text-white data-[state=open]:border-white/[0.16] data-[state=open]:bg-[#222222] disabled:border-white/[0.05] disabled:bg-[#171717] disabled:text-white/35 disabled:opacity-100"
+    "border-chrome-border bg-chrome-button text-chrome-muted shadow-none hover:border-chrome-border-hover hover:bg-chrome-button-hover hover:text-chrome-foreground data-[state=open]:border-chrome-border-hover data-[state=open]:bg-chrome-button-hover disabled:border-chrome-border disabled:bg-chrome-button disabled:text-chrome-muted/45 disabled:opacity-100"
   const toolbarMenuClass =
-    "rounded-md border border-white/[0.08] bg-[#181818] p-1 text-[#d7d7d7] shadow-xl ring-0"
+    "rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-xl ring-0"
   const toolbarMenuItemClass =
-    "rounded-[5px] px-2.5 py-1.5 text-[13px] text-[#d7d7d7] focus:bg-white/[0.07] focus:text-white"
+    "rounded-[5px] px-2.5 py-1.5 text-[13px] text-popover-foreground focus:bg-accent focus:text-accent-foreground"
 
   return (
     <header className={`relative z-50 flex h-[40px] shrink-0 select-none items-center border-b ${headerClass}`}>
@@ -480,7 +480,7 @@ export function TitleBar() {
           </Button>
 
           {branchInfo?.head && (
-            <div className="ml-1 hidden items-center gap-2 rounded-md bg-white/[0.03] px-2 py-1 text-xs text-current/65 lg:flex">
+            <div className="ml-1 hidden items-center gap-2 rounded-md bg-chrome-button px-2 py-1 text-xs text-current/65 lg:flex">
               <GitBranch className="h-3.5 w-3.5" strokeWidth={1.9} />
               <span className="max-w-[170px] truncate">{branchInfo.head}</span>
             </div>
@@ -527,7 +527,7 @@ export function TitleBar() {
                   </DropdownMenuItem>
                 ))
               ) : (
-                <div className="px-2.5 py-1.5 text-[13px] text-white/45">No available CLI found</div>
+                <div className="px-2.5 py-1.5 text-[13px] text-chrome-muted/70">No available CLI found</div>
               )}
             </DropdownMenuContent>
           </DropdownMenu>
