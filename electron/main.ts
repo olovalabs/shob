@@ -279,6 +279,112 @@ async function revealInFinder(targetPath: string) {
   shell.showItemInFolder(targetPath);
 }
 
+function quotePowerShellLiteral(value: string) {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function launchDetached(command: string, args: string[], cwd: string) {
+  const isWindowsScript = process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
+  const child = isWindowsScript
+    ? spawnProcess("cmd.exe", ["/d", "/s", "/c", "start", "", command, ...args], {
+        cwd,
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+      })
+    : spawnProcess(command, args, {
+        cwd,
+        detached: true,
+        stdio: "ignore",
+        windowsHide: false,
+      });
+
+  child.unref();
+}
+
+function resolveFirstCommand(commands: string[]) {
+  for (const command of commands) {
+    const resolved = resolveCommand(command);
+    if (resolved) return resolved;
+  }
+
+  return null;
+}
+
+function openCommand(commands: string[], args: string[], cwd: string) {
+  const resolved = resolveFirstCommand(commands);
+  if (!resolved) throw new Error(`No matching command found: ${commands.join(", ")}`);
+  launchDetached(resolved, args, cwd);
+}
+
+function openExternalTerminal(cwd: string) {
+  if (process.platform === "win32") {
+    const windowsTerminal = resolveCommand("wt.exe") || resolveCommand("wt");
+    if (windowsTerminal) {
+      launchDetached(windowsTerminal, ["-d", cwd], cwd);
+      return;
+    }
+
+    const powershell = resolveCommand("pwsh.exe") || resolveCommand("powershell.exe") || "powershell.exe";
+    launchDetached(powershell, ["-NoExit", "-Command", `Set-Location -LiteralPath ${quotePowerShellLiteral(cwd)}`], cwd);
+    return;
+  }
+
+  if (process.platform === "darwin") {
+    launchDetached("open", ["-a", "Terminal", cwd], cwd);
+    return;
+  }
+
+  const linuxTerminal = resolveFirstCommand(["x-terminal-emulator", "gnome-terminal", "konsole", "xfce4-terminal", "xterm"]);
+  if (!linuxTerminal) throw new Error("No external terminal found");
+  if (path.basename(linuxTerminal).toLowerCase().includes("gnome-terminal")) {
+    launchDetached(linuxTerminal, ["--working-directory", cwd], cwd);
+    return;
+  }
+  launchDetached(linuxTerminal, [], cwd);
+}
+
+async function openWithApp(target: string, cwd: string) {
+  const stats = await fs.stat(cwd);
+  if (!stats.isDirectory()) throw new Error("Project path is not a directory");
+
+  switch (target) {
+    case "vscode":
+      openCommand(["code", "code.cmd", "code.exe"], [cwd], cwd);
+      return;
+    case "zed":
+      openCommand(["zed", "zed.cmd", "zed.exe"], [cwd], cwd);
+      return;
+    case "antigravity":
+      openCommand(["antigravity", "antigravity.cmd", "antigravity.exe"], [cwd], cwd);
+      return;
+    case "file-explorer":
+      await shell.openPath(cwd);
+      return;
+    case "terminal":
+      openExternalTerminal(cwd);
+      return;
+    case "git-bash": {
+      const gitBash = resolveFirstCommand([
+        "C:\\Program Files\\Git\\git-bash.exe",
+        "C:\\Program Files (x86)\\Git\\git-bash.exe",
+        "git-bash.exe",
+      ]);
+      if (!gitBash) throw new Error("Git Bash was not found");
+      launchDetached(gitBash, [`--cd=${cwd}`], cwd);
+      return;
+    }
+    case "wsl": {
+      const wsl = resolveFirstCommand(["wsl.exe", "wsl"]);
+      if (!wsl) throw new Error("WSL was not found");
+      launchDetached(wsl, process.platform === "win32" ? ["--cd", cwd] : [], cwd);
+      return;
+    }
+    default:
+      throw new Error(`Unknown open-with target: ${target}`);
+  }
+}
+
 async function getGitStatus(cwd: string) {
   const repoRoot = (await gitOutput(["rev-parse", "--show-toplevel"], cwd)).trim();
   const statusOutput = await gitOutput(["status", "--porcelain"], cwd);
@@ -491,6 +597,7 @@ const handlers: Record<string, (payload?: any) => Promise<any> | any> = {
   is_window_maximized: async () => Boolean(mainWindow?.isMaximized()),
   close_window: async () => mainWindow?.close(),
   reveal_in_finder: async ({ path: targetPath }) => revealInFinder(targetPath),
+  open_with_app: async ({ target, path: projectPath }) => openWithApp(target, projectPath),
   show_open_dialog: async (options) => {
     const result = await dialog.showOpenDialog(mainWindow!, {
       title: options?.title,

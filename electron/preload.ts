@@ -25,6 +25,7 @@ const allowedCommands = new Set([
   "is_window_maximized",
   "close_window",
   "reveal_in_finder",
+  "open_with_app",
   "show_open_dialog",
 ]);
 

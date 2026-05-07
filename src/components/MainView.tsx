@@ -8,8 +8,16 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react"
-import { FolderTree, PanelRight, PanelTop, Plus } from "lucide-react"
+import {
+  FolderTree,
+  PanelRight,
+  PanelTop,
+  Play,
+  Plus,
+  SquareTerminal,
+} from "lucide-react"
 import { nativeApi } from "../services/native"
+import { BottomTerminalPanel } from "./BottomTerminalPanel"
 import { Sidebar } from "./Sidebar"
 import { TabBar } from "./TabBar"
 import { Terminal } from "./Terminal"
@@ -23,9 +31,13 @@ const FileTree = lazy(async () => {
 })
 
 const RIGHT_PANEL_MIN_WIDTH = 320
-const RIGHT_PANEL_DEFAULT_WIDTH = 520
+const RIGHT_PANEL_DEFAULT_WIDTH = 392
 const RIGHT_PANEL_MAX_WIDTH = 760
 const MAIN_CONTENT_MIN_WIDTH = 520
+const BOTTOM_TERMINAL_MIN_HEIGHT = 180
+const BOTTOM_TERMINAL_DEFAULT_HEIGHT = 260
+const BOTTOM_TERMINAL_MAX_HEIGHT = 520
+const MAIN_CONTENT_MIN_HEIGHT = 240
 
 const folderNameFromPath = (path: string) => {
   const parts = path.split(/[\\/]/).filter(Boolean)
@@ -46,6 +58,16 @@ const getInitialRightPanelWidth = () => {
 }
 
 type RightPanelMode = "review" | "file-tree"
+const clampBottomTerminalHeight = (height: number, workspaceHeight?: number) => {
+  const dynamicMax = workspaceHeight
+    ? Math.max(
+        BOTTOM_TERMINAL_MIN_HEIGHT,
+        Math.min(BOTTOM_TERMINAL_MAX_HEIGHT, workspaceHeight - MAIN_CONTENT_MIN_HEIGHT),
+      )
+    : BOTTOM_TERMINAL_MAX_HEIGHT
+
+  return Math.round(Math.min(Math.max(height, BOTTOM_TERMINAL_MIN_HEIGHT), dynamicMax))
+}
 
 function ReviewEmptyState() {
   return (
@@ -73,6 +95,8 @@ export function MainView() {
   const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>("file-tree")
   const [isRightPanelVisible, setIsRightPanelVisible] = useState(true)
   const [rightPanelWidth, setRightPanelWidth] = useState(getInitialRightPanelWidth)
+  const [isBottomTerminalVisible, setIsBottomTerminalVisible] = useState(false)
+  const [bottomTerminalHeight, setBottomTerminalHeight] = useState(BOTTOM_TERMINAL_DEFAULT_HEIGHT)
   const [isAddPanelMenuOpen, setIsAddPanelMenuOpen] = useState(false)
   const [bootedSessionIds, setBootedSessionIds] = useState<Set<string>>(new Set())
   const projectSessions = useMemo(() => currentProject?.sessions ?? [], [currentProject])
@@ -169,6 +193,36 @@ export function MainView() {
     window.addEventListener("pointercancel", cleanup)
   }, [])
 
+  const handleBottomTerminalResizeStart = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
+
+    const workspaceRect = workspaceRef.current?.getBoundingClientRect()
+    if (!workspaceRect) return
+
+    const previousCursor = document.body.style.cursor
+    const previousUserSelect = document.body.style.userSelect
+    document.body.style.cursor = "row-resize"
+    document.body.style.userSelect = "none"
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const nextHeight = workspaceRect.bottom - moveEvent.clientY
+      setBottomTerminalHeight(clampBottomTerminalHeight(nextHeight, workspaceRect.height))
+    }
+
+    const cleanup = () => {
+      window.removeEventListener("pointermove", handlePointerMove)
+      window.removeEventListener("pointerup", cleanup)
+      window.removeEventListener("pointercancel", cleanup)
+      document.body.style.cursor = previousCursor
+      document.body.style.userSelect = previousUserSelect
+    }
+
+    window.addEventListener("pointermove", handlePointerMove)
+    window.addEventListener("pointerup", cleanup)
+    window.addEventListener("pointercancel", cleanup)
+  }, [])
+
   const handleFileSelect = (filePath: string | null) => {
     setActiveFilePath(filePath)
   }
@@ -197,60 +251,67 @@ export function MainView() {
     await launchCliSession(currentProjectId)
   }
 
+  useEffect(() => {
+    const handleOpenBottomTerminal = () => setIsBottomTerminalVisible(true)
+    window.addEventListener("gg-open-bottom-terminal", handleOpenBottomTerminal)
+    return () => window.removeEventListener("gg-open-bottom-terminal", handleOpenBottomTerminal)
+  }, [])
+
   return (
     <div className="flex min-h-0 flex-1 bg-background text-foreground">
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col bg-background">
-        <TabBar />
-        <div ref={workspaceRef} className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
-          <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
-            <div
-              className="relative h-full min-h-0 w-full min-w-0 overflow-hidden"
-              style={{ display: projectSessions.length > 0 ? "block" : "none" }}
-            >
-              {allSessions.map((session) => {
-                const shouldBoot = bootedSessionIds.has(session.id)
-                if (!shouldBoot) return null
-
-                return (
-                  <Terminal
-                    key={session.id}
-                    sessionId={session.id}
-                    isActive={session.id === activeSessionId}
-                    shouldBoot={shouldBoot}
-                  />
-                )
-              })}
-            </div>
-
-            {projectSessions.length === 0 && (
-              <WelcomeScreen
-                projects={projects}
-                currentProject={currentProject}
-                onOpenFolder={handleOpenFolder}
-                onCreateSession={handleCreateSession}
-                onSelectProject={setCurrentProject}
-                onToggleFileTree={handleToggleFileTree}
-              />
-            )}
-          </main>
-
-          {isRightPanelVisible && (
-            <>
+        <div ref={workspaceRef} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+          <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
+            <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              <TabBar />
               <div
-                className="workspace-divider h-full w-[5px] shrink-0"
-                role="separator"
-                aria-orientation="vertical"
-                aria-label="Resize review panel"
-                onPointerDown={handleRightPanelResizeStart}
-              />
-
-              <aside
-                className="flex h-full shrink-0 flex-col border-l border-border bg-background"
-                style={{ width: rightPanelWidth }}
+                className="relative h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden"
+                style={{ display: projectSessions.length > 0 ? "block" : "none" }}
               >
-                <div className="flex h-10 shrink-0 items-center border-b border-border px-3">
-                  <div className="relative flex min-w-0 items-center gap-1">
+                {allSessions.map((session) => {
+                  const shouldBoot = bootedSessionIds.has(session.id)
+                  if (!shouldBoot) return null
+
+                  return (
+                    <Terminal
+                      key={session.id}
+                      sessionId={session.id}
+                      isActive={session.id === activeSessionId}
+                      shouldBoot={shouldBoot}
+                    />
+                  )
+                })}
+              </div>
+
+              {projectSessions.length === 0 && (
+                <WelcomeScreen
+                  projects={projects}
+                  currentProject={currentProject}
+                  onOpenFolder={handleOpenFolder}
+                  onCreateSession={handleCreateSession}
+                  onSelectProject={setCurrentProject}
+                  onToggleFileTree={handleToggleFileTree}
+                />
+              )}
+            </main>
+
+            {isRightPanelVisible && (
+              <>
+                <div
+                  className="workspace-divider h-full w-[5px] shrink-0"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="Resize review panel"
+                  onPointerDown={handleRightPanelResizeStart}
+                />
+
+                <aside
+                  className="flex h-full shrink-0 flex-col border-l border-border bg-background"
+                  style={{ width: rightPanelWidth }}
+                >
+                  <div className="flex h-10 shrink-0 items-center border-b border-border px-3">
+                    <div className="relative flex min-w-0 items-center gap-1">
                     <button
                       type="button"
                       onClick={showReviewPanel}
@@ -294,10 +355,38 @@ export function MainView() {
                       type="button"
                       variant="ghost"
                       size="icon-xs"
+                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                      disabled={!currentProject?.path}
+                      onClick={() => void handleCreateSession()}
+                      title="Run"
+                    >
+                      <Play className="h-3.5 w-3.5" />
+                    </Button>
+
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
                       className={`h-7 w-7 ${
-                        rightPanelMode === "file-tree"
+                        isBottomTerminalVisible
                           ? "bg-accent/75 text-foreground"
-                          : "text-foreground/60 hover:text-foreground"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                      onClick={() => setIsBottomTerminalVisible((current) => !current)}
+                      title={isBottomTerminalVisible ? "Hide terminal panel" : "Show terminal panel"}
+                      aria-pressed={isBottomTerminalVisible}
+                    >
+                      <SquareTerminal className="h-3.5 w-3.5" />
+                    </Button>
+
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      className={`h-7 w-7 ${
+                        isFileTreeVisible
+                          ? "bg-accent/75 text-foreground"
+                          : "text-muted-foreground hover:text-foreground"
                       }`}
                       onClick={handleToggleFileTree}
                       title={isFileTreeVisible ? "Show review" : "Show file tree"}
@@ -310,9 +399,20 @@ export function MainView() {
                       type="button"
                       variant="ghost"
                       size="icon-xs"
-                      className="h-7 w-7 text-foreground/60 hover:text-foreground"
-                      onClick={() => setIsRightPanelVisible(false)}
-                      title="Hide review panel"
+                      className={`h-7 w-7 ${
+                        isRightPanelVisible
+                          ? "bg-accent/75 text-foreground"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                      onClick={() => {
+                        if (isRightPanelVisible) {
+                          setIsRightPanelVisible(false)
+                          return
+                        }
+                        showFileTree()
+                      }}
+                      title={isRightPanelVisible ? "Hide right panel" : "Show right panel"}
+                      aria-pressed={isRightPanelVisible}
                     >
                       <PanelRight className="h-3.5 w-3.5" />
                     </Button>
@@ -329,7 +429,17 @@ export function MainView() {
                   )}
                 </div>
               </aside>
-            </>
+              </>
+            )}
+          </div>
+
+          {isBottomTerminalVisible && (
+            <BottomTerminalPanel
+              projectPath={currentProject?.path}
+              height={bottomTerminalHeight}
+              onClose={() => setIsBottomTerminalVisible(false)}
+              onResizeStart={handleBottomTerminalResizeStart}
+            />
           )}
         </div>
       </div>

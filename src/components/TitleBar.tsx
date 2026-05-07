@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { nativeApi } from "../services/native"
-import { ChevronDown, Folder, GitBranch, Play } from "lucide-react"
+import { ChevronDown, GitBranch } from "lucide-react"
 import { CliAvatar } from "./CliAvatar"
 import { useStore } from "../store"
 import { Button } from "@/components/ui/button"
@@ -22,6 +22,18 @@ interface ProjectFsEvent {
   projectPath: string
   paths: string[]
 }
+
+type OpenWithTarget = "vscode" | "zed" | "antigravity" | "file-explorer" | "terminal" | "git-bash" | "wsl"
+
+const OPEN_WITH_OPTIONS = [
+  { id: "vscode", label: "VS Code", icon: "/vscode-icons/file_type_vscode.svg" },
+  { id: "zed", label: "Zed", icon: "/vscode-icons/default_file.svg" },
+  { id: "antigravity", label: "Antigravity", icon: "/vscode-icons/default_file.svg" },
+  { id: "file-explorer", label: "File Explorer", icon: "/vscode-icons/default_root_folder.svg" },
+  { id: "terminal", label: "Terminal", icon: "/vscode-icons/file_type_shell.svg" },
+  { id: "git-bash", label: "Git Bash", icon: "/vscode-icons/file_type_git.svg" },
+  { id: "wsl", label: "WSL", icon: "/vscode-icons/file_type_shell.svg" },
+] as const
 
 function mapNativePlatform(value: string): OsPlatform {
   switch (value) {
@@ -251,7 +263,6 @@ export function TitleBar() {
   } = useStore()
   const [isLauncherOpen, setIsLauncherOpen] = useState(false)
   const [isSidebarVisible, setIsSidebarVisible] = useState(true)
-  const [isFileTreeVisible, setIsFileTreeVisible] = useState(false)
   const [branchInfo, setBranchInfo] = useState<GitBranchInfo | null>(null)
   const launcherRef = useRef<HTMLDivElement>(null)
   const branchRefreshTimeoutRef = useRef<number | null>(null)
@@ -350,17 +361,6 @@ export function TitleBar() {
   }, [])
 
   useEffect(() => {
-    const handleFileTreeState = (event: Event) => {
-      const detail = (event as CustomEvent<{ isFileTreeVisible: boolean }>).detail
-      if (!detail) return
-      setIsFileTreeVisible(Boolean(detail.isFileTreeVisible))
-    }
-
-    window.addEventListener("gg-file-tree-state", handleFileTreeState as EventListener)
-    return () => window.removeEventListener("gg-file-tree-state", handleFileTreeState as EventListener)
-  }, [])
-
-  useEffect(() => {
     void loadBranchInfo(currentProject?.path)
   }, [currentProject?.path, loadBranchInfo])
 
@@ -433,12 +433,30 @@ export function TitleBar() {
     window.dispatchEvent(new Event("gg-toggle-sidebar"))
   }
 
-  const handleToggleFileTree = () => {
-    window.dispatchEvent(new Event("gg-toggle-file-tree"))
+  const handleOpenWith = (target: OpenWithTarget) => {
+    if (!currentProject?.path) return
+
+    if (target === "terminal") {
+      window.dispatchEvent(new Event("gg-open-bottom-terminal"))
+      return
+    }
+
+    void nativeApi.invoke("open_with_app", {
+      target,
+      path: currentProject.path,
+    }).catch((error) => {
+      console.error(`Failed to open project with ${target}:`, error)
+    })
   }
 
   const headerClass = "border-white/[0.06] bg-[#121212] text-white"
   const navButtonClass = "text-[#6f6f6f] hover:bg-white/[0.05] hover:text-white"
+  const toolbarButtonClass =
+    "border-white/[0.08] bg-[#1a1a1a] text-[#a9a9a9] shadow-none hover:border-white/[0.14] hover:bg-[#222222] hover:text-white data-[state=open]:border-white/[0.16] data-[state=open]:bg-[#222222] disabled:border-white/[0.05] disabled:bg-[#171717] disabled:text-white/35 disabled:opacity-100"
+  const toolbarMenuClass =
+    "rounded-md border border-white/[0.08] bg-[#181818] p-1 text-[#d7d7d7] shadow-xl ring-0"
+  const toolbarMenuItemClass =
+    "rounded-[5px] px-2.5 py-1.5 text-[13px] text-[#d7d7d7] focus:bg-white/[0.07] focus:text-white"
 
   return (
     <header className={`relative z-50 flex h-[40px] shrink-0 select-none items-center border-b ${headerClass}`}>
@@ -476,7 +494,7 @@ export function TitleBar() {
         style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
       />
 
-      <div className="flex items-center gap-2 px-2" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
+      <div className="flex items-center gap-1.5 px-2" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
         <div ref={launcherRef} className="relative flex items-center">
           <DropdownMenu open={isLauncherOpen} onOpenChange={setIsLauncherOpen}>
             <DropdownMenuTrigger asChild>
@@ -484,56 +502,71 @@ export function TitleBar() {
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="h-7 min-w-[108px] items-center justify-between gap-2 rounded-md border border-white/10 bg-white/[0.03] px-2.5 text-xs font-medium leading-none text-current/80 hover:bg-white/[0.06]"
+                className={`h-7 min-w-[54px] gap-1 rounded-md px-2 ${toolbarButtonClass}`}
                 title={currentCliTool ? `Current CLI: ${currentCliTool.label}` : "Choose CLI launcher"}
+                aria-label={currentCliTool ? `Current CLI: ${currentCliTool.label}` : "Choose CLI launcher"}
               >
                 {currentCliTool ? (
-                  <>
-                    <CliAvatar cliId={currentCliTool.id} label={currentCliTool.label} size="sm" />
-                    <span className="hidden sm:inline">{currentCliTool.label}</span>
-                  </>
+                  <CliAvatar cliId={currentCliTool.id} label={currentCliTool.label} size="sm" className="rounded-[4px]" />
                 ) : (
-                  <Play className="h-3.5 w-3.5 fill-current" strokeWidth={1.8} />
+                  <span className="text-[11px] font-medium leading-none text-current/80">CLI</span>
                 )}
-                <ChevronDown className={`h-3.5 w-3.5 transition ${isLauncherOpen ? "rotate-180" : ""}`} strokeWidth={1.9} />
+                <ChevronDown className={`h-[13px] w-[13px] text-current/60 transition ${isLauncherOpen ? "rotate-180" : ""}`} strokeWidth={2} />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-[208px]">
+            <DropdownMenuContent align="end" className={`w-[196px] ${toolbarMenuClass}`}>
               {installedCliTools.length > 0 ? (
                 installedCliTools.map((tool) => (
                   <DropdownMenuItem
                     key={tool.id}
                     onClick={() => void handleLaunchSession(tool.id)}
-                    className="gap-2.5 px-3 py-2"
+                    className={`gap-2 ${toolbarMenuItemClass}`}
                   >
-                    <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted/50">
-                      <CliAvatar cliId={tool.id} label={tool.label} size="sm" className="rounded-md" />
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{tool.label}</span>
+                    <CliAvatar cliId={tool.id} label={tool.label} size="sm" className="rounded-[4px]" />
+                    <span className="min-w-0 flex-1 truncate font-medium">{tool.label}</span>
                   </DropdownMenuItem>
                 ))
               ) : (
-                <div className="px-3 py-2 text-[13px] text-muted-foreground">No available CLI found</div>
+                <div className="px-2.5 py-1.5 text-[13px] text-white/45">No available CLI found</div>
               )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
 
-        <Button
-          type="button"
-          onClick={handleToggleFileTree}
-          variant="ghost"
-          size="icon-sm"
-          className={`h-7 w-7 ${
-            isFileTreeVisible
-              ? "bg-[#1e2a1f] text-[#9bdd9f]"
-              : "text-current/65 hover:bg-white/[0.05] hover:text-current"
-          }`}
-          title={isFileTreeVisible ? "Hide file tree" : "Show file tree"}
-          aria-pressed={isFileTreeVisible}
-        >
-          <Folder className="h-4 w-4" strokeWidth={1.9} />
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              disabled={!currentProject?.path}
+              className={`h-7 w-7 rounded-md p-0 ${toolbarButtonClass}`}
+              title="Open with"
+              aria-label="Open with"
+            >
+              <img
+                src="/vscode-icons/file_type_vscode.svg"
+                alt=""
+                className="h-4 w-4 shrink-0 opacity-90"
+              />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className={`w-[170px] ${toolbarMenuClass}`}>
+            {OPEN_WITH_OPTIONS.map((option) => {
+              return (
+                <DropdownMenuItem
+                  key={option.id}
+                  onClick={() => handleOpenWith(option.id)}
+                  className={`gap-2 ${toolbarMenuItemClass}`}
+                >
+                  <img src={option.icon} alt="" className="h-4 w-4 shrink-0" />
+                  <span>{option.label}</span>
+                </DropdownMenuItem>
+              )
+            })}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
       </div>
 
       {(osPlatform === "windows" || osPlatform === "chromeos") && (

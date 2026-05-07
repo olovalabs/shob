@@ -95,5 +95,6 @@ export interface NativeCommandMap {
   get_git_branch: { args: { path: string }; result: ElectronGitBranchInfo }
   cleanup_runtime: { args: undefined; result: void }
   reveal_in_finder: { args: { path: string }; result: void }
+  open_with_app: { args: { target: string; path: string }; result: void }
   show_open_dialog: { args: ElectronOpenDialogOptions; result: string | string[] | null }
 }
