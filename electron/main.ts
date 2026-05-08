@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import pty from "@lydell/node-pty";
 import chokidar from "chokidar";
 import crypto from "node:crypto";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const execFileAsync = promisify(execFile);
 const isDev = !app.isPackaged;
@@ -23,12 +23,371 @@ let lastWatcherOperationAt = 0;
 const ptyProcesses = new Map<string, any>();
 const ptyOutputQueues = new Map<string, { chunks: string[]; scheduled: boolean }>();
 
+type OpencodeListener = {
+  hostname?: string;
+  port?: number;
+  url?: URL | string;
+  stop?: () => Promise<void> | void;
+  close?: () => Promise<void> | void;
+};
+
+type OpencodeRuntime = {
+  listener: OpencodeListener;
+  hostname: string;
+  port: number;
+  url: string;
+  username: string;
+  password: string;
+  modulePath: string;
+  startedAt: number;
+};
+
+let opencodeRuntime: OpencodeRuntime | null = null;
+let opencodeStartPromise: Promise<OpencodeRuntime> | null = null;
+
 function userDataPath(...parts: string[]) {
   return path.join(app.getPath("userData"), ...parts);
 }
 
 async function ensureDataDirs() {
   await fs.mkdir(userDataPath("sessions"), { recursive: true });
+}
+
+function getOpencodeServerCandidates() {
+  const relative = path.join("vendor", "opencode", "server", "dist", "node", "node.js");
+  return [
+    path.join(process.cwd(), relative),
+    path.join(app.getAppPath(), relative),
+    path.join(__dirname, "..", relative),
+    path.join(process.resourcesPath ?? "", relative),
+  ].filter((item, index, all) => item && all.indexOf(item) === index);
+}
+
+function resolveOpencodeServerModulePath() {
+  for (const candidate of getOpencodeServerCandidates()) {
+    if (fsSync.existsSync(candidate)) return candidate;
+  }
+
+  throw new Error(
+    `OpenCode server bundle was not found. Expected one of: ${getOpencodeServerCandidates().join(", ")}`
+  );
+}
+
+async function importOpencodeServer() {
+  const modulePath = resolveOpencodeServerModulePath();
+  const moduleUrl = pathToFileURL(modulePath).href;
+  const serverModule = await import(moduleUrl) as {
+    Log: { init: (options: { level: string }) => Promise<void> | void };
+    Server: {
+      listen: (options: {
+        hostname: string;
+        port: number;
+        username: string;
+        password: string;
+      }) => Promise<OpencodeListener>;
+    };
+  };
+
+  return { modulePath, ...serverModule };
+}
+
+function prepareOpencodeServerEnv(password: string) {
+  Object.assign(process.env, {
+    OPENCODE_EXPERIMENTAL_ICON_DISCOVERY: "true",
+    OPENCODE_EXPERIMENTAL_FILEWATCHER: "true",
+    OPENCODE_DISABLE_MODELS_FETCH: "true",
+    OPENCODE_CLIENT: "desktop",
+    OPENCODE_SERVER_USERNAME: "opencode",
+    OPENCODE_SERVER_PASSWORD: password,
+    XDG_STATE_HOME: app.getPath("userData"),
+  });
+}
+
+function getOpencodeAuthHeader(password = opencodeRuntime?.password) {
+  if (!password) return null;
+  return `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`;
+}
+
+async function checkOpencodeHealth(url: string, password?: string | null) {
+  try {
+    const healthUrl = new URL("/global/health", url);
+    const headers = new Headers();
+    const authorization = getOpencodeAuthHeader(password ?? undefined);
+    if (authorization) headers.set("authorization", authorization);
+    const response = await fetch(healthUrl, {
+      method: "GET",
+      headers,
+      signal: AbortSignal.timeout(3000),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeOpencodeUrl(listener: OpencodeListener, hostname: string, port: number) {
+  const url = listener.url ? String(listener.url) : `http://${hostname}:${port}`;
+  return url.replace(/\/$/, "");
+}
+
+async function getOpencodeServerStatus(includeCredentials = false) {
+  const runtime = opencodeRuntime;
+  const healthy = runtime ? await checkOpencodeHealth(runtime.url, runtime.password) : false;
+
+  if (!runtime) {
+    return { running: false, healthy: false };
+  }
+
+  return {
+    running: true,
+    healthy,
+    url: runtime.url,
+    hostname: runtime.hostname,
+    port: runtime.port,
+    username: runtime.username,
+    password: includeCredentials ? runtime.password : undefined,
+    modulePath: runtime.modulePath,
+    startedAt: runtime.startedAt,
+  };
+}
+
+async function startOpencodeServer(payload: { hostname?: string; port?: number; password?: string } = {}) {
+  if (opencodeStartPromise) return opencodeStartPromise;
+
+  opencodeStartPromise = (async () => {
+    if (opencodeRuntime && await checkOpencodeHealth(opencodeRuntime.url, opencodeRuntime.password)) {
+      return opencodeRuntime;
+    }
+
+    await stopOpencodeServer();
+    await ensureDataDirs();
+
+    const hostname = payload.hostname?.trim() || "127.0.0.1";
+    const port = Number.isFinite(Number(payload.port)) ? Math.max(0, Number(payload.port)) : 0;
+    const password = payload.password?.trim() || crypto.randomBytes(18).toString("base64url");
+
+    prepareOpencodeServerEnv(password);
+    const { modulePath, Log, Server } = await importOpencodeServer();
+    await Log.init({ level: "WARN" });
+
+    const listener = await Server.listen({
+      hostname,
+      port,
+      username: "opencode",
+      password,
+    });
+
+    const resolvedPort = Number(listener.port ?? port);
+    const runtime: OpencodeRuntime = {
+      listener,
+      hostname: listener.hostname ?? hostname,
+      port: resolvedPort,
+      url: normalizeOpencodeUrl(listener, listener.hostname ?? hostname, resolvedPort),
+      username: "opencode",
+      password,
+      modulePath,
+      startedAt: Date.now(),
+    };
+
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 10_000) {
+      if (await checkOpencodeHealth(runtime.url, password)) {
+        opencodeRuntime = runtime;
+        return runtime;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    await stopOpencodeListener(listener);
+    throw new Error(`OpenCode server started but did not become healthy at ${runtime.url}`);
+  })();
+
+  try {
+    return await opencodeStartPromise;
+  } finally {
+    opencodeStartPromise = null;
+  }
+}
+
+async function stopOpencodeListener(listener?: OpencodeListener | null) {
+  if (!listener) return;
+  if (typeof listener.stop === "function") {
+    await listener.stop();
+    return;
+  }
+  if (typeof listener.close === "function") {
+    await listener.close();
+  }
+}
+
+async function stopOpencodeServer() {
+  const runtime = opencodeRuntime;
+  opencodeRuntime = null;
+  if (runtime) {
+    const authorization = getOpencodeAuthHeader(runtime.password);
+    const headers = new Headers();
+    if (authorization) headers.set("authorization", authorization);
+    await fetch(new URL("/global/dispose", runtime.url), {
+      method: "POST",
+      headers,
+      signal: AbortSignal.timeout(3000),
+    }).catch(() => undefined);
+  }
+  await stopOpencodeListener(runtime?.listener);
+}
+
+function buildOpencodeUrl(runtime: OpencodeRuntime, endpoint: string, query?: Record<string, unknown>) {
+  const url = new URL(endpoint, `${runtime.url}/`);
+  for (const [key, value] of Object.entries(query ?? {})) {
+    if (value === undefined || value === null || value === "") continue;
+    url.searchParams.set(key, String(value));
+  }
+  return url;
+}
+
+async function parseOpencodeResponse(response: Response) {
+  if (response.status === 204) return null;
+  const text = await response.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+function formatOpencodeError(status: number, payload: unknown) {
+  if (typeof payload === "string") return payload || `OpenCode request failed (${status})`;
+  if (payload && typeof payload === "object") {
+    const data = payload as any;
+    const nested =
+      data?.error?.message
+      ?? data?.data?.message
+      ?? data?.message
+      ?? (typeof data?.error === "string" ? data.error : undefined);
+    if (nested) return nested;
+    try {
+      return JSON.stringify(data);
+    } catch {
+      return `OpenCode request failed (${status})`;
+    }
+  }
+  return `OpenCode request failed (${status})`;
+}
+
+function formatIpcError(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    const data = error as any;
+    const nested =
+      data?.message
+      ?? data?.error?.message
+      ?? data?.data?.message
+      ?? (typeof data?.error === "string" ? data.error : undefined);
+    if (nested) return nested;
+    try {
+      return JSON.stringify(data);
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error);
+}
+
+async function opencodeRequest<T = any>(
+  method: string,
+  endpoint: string,
+  options: {
+    directory?: string | null;
+    workspace?: string | null;
+    query?: Record<string, unknown>;
+    body?: unknown;
+    timeoutMs?: number | null;
+  } = {},
+): Promise<T> {
+  const runtime = await startOpencodeServer();
+  const url = buildOpencodeUrl(runtime, endpoint, {
+    ...options.query,
+    directory: options.directory,
+    workspace: options.workspace,
+  });
+  const headers = new Headers();
+  const authorization = getOpencodeAuthHeader(runtime.password);
+  if (authorization) headers.set("authorization", authorization);
+  if (options.body !== undefined) headers.set("content-type", "application/json");
+
+  const response = await fetch(url, {
+    method,
+    headers,
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    signal: options.timeoutMs && options.timeoutMs > 0 ? AbortSignal.timeout(options.timeoutMs) : undefined,
+  });
+  const payload = await parseOpencodeResponse(response);
+  if (!response.ok) throw new Error(formatOpencodeError(response.status, payload));
+  return payload as T;
+}
+
+function extractOpenCodeText(parts: any[] | undefined) {
+  return (parts ?? [])
+    .filter((part) => part?.type === "text" && typeof part.text === "string")
+    .map((part) => part.text)
+    .join("\n")
+    .trim();
+}
+
+function extractOpenCodeToolCalls(parts: any[] | undefined) {
+  return (parts ?? [])
+    .filter((part) => part?.type === "tool")
+    .map((part) => {
+      const state = part?.state ?? {};
+      return {
+        id: part?.id ?? null,
+        callID: part?.callID ?? null,
+        tool: part?.tool ?? "tool",
+        status: state?.status ?? "pending",
+        title: typeof state?.title === "string" ? state.title : null,
+        input: state?.input ?? null,
+        output: typeof state?.output === "string" ? state.output : null,
+        error: typeof state?.error === "string" ? state.error : null,
+        startedAt: typeof state?.time?.start === "number" ? state.time.start : null,
+        endedAt: typeof state?.time?.end === "number" ? state.time.end : null,
+      };
+    });
+}
+
+function extractAssistantSnapshot(messages: any[] | undefined, requestMessageID: string) {
+  const list = Array.isArray(messages) ? messages : [];
+  const match = list
+    .filter((item) => item?.info?.role === "assistant" && item?.info?.parentID === requestMessageID)
+    .sort((left, right) => Number((right?.info?.time?.created ?? 0)) - Number((left?.info?.time?.created ?? 0)))[0];
+
+  if (!match) {
+    return {
+      found: false,
+      completed: false,
+      content: "",
+      toolCalls: [],
+      error: null,
+      assistantMessageID: null,
+    };
+  }
+
+  return {
+    found: true,
+    completed: typeof match?.info?.time?.completed === "number",
+    content: extractOpenCodeText(match?.parts),
+    toolCalls: extractOpenCodeToolCalls(match?.parts),
+    error: match?.info?.error ?? null,
+    assistantMessageID: match?.info?.id ?? null,
+  };
+}
+
+function buildOpenCodeMessageID(input?: string | null) {
+  const trimmed = input?.trim();
+  if (trimmed && trimmed.startsWith("msg")) return trimmed;
+  const suffix = trimmed && trimmed.length > 0 ? trimmed : crypto.randomUUID();
+  return `msg_${suffix}`;
 }
 
 async function readJson<T>(filePath: string, fallback: T): Promise<T> {
@@ -580,8 +939,219 @@ const handlers: Record<string, (payload?: any) => Promise<any> | any> = {
     return gitOutput(["show", `HEAD:${relativePath}`], repoRoot).catch(() => "");
   },
   get_git_file_state: async ({ path: filePath }) => getGitFileState(filePath),
+  opencode_server_status: async (payload = {}) => getOpencodeServerStatus(Boolean(payload.includeCredentials)),
+  opencode_server_start: async (payload = {}) => {
+    await startOpencodeServer(payload);
+    return getOpencodeServerStatus(Boolean(payload.includeCredentials));
+  },
+  opencode_server_stop: async () => {
+    await stopOpencodeServer();
+    return getOpencodeServerStatus();
+  },
+  opencode_provider_list: async ({ directory, workspace } = {}) =>
+    opencodeRequest("GET", "/provider", { directory, workspace, timeoutMs: 30_000 }),
+  opencode_provider_auth_methods: async ({ directory, workspace } = {}) =>
+    opencodeRequest("GET", "/provider/auth", { directory, workspace, timeoutMs: 30_000 }),
+  opencode_global_dispose: async () =>
+    opencodeRequest("POST", "/global/dispose", { timeoutMs: 30_000 }),
+  opencode_config_get: async ({ directory, workspace } = {}) =>
+    opencodeRequest("GET", "/config", { directory, workspace, timeoutMs: 30_000 }),
+  opencode_config_update: async ({ directory, workspace, config }) =>
+    opencodeRequest("PATCH", "/config", {
+      directory,
+      workspace,
+      body: config,
+      timeoutMs: 30_000,
+    }),
+  opencode_global_config_get: async () =>
+    opencodeRequest("GET", "/global/config", { timeoutMs: 30_000 }),
+  opencode_global_config_update: async ({ config }) =>
+    opencodeRequest("PATCH", "/global/config", {
+      body: config,
+      timeoutMs: 30_000,
+    }),
+  opencode_auth_set: async ({ providerID, key, auth }) => {
+    if (!providerID) throw new Error("Provider ID is required");
+    const body = auth ?? { type: "api", key };
+    return opencodeRequest("PUT", `/auth/${encodeURIComponent(providerID)}`, {
+      body,
+      timeoutMs: 30_000,
+    });
+  },
+  opencode_auth_remove: async ({ providerID }) => {
+    if (!providerID) throw new Error("Provider ID is required");
+    return opencodeRequest("DELETE", `/auth/${encodeURIComponent(providerID)}`, {
+      timeoutMs: 30_000,
+    });
+  },
+  opencode_oauth_authorize: async ({ providerID, method = 0, inputs, directory, workspace }) => {
+    if (!providerID) throw new Error("Provider ID is required");
+    return opencodeRequest("POST", `/provider/${encodeURIComponent(providerID)}/oauth/authorize`, {
+      directory,
+      workspace,
+      body: { method, inputs },
+      timeoutMs: 30_000,
+    });
+  },
+  opencode_oauth_callback: async ({ providerID, method = 0, code, directory, workspace }) => {
+    if (!providerID) throw new Error("Provider ID is required");
+    return opencodeRequest("POST", `/provider/${encodeURIComponent(providerID)}/oauth/callback`, {
+      directory,
+      workspace,
+      body: { method, code },
+      timeoutMs: 30_000,
+    });
+  },
+  opencode_session_create: async ({ directory, workspace, title, parentID, permission } = {}) =>
+    opencodeRequest("POST", "/session", {
+      directory,
+      workspace,
+      body: { title, parentID, permission },
+      timeoutMs: 30_000,
+    }),
+  opencode_session_messages: async ({ directory, workspace, sessionID, limit, before }) => {
+    if (!sessionID) throw new Error("OpenCode session ID is required");
+    return opencodeRequest("GET", `/session/${encodeURIComponent(sessionID)}/message`, {
+      directory,
+      workspace,
+      query: { limit, before },
+      timeoutMs: 30_000,
+    });
+  },
+  opencode_session_prompt: async ({
+    directory,
+    workspace,
+    sessionID,
+    title,
+    prompt,
+    parts,
+    providerID,
+    modelID,
+    agent,
+    variant,
+    messageID,
+    noReply,
+  }) => {
+    if (!prompt && (!Array.isArray(parts) || parts.length === 0)) {
+      throw new Error("Prompt text or parts are required");
+    }
+
+    let resolvedSessionID = sessionID;
+    if (!resolvedSessionID) {
+      const created = await opencodeRequest<any>("POST", "/session", {
+        directory,
+        workspace,
+        body: { title },
+        timeoutMs: 30_000,
+      });
+      resolvedSessionID = created?.id;
+    }
+    if (!resolvedSessionID) throw new Error("OpenCode did not return a session ID");
+
+    const model = providerID && modelID ? { providerID, modelID } : undefined;
+    const resolvedMessageID = buildOpenCodeMessageID(messageID);
+    const result = await opencodeRequest<any>("POST", `/session/${encodeURIComponent(resolvedSessionID)}/message`, {
+      directory,
+      workspace,
+      body: {
+        messageID: resolvedMessageID,
+        model,
+        agent: agent || "build",
+        noReply,
+        variant,
+        parts: Array.isArray(parts) && parts.length > 0 ? parts : [{ type: "text", text: prompt }],
+      },
+      timeoutMs: null,
+    });
+
+    return {
+      sessionID: resolvedSessionID,
+      message: result,
+      content: extractOpenCodeText(result?.parts),
+      toolCalls: extractOpenCodeToolCalls(result?.parts),
+      error: result?.info?.error ?? null,
+    };
+  },
+  opencode_session_abort: async ({ directory, workspace, sessionID }) => {
+    if (!sessionID) throw new Error("OpenCode session ID is required");
+    return opencodeRequest("POST", `/session/${encodeURIComponent(sessionID)}/abort`, {
+      directory,
+      workspace,
+      timeoutMs: 30_000,
+    });
+  },
+  opencode_session_prompt_async: async ({
+    directory,
+    workspace,
+    sessionID,
+    title,
+    prompt,
+    parts,
+    providerID,
+    modelID,
+    agent,
+    variant,
+    messageID,
+    noReply,
+  }) => {
+    if (!prompt && (!Array.isArray(parts) || parts.length === 0)) {
+      throw new Error("Prompt text or parts are required");
+    }
+
+    let resolvedSessionID = sessionID;
+    if (!resolvedSessionID) {
+      const created = await opencodeRequest<any>("POST", "/session", {
+        directory,
+        workspace,
+        body: { title },
+        timeoutMs: 30_000,
+      });
+      resolvedSessionID = created?.id;
+    }
+    if (!resolvedSessionID) throw new Error("OpenCode did not return a session ID");
+
+    const requestMessageID = buildOpenCodeMessageID(messageID);
+    const model = providerID && modelID ? { providerID, modelID } : undefined;
+    await opencodeRequest("POST", `/session/${encodeURIComponent(resolvedSessionID)}/prompt_async`, {
+      directory,
+      workspace,
+      body: {
+        messageID: requestMessageID,
+        model,
+        agent: agent || "build",
+        noReply,
+        variant,
+        parts: Array.isArray(parts) && parts.length > 0 ? parts : [{ type: "text", text: prompt }],
+      },
+      timeoutMs: 30_000,
+    });
+
+    return {
+      sessionID: resolvedSessionID,
+      requestMessageID,
+    };
+  },
+  opencode_session_prompt_status: async ({ directory, workspace, sessionID, requestMessageID }) => {
+    if (!sessionID) throw new Error("OpenCode session ID is required");
+    if (!requestMessageID) throw new Error("OpenCode request message ID is required");
+
+    const messages = await opencodeRequest<any[]>("GET", `/session/${encodeURIComponent(sessionID)}/message`, {
+      directory,
+      workspace,
+      query: { limit: 120 },
+      timeoutMs: 30_000,
+    });
+
+    const snapshot = extractAssistantSnapshot(messages, requestMessageID);
+    return {
+      sessionID,
+      requestMessageID,
+      ...snapshot,
+    };
+  },
   cleanup_runtime: async () => {
     await setProjectWatch(null);
+    await stopOpencodeServer();
     killAllPtys();
   },
   minimize_window: async () => mainWindow?.minimize(),
@@ -597,6 +1167,10 @@ const handlers: Record<string, (payload?: any) => Promise<any> | any> = {
   is_window_maximized: async () => Boolean(mainWindow?.isMaximized()),
   close_window: async () => mainWindow?.close(),
   reveal_in_finder: async ({ path: targetPath }) => revealInFinder(targetPath),
+  open_external_url: async ({ url }) => {
+    if (!url || typeof url !== "string") throw new Error("URL is required");
+    await shell.openExternal(url);
+  },
   open_with_app: async ({ target, path: projectPath }) => openWithApp(target, projectPath),
   show_open_dialog: async (options) => {
     const result = await dialog.showOpenDialog(mainWindow!, {
@@ -616,7 +1190,11 @@ function registerIpc() {
   ipcMain.handle("shob:invoke", async (_event, command, payload = {}) => {
     const handler = handlers[command];
     if (!handler) throw new Error(`Unknown IPC command: ${command}`);
-    return handler(payload);
+    try {
+      return await handler(payload);
+    } catch (error) {
+      throw new Error(formatIpcError(error));
+    }
   });
 
   ipcMain.handle("shob:terminal-spawn", async (_event, options) => {

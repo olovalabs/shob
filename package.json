@@ -25,6 +25,9 @@
       "dist-renderer/**",
       "electron-dist/**",
       "electron/icons/**",
+      "vendor/opencode/server/dist/**",
+      "vendor/opencode/server/node_modules/**",
+      "vendor/opencode/sdk/**",
       "package.json"
     ],
     "directories": {

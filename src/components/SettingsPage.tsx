@@ -20,6 +20,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { OpenCodeProvidersSettings } from "@/components/opencode/OpenCodeProvidersSettings"
 
 const SETTINGS_SECTIONS: {
   id: SettingsSection
@@ -239,32 +240,8 @@ function AppearanceSettings() {
 }
 
 function ProvidersSettings() {
-  const { cliLaunchMode, setCliLaunchMode } = useStore()
-
-  return (
-    <SettingsBlock title="Providers">
-      <SettingsRow title="Provider Switch Mode" description="Controls how launcher changes open sessions.">
-        <Select
-          value={cliLaunchMode}
-          onValueChange={(value) => setCliLaunchMode(value === "replace-current" ? "replace-current" : "new-tab")}
-        >
-          <SelectTrigger className="h-8 w-full">
-            <SelectValue placeholder="Select mode" />
-          </SelectTrigger>
-          <SelectContent className="p-1">
-            <SelectItem className="py-1" value="new-tab">
-              Open in new tab
-            </SelectItem>
-            <SelectItem className="py-1" value="replace-current">
-              Replace current tab
-            </SelectItem>
-          </SelectContent>
-        </Select>
-      </SettingsRow>
-    </SettingsBlock>
-  )
+  return <OpenCodeProvidersSettings />
 }
-
 function CliToolsSettings() {
   const { cliTools, installCliTool } = useStore()
   const [cliToolSearchQuery, setCliToolSearchQuery] = useState("")

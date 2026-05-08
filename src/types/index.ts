@@ -14,6 +14,18 @@ export interface AgentMessage {
   role: 'user' | 'assistant';
   content: string;
   createdAt: number;
+  toolCalls?: Array<{
+    id?: string | null;
+    callID?: string | null;
+    tool: string;
+    status: "pending" | "running" | "completed" | "error" | string;
+    title?: string | null;
+    input?: unknown;
+    output?: string | null;
+    error?: string | null;
+    startedAt?: number | null;
+    endedAt?: number | null;
+  }> | null;
 }
 
 export interface Session {
@@ -28,6 +40,10 @@ export interface Session {
   commandCount?: number | null;
   startupDurationMs?: number | null;
   agentMessages?: AgentMessage[] | null;
+  opencodeSessionId?: string | null;
+  opencodeProviderId?: string | null;
+  opencodeModelId?: string | null;
+  opencodeModelVariant?: string | null;
 }
 
 export interface CliTool {

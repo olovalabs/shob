@@ -12,7 +12,7 @@ import {
   normalizeOptionalDuration,
 } from '../utils';
 import { CLI_CATALOG, DEFAULT_CLI_ID, type CliProbeResult } from '../config/check';
-import type { Project, Session, CliTool } from '../types';
+import type { Project, Session, CliTool, AgentMessage } from '../types';
 import {
   DEFAULT_APPEARANCE_THEME_ID,
   DEFAULT_COLOR_SCHEME,
@@ -115,7 +115,15 @@ interface AppState {
   addSession: (projectId: string, shell: string) => Promise<Session>;
   launchCliSession: (projectId: string, cliId?: string | null) => Promise<Session>;
   launchAgentSession: (projectId: string) => Promise<Session>;
-  appendAgentMessage: (projectId: string, sessionId: string, message: { role: 'user' | 'assistant'; content: string }) => Promise<void>;
+  appendAgentMessage: (
+    projectId: string,
+    sessionId: string,
+    message: {
+      role: 'user' | 'assistant';
+      content: string;
+      toolCalls?: AgentMessage["toolCalls"] | null;
+    },
+  ) => Promise<void>;
   renameSession: (projectId: string, sessionId: string, name: string) => Promise<void>;
   updateSession: (projectId: string, sessionId: string, updates: Partial<Session>) => Promise<void>;
   removeSession: (projectId: string, sessionId: string) => Promise<void>;
@@ -410,6 +418,7 @@ export const useStore = create<AppState>((set, get) => ({
       id: crypto.randomUUID(),
       role: message.role,
       content: message.content,
+      toolCalls: message.toolCalls ?? null,
       createdAt: now,
     };
 

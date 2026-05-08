@@ -15,6 +15,12 @@ electron-dist
 release
 *.local
 
+!vendor/
+!vendor/opencode/
+!vendor/opencode/server/
+!vendor/opencode/server/dist/
+!vendor/opencode/server/dist/**
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
