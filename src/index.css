@@ -757,7 +757,7 @@ button {
   background: radial-gradient(circle, var(--ring) 0%, transparent 70%);
   filter: blur(110px);
   opacity: 0.08;
-  animation: agent-float 18s infinite alternate ease-in-out;
+  animation: none;
 }
 
 .agent-blob-1 {
@@ -807,7 +807,7 @@ button {
 }
 
 .agent-fade-up {
-  animation: agent-fade-up 520ms var(--ease-out-expo) both;
+  animation: none;
 }
 
 @keyframes agent-fade-up {
@@ -834,7 +834,7 @@ button {
 }
 
 .agent-message-bubble {
-  animation: agent-fade-up 360ms var(--ease-out-expo) both;
+  animation: none;
 }
 
 .agent-choice-card {

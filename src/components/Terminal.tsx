@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { memo, useCallback, useEffect, useRef, useState } from "react"
 import { Terminal as XTerm } from "@xterm/xterm"
 import { FitAddon } from "@xterm/addon-fit"
 import { WebLinksAddon } from "@xterm/addon-web-links"
@@ -222,7 +222,7 @@ function parseCliInvocation(input: string): { cliTool: string; promptText: strin
   }
 }
 
-export function Terminal({ sessionId, isActive = true, shouldBoot = true }: TerminalProps) {
+function TerminalComponent({ sessionId, isActive = true, shouldBoot = true }: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null)
   const xtermRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -1104,8 +1104,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
       className="terminal-container absolute inset-0 h-full w-full min-h-0 min-w-0 overflow-hidden rounded-none border-0 bg-background p-0"
       data-active={isActive ? "true" : "false"}
       style={{
-        visibility: isActive ? "visible" : "hidden",
-        pointerEvents: isActive ? "auto" : "none",
+        display: isActive ? undefined : "none",
       }}
     >
       <div className="absolute right-4 top-2 z-10 flex items-center gap-1 opacity-0 transition-opacity hover:opacity-100 group-hover:opacity-100 terminal-toolbar">
@@ -1212,3 +1211,11 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
     </Card>
   )
 }
+
+export const Terminal = memo(
+  TerminalComponent,
+  (prev, next) =>
+    prev.sessionId === next.sessionId
+    && prev.isActive === next.isActive
+    && prev.shouldBoot === next.shouldBoot,
+)

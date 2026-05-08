@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react"
-import { ArrowUp, GitBranch, Sparkles, StopCircle } from "lucide-react"
+import { memo, useEffect, useMemo, useRef, useState } from "react"
+import { ArrowUp, ChevronDown, GitBranch, Plus, Sparkles, StopCircle } from "lucide-react"
 import { useStore } from "../store"
 import { Button } from "@/components/ui/button"
 
@@ -39,7 +39,7 @@ const formatRelativeTime = (ts: number) => {
   return `${days}d ago`
 }
 
-export function AgentView({ sessionId, isActive = true }: AgentViewProps) {
+function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
   const project = useStore((state) => {
     for (const p of state.projects) {
       const s = p.sessions.find((item) => item.id === sessionId)
@@ -60,7 +60,12 @@ export function AgentView({ sessionId, isActive = true }: AgentViewProps) {
 
   const [input, setInput] = useState("")
   const [isThinking, setIsThinking] = useState(false)
+  const [composerMode, setComposerMode] = useState<"build" | "plan">("build")
+  const [selectedModel, setSelectedModel] = useState("gpt-5")
+  const [modelPower, setModelPower] = useState("high")
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const thinkingTimerRef = useRef<number | null>(null)
 
@@ -103,18 +108,22 @@ export function AgentView({ sessionId, isActive = true }: AgentViewProps) {
     autoGrow()
   }, [input])
 
-  const canSubmit = input.trim().length > 0 && !isThinking && !!project && !!session
+  const canSubmit = (input.trim().length > 0 || attachedFiles.length > 0) && !isThinking && !!project && !!session
 
   const handleSubmit = async () => {
     if (!canSubmit || !project || !session) return
 
     const text = input.trim()
+    const attachmentLine =
+      attachedFiles.length > 0 ? `\n\nAttached files: ${attachedFiles.map((file) => file.name).join(", ")}` : ""
+    const metaLine = `\n\nMode: ${composerMode} | Model: ${selectedModel} | Power: ${modelPower}`
     setInput("")
+    setAttachedFiles([])
     autoGrow()
 
     await appendAgentMessage(project.id, session.id, {
       role: "user",
-      content: text,
+      content: `${text}${attachmentLine}${metaLine}`.trim(),
     })
 
     setIsThinking(true)
@@ -144,13 +153,21 @@ export function AgentView({ sessionId, isActive = true }: AgentViewProps) {
     })
   }
 
+  const handlePickFiles = () => fileInputRef.current?.click()
+
+  const handleFilesSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files
+    if (!files || files.length === 0) return
+    setAttachedFiles(Array.from(files))
+    event.target.value = ""
+  }
+
   return (
     <div
       className="agent-container absolute inset-0 flex h-full w-full flex-col"
       data-active={isActive ? "true" : "false"}
       style={{
-        visibility: isActive ? "visible" : "hidden",
-        pointerEvents: isActive ? "auto" : "none",
+        display: isActive ? "flex" : "none",
       }}
     >
       <div className="agent-bg" aria-hidden />
@@ -265,7 +282,7 @@ export function AgentView({ sessionId, isActive = true }: AgentViewProps) {
 
       <div className="relative z-[1] shrink-0 px-4 pb-5 pt-3 sm:px-6">
         <div className="agent-fade-up mx-auto w-full max-w-[780px]">
-          <div className="agent-composer flex flex-col gap-2 p-2.5">
+          <div className="agent-composer relative overflow-hidden rounded-[16px] border border-border/70 bg-card/85">
             <textarea
               ref={textareaRef}
               value={input}
@@ -278,20 +295,96 @@ export function AgentView({ sessionId, isActive = true }: AgentViewProps) {
               }
               disabled={!project}
               rows={1}
-              className="w-full resize-none bg-transparent px-2.5 pt-2 text-[14px] leading-[1.5] text-foreground placeholder:text-muted-foreground/70 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+              className="w-full max-h-[200px] min-h-[52px] resize-none overflow-y-auto bg-transparent px-3.5 pb-14 pt-3 text-[14px] leading-[1.5] text-foreground placeholder:text-muted-foreground/70 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
             />
 
-            <div className="flex items-center justify-between gap-2 px-1">
-              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground/80">
-                <kbd className="rounded border border-border/70 bg-background/70 px-1.5 py-[1px] font-mono text-[10px] text-muted-foreground">
-                  Enter
-                </kbd>
-                <span>to send</span>
-                <span className="mx-1 text-muted-foreground/30">\u00b7</span>
-                <kbd className="rounded border border-border/70 bg-background/70 px-1.5 py-[1px] font-mono text-[10px] text-muted-foreground">
-                  Shift+Enter
-                </kbd>
-                <span>for a new line</span>
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-x-0 bottom-[42px] h-7"
+              style={{ background: "linear-gradient(to top, var(--card), transparent)" }}
+            />
+
+            <div className="absolute inset-x-0 bottom-0 z-[2] flex items-center justify-between gap-2 px-2.5 py-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={handleFilesSelected}
+              />
+
+              <div className="flex min-w-0 flex-1 items-center gap-1 pointer-events-auto">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="h-6 w-6 rounded-full border border-border/70 bg-card/90 text-foreground shadow-xs hover:bg-accent/70"
+                  onClick={handlePickFiles}
+                  title="Add files"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </Button>
+
+                <div className="inline-flex items-center gap-0.5 rounded-md border border-border/70 bg-card/90 p-0.5 shadow-xs">
+                  <button
+                    type="button"
+                    onClick={() => setComposerMode("build")}
+                    className={`rounded px-2 py-1 text-[11px] leading-none transition-colors ${
+                      composerMode === "build"
+                        ? "bg-accent/85 text-foreground"
+                        : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                    }`}
+                  >
+                    Build
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setComposerMode("plan")}
+                    className={`rounded px-2 py-1 text-[11px] leading-none transition-colors ${
+                      composerMode === "plan"
+                        ? "bg-accent/85 text-foreground"
+                        : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                    }`}
+                  >
+                    Plan
+                  </button>
+                </div>
+
+                <div className="relative max-w-[140px]">
+                  <select
+                    value={selectedModel}
+                    onChange={(event) => setSelectedModel(event.target.value)}
+                    className="h-7 w-full appearance-none rounded-md border border-border/70 bg-card/90 pl-2 pr-6 text-[11px] text-foreground shadow-xs outline-none transition-colors hover:bg-accent/55"
+                    title="Model"
+                  >
+                    <option value="gpt-5">GPT-5</option>
+                    <option value="gpt-5.4">GPT-5.4</option>
+                    <option value="gpt-5.4-mini">GPT-5.4-Mini</option>
+                    <option value="gpt-5.3-codex">GPT-5.3-Codex</option>
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                </div>
+
+                <div className="relative max-w-[95px]">
+                  <select
+                    value={modelPower}
+                    onChange={(event) => setModelPower(event.target.value)}
+                    className="h-7 w-full appearance-none rounded-md border border-border/70 bg-card/90 pl-2 pr-6 text-[11px] text-foreground shadow-xs outline-none transition-colors hover:bg-accent/55"
+                    title="Model power"
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="xhigh">XHigh</option>
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                </div>
+
+                {attachedFiles.length > 0 && (
+                  <span className="truncate text-[11px] text-muted-foreground">
+                    {attachedFiles.length} file{attachedFiles.length > 1 ? "s" : ""} selected
+                  </span>
+                )}
               </div>
 
               {isThinking ? (
@@ -306,7 +399,7 @@ export function AgentView({ sessionId, isActive = true }: AgentViewProps) {
                     }
                     setIsThinking(false)
                   }}
-                  className="h-8 gap-1.5 rounded-full px-3"
+                  className="pointer-events-auto h-8 gap-1.5 rounded-full px-3"
                 >
                   <StopCircle className="h-3.5 w-3.5" />
                   Stop
@@ -317,7 +410,7 @@ export function AgentView({ sessionId, isActive = true }: AgentViewProps) {
                   size="icon-sm"
                   onClick={() => void handleSubmit()}
                   disabled={!canSubmit}
-                  className="h-8 w-8 rounded-full"
+                  className="pointer-events-auto h-8 w-8 rounded-full"
                   title="Send (Enter)"
                 >
                   <ArrowUp className="h-4 w-4" strokeWidth={2.2} />
@@ -330,3 +423,8 @@ export function AgentView({ sessionId, isActive = true }: AgentViewProps) {
     </div>
   )
 }
+
+export const AgentView = memo(
+  AgentViewComponent,
+  (prev, next) => prev.sessionId === next.sessionId && prev.isActive === next.isActive,
+)
