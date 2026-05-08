@@ -17,7 +17,9 @@ import {
   SquareTerminal,
 } from "lucide-react"
 import { nativeApi } from "../services/native"
+import { AgentView } from "./AgentView"
 import { BottomTerminalPanel } from "./BottomTerminalPanel"
+import { NewSessionChoiceDialog } from "./NewSessionChoiceDialog"
 import { Sidebar } from "./Sidebar"
 import { SettingsPage } from "./SettingsPage"
 import { TabBar } from "./TabBar"
@@ -92,6 +94,7 @@ export function MainView() {
   const addProject = useStore((state) => state.addProject)
   const setCurrentProject = useStore((state) => state.setCurrentProject)
   const launchCliSession = useStore((state) => state.launchCliSession)
+  const launchAgentSession = useStore((state) => state.launchAgentSession)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null)
   const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>("file-tree")
@@ -101,6 +104,7 @@ export function MainView() {
   const [bottomTerminalHeight, setBottomTerminalHeight] = useState(BOTTOM_TERMINAL_DEFAULT_HEIGHT)
   const [isAddPanelMenuOpen, setIsAddPanelMenuOpen] = useState(false)
   const [bootedSessionIds, setBootedSessionIds] = useState<Set<string>>(new Set())
+  const [isNewSessionChoiceOpen, setIsNewSessionChoiceOpen] = useState(false)
   const projectSessions = useMemo(() => currentProject?.sessions ?? [], [currentProject])
   const allSessions = useMemo(() => projects.flatMap((p) => p.sessions), [projects])
   const isFileTreeVisible = isRightPanelVisible && rightPanelMode === "file-tree"
@@ -249,10 +253,30 @@ export function MainView() {
     setCurrentProject(created.id)
   }
 
-  const handleCreateSession = async () => {
+  const handleCreateSession = () => {
+    if (!currentProjectId) return
+    setIsNewSessionChoiceOpen(true)
+  }
+
+  const handlePickAgent = useCallback(async () => {
+    if (!currentProjectId) return
+    await launchAgentSession(currentProjectId)
+  }, [currentProjectId, launchAgentSession])
+
+  const handlePickTerminal = useCallback(async () => {
     if (!currentProjectId) return
     await launchCliSession(currentProjectId)
-  }
+  }, [currentProjectId, launchCliSession])
+
+  useEffect(() => {
+    const handleOpenChoice = () => {
+      if (!currentProjectId) return
+      setIsNewSessionChoiceOpen(true)
+    }
+
+    window.addEventListener("gg-open-new-session-choice", handleOpenChoice)
+    return () => window.removeEventListener("gg-open-new-session-choice", handleOpenChoice)
+  }, [currentProjectId])
 
   useEffect(() => {
     const handleOpenBottomTerminal = () => setIsBottomTerminalVisible(true)
@@ -277,6 +301,16 @@ export function MainView() {
                     {allSessions.map((session) => {
                       const shouldBoot = bootedSessionIds.has(session.id)
                       if (!shouldBoot) return null
+
+                      if (session.kind === "agent") {
+                        return (
+                          <AgentView
+                            key={session.id}
+                            sessionId={session.id}
+                            isActive={session.id === activeSessionId}
+                          />
+                        )
+                      }
 
                       return (
                         <Terminal
@@ -366,7 +400,7 @@ export function MainView() {
                       size="icon-xs"
                       className="h-7 w-7 text-muted-foreground hover:text-foreground"
                       disabled={!currentProject?.path}
-                      onClick={() => void handleCreateSession()}
+                      onClick={handleCreateSession}
                       title="Run"
                     >
                       <Play className="h-3.5 w-3.5" />
@@ -452,6 +486,13 @@ export function MainView() {
           )}
         </div>
       </div>
+
+      <NewSessionChoiceDialog
+        open={isNewSessionChoiceOpen}
+        onOpenChange={setIsNewSessionChoiceOpen}
+        onSelectAgent={() => void handlePickAgent()}
+        onSelectTerminal={() => void handlePickTerminal()}
+      />
     </div>
   )
 }

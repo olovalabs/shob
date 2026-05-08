@@ -1,4 +1,4 @@
-import { Plus, SquareTerminal, X } from "lucide-react"
+import { Plus, SquareTerminal, X, Sparkles } from "lucide-react"
 import { CliAvatar } from "./CliAvatar"
 import { getCliDisplayLabel } from "../config/cli-ui"
 import { useStore } from "../store"
@@ -8,6 +8,12 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 
 const compactTitle = (title: string, maxChars: number) =>
   title.length > maxChars ? `${title.slice(0, Math.max(1, maxChars - 1))}…` : title
@@ -18,8 +24,9 @@ export function TabBar() {
     currentProjectId,
     activeSessionId,
     setActiveSession,
-    launchCliSession,
     removeSession,
+    launchAgentSession,
+    addSession,
   } = useStore()
 
   const currentProject = projects.find((project) => project.id === currentProjectId) ?? null
@@ -29,8 +36,15 @@ export function TabBar() {
 
   if (!currentProject) return null
 
-  const handleLaunchSession = async () => {
-    await launchCliSession(currentProjectId!)
+  const handleLaunchAgentSession = async () => {
+    if (!currentProjectId) return
+    await launchAgentSession(currentProjectId)
+  }
+
+  const handleLaunchTerminalSession = async () => {
+    if (!currentProjectId) return
+    const shell = 'powershell.exe'
+    await addSession(currentProjectId, shell)
   }
 
   const handleCloseSession = (sessionId: string) => {
@@ -96,16 +110,29 @@ export function TabBar() {
             </TabsList>
           </Tabs>
 
-          <Button
-            type="button"
-            onClick={() => handleLaunchSession()}
-            variant="ghost"
-            size="icon-sm"
-            className="chrome-tab-new-button mb-[4px] ml-1 h-7 w-7 shrink-0 rounded-full"
-            title="New session"
-          >
-            <Plus className="h-4 w-4" strokeWidth={2} />
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="chrome-tab-new-button mb-[4px] ml-1 h-7 w-7 shrink-0 rounded-full"
+                title="New session"
+              >
+                <Plus className="h-4 w-4" strokeWidth={2} />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-[140px]">
+              <DropdownMenuItem onClick={handleLaunchAgentSession} className="flex items-center gap-2">
+                <Sparkles className="h-3.5 w-3.5" strokeWidth={1.7} />
+                Agent
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleLaunchTerminalSession} className="flex items-center gap-2">
+                <SquareTerminal className="h-3.5 w-3.5" strokeWidth={1.7} />
+                Terminal
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
     </div>

@@ -99,9 +99,10 @@ export function Sidebar() {
     addProject,
     updateProject,
     deleteProject,
-    launchCliSession,
     removeSession,
     setActivePage,
+    launchAgentSession,
+    addSession,
   } = useStore()
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({})
   const [isSessionPaneVisible, setIsSessionPaneVisible] = useState(true)
@@ -303,9 +304,19 @@ export function Sidebar() {
     setExpandedProjects((current) => ({ ...current, [created.id]: true }))
   }
 
-  const handleCreateSession = async (projectId: string) => {
-    await launchCliSession(projectId)
+  const handleCreateAgentSession = async (projectId: string) => {
+    setCurrentProject(projectId)
     setExpandedProjects((current) => ({ ...current, [projectId]: true }))
+    await launchAgentSession(projectId)
+  }
+
+  const handleCreateTerminalSession = async (projectId: string) => {
+    setCurrentProject(projectId)
+    setExpandedProjects((current) => ({ ...current, [projectId]: true }))
+    const project = projects.find((p) => p.id === projectId)
+    if (!project) return
+    const shell = 'powershell.exe'
+    await addSession(projectId, shell)
   }
 
   const handleDeleteProject = async (projectId: string) => {
@@ -497,9 +508,15 @@ export function Sidebar() {
                             <DropdownMenuContent align="end" className={`w-[146px] ${SIDEBAR_MENU_CLASS}`}>
                               <DropdownMenuItem
                                 className={SIDEBAR_MENU_ITEM_CLASS}
-                                onClick={() => void handleCreateSession(project.id)}
+                                onClick={() => handleCreateAgentSession(project.id)}
                               >
-                                New session
+                                Agent
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className={SIDEBAR_MENU_ITEM_CLASS}
+                                onClick={() => handleCreateTerminalSession(project.id)}
+                              >
+                                Terminal
                               </DropdownMenuItem>
                               <DropdownMenuItem
                                 className={SIDEBAR_MENU_ITEM_CLASS}
@@ -520,13 +537,22 @@ export function Sidebar() {
 
                         <div className="space-y-0.5">
                           {visibleSessions.length === 0 ? (
-                            <button
-                              type="button"
-                              onClick={() => void handleCreateSession(project.id)}
-                              className="ml-7 flex h-8 w-[calc(100%-1.75rem)] items-center rounded-[8px] px-2 text-left text-[13px] font-medium text-sidebar-foreground/55 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
-                            >
-                              Create session
-                            </button>
+                            <div className="ml-7 flex w-[calc(100%-1.75rem)] flex-col gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleCreateAgentSession(project.id)}
+                                className="flex h-8 items-center rounded-[8px] px-2 text-left text-[13px] font-medium text-sidebar-foreground/55 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+                              >
+                                Agent
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleCreateTerminalSession(project.id)}
+                                className="flex h-8 items-center rounded-[8px] px-2 text-left text-[13px] font-medium text-sidebar-foreground/55 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+                              >
+                                Terminal
+                              </button>
+                            </div>
                           ) : (
                             visibleSessions.map((session, index) => {
                               const isActiveSession = activeSessionId === session.id

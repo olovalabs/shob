@@ -62,10 +62,12 @@ const normalizeProjects = (projects: Project[]): Project[] =>
     sessions: project.sessions.map((session) => ({
       ...session,
       name: sanitizeSessionName(session.name) || session.name,
+      kind: session.kind ?? 'terminal',
       createdAt: inferSessionCreatedAt(session),
       lastActiveAt: inferSessionLastActiveAt(session),
       commandCount: normalizeSessionCounter(session.commandCount),
       startupDurationMs: normalizeOptionalDuration(session.startupDurationMs),
+      agentMessages: Array.isArray(session.agentMessages) ? session.agentMessages : null,
     })),
   }));
 
@@ -112,6 +114,8 @@ interface AppState {
   
   addSession: (projectId: string, shell: string) => Promise<Session>;
   launchCliSession: (projectId: string, cliId?: string | null) => Promise<Session>;
+  launchAgentSession: (projectId: string) => Promise<Session>;
+  appendAgentMessage: (projectId: string, sessionId: string, message: { role: 'user' | 'assistant'; content: string }) => Promise<void>;
   renameSession: (projectId: string, sessionId: string, name: string) => Promise<void>;
   updateSession: (projectId: string, sessionId: string, updates: Partial<Session>) => Promise<void>;
   removeSession: (projectId: string, sessionId: string) => Promise<void>;
@@ -315,6 +319,7 @@ export const useStore = create<AppState>((set, get) => ({
       id: crypto.randomUUID(),
       name: `Terminal ${createdAt}`,
       shell,
+      kind: 'terminal',
       cliTool: null,
       pendingLaunchCommand: null,
       createdAt,
@@ -348,6 +353,85 @@ export const useStore = create<AppState>((set, get) => ({
     return session;
   },
 
+  launchAgentSession: async (projectId: string) => {
+    const state = get();
+    const createdAt = Date.now();
+    const shell =
+      state.availableShells.find((item) => item === state.preferredShell) ??
+      state.availableShells[0] ??
+      state.preferredShell ??
+      'powershell.exe';
+
+    const session: Session = {
+      id: crypto.randomUUID(),
+      name: `Agent ${createdAt}`,
+      shell,
+      kind: 'agent',
+      cliTool: null,
+      pendingLaunchCommand: null,
+      createdAt,
+      lastActiveAt: createdAt,
+      commandCount: 0,
+      startupDurationMs: null,
+      agentMessages: [],
+    };
+
+    const project = state.projects.find((p) => p.id === projectId);
+    if (!project) throw new Error('Project not found');
+
+    const updatedProject = {
+      ...project,
+      sessions: [...project.sessions, session],
+    };
+
+    await api.saveProject(updatedProject);
+    setStoredValue(STORAGE_KEYS.currentProjectId, projectId);
+    setStoredValue(STORAGE_KEYS.activeSessionId, session.id);
+
+    set((currentState) => ({
+      projects: currentState.projects.map((p) => (p.id === projectId ? updatedProject : p)),
+      currentProjectId: projectId,
+      activeSessionId: session.id,
+      activePage: 'workspace',
+    }));
+
+    return session;
+  },
+
+  appendAgentMessage: async (projectId: string, sessionId: string, message) => {
+    const state = get();
+    const project = state.projects.find((p) => p.id === projectId);
+    if (!project) return;
+    const session = project.sessions.find((s) => s.id === sessionId);
+    if (!session) return;
+
+    const now = Date.now();
+    const nextMessage = {
+      id: crypto.randomUUID(),
+      role: message.role,
+      content: message.content,
+      createdAt: now,
+    };
+
+    const updatedProject: Project = {
+      ...project,
+      sessions: project.sessions.map((item) =>
+        item.id === sessionId
+          ? {
+              ...item,
+              agentMessages: [...(item.agentMessages ?? []), nextMessage],
+              lastActiveAt: now,
+            }
+          : item,
+      ),
+    };
+
+    await api.saveProject(updatedProject);
+    set((currentState) => ({
+      projects: currentState.projects.map((item) => (item.id === projectId ? updatedProject : item)),
+    }));
+  },
+
   launchCliSession: async (projectId: string, cliId?: string | null) => {
     const state = get();
     const createdAt = Date.now();
@@ -368,6 +452,7 @@ export const useStore = create<AppState>((set, get) => ({
       id: crypto.randomUUID(),
       name: `Terminal ${createdAt}`,
       shell,
+      kind: 'terminal',
       cliTool: selectedCli?.id ?? null,
       pendingLaunchCommand: selectedCli?.matchedCommand ?? null,
       createdAt,

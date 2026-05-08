@@ -5,3 +5,5 @@ export { MainView } from './MainView';
 export { FileTree } from './FileTree';
 export { CliAvatar } from './CliAvatar';
 export { TitleBar } from './TitleBar';
+export { AgentView } from './AgentView';
+export { NewSessionChoiceDialog } from './NewSessionChoiceDialog';

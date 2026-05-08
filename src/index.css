@@ -726,6 +726,147 @@ button {
 }
 
 /* ═══════════════════════════════════════════════════
+   AGENT UI — better-code inspired glassmorphism
+   ═══════════════════════════════════════════════════ */
+.agent-container {
+  position: relative;
+  overflow: hidden;
+  background: var(--background);
+}
+
+.agent-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% -20%,
+      color-mix(in oklch, var(--ring) 12%, transparent) 0%,
+      transparent 55%),
+    radial-gradient(circle at 50% 110%,
+      color-mix(in oklch, var(--card) 60%, transparent) 0%,
+      transparent 60%);
+}
+
+.agent-blob {
+  position: absolute;
+  width: 460px;
+  height: 460px;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(circle, var(--ring) 0%, transparent 70%);
+  filter: blur(110px);
+  opacity: 0.08;
+  animation: agent-float 18s infinite alternate ease-in-out;
+}
+
+.agent-blob-1 {
+  top: -8%;
+  left: -8%;
+  animation-delay: 0s;
+}
+
+.agent-blob-2 {
+  bottom: -5%;
+  right: -8%;
+  opacity: 0.05;
+  animation-delay: -6s;
+  background: radial-gradient(circle,
+    color-mix(in oklch, var(--chart-4) 85%, var(--ring)) 0%,
+    transparent 70%);
+}
+
+@keyframes agent-float {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(40px, 26px) scale(1.08); }
+}
+
+.agent-glass {
+  background: color-mix(in oklch, var(--card) 72%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid color-mix(in oklch, var(--border) 75%, transparent);
+  transition: all var(--duration-base) var(--ease-snappy);
+}
+
+.agent-glass:hover {
+  background: color-mix(in oklch, var(--card) 88%, transparent);
+  border-color: color-mix(in oklch, var(--border) 100%, var(--foreground) 6%);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 30px -14px rgba(0, 0, 0, 0.5);
+}
+
+.agent-hero-text {
+  background: linear-gradient(135deg,
+    var(--foreground) 0%,
+    color-mix(in oklch, var(--muted-foreground) 70%, var(--foreground) 30%) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+.agent-fade-up {
+  animation: agent-fade-up 520ms var(--ease-out-expo) both;
+}
+
+@keyframes agent-fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.agent-composer {
+  background: color-mix(in oklch, var(--card) 82%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid color-mix(in oklch, var(--border) 85%, transparent);
+  border-radius: calc(var(--radius) * 1.6);
+  transition:
+    border-color var(--duration-base) var(--ease-snappy),
+    box-shadow var(--duration-base) var(--ease-snappy);
+}
+
+.agent-composer:focus-within {
+  border-color: color-mix(in oklch, var(--ring) 55%, var(--border));
+  box-shadow:
+    0 0 0 3px color-mix(in oklch, var(--ring) 12%, transparent),
+    0 12px 40px -18px rgba(0, 0, 0, 0.5);
+}
+
+.agent-message-bubble {
+  animation: agent-fade-up 360ms var(--ease-out-expo) both;
+}
+
+.agent-choice-card {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.agent-choice-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(circle at 30% 0%,
+    color-mix(in oklch, var(--ring) 18%, transparent) 0%,
+    transparent 60%);
+  opacity: 0;
+  transition: opacity var(--duration-base) var(--ease-snappy);
+}
+
+.agent-choice-card:hover::before,
+.agent-choice-card:focus-visible::before {
+  opacity: 1;
+}
+
+.agent-choice-card[data-variant="agent"]::before {
+  background: radial-gradient(circle at 30% 0%,
+    color-mix(in oklch, var(--chart-4) 28%, transparent) 0%,
+    transparent 60%);
+}
+
+/* ═══════════════════════════════════════════════════
    STARTUP SPLASH
    ═══════════════════════════════════════════════════ */
 .startup-splash {
