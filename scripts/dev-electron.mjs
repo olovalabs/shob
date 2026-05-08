@@ -67,12 +67,12 @@ function spawnCmd(command, args, extraEnv = {}) {
   return child;
 }
 
-function spawnPnpm(args, extraEnv = {}) {
+function spawnBun(args, extraEnv = {}) {
   const npmExecPath = process.env.npm_execpath;
   if (npmExecPath && (npmExecPath.endsWith(".js") || npmExecPath.endsWith(".cjs"))) {
     return spawnCmd(process.execPath, [npmExecPath, ...args], extraEnv);
   }
-  return spawnCmd(process.platform === "win32" ? "pnpm.cmd" : "pnpm", args, extraEnv);
+  return spawnCmd(process.platform === "win32" ? "bun.exe" : "bun", args, extraEnv);
 }
 
 async function main() {
@@ -95,13 +95,13 @@ async function main() {
   process.on("SIGINT", () => shutdown(0));
   process.on("SIGTERM", () => shutdown(0));
 
-  const tsc = spawnPnpm(["run", "dev:electron:tsc"]);
+  const tsc = spawnBun(["run", "dev:electron:tsc"]);
   children.push(tsc);
   tsc.on("exit", (code) => {
     if (!shuttingDown && code !== 0) shutdown(code || 1);
   });
 
-  const vite = spawnPnpm(["exec", "vite", "--host", host, "--port", String(port)]);
+  const vite = spawnBun(["x", "vite", "--host", host, "--port", String(port)]);
   children.push(vite);
   vite.on("exit", (code) => {
     if (!shuttingDown && code !== 0) shutdown(code || 1);
@@ -110,7 +110,7 @@ async function main() {
   await waitForFile(electronMain);
   await waitForHttp(devUrl);
 
-  const electron = spawnPnpm(["exec", "cross-env", `VITE_DEV_SERVER_URL=${devUrl}`, "electron", "."], {
+  const electron = spawnBun(["x", "cross-env", `VITE_DEV_SERVER_URL=${devUrl}`, "electron", "."], {
     VITE_DEV_SERVER_URL: devUrl,
   });
   children.push(electron);

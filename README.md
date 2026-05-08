@@ -17,7 +17,7 @@ It helps you keep parallel sessions focused, persistent, and easy to switch betw
 - React 19 + TypeScript
 - Vite
 - Electron
-- pnpm
+- Bun
 
 ## Project Structure
 
@@ -29,30 +29,30 @@ It helps you keep parallel sessions focused, persistent, and easy to switch betw
 ## Requirements
 
 - Node.js 22+
-- pnpm
+- Bun
 
 ## Quick Start
 
 ```bash
-pnpm install
-pnpm electron
+bun install
+bun run electron
 ```
 
 ## Build
 
 ```bash
-pnpm build
-pnpm build:electron
+bun run build
+bun run build:electron
 ```
 
 ## Scripts
 
-- `pnpm dev`: Start Vite dev server
-- `pnpm electron`: Run Electron app in development
-- `pnpm build`: Type-check and build frontend
-- `pnpm build:electron`: Build desktop installers with electron-builder
-- `pnpm lint`: Run ESLint
-- `pnpm preview`: Preview production frontend build
+- `bun run dev`: Start Vite dev server
+- `bun run electron`: Run Electron app in development
+- `bun run build`: Type-check and build frontend
+- `bun run build:electron`: Build desktop installers with electron-builder
+- `bun run lint`: Run ESLint
+- `bun run preview`: Preview production frontend build
 
 ## Release
 
