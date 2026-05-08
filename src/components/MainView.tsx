@@ -34,7 +34,7 @@ const FileTree = lazy(async () => {
 })
 
 const RIGHT_PANEL_MIN_WIDTH = 320
-const RIGHT_PANEL_DEFAULT_WIDTH = 392
+const RIGHT_PANEL_DEFAULT_WIDTH = 320
 const RIGHT_PANEL_MAX_WIDTH = 760
 const MAIN_CONTENT_MIN_WIDTH = 520
 const BOTTOM_TERMINAL_MIN_HEIGHT = 180
@@ -57,7 +57,7 @@ const clampRightPanelWidth = (width: number, workspaceWidth?: number) => {
 
 const getInitialRightPanelWidth = () => {
   if (typeof window === "undefined") return RIGHT_PANEL_DEFAULT_WIDTH
-  return clampRightPanelWidth(Math.round(window.innerWidth * 0.34), window.innerWidth)
+  return clampRightPanelWidth(RIGHT_PANEL_DEFAULT_WIDTH, window.innerWidth)
 }
 
 type RightPanelMode = "review" | "file-tree"
@@ -106,7 +106,6 @@ export function MainView() {
   const [bootedSessionIds, setBootedSessionIds] = useState<Set<string>>(new Set())
   const [isNewSessionChoiceOpen, setIsNewSessionChoiceOpen] = useState(false)
   const projectSessions = useMemo(() => currentProject?.sessions ?? [], [currentProject])
-  const allSessions = useMemo(() => projects.flatMap((p) => p.sessions), [projects])
   const isFileTreeVisible = isRightPanelVisible && rightPanelMode === "file-tree"
   const isWorkspacePage = activePage === "workspace"
 
@@ -295,10 +294,10 @@ export function MainView() {
                 <>
                   <TabBar />
                   <div
-                    className="relative h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden"
+                    className="relative min-h-0 w-full min-w-0 flex-1 overflow-hidden"
                     style={{ display: projectSessions.length > 0 ? "block" : "none" }}
                   >
-                    {allSessions.map((session) => {
+                    {projectSessions.map((session) => {
                       const shouldBoot = bootedSessionIds.has(session.id)
                       if (!shouldBoot) return null
 
