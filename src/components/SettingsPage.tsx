@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react"
-import { Boxes, Check, Monitor, Moon, Palette, SlidersHorizontal, Sun, Terminal } from "lucide-react"
+import { Boxes, Check, ChevronDown, Monitor, Moon, Palette, SlidersHorizontal, Sun, Terminal } from "lucide-react"
 import { CliAvatar } from "./CliAvatar"
 import { useStore, type SettingsSection } from "../store"
 import {
@@ -8,6 +8,8 @@ import {
   type ColorScheme,
 } from "../theme"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
@@ -15,6 +17,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
 const SETTINGS_SECTIONS: {
@@ -38,17 +42,6 @@ const COLOR_SCHEME_OPTIONS: {
   { value: "dark", label: "Dark", icon: Moon },
 ]
 
-const TOKEN_PREVIEW_ITEMS = [
-  { label: "Background", value: "var(--background)" },
-  { label: "Surface", value: "var(--card)" },
-  { label: "Border", value: "var(--border)" },
-  { label: "Text", value: "var(--foreground)" },
-  { label: "Accent", value: "var(--ring)" },
-  { label: "Success", value: "var(--success)" },
-  { label: "Warning", value: "var(--warning)" },
-  { label: "Danger", value: "var(--destructive)" },
-] as const
-
 const getShellLabel = (shell: string) => {
   const name = shell.split(/[\\/]/).pop()
   return name || shell
@@ -64,22 +57,24 @@ function SettingsRow({
   children: ReactNode
 }) {
   return (
-    <div className="grid gap-3 border-b border-border px-4 py-4 last:border-b-0 md:grid-cols-[minmax(0,1fr)_minmax(260px,340px)] md:items-center md:px-5">
+    <div className="grid gap-3 border-b border-[var(--border)] px-4 py-3 last:border-b-0 md:grid-cols-[minmax(0,1fr)_minmax(260px,360px)] md:items-center">
       <div className="min-w-0">
-        <div className="text-sm font-semibold text-foreground">{title}</div>
-        {description ? <div className="mt-1 text-xs text-muted-foreground">{description}</div> : null}
+        <div className="text-sm font-medium text-[var(--foreground)]">{title}</div>
+        {description ? <div className="mt-1 text-xs text-[var(--muted-foreground)]">{description}</div> : null}
       </div>
       <div className="min-w-0">{children}</div>
     </div>
   )
 }
 
-function SettingsGroup({ title, children }: { title: string; children: ReactNode }) {
+function SettingsBlock({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="space-y-3">
-      <h2 className="px-1 text-sm font-semibold text-foreground">{title}</h2>
-      <div className="overflow-hidden rounded-lg border border-border bg-card">{children}</div>
-    </section>
+    <Card className="before:hidden">
+      <CardHeader className="border-b border-[var(--border)] pb-2">
+        <CardTitle className="text-sm">{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">{children}</CardContent>
+    </Card>
   )
 }
 
@@ -95,10 +90,10 @@ function GeneralSettings() {
   const installedCliTools = useMemo(() => cliTools.filter((tool) => tool.installed), [cliTools])
 
   return (
-    <SettingsGroup title="General">
+    <SettingsBlock title="General">
       <SettingsRow title="Default CLI" description="Used for newly-created sessions.">
         <div className="flex items-center gap-2">
-          <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted/50">
+          <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[var(--muted)]">
             <CliAvatar
               cliId={preferredCliId ?? installedCliTools[0]?.id ?? null}
               label="Default CLI"
@@ -109,7 +104,7 @@ function GeneralSettings() {
             value={preferredCliId ?? installedCliTools[0]?.id ?? ""}
             onValueChange={(value) => setPreferredCliTool(value || null)}
           >
-            <SelectTrigger className="h-10 w-full">
+            <SelectTrigger className="h-8 w-full">
               <SelectValue placeholder="Select CLI" />
             </SelectTrigger>
             <SelectContent className="p-1">
@@ -134,7 +129,7 @@ function GeneralSettings() {
           value={preferredShell ?? availableShells[0] ?? ""}
           onValueChange={(value) => setPreferredShell(value || null)}
         >
-          <SelectTrigger className="h-10 w-full">
+          <SelectTrigger className="h-8 w-full">
             <SelectValue placeholder="Select shell" />
           </SelectTrigger>
           <SelectContent className="p-1">
@@ -152,111 +147,93 @@ function GeneralSettings() {
           </SelectContent>
         </Select>
       </SettingsRow>
-    </SettingsGroup>
+    </SettingsBlock>
   )
 }
 
 function AppearanceSettings() {
   const { appearanceThemeId, colorScheme, setAppearanceTheme, setColorScheme } = useStore()
+  const activeTheme = APPEARANCE_THEMES.find((theme) => theme.id === appearanceThemeId) ?? APPEARANCE_THEMES[0]
+  const [themePickerOpen, setThemePickerOpen] = useState(false)
 
   return (
-    <div className="space-y-6">
-      <SettingsGroup title="Appearance">
+    <div className="space-y-4">
+      <SettingsBlock title="Appearance">
         <SettingsRow title="Color Scheme" description="Choose the base light or dark mode.">
-          <div className="grid grid-cols-3 rounded-lg border border-border bg-muted p-1">
-            {COLOR_SCHEME_OPTIONS.map((option) => {
-              const Icon = option.icon
-              const isActive = colorScheme === option.value
-
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => setColorScheme(option.value)}
-                  className={`flex h-9 items-center justify-center gap-2 rounded-md text-sm font-medium transition ${
-                    isActive
-                      ? "bg-card text-foreground shadow-sm"
-                      : "text-muted-foreground hover:bg-accent hover:text-foreground"
-                  }`}
-                >
-                  <Icon className="h-4 w-4" strokeWidth={1.9} />
-                  <span>{option.label}</span>
-                </button>
-              )
-            })}
-          </div>
+          <Tabs value={colorScheme} onValueChange={(value) => setColorScheme(value as ColorScheme)}>
+            <TabsList className="w-full" variant="default">
+              {COLOR_SCHEME_OPTIONS.map((option) => {
+                const Icon = option.icon
+                return (
+                  <TabsTrigger key={option.value} value={option.value} className="h-7 text-xs">
+                    <Icon className="h-3.5 w-3.5" strokeWidth={1.9} />
+                    <span>{option.label}</span>
+                  </TabsTrigger>
+                )
+              })}
+            </TabsList>
+          </Tabs>
         </SettingsRow>
 
         <SettingsRow title="Theme" description="Theme tokens are applied across chrome, panels, and terminals.">
-          <Select
-            value={appearanceThemeId}
-            onValueChange={(value) => setAppearanceTheme(value as AppearanceThemeId)}
-          >
-            <SelectTrigger className="h-10 w-full">
-              <SelectValue placeholder="Select theme" />
-            </SelectTrigger>
-            <SelectContent className="p-1">
-              {APPEARANCE_THEMES.map((theme) => (
-                <SelectItem className="py-1" key={theme.id} value={theme.id}>
-                  {theme.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </SettingsRow>
-      </SettingsGroup>
-
-      <SettingsGroup title="Theme Gallery">
-        <div className="grid gap-2 p-4 sm:grid-cols-2 xl:grid-cols-3">
-          {APPEARANCE_THEMES.map((theme) => {
-            const isActive = appearanceThemeId === theme.id
-
-            return (
-              <button
-                key={theme.id}
+          <Popover open={themePickerOpen} onOpenChange={setThemePickerOpen}>
+            <PopoverTrigger asChild>
+              <Button
                 type="button"
-                onClick={() => setAppearanceTheme(theme.id)}
-                className={`min-w-0 rounded-lg border p-3 text-left transition ${
-                  isActive
-                    ? "border-ring bg-accent text-foreground"
-                    : "border-border bg-background hover:border-ring/55 hover:bg-accent/55"
-                }`}
+                variant="outline"
+                className="h-8 w-full justify-between px-2.5 text-sm"
               >
-                <div className="flex items-center justify-between gap-3">
-                  <span className="truncate text-sm font-semibold">{theme.name}</span>
-                  {isActive ? <Check className="h-4 w-4 shrink-0 text-ring" strokeWidth={2} /> : null}
-                </div>
-                <div className="mt-3 grid grid-cols-4 gap-1">
-                  {theme.swatches.map((swatch) => (
-                    <span
-                      key={swatch}
-                      className="h-7 rounded-md border border-border/70"
-                      style={{ background: swatch }}
-                    />
-                  ))}
-                </div>
-              </button>
-            )
-          })}
-        </div>
-      </SettingsGroup>
-
-      <SettingsGroup title="Theme Tokens">
-        <div className="grid gap-2 p-4 sm:grid-cols-2 xl:grid-cols-4">
-          {TOKEN_PREVIEW_ITEMS.map((item) => (
-            <div key={item.label} className="rounded-lg border border-border bg-background p-3">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-xs font-medium text-muted-foreground">{item.label}</span>
-                <span
-                  className="h-6 w-6 shrink-0 rounded-md border border-border"
-                  style={{ background: item.value }}
-                />
+                <span className="truncate">{activeTheme.name}</span>
+                <ChevronDown className="h-4 w-4 text-[var(--muted-foreground)]" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-1.5">
+              <div className="max-h-64 overflow-y-auto">
+                {APPEARANCE_THEMES.map((theme) => {
+                  const isActive = theme.id === appearanceThemeId
+                  return (
+                    <button
+                      key={theme.id}
+                      type="button"
+                      onClick={() => {
+                        setAppearanceTheme(theme.id as AppearanceThemeId)
+                        setThemePickerOpen(false)
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition ${
+                        isActive ? "bg-[var(--accent)] text-[var(--foreground)]" : "hover:bg-[var(--muted)]"
+                      }`}
+                    >
+                      <span className="grid grid-cols-4 gap-0.5">
+                        {theme.swatches.slice(0, 4).map((swatch) => (
+                          <span
+                            key={`${theme.id}-${swatch}`}
+                            className="h-2.5 w-2.5 rounded-[3px] border border-[var(--border)]"
+                            style={{ background: swatch }}
+                          />
+                        ))}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate">{theme.name}</span>
+                      {isActive ? <Check className="h-3.5 w-3.5 shrink-0 text-[var(--ring)]" /> : null}
+                    </button>
+                  )
+                })}
               </div>
-              <div className="mt-3 h-1.5 rounded-full" style={{ background: item.value }} />
-            </div>
-          ))}
-        </div>
-      </SettingsGroup>
+            </PopoverContent>
+          </Popover>
+        </SettingsRow>
+        <SettingsRow title="Preview" description="Colors from the currently selected theme.">
+          <div className="grid grid-cols-4 gap-1.5">
+            {activeTheme.swatches.map((swatch) => (
+              <span
+                key={`${activeTheme.id}-${swatch}`}
+                className="h-7 rounded-md border border-[var(--border)]"
+                style={{ background: swatch }}
+              />
+            ))}
+          </div>
+        </SettingsRow>
+      </SettingsBlock>
+
     </div>
   )
 }
@@ -265,13 +242,13 @@ function ProvidersSettings() {
   const { cliLaunchMode, setCliLaunchMode } = useStore()
 
   return (
-    <SettingsGroup title="Providers">
+    <SettingsBlock title="Providers">
       <SettingsRow title="Provider Switch Mode" description="Controls how launcher changes open sessions.">
         <Select
           value={cliLaunchMode}
           onValueChange={(value) => setCliLaunchMode(value === "replace-current" ? "replace-current" : "new-tab")}
         >
-          <SelectTrigger className="h-10 w-full">
+          <SelectTrigger className="h-8 w-full">
             <SelectValue placeholder="Select mode" />
           </SelectTrigger>
           <SelectContent className="p-1">
@@ -284,7 +261,7 @@ function ProvidersSettings() {
           </SelectContent>
         </Select>
       </SettingsRow>
-    </SettingsGroup>
+    </SettingsBlock>
   )
 }
 
@@ -310,13 +287,13 @@ function CliToolsSettings() {
   }, [cliTools, cliToolSearchQuery])
 
   return (
-    <section className="flex min-h-0 flex-col gap-4">
+    <div className="flex min-h-0 flex-col gap-3">
       <div className="flex items-center gap-2">
-        <input
+        <Input
           value={cliToolSearchQuery}
           onChange={(event) => setCliToolSearchQuery(event.target.value)}
           placeholder="Search tools, status, command..."
-          className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
+          className="h-8"
         />
         {cliToolSearchQuery.trim() ? (
           <Button type="button" size="sm" variant="ghost" onClick={() => setCliToolSearchQuery("")}>
@@ -325,7 +302,7 @@ function CliToolsSettings() {
         ) : null}
       </div>
 
-      <div className="min-h-0 overflow-hidden rounded-lg border border-border bg-card">
+      <Card className="min-h-0 overflow-hidden before:hidden">
         <div className="thin-scrollbar max-h-[540px] overflow-y-auto">
           <Table>
             <TableHeader>
@@ -348,12 +325,12 @@ function CliToolsSettings() {
                     {tool.installed ? (
                       <span className="text-success">Installed</span>
                     ) : (
-                      <span className="text-muted-foreground">Not installed</span>
+                      <span className="text-[var(--muted-foreground)]">Not installed</span>
                     )}
                   </TableCell>
                   <TableCell className="text-right">
                     {tool.installed ? (
-                      <span className="text-sm text-muted-foreground">Ready</span>
+                      <span className="text-sm text-[var(--muted-foreground)]">Ready</span>
                     ) : (
                       <Button
                         size="sm"
@@ -368,7 +345,7 @@ function CliToolsSettings() {
               ))}
               {filteredCliTools.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={3} className="py-8 text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={3} className="py-8 text-center text-sm text-[var(--muted-foreground)]">
                     No tools found for "{cliToolSearchQuery.trim()}".
                   </TableCell>
                 </TableRow>
@@ -376,8 +353,8 @@ function CliToolsSettings() {
             </TableBody>
           </Table>
         </div>
-      </div>
-    </section>
+      </Card>
+    </div>
   )
 }
 
@@ -388,74 +365,67 @@ export function SettingsPage() {
   const activeSection = SETTINGS_SECTIONS.find((section) => section.id === activeSettingsSection) ?? SETTINGS_SECTIONS[0]
 
   return (
-    <div className="flex h-full min-h-0 bg-background text-foreground">
-      <aside className="hidden w-[220px] shrink-0 border-r border-border bg-card md:flex md:flex-col">
-        <div className="border-b border-border px-4 py-4">
-          <p className="text-sm font-semibold">Settings</p>
+    <div className="flex h-full min-h-0 bg-[var(--background)] text-[var(--foreground)]">
+      <aside className="hidden w-[236px] shrink-0 border-r border-[var(--border)] bg-[var(--card)] md:flex md:flex-col">
+        <div className="border-b border-[var(--border)] px-4 py-3">
+          <p className="text-sm font-medium">Settings</p>
         </div>
-        <nav className="flex flex-col gap-1 p-3">
+        <nav className="flex flex-col gap-1 p-2">
           {SETTINGS_SECTIONS.map((section) => {
             const Icon = section.icon
             const isActive = activeSettingsSection === section.id
 
             return (
-              <button
+              <Button
                 key={section.id}
                 type="button"
+                variant="ghost"
+                size="default"
                 onClick={() => setActiveSettingsSection(section.id)}
-                className={`flex h-10 items-center gap-3 rounded-lg px-3 text-left text-sm font-medium transition ${
-                  isActive
-                    ? "bg-accent text-foreground"
-                    : "text-muted-foreground hover:bg-accent/65 hover:text-foreground"
+                className={`h-8 w-full justify-start gap-2 px-2 text-left ${
+                  isActive ? "bg-[var(--accent)] text-[var(--foreground)]" : "text-[var(--muted-foreground)]"
                 }`}
               >
                 <Icon className="h-4 w-4 shrink-0" strokeWidth={1.9} />
                 <span>{section.label}</span>
-              </button>
+              </Button>
             )
           })}
         </nav>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background px-4 md:px-6">
+        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-[var(--border)] px-4 md:px-6">
           <Button
             type="button"
             variant="ghost"
             size="sm"
-            className="h-8 px-2 text-muted-foreground hover:text-foreground"
+            className="h-7 px-2 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
             onClick={() => setActivePage("workspace")}
           >
             Workspace
           </Button>
-          <div className="h-4 w-px bg-border" />
-          <h1 className="truncate text-base font-semibold">{activeSection.label}</h1>
+          <div className="h-4 w-px bg-[var(--border)]" />
+          <h1 className="truncate text-sm font-medium">{activeSection.label}</h1>
         </header>
 
-        <div className="border-b border-border bg-card px-3 py-2 md:hidden">
-          <div className="thin-scrollbar flex gap-1 overflow-x-auto">
-            {SETTINGS_SECTIONS.map((section) => {
-              const Icon = section.icon
-              const isActive = activeSettingsSection === section.id
-
-              return (
-                <button
-                  key={section.id}
-                  type="button"
-                  onClick={() => setActiveSettingsSection(section.id)}
-                  className={`flex h-9 shrink-0 items-center gap-2 rounded-md px-3 text-sm font-medium ${
-                    isActive ? "bg-accent text-foreground" : "text-muted-foreground"
-                  }`}
-                >
-                  <Icon className="h-4 w-4" strokeWidth={1.9} />
-                  <span>{section.label}</span>
-                </button>
-              )
-            })}
-          </div>
+        <div className="border-b border-[var(--border)] bg-[var(--card)] px-3 py-2 md:hidden">
+          <Tabs value={activeSettingsSection} onValueChange={(value) => setActiveSettingsSection(value as SettingsSection)}>
+            <TabsList variant="line" className="thin-scrollbar w-full justify-start overflow-x-auto">
+              {SETTINGS_SECTIONS.map((section) => {
+                const Icon = section.icon
+                return (
+                  <TabsTrigger key={section.id} value={section.id} className="h-8 shrink-0 gap-2 px-3 text-sm">
+                    <Icon className="h-4 w-4" strokeWidth={1.9} />
+                    <span>{section.label}</span>
+                  </TabsTrigger>
+                )
+              })}
+            </TabsList>
+          </Tabs>
         </div>
 
-        <main className="thin-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-6">
+        <main className="thin-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6">
           <div className="mx-auto w-full max-w-5xl">
             {activeSettingsSection === "general" && <GeneralSettings />}
             {activeSettingsSection === "appearance" && <AppearanceSettings />}
