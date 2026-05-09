@@ -3,6 +3,10 @@ import fs from "node:fs";
 import http from "node:http";
 import { spawn } from "node:child_process";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const host = "127.0.0.1";
 const startPort = 5173;
@@ -75,7 +79,26 @@ function spawnBun(args, extraEnv = {}) {
   return spawnCmd(process.platform === "win32" ? "bun.exe" : "bun", args, extraEnv);
 }
 
+async function ensureServerBundle() {
+  const bundlePath = path.resolve(__dirname, "..", "vendor", "opencode", "server", "dist", "node", "node.js");
+  if (fs.existsSync(bundlePath)) return;
+
+  console.log("[dev] server bundle missing, building...");
+  const { execFileSync } = await import("node:child_process");
+  const bunName = process.platform === "win32" ? "bun.exe" : "bun";
+  const scriptPath = path.resolve(__dirname, "build-server.mjs");
+  try {
+    execFileSync(process.execPath, [scriptPath], { stdio: "inherit" });
+  } catch {
+    console.error("[dev] failed to build server bundle");
+    process.exit(1);
+  }
+  console.log("[dev] server bundle built");
+}
+
 async function main() {
+  await ensureServerBundle();
+
   const port = await findFreePort();
   const devUrl = `http://${host}:${port}`;
   console.log(`[dev] using port ${port}`);
