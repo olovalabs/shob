@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from "react"
+import { useCallback, useEffect, useRef, useState, useMemo } from "react"
 import { marked } from "marked"
 import DOMPurify from "dompurify"
 import "./markdown.css"
@@ -20,6 +20,57 @@ const config = {
 function sanitize(html: string) {
   if (!DOMPurify.isSupported) return ""
   return DOMPurify.sanitize(html, config)
+}
+
+function fixIncompleteMarkdown(text: string): string {
+  const lines = text.split("\n")
+  let result = text
+
+  // Close unclosed fenced code blocks
+  let fenceCount = 0
+  for (const line of lines) {
+    if (/^```/.test(line.trim())) {
+      fenceCount++
+    }
+  }
+  if (fenceCount % 2 !== 0) {
+    result += "\n```"
+  }
+
+  // Close unclosed inline code (single backtick, not part of double/triple)
+  const cleanedForBacktick = result.replace(/```[\s\S]*?```/g, "").replace(/``[\s\S]*?``/g, "")
+  const backtickCount = (cleanedForBacktick.match(/(?<!`)`(?!`)/g) || []).length
+  if (backtickCount % 2 !== 0) {
+    result += "`"
+  }
+
+  // Close unclosed bold (** or __)
+  const boldStarCount = (result.match(/(?<!\*)\*\*(?!\*)/g) || []).length
+  if (boldStarCount % 2 !== 0) {
+    result += "**"
+  }
+  const boldUnderCount = (result.match(/(?<!_)__(?!_)/g) || []).length
+  if (boldUnderCount % 2 !== 0) {
+    result += "__"
+  }
+
+  // Close unclosed italic (* but not **)
+  const allStars = (result.match(/\*/g) || []).length
+  const doubleStars = (result.match(/\*\*/g) || []).length * 2
+  const tripleStars = (result.match(/\*\*\*/g) || []).length * 3
+  const italicStarCount = allStars - doubleStars - tripleStars
+  if (italicStarCount % 2 !== 0) {
+    result += "*"
+  }
+
+  // Close unclosed links [text](url
+  const openLinks = (result.match(/\[[^\]]*\]\(/g) || []).length
+  const closeParensInLinks = (result.match(/\[[^\]]*\]\([^)]*\)/g) || []).length
+  if (openLinks > closeParensInLinks) {
+    result += ")"
+  }
+
+  return result
 }
 
 function urlPatternTest(text: string) {
@@ -72,7 +123,7 @@ function createCopyButton(labels: { copy: string; copied: string }, onClick: () 
   button.setAttribute("data-slot", "markdown-copy-button")
   button.setAttribute("aria-label", labels.copy)
   button.setAttribute("data-tooltip", labels.copy)
-  
+
   const copyIcon = document.createElement("div")
   copyIcon.setAttribute("data-component", "icon")
   copyIcon.setAttribute("data-size", "small")
@@ -84,7 +135,7 @@ function createCopyButton(labels: { copy: string; copied: string }, onClick: () 
   copySvg.setAttribute("aria-hidden", "true")
   copySvg.innerHTML = iconPaths.copy
   copyIcon.appendChild(copySvg)
-  
+
   const checkIcon = document.createElement("div")
   checkIcon.setAttribute("data-component", "icon")
   checkIcon.setAttribute("data-size", "small")
@@ -96,11 +147,11 @@ function createCopyButton(labels: { copy: string; copied: string }, onClick: () 
   checkSvg.setAttribute("aria-hidden", "true")
   checkSvg.innerHTML = iconPaths.check
   checkIcon.appendChild(checkSvg)
-  
+
   button.appendChild(copyIcon)
   button.appendChild(checkIcon)
   button.addEventListener("click", onClick)
-  
+
   return button
 }
 
@@ -139,37 +190,94 @@ function decorate(root: HTMLDivElement, labels: { copy: string; copied: string }
   markCodeLinks(root)
 }
 
+function elementsEqual(a: Element, b: Element): boolean {
+  if (a.tagName !== b.tagName) return false
+  if (a.childNodes.length !== b.childNodes.length) return false
+  for (let i = 0; i < a.childNodes.length; i++) {
+    const ca = a.childNodes[i]
+    const cb = b.childNodes[i]
+    if (ca.nodeType !== cb.nodeType) return false
+    if (ca.nodeType === Node.TEXT_NODE) {
+      if (ca.textContent !== cb.textContent) return false
+    } else if (ca.nodeType === Node.ELEMENT_NODE) {
+      if (!elementsEqual(ca as Element, cb as Element)) return false
+    }
+  }
+  return true
+}
+
+function updateDomIncrementally(container: HTMLDivElement, newHtml: string, labels: { copy: string; copied: string }) {
+  const temp = document.createElement("div")
+  temp.innerHTML = newHtml
+  decorate(temp, labels, () => {})
+
+  const existingChildren = Array.from(container.childNodes)
+  const newChildren = Array.from(temp.childNodes)
+
+  const maxLen = Math.max(existingChildren.length, newChildren.length)
+
+  for (let i = 0; i < maxLen; i++) {
+    if (i >= newChildren.length) {
+      container.removeChild(existingChildren[i])
+    } else if (i >= existingChildren.length) {
+      container.appendChild(newChildren[i])
+    } else {
+      const existing = existingChildren[i]
+      const newNode = newChildren[i]
+      if (existing.nodeType === Node.TEXT_NODE && newNode.nodeType === Node.TEXT_NODE) {
+        if (existing.textContent !== newNode.textContent) {
+          existing.textContent = newNode.textContent
+        }
+      } else if (existing.nodeType === Node.ELEMENT_NODE && newNode.nodeType === Node.ELEMENT_NODE) {
+        const existingEl = existing as Element
+        const newEl = newNode as Element
+        if (!elementsEqual(existingEl, newEl)) {
+          container.replaceChild(newEl, existing)
+        }
+      } else {
+        container.replaceChild(newNode, existing)
+      }
+    }
+  }
+}
+
 export function Markdown({ text }: { text: string }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null)
-  const [html, setHtml] = useState<string>("")
 
   const labels = useMemo(() => ({ copy: "Copy", copied: "Copied" }), [])
 
-  const handleCopy = async (code: string, index: number) => {
+  const handleCopy = useCallback(async (code: string, index: number) => {
     if (!code) return
     await navigator.clipboard.writeText(code)
     setCopiedIndex(index)
     setTimeout(() => setCopiedIndex(null), 2000)
-  }
+  }, [])
 
   useEffect(() => {
-    const rawHtml = marked.parse(text, { async: false }) as string
+    if (!containerRef.current) return
+
+    const fixedText = fixIncompleteMarkdown(text)
+    const rawHtml = marked.parse(fixedText, { async: false }) as string
     const sanitized = sanitize(rawHtml)
-    setHtml(sanitized)
-  }, [text])
 
-  useEffect(() => {
-    if (!containerRef.current || !html) return
+    if (!sanitized) {
+      containerRef.current.innerHTML = ""
+      return
+    }
 
-    containerRef.current.innerHTML = html
-    decorate(containerRef.current, labels, () => {})
+    if (containerRef.current.childNodes.length === 0) {
+      containerRef.current.innerHTML = sanitized
+      decorate(containerRef.current, labels, () => {})
+    } else {
+      updateDomIncrementally(containerRef.current, sanitized, labels)
+    }
 
     const codeBlocks = Array.from(containerRef.current.querySelectorAll('[data-component="markdown-code"]'))
     codeBlocks.forEach((block, index) => {
       const code = block.querySelector("code")
       const button = block.querySelector('[data-slot="markdown-copy-button"]') as HTMLButtonElement | null
-      
+
       if (!code || !button) return
 
       const handleClick = async () => {
@@ -189,7 +297,7 @@ export function Markdown({ text }: { text: string }) {
         button.setAttribute("data-tooltip", labels.copy)
       }
     })
-  }, [html, copiedIndex, labels])
+  }, [text, copiedIndex, labels, handleCopy])
 
   return <div ref={containerRef} data-component="markdown" />
 }

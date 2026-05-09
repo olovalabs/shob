@@ -480,6 +480,29 @@ export function Sidebar() {
                       ? sortedSessions
                       : sortedSessions.slice(0, VISIBLE_SESSIONS_PER_PROJECT)
 
+                    const orderedSessions = useMemo(() => {
+                      const childrenByParent = new Map<string, typeof sortedSessions>()
+                      const roots: typeof sortedSessions = []
+                      for (const s of visibleSessions) {
+                        if (s.parentSessionId) {
+                          const list = childrenByParent.get(s.parentSessionId) ?? []
+                          list.push(s)
+                          childrenByParent.set(s.parentSessionId, list)
+                        } else {
+                          roots.push(s)
+                        }
+                      }
+                      const result: typeof sortedSessions = []
+                      for (const root of roots) {
+                        result.push(root)
+                        const children = childrenByParent.get(root.id)
+                        if (children) {
+                          result.push(...children)
+                        }
+                      }
+                      return result
+                    }, [visibleSessions])
+
                     return (
                       <section key={project.id} className="group/project min-w-0">
                         <div className="mb-1 flex h-7 items-center gap-1 px-2">
@@ -537,7 +560,7 @@ export function Sidebar() {
                         </div>
 
                         <div className="space-y-0.5">
-                          {visibleSessions.length === 0 ? (
+                          {orderedSessions.length === 0 ? (
                             <div className="ml-7 flex w-[calc(100%-1.75rem)] flex-col gap-1">
                               <button
                                 type="button"
@@ -555,7 +578,7 @@ export function Sidebar() {
                               </button>
                             </div>
                           ) : (
-                            visibleSessions.map((session, index) => {
+                            orderedSessions.map((session, index) => {
                               const isActiveSession = activeSessionId === session.id
                               const isRunningSession = Boolean(busySessions[session.id] || session.pendingLaunchCommand)
                               const projectAgeLabel = formatRelativeSessionTime(session.lastActiveAt ?? session.createdAt)

@@ -90,18 +90,22 @@ function ReasoningPartDisplay({ part }: MessagePartProps) {
   if (!text) return null
 
   return (
-    <div data-component="reasoning-part">
-      <div className="whitespace-pre-wrap text-[13px] leading-relaxed">{text}</div>
+    <div data-component="reasoning-part" className="my-1">
+      <details className="group">
+        <summary className="flex cursor-pointer list-none items-center gap-2 py-1 text-[12px] text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+          <svg className="h-3 w-3 shrink-0 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+          <span>Thinking</span>
+        </summary>
+        <div className="whitespace-pre-wrap px-1 py-2 text-[12px] leading-relaxed text-muted-foreground">{text}</div>
+      </details>
     </div>
   )
 }
 
 function ToolPartDisplay({ part, defaultOpen, hideDetails }: MessagePartProps) {
   if (!part.tool) return null
-  if (part.tool === "todowrite") return null
-  if (part.tool === "question" && part.state?.status && ["pending", "running"].includes(part.state.status)) {
-    return null
-  }
 
   const input = (part.state?.input ?? {}) as Record<string, unknown>
   const partMetadata = (part.state?.metadata ?? {}) as Record<string, unknown>
