@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ArrowUp,
   ChevronDown,
@@ -21,6 +21,8 @@ import type {
   ElectronOpencodeEventEnvelope,
   ElectronOpencodeEventSubscription,
 } from "../electron"
+import { ToolPart, SessionTurn } from "@/components/opencode/tools"
+import "@/components/opencode/tools/tool-renderers"
 
 
 interface AgentViewProps {
@@ -35,7 +37,7 @@ const SUGGESTED_PROMPTS = [
   "Write unit tests for the current module",
 ] as const
 
-type ToolCallView = {
+export type ToolCallView = {
   id?: string | null
   callID?: string | null
   tool: string
@@ -199,425 +201,7 @@ const createOpenCodeID = (type: "message" | "part") => {
   return `${prefix}_${hex}${randomBase62(OPEN_CODE_ID_LENGTH - 12)}`
 }
 
-const asRecord = (value: unknown): Record<string, unknown> =>
-  value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
 
-const stringValue = (value: unknown) => (typeof value === "string" && value ? value : undefined)
-
-const normalizePathDisplay = (value: unknown) => {
-  if (typeof value !== "string" || !value) return ""
-  return value.replace(/\\/g, "/")
-}
-
-const primitiveArgs = (input: unknown, omit: string[] = []) => {
-  const record = asRecord(input)
-  const skip = new Set(omit)
-  return Object.entries(record)
-    .filter(([key]) => !skip.has(key))
-    .flatMap(([key, value]) => {
-      if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-        return [`${key}=${String(value)}`]
-      }
-      return []
-    })
-}
-
-const ANSI_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[ -/]*[@-~]`, "g")
-const stripAnsi = (value: string) => value.replace(ANSI_PATTERN, "")
-
-const titlecase = (value: string) =>
-  value
-    .split(/[\s_-]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ")
-
-const formatCount = (value: unknown, singular: string, plural = `${singular}s`) => {
-  if (typeof value !== "number" || !Number.isFinite(value)) return ""
-  return `(${value} ${value === 1 ? singular : plural})`
-}
-
-const formatDuration = (start?: number | null, end?: number | null) => {
-  if (typeof start !== "number") return null
-  const stop = typeof end === "number" ? end : Date.now()
-  const seconds = Math.max(0, (stop - start) / 1000)
-  if (seconds < 1) return "<1s"
-  if (seconds < 60) return `${Math.round(seconds)}s`
-  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`
-}
-
-const toolComplete = (toolCall: ToolCallView) => toolCall.status === "completed"
-const toolRunning = (toolCall: ToolCallView) => toolCall.status === "running"
-const toolPending = (toolCall: ToolCallView) => toolCall.status === "pending"
-
-function InlineTool({
-  icon,
-  pending,
-  complete,
-  children,
-  toolCall,
-  spinner,
-}: {
-  icon: string
-  pending: string
-  complete: unknown
-  children: ReactNode
-  toolCall: ToolCallView
-  spinner?: boolean
-}) {
-  const ready = Boolean(complete) || toolComplete(toolCall)
-  const duration = formatDuration(toolCall.startedAt, toolCall.endedAt)
-  const active = toolRunning(toolCall) || toolPending(toolCall)
-  const error = toolCall.error
-
-  return (
-    <div className="pl-3">
-      <div
-        className={`flex min-h-6 items-start gap-2 rounded-md px-1.5 py-0.5 text-[12px] leading-5 ${
-          active ? "text-foreground/90" : "text-muted-foreground"
-        }`}
-      >
-        <span className="mt-0.5 inline-flex h-4 min-w-4 items-center justify-center font-mono text-[11px]">
-          {spinner && active ? <Loader2 className="size-3 animate-spin" /> : ready ? icon : "~"}
-        </span>
-        <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
-          {ready ? children : pending}
-        </span>
-        {duration ? <span className="ml-2 shrink-0 text-[11px] text-muted-foreground/75">{duration}</span> : null}
-      </div>
-      {error ? (
-        <div className="ml-7 mt-1 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
-          {error}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function ExpandablePre({
-  content,
-  maxLines = 10,
-  className = "",
-}: {
-  content: string
-  maxLines?: number
-  className?: string
-}) {
-  const [expanded, setExpanded] = useState(false)
-  const lines = content.split(/\r?\n/)
-  const overflow = lines.length > maxLines
-  const visible = expanded || !overflow ? content : [...lines.slice(0, maxLines), "..."].join("\n")
-
-  if (!content.trim()) return null
-
-  return (
-    <div className="space-y-1">
-      <pre className={`thin-scrollbar overflow-auto whitespace-pre-wrap text-[11px] leading-5 ${className}`}>
-        {visible}
-      </pre>
-      {overflow ? (
-        <button
-          type="button"
-          className="text-[11px] font-medium text-muted-foreground hover:text-foreground"
-          onClick={() => setExpanded((value) => !value)}
-        >
-          {expanded ? "Collapse" : "Expand"}
-        </button>
-      ) : null}
-    </div>
-  )
-}
-
-function BlockTool({
-  title,
-  children,
-  toolCall,
-  spinner,
-}: {
-  title: string
-  children: ReactNode
-  toolCall: ToolCallView
-  spinner?: boolean
-}) {
-  const error = toolCall.error
-  return (
-    <div className="my-2 border-l border-border bg-muted/25 px-3 py-2">
-      <div className="mb-2 flex items-center gap-2 text-[12px] text-muted-foreground">
-        {spinner ? <Loader2 className="size-3 animate-spin" /> : null}
-        <span className="min-w-0 truncate font-mono">{title}</span>
-      </div>
-      <div className="space-y-2 text-[12px] text-foreground/90">{children}</div>
-      {error ? (
-        <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
-          {error}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-const renderDiagnostics = (metadata: Record<string, unknown>) => {
-  const diagnostics = asRecord(metadata.diagnostics)
-  const errors = Object.values(diagnostics)
-    .flatMap((value) => (Array.isArray(value) ? value : []))
-    .filter((item) => asRecord(item).severity === 1)
-    .slice(0, 3)
-
-  if (errors.length === 0) return null
-
-  return (
-    <div className="space-y-1 rounded-md border border-destructive/25 bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
-      {errors.map((item, index) => {
-        const record = asRecord(item)
-        return <div key={index}>{String(record.message ?? "Diagnostic error")}</div>
-      })}
-    </div>
-  )
-}
-
-function ToolCallItem({ toolCall }: { toolCall: ToolCallView }) {
-  const input = asRecord(toolCall.input)
-  const metadata = asRecord(toolCall.metadata)
-  const running = toolRunning(toolCall)
-  const output = toolCall.output ?? stringValue(metadata.output) ?? ""
-
-  switch (toolCall.tool) {
-    case "bash": {
-      const command = stringValue(input.command) ?? ""
-      const description = stringValue(input.description) ?? "Shell"
-      const workdir = normalizePathDisplay(input.workdir)
-      const title = workdir && workdir !== "." && !description.includes(workdir)
-        ? `# ${description} in ${workdir}`
-        : `# ${description}`
-      const commandOutput = stripAnsi(stringValue(metadata.output) ?? toolCall.output ?? "")
-
-      if (metadata.output !== undefined || toolCall.output) {
-        return (
-          <BlockTool title={title} toolCall={toolCall} spinner={running}>
-            {command ? <div className="font-mono text-[11px] text-muted-foreground">$ {command}</div> : null}
-            <ExpandablePre content={commandOutput} />
-          </BlockTool>
-        )
-      }
-
-      return (
-        <InlineTool icon="$" pending="Writing command..." complete={command} toolCall={toolCall} spinner={running}>
-          {command || description}
-        </InlineTool>
-      )
-    }
-
-    case "write": {
-      const filePath = normalizePathDisplay(input.filePath)
-      const content = stringValue(input.content) ?? ""
-      if (metadata.diagnostics !== undefined || content) {
-        return (
-          <BlockTool title={`# Wrote ${filePath}`} toolCall={toolCall}>
-            <ExpandablePre content={content} maxLines={14} />
-            {renderDiagnostics(metadata)}
-          </BlockTool>
-        )
-      }
-      return (
-        <InlineTool icon="<-" pending="Preparing write..." complete={filePath} toolCall={toolCall}>
-          Write {filePath}
-        </InlineTool>
-      )
-    }
-
-    case "edit": {
-      const filePath = normalizePathDisplay(input.filePath)
-      const diff = stringValue(metadata.diff)
-      if (diff !== undefined) {
-        return (
-          <BlockTool title={`<- Edit ${filePath}`} toolCall={toolCall}>
-            <ExpandablePre content={diff} maxLines={18} className="font-mono" />
-            {renderDiagnostics(metadata)}
-          </BlockTool>
-        )
-      }
-      return (
-        <InlineTool icon="<-" pending="Preparing edit..." complete={filePath} toolCall={toolCall}>
-          Edit {filePath} {primitiveArgs({ replaceAll: input.replaceAll }).join(" ")}
-        </InlineTool>
-      )
-    }
-
-    case "apply_patch": {
-      const files = Array.isArray(metadata.files) ? metadata.files.map(asRecord) : []
-      if (files.length > 0) {
-        return (
-          <BlockTool title={`<- Patched ${files.length} ${files.length === 1 ? "file" : "files"}`} toolCall={toolCall}>
-            <div className="space-y-3">
-              {files.map((file, index) => {
-                const name = normalizePathDisplay(file.relativePath ?? file.filePath ?? `file-${index + 1}`)
-                const patch = stringValue(file.patch) ?? ""
-                return (
-                  <div key={`${name}-${index}`} className="space-y-1">
-                    <div className="text-[11px] font-medium text-muted-foreground">{name}</div>
-                    <ExpandablePre content={patch} maxLines={14} className="font-mono" />
-                  </div>
-                )
-              })}
-            </div>
-            {renderDiagnostics(metadata)}
-          </BlockTool>
-        )
-      }
-      return (
-        <InlineTool icon="%" pending="Preparing patch..." complete={toolComplete(toolCall)} toolCall={toolCall}>
-          Patch
-        </InlineTool>
-      )
-    }
-
-    case "read": {
-      const filePath = normalizePathDisplay(input.filePath)
-      const loaded = Array.isArray(metadata.loaded) ? metadata.loaded.filter((item): item is string => typeof item === "string") : []
-      return (
-        <>
-          <InlineTool icon="->" pending="Reading file..." complete={filePath} toolCall={toolCall} spinner={running}>
-            Read {filePath} {primitiveArgs(input, ["filePath"]).join(" ")}
-          </InlineTool>
-          {loaded.map((file) => (
-            <div key={file} className="ml-10 text-[12px] leading-5 text-muted-foreground">
-              Loaded {normalizePathDisplay(file)}
-            </div>
-          ))}
-        </>
-      )
-    }
-
-    case "grep":
-      return (
-        <InlineTool icon="*" pending="Searching content..." complete={input.pattern} toolCall={toolCall}>
-          Grep "{String(input.pattern ?? "")}" {input.path ? `in ${normalizePathDisplay(input.path)} ` : ""}
-          {formatCount(metadata.matches, "match", "matches")}
-        </InlineTool>
-      )
-
-    case "glob":
-      return (
-        <InlineTool icon="*" pending="Finding files..." complete={input.pattern} toolCall={toolCall}>
-          Glob "{String(input.pattern ?? "")}" {input.path ? `in ${normalizePathDisplay(input.path)} ` : ""}
-          {formatCount(metadata.count, "match", "matches")}
-        </InlineTool>
-      )
-
-    case "list":
-      return (
-        <InlineTool icon="->" pending="Listing directory..." complete={input.path !== undefined} toolCall={toolCall}>
-          List {normalizePathDisplay(input.path)}
-        </InlineTool>
-      )
-
-    case "webfetch":
-      return (
-        <InlineTool icon="%" pending="Fetching from the web..." complete={input.url} toolCall={toolCall}>
-          WebFetch {String(input.url ?? "")}
-        </InlineTool>
-      )
-
-    case "websearch":
-      return (
-        <InlineTool icon="<>" pending="Searching web..." complete={input.query} toolCall={toolCall}>
-          Web Search "{String(input.query ?? "")}" {formatCount(metadata.numResults, "result")}
-        </InlineTool>
-      )
-
-    case "codesearch":
-      return (
-        <InlineTool icon="<>" pending="Searching code..." complete={input.query} toolCall={toolCall}>
-          Code Search "{String(input.query ?? "")}" {formatCount(metadata.results, "result")}
-        </InlineTool>
-      )
-
-    case "todowrite": {
-      const todos = Array.isArray(input.todos)
-        ? input.todos.map(asRecord)
-        : Array.isArray(metadata.todos)
-          ? metadata.todos.map(asRecord)
-          : []
-      if (todos.length > 0) {
-        return (
-          <BlockTool title="# Todos" toolCall={toolCall}>
-            <div className="space-y-1">
-              {todos.map((todo, index) => (
-                <div key={index} className="flex gap-2 text-[12px]">
-                  <span className="w-20 shrink-0 text-muted-foreground">{String(todo.status ?? "pending")}</span>
-                  <span>{String(todo.content ?? "")}</span>
-                </div>
-              ))}
-            </div>
-          </BlockTool>
-        )
-      }
-      return (
-        <InlineTool icon="*" pending="Updating todos..." complete={toolComplete(toolCall)} toolCall={toolCall}>
-          Updating todos
-        </InlineTool>
-      )
-    }
-
-    case "task": {
-      const description = stringValue(input.description) ?? ""
-      const subagent = stringValue(input.subagent_type) ?? "general"
-      const current = stringValue(metadata.title) ?? toolCall.title ?? ""
-      const lines = [`${titlecase(subagent)} Task - ${description || "delegated work"}`]
-      if (running && current) lines.push(`  ${current}`)
-      return (
-        <InlineTool icon="|" pending="Delegating..." complete={description || toolComplete(toolCall)} toolCall={toolCall} spinner={running}>
-          {lines.join("\n")}
-        </InlineTool>
-      )
-    }
-
-    case "question": {
-      const questions = Array.isArray(input.questions) ? input.questions.map(asRecord) : []
-      const answers = Array.isArray(metadata.answers) ? metadata.answers : []
-      if (answers.length > 0) {
-        return (
-          <BlockTool title="# Questions" toolCall={toolCall}>
-            {questions.map((question, index) => (
-              <div key={index} className="space-y-1">
-                <div className="text-muted-foreground">{String(question.question ?? "")}</div>
-                <div>{Array.isArray(answers[index]) ? answers[index].join(", ") : "(no answer)"}</div>
-              </div>
-            ))}
-          </BlockTool>
-        )
-      }
-      return (
-        <InlineTool icon="->" pending="Asking questions..." complete={questions.length} toolCall={toolCall}>
-          Asked {questions.length} question{questions.length === 1 ? "" : "s"}
-        </InlineTool>
-      )
-    }
-
-    case "skill":
-      return (
-        <InlineTool icon="->" pending="Loading skill..." complete={input.name} toolCall={toolCall}>
-          Skill "{String(input.name ?? "")}"
-        </InlineTool>
-      )
-
-    default: {
-      const inputLabel = primitiveArgs(input).slice(0, 4).join(", ")
-      return (
-        <>
-          <InlineTool icon="*" pending="Calling tool..." complete={toolComplete(toolCall) || inputLabel} toolCall={toolCall} spinner={running}>
-            {toolCall.tool} {inputLabel ? `[${inputLabel}]` : ""}
-          </InlineTool>
-          {output ? (
-            <div className="ml-10 mt-1">
-              <ExpandablePre content={output} maxLines={6} className="rounded-md border border-border/60 bg-background/55 p-2" />
-            </div>
-          ) : null}
-        </>
-      )
-    }
-  }
-}
 
 const ToolCallsList = ({ toolCalls, messageID }: { toolCalls: ToolCallView[]; messageID: string }) => {
   if (!Array.isArray(toolCalls) || toolCalls.length === 0) return null
@@ -631,10 +215,151 @@ const ToolCallsList = ({ toolCalls, messageID }: { toolCalls: ToolCallView[]; me
           data-tool={toolCall.tool}
           data-status={toolCall.status}
         >
-          <ToolCallItem toolCall={toolCall} />
+          <ToolPart toolCall={toolCall} />
         </div>
       ))}
     </div>
+  )
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AgentMsg = any
+
+const convertToSessionFormat = (msgs: AgentMsg[]) => {
+  const groups: Array<{ userIndex: number; userMessage: AgentMsg; assistantMessages: AgentMsg[] }> = []
+  let cu: { index: number; message: AgentMsg } | null = null
+  const assistants: AgentMsg[] = []
+
+  for (let i = 0; i < msgs.length; i++) {
+    const msg = msgs[i]
+    if (msg?.role === "user") {
+      if (cu && assistants.length > 0) {
+        groups.push({
+          userIndex: cu.index,
+          userMessage: cu.message,
+          assistantMessages: [...assistants],
+        })
+        assistants.length = 0
+      }
+      cu = { index: i, message: msg }
+    } else if (msg?.role === "assistant" && cu) {
+      assistants.push(msg)
+    }
+  }
+
+  if (cu) {
+    groups.push({
+      userIndex: cu.index,
+      userMessage: cu.message,
+      assistantMessages: [...assistants],
+    })
+  }
+
+  return groups
+}
+
+const convertToolCallsToParts = (toolCalls: ToolCallView[] | null | undefined) => {
+  if (!toolCalls || toolCalls.length === 0) return undefined
+  return toolCalls.map((tc) => ({
+    id: tc.callID ?? tc.id ?? tc.tool,
+    type: "tool" as const,
+    tool: tc.tool,
+    callID: tc.callID ?? tc.id ?? undefined,
+    state: {
+      status: tc.status,
+      title: tc.title ?? undefined,
+      input: tc.input as Record<string, unknown> | undefined,
+      output: tc.output ?? undefined,
+      error: tc.error ?? undefined,
+      metadata: tc.metadata as Record<string, unknown> | undefined,
+      time: {
+        start: tc.startedAt ?? undefined,
+        end: tc.endedAt ?? undefined,
+        compacted: tc.compactedAt ?? undefined,
+      },
+    },
+  }))
+}
+
+function MessageGroupRenderer({
+  messages: msgs,
+  isThinking,
+  liveAssistant,
+  sessionId,
+}: {
+  messages: AgentMsg[]
+  isThinking: boolean
+  liveAssistant: { content: string; toolCalls: ToolCallView[]; error: unknown } | null
+  sessionId: string
+}) {
+  const groups = useMemo(() => convertToSessionFormat(msgs), [msgs])
+
+  const convertMessageForSessionTurn = useCallback((msg: AgentMsg) => ({
+    id: msg.id,
+    role: msg.role,
+    content: msg.content ?? undefined,
+    parts: convertToolCallsToParts(msg.toolCalls) as Array<{
+      id: string
+      type: string
+      text?: string
+      tool?: string
+      state?: {
+        status?: string
+        input?: unknown
+        output?: string
+        error?: string
+        metadata?: Record<string, unknown>
+      }
+    }> | undefined,
+    summary: (msg as AgentMsg).summary,
+    agent: (msg as AgentMsg).agent ?? undefined,
+    model: (msg as AgentMsg).model ?? undefined,
+    time: (msg as AgentMsg).time ?? undefined,
+    error: (msg as AgentMsg).error ?? undefined,
+  }), [])
+
+  return (
+    <>
+      {groups.map((group) => {
+        const convertedUser = convertMessageForSessionTurn(group.userMessage)
+        const convertedAssistants = group.assistantMessages.map(convertMessageForSessionTurn)
+        return (
+          <div key={group.userMessage.id} className="w-full">
+            <SessionTurn
+              messages={[convertedUser]}
+              userMessageIndex={0}
+              assistantMessages={convertedAssistants}
+            />
+          </div>
+        )
+      })}
+      {isThinking && liveAssistant && (
+        <div className="w-full">
+          <div data-component="tool-part-wrapper" className="my-2">
+            <div className="flex items-center gap-2 text-[13px] text-muted-foreground mb-1">
+              <Loader2 className="size-3.5 animate-spin" />
+              <span>Thinking</span>
+            </div>
+            {liveAssistant.toolCalls.length > 0 && (
+              <ToolCallsList toolCalls={liveAssistant.toolCalls} messageID={`live-${sessionId}`} />
+            )}
+            {liveAssistant.content && (
+              <div className="whitespace-pre-wrap text-[14px] leading-relaxed text-foreground/92">
+                {liveAssistant.content}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {isThinking && !liveAssistant && (
+        <div className="w-full">
+          <div className="flex items-center gap-2 text-[13px] text-muted-foreground py-4">
+            <Loader2 className="size-3.5 animate-spin" />
+            <span>Thinking</span>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -1128,61 +853,13 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
             </div>
           </div>
         ) : (
-          <div className="mx-auto flex w-full max-w-[800px] flex-col gap-5 px-6 py-8 sm:py-10 2xl:max-w-[1000px]">
-            {messages.map((message) => {
-              const isUser = message.role === "user"
-              return (
-                <div
-                  key={message.id}
-                  className={`agent-message-bubble flex w-full ${
-                    isUser ? "justify-end" : "justify-start"
-                  }`}
-                >
-                  <div
-                    className={`whitespace-pre-wrap text-[13.5px] leading-[1.65] ${
-                      isUser
-                        ? "max-w-[82%] rounded-2xl border border-border/70 bg-card/80 px-4 py-2.5 text-foreground backdrop-blur"
-                        : "w-full text-foreground/92"
-                    }`}
-                  >
-                    {!isUser && (
-                      <div className="mb-2 flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                        <span className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-border/70 bg-background/60">
-                          <Sparkles className="h-3 w-3" strokeWidth={1.8} />
-                        </span>
-                        Agent
-                      </div>
-                    )}
-                    {!isUser && Array.isArray(message.toolCalls) && message.toolCalls.length > 0 ? (
-                      <ToolCallsList toolCalls={message.toolCalls} messageID={message.id} />
-                    ) : null}
-                    {message.content}
-                  </div>
-                </div>
-              )
-            })}
-
-            {isThinking && (
-              <div className="agent-message-bubble flex w-full justify-start">
-                <div className="w-full">
-                  <div className="mb-2 flex items-center gap-2 text-[12.5px] text-muted-foreground">
-                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-border/70 bg-background/60">
-                          <Sparkles className="h-3 w-3 text-foreground/70" strokeWidth={1.8} />
-                    </span>
-                    <span className="inline-flex items-center gap-1.5">
-                      <Loader2 className="size-3.5 animate-spin" />
-                      Thinking
-                    </span>
-                  </div>
-                  {liveAssistant && liveAssistant.toolCalls.length > 0 ? (
-                    <ToolCallsList toolCalls={liveAssistant.toolCalls} messageID={`live-${sessionId}`} />
-                  ) : null}
-                  {liveAssistant?.content ? (
-                    <div className="whitespace-pre-wrap text-[13.5px] leading-[1.65] text-foreground/92">{liveAssistant.content}</div>
-                  ) : null}
-                </div>
-              </div>
-            )}
+          <div className="mx-auto flex w-full max-w-[800px] flex-col gap-2 px-6 py-8 sm:py-10 2xl:max-w-[1000px]">
+            <MessageGroupRenderer
+              messages={messages}
+              isThinking={isThinking}
+              liveAssistant={liveAssistant}
+              sessionId={sessionId}
+            />
           </div>
         )}
       </div>
