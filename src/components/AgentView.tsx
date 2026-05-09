@@ -3,7 +3,6 @@ import {
   ArrowUp,
   ChevronDown,
   GitBranch,
-  Loader2,
   Plus,
   Sparkles,
   StopCircle,
@@ -21,7 +20,8 @@ import type {
   ElectronOpencodeEventEnvelope,
   ElectronOpencodeEventSubscription,
 } from "../electron"
-import { Markdown } from "@/components/opencode/tools/markdown"
+import { SessionTurn } from "@/components/opencode/tools"
+import type { AgentMessage, AgentMessagePart } from "@/types"
 
 
 interface AgentViewProps {
@@ -55,7 +55,7 @@ export type ToolCallView = {
 
 type OpenCodePartView = {
   id: string
-  messageID: string
+  messageID?: string
   type: string
   text?: string
   tool?: string
@@ -81,10 +81,21 @@ type OpenCodeMessageInfo = {
   id?: string
   role?: string
   parentID?: string
+  title?: string
   error?: unknown
   time?: {
     created?: number
     completed?: number
+  }
+}
+
+type OpenCodeSessionInfo = {
+  id?: string
+  title?: string
+  parentID?: string
+  time?: {
+    created?: number
+    updated?: number
   }
 }
 
@@ -97,7 +108,7 @@ type OpenCodeEventPayload = {
     field?: string
     delta?: string
     part?: OpenCodePartView
-    info?: OpenCodeMessageInfo
+    info?: OpenCodeMessageInfo & OpenCodeSessionInfo
     status?: { type?: string; message?: string; attempt?: number; next?: number }
     error?: unknown
   }
@@ -141,6 +152,28 @@ const describeOpenCodeError = (error: unknown) => {
   return "OpenCode returned an unknown error"
 }
 
+const OPEN_CODE_DEFAULT_TITLE_RE =
+  /^(New session|Child session) - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+const LOCAL_AGENT_PLACEHOLDER_TITLE_RE = /^Agent \d+$/
+
+const isOpenCodeDefaultTitle = (title: string | null | undefined) =>
+  Boolean(title && OPEN_CODE_DEFAULT_TITLE_RE.test(title.trim()))
+
+const isLocalAgentPlaceholderTitle = (title: string | null | undefined) =>
+  Boolean(title && LOCAL_AGENT_PLACEHOLDER_TITLE_RE.test(title.trim()))
+
+const shouldAdoptOpenCodeTitle = (nextTitle: string | null | undefined, currentTitle: string | null | undefined) => {
+  const next = nextTitle?.trim()
+  const current = currentTitle?.trim()
+  if (!next || next === current || isOpenCodeDefaultTitle(next)) return false
+  return !current || isLocalAgentPlaceholderTitle(current) || isOpenCodeDefaultTitle(current)
+}
+
+const getOpenCodeCreateTitle = (sessionName: string | undefined, existingSessionID?: string | null) => {
+  if (existingSessionID) return undefined
+  return isLocalAgentPlaceholderTitle(sessionName) ? undefined : sessionName
+}
+
 const extractTextFromParts = (parts: OpenCodePartView[]) =>
   parts
     .filter((part) => part.type === "text" && typeof part.text === "string")
@@ -171,6 +204,75 @@ const extractToolCallsFromParts = (parts: OpenCodePartView[]): ToolCallView[] =>
 const sortOpenCodeParts = (parts: OpenCodePartView[]) =>
   [...parts].sort((left, right) => left.id.localeCompare(right.id))
 
+const normalizePartForView = (part: OpenCodePartView | AgentMessagePart): OpenCodePartView => ({
+  id: part.id,
+  messageID: part.messageID,
+  type: part.type,
+  text: part.text,
+  tool: part.tool,
+  callID: part.callID,
+  state: part.state
+    ? {
+        status: part.state.status,
+        title: part.state.title,
+        input: part.state.input,
+        output: part.state.output,
+        error: part.state.error,
+        raw: part.state.raw,
+        metadata: part.state.metadata,
+        attachments: part.state.attachments,
+        time: part.state.time,
+      }
+    : undefined,
+})
+
+const normalizeRawPartsForView = (parts: unknown, fallbackMessageID?: string | null) => {
+  if (!Array.isArray(parts)) return []
+  return parts
+    .filter((part): part is Record<string, unknown> => Boolean(part && typeof part === "object"))
+    .map((part, index) => normalizePartForView({
+      ...(part as OpenCodePartView),
+      id: typeof part.id === "string" ? part.id : `${fallbackMessageID ?? "message"}-part-${index}`,
+      messageID: typeof part.messageID === "string" ? part.messageID : fallbackMessageID ?? undefined,
+    }))
+}
+
+const toolCallToPart = (toolCall: ToolCallView, index: number, messageID: string): OpenCodePartView => ({
+  id: toolCall.id ?? toolCall.callID ?? `${messageID}-tool-${index}`,
+  messageID,
+  type: "tool",
+  tool: toolCall.tool,
+  callID: toolCall.callID ?? undefined,
+  state: {
+    status: toolCall.status,
+    title: toolCall.title ?? undefined,
+    input: toolCall.input ?? undefined,
+    output: toolCall.output ?? undefined,
+    error: toolCall.error ?? undefined,
+    raw: toolCall.raw ?? undefined,
+    metadata: toolCall.metadata ?? undefined,
+    attachments: toolCall.attachments ?? undefined,
+    time: {
+      start: toolCall.startedAt ?? undefined,
+      end: toolCall.endedAt ?? undefined,
+      compacted: toolCall.compactedAt ?? undefined,
+    },
+  },
+})
+
+const buildAssistantParts = (messageID: string, content: string, toolCalls: ToolCallView[]) => {
+  const parts = toolCalls.map((toolCall, index) => toolCallToPart(toolCall, index, messageID))
+  if (content.trim()) {
+    parts.push({
+      id: `${messageID}-text`,
+      messageID,
+      type: "text",
+      text: content,
+    })
+  }
+  return parts
+}
+
 const OPEN_CODE_ID_LENGTH = 26
 let lastOpenCodeIDTimestamp = 0
 let openCodeIDCounter = 0
@@ -200,74 +302,52 @@ const createOpenCodeID = (type: "message" | "part") => {
   return `${prefix}_${hex}${randomBase62(OPEN_CODE_ID_LENGTH - 12)}`
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AgentMsg = any
-
-function SimpleMessage({ msg }: { msg: AgentMsg }) {
-  const [open, setOpen] = useState(false)
-  const isAssistant = msg.role === "assistant"
-  const content = msg.content ?? ""
-  const toolCalls: ToolCallView[] = msg.toolCalls ?? []
-  const hasTools = Array.isArray(toolCalls) && toolCalls.length > 0
-  const pending = toolCalls.some((tc: any) => tc.status === "pending" || tc.status === "running")
-  
-  useEffect(() => {
-    if (pending) setOpen(true)
-  }, [pending])
-
-  if (!isAssistant) {
-    return (
-      <div className="py-2 px-4 mb-1">
-        <div className="text-[14px] font-medium text-foreground/90 mb-1">You</div>
-        <div className="text-[14px] leading-relaxed text-foreground/82 whitespace-pre-wrap">{content}</div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="py-2 px-4 mb-1">
-      <div className="text-[14px] font-medium text-foreground/90 mb-1">Assistant</div>
-      {content && (
-        <div className="text-[14px] leading-relaxed text-foreground/82 whitespace-pre-wrap mb-2">
-          <Markdown text={content} />
-        </div>
-      )}
-      
-      {hasTools && toolCalls.map((tc: ToolCallView, i: number) => {
-        const label = tc.tool?.charAt(0).toUpperCase() + tc.tool?.slice(1) || "Tool"
-        const subtitle = typeof tc.input === "object" && tc.input 
-          ? ((tc.input as any)?.filePath || (tc.input as any)?.description || (tc.input as any)?.command || JSON.stringify(tc.input).slice(0, 60))
-          : ""
-        const isPending = tc.status === "pending" || tc.status === "running"
-        
-        return (
-          <div key={tc.id ?? tc.callID ?? i} className="mb-1.5 rounded-lg border border-border/60 overflow-hidden">
-            <button
-              onClick={() => !isPending && setOpen(!open)}
-              className={`w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] ${isPending ? 'animate-pulse' : ''}`}
-              style={{ background: 'var(--card)' }}
-            >
-              <span className="font-medium text-foreground/90">{label}</span>
-              {subtitle && <span className="text-muted-foreground truncate">{subtitle}</span>}
-              {!isPending && (
-                <ChevronDown className={`ml-auto h-3.5 w-3.5 transition-transform ${open ? 'rotate-0' : '-rotate-90'}`} />
-              )}
-            </button>
-            {open && !isPending && (
-              <div className="border-t border-border/40 p-3">
-                {tc.output && (
-                  <pre className="text-[12px] text-foreground/80 whitespace-pre-wrap bg-muted/30 p-2 rounded">
-                    {tc.output.slice(0, 500)}
-                  </pre>
-                )}
-              </div>
-            )}
-          </div>
-        )
-      })}
-    </div>
-  )
+type AgentMsg = AgentMessage & {
+  parts?: AgentMessagePart[] | OpenCodePartView[] | null
 }
+
+type TurnMsg = Omit<AgentMsg, "agent" | "error" | "model" | "parts" | "time" | "toolCalls"> & {
+  content: string
+  parts: OpenCodePartView[]
+  toolCalls?: ToolCallView[]
+  agent?: string
+  model?: {
+    providerID?: string
+    modelID?: string
+  }
+  time?: {
+    created?: number
+    completed?: number
+  }
+  error?: {
+    name?: string
+    data?: { message?: string }
+  }
+}
+
+const getAssistantParts = (msg: AgentMsg) => {
+  if (Array.isArray(msg.parts) && msg.parts.length > 0) {
+    return msg.parts.map((part) => normalizePartForView(part))
+  }
+  return buildAssistantParts(msg.id, msg.content ?? "", msg.toolCalls ?? [])
+}
+
+const getUserParts = (msg: AgentMsg) =>
+  Array.isArray(msg.parts) ? msg.parts.map((part) => normalizePartForView(part)) : []
+
+const toTurnMessage = (msg: AgentMsg): TurnMsg => ({
+  ...msg,
+  content: msg.content ?? "",
+  toolCalls: msg.toolCalls ?? undefined,
+  agent: msg.agent ?? undefined,
+  model: msg.model ?? undefined,
+  error: msg.error ?? undefined,
+  parts: msg.role === "assistant" ? getAssistantParts(msg) : getUserParts(msg),
+  time: msg.time ?? {
+    created: msg.createdAt,
+    completed: msg.role === "assistant" ? msg.createdAt : undefined,
+  },
+})
 
 const convertToSessionFormat = (msgs: AgentMsg[]) => {
   const groups: Array<{ userIndex: number; userMessage: AgentMsg; assistantMessages: AgentMsg[] }> = []
@@ -310,49 +390,44 @@ function MessageGroupRenderer({
 }: {
   messages: AgentMsg[]
   isThinking: boolean
-  liveAssistant: { content: string; toolCalls: ToolCallView[]; error: unknown } | null
+  liveAssistant: { content: string; toolCalls: ToolCallView[]; parts: OpenCodePartView[]; error: unknown } | null
 }) {
   const groups = useMemo(() => convertToSessionFormat(msgs), [msgs])
 
   return (
     <>
-      {groups.map((group) => (
-        <div key={group.userMessage.id} className="w-full">
-          <SimpleMessage msg={group.userMessage} />
-          {group.assistantMessages.map((amsg: AgentMsg) => (
-            <SimpleMessage key={amsg.id} msg={amsg} />
-          ))}
-        </div>
-      ))}
-      {isThinking && liveAssistant && (
-        <div className="w-full px-4 py-3">
-          <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
-            <Loader2 className="size-3.5 animate-spin" />
-            <span>Thinking</span>
-          </div>
-          {liveAssistant.toolCalls.length > 0 && liveAssistant.toolCalls.map((tc, i) => (
-            <div key={tc.id ?? i} className="mt-1 rounded-lg border border-border/60 overflow-hidden animate-pulse">
-              <div className="flex items-center gap-2 px-3 py-2 text-[13px]">
-                <span className="font-medium text-foreground/90">{tc.tool}</span>
-                <span className="text-muted-foreground truncate">{tc.status}</span>
-              </div>
-            </div>
-          ))}
-          {liveAssistant.content && (
-            <div className="mt-2 text-[14px] leading-relaxed text-foreground/82">
-              <Markdown text={liveAssistant.content} />
-            </div>
-          )}
-        </div>
-      )}
-      {isThinking && !liveAssistant && (
-        <div className="w-full px-4 py-3">
-          <div className="flex items-center gap-2 text-[13px] text-muted-foreground py-4">
-            <Loader2 className="size-3.5 animate-spin" />
-            <span>Thinking</span>
-          </div>
-        </div>
-      )}
+      {groups.map((group, index) => {
+        const isLast = index === groups.length - 1
+        const assistantMessages = group.assistantMessages.map(toTurnMessage)
+
+        if (isLast && isThinking && liveAssistant) {
+          const liveID = "live-assistant"
+          assistantMessages.push(toTurnMessage({
+            id: liveID,
+            role: "assistant",
+            content: liveAssistant.content,
+            createdAt: Date.now(),
+            toolCalls: liveAssistant.toolCalls,
+            parts: liveAssistant.parts.length > 0
+              ? liveAssistant.parts
+              : buildAssistantParts(liveID, liveAssistant.content, liveAssistant.toolCalls),
+            error: liveAssistant.error
+              ? { name: "OpenCodeError", data: { message: describeOpenCodeError(liveAssistant.error) } }
+              : null,
+          }))
+        }
+
+        return (
+          <SessionTurn
+            key={group.userMessage.id}
+            messages={[toTurnMessage(group.userMessage), ...assistantMessages]}
+            userMessageIndex={0}
+            assistantMessages={assistantMessages}
+            working={isThinking && isLast}
+            error={isThinking && isLast && liveAssistant?.error ? describeOpenCodeError(liveAssistant.error) : null}
+          />
+        )
+      })}
     </>
   )
 }
@@ -390,7 +465,12 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
   const [modelOptions, setModelOptions] = useState<OpenCodeModelOption[]>([])
   const [providerStatus, setProviderStatus] = useState<"idle" | "loading" | "ready" | "error">("idle")
   const [attachedFiles, setAttachedFiles] = useState<File[]>([])
-  const [liveAssistant, setLiveAssistant] = useState<{ content: string; toolCalls: ToolCallView[]; error: unknown | null } | null>(null)
+  const [liveAssistant, setLiveAssistant] = useState<{
+    content: string
+    toolCalls: ToolCallView[]
+    parts: OpenCodePartView[]
+    error: unknown | null
+  } | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -421,6 +501,56 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
       activePromptRef.current = null
     }
   }, [sessionId])
+
+  useEffect(() => {
+    const openSubagentSession = async (opencodeSessionID: string, label?: string) => {
+      const state = useStore.getState()
+      const currentProject = state.projects.find((item) => item.id === project?.id)
+      if (!currentProject) return
+
+      const existing = currentProject.sessions.find((item) => item.kind === "agent" && item.opencodeSessionId === opencodeSessionID)
+      if (existing) {
+        state.setActiveSession(existing.id)
+        return
+      }
+
+      let title = label?.trim()
+      try {
+        const info = await nativeApi.invoke("opencode_session_get", {
+          directory: currentProject.path,
+          sessionID: opencodeSessionID,
+        })
+        if (info.title && !isOpenCodeDefaultTitle(info.title)) {
+          title = info.title.trim()
+        }
+      } catch (error) {
+        console.warn("Failed to load OpenCode subagent session:", error)
+      }
+
+      const child = await state.launchAgentSession(currentProject.id)
+      await state.updateSession(currentProject.id, child.id, {
+        name: title || child.name,
+        opencodeSessionId: opencodeSessionID,
+        opencodeProviderId: session?.opencodeProviderId ?? state.preferredOpencodeProviderId,
+        opencodeModelId: session?.opencodeModelId ?? state.preferredOpencodeModelId,
+        opencodeModelVariant: session?.opencodeModelVariant ?? state.preferredOpencodeVariant,
+      })
+    }
+
+    const handleOpenSubagent = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionID?: unknown; title?: unknown }>).detail
+      if (typeof detail?.sessionID !== "string" || !detail.sessionID) return
+      void openSubagentSession(detail.sessionID, typeof detail.title === "string" ? detail.title : undefined)
+    }
+
+    window.addEventListener("shob:open-opencode-session", handleOpenSubagent)
+    return () => window.removeEventListener("shob:open-opencode-session", handleOpenSubagent)
+  }, [
+    project?.id,
+    session?.opencodeModelId,
+    session?.opencodeModelVariant,
+    session?.opencodeProviderId,
+  ])
 
   useEffect(() => {
     setModelPower(preferredOpencodeVariant || "high")
@@ -557,7 +687,7 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
     const promptRunId = crypto.randomUUID()
     activePromptRef.current = promptRunId
     setIsThinking(true)
-    setLiveAssistant({ content: "", toolCalls: [], error: null })
+    setLiveAssistant({ content: "", toolCalls: [], parts: [], error: null })
 
     let removeOpencodeEventHandler: (() => void) | null = null
 
@@ -576,17 +706,39 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
       let eventError: unknown = null
       let finalContent = ""
       let finalToolCalls: ToolCallView[] = []
+      let finalParts: OpenCodePartView[] = []
       let finalError: unknown = null
+
+      const maybeSyncGeneratedTitle = async (opencodeSessionID: string, attempts = 1) => {
+        for (let attempt = 0; attempt < attempts; attempt += 1) {
+          if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 450))
+          try {
+            const info = await nativeApi.invoke("opencode_session_get", {
+              directory: project.path,
+              sessionID: opencodeSessionID,
+            })
+            if (shouldAdoptOpenCodeTitle(info.title, session.name) && info.title) {
+              await updateSession(project.id, session.id, { name: info.title.trim() })
+              return true
+            }
+          } catch (error) {
+            console.warn("Failed to sync OpenCode generated title:", error)
+          }
+        }
+        return false
+      }
 
       const renderFromParts = () => {
         if (!assistantMessageID) return
         const parts = sortOpenCodeParts([...(partsByMessageID.get(assistantMessageID)?.values() ?? [])])
+        finalParts = parts
         finalContent = extractTextFromParts(parts)
         finalToolCalls = extractToolCallsFromParts(parts)
         finalError = eventError
         setLiveAssistant({
           content: finalContent,
           toolCalls: finalToolCalls,
+          parts: finalParts,
           error: finalError,
         })
       }
@@ -603,6 +755,17 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
         const properties = event?.properties ?? {}
         if (properties.sessionID && resolvedSessionID && properties.sessionID !== resolvedSessionID) return
 
+        if (event?.type === "session.updated") {
+          const eventSessionID = properties.sessionID ?? properties.info?.id
+          if (!eventSessionID || !resolvedSessionID) return
+          if (eventSessionID && resolvedSessionID && eventSessionID !== resolvedSessionID) return
+          const nextTitle = properties.info?.title
+          if (shouldAdoptOpenCodeTitle(nextTitle, session.name) && nextTitle) {
+            void updateSession(project.id, session.id, { name: nextTitle.trim() })
+          }
+          return
+        }
+
         if (event?.type === "session.error") {
           finalError = properties.error ?? "OpenCode session failed."
           eventError = finalError
@@ -610,6 +773,7 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
           setLiveAssistant({
             content: finalContent,
             toolCalls: finalToolCalls,
+            parts: finalParts,
             error: finalError,
           })
           return
@@ -629,10 +793,12 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
 
         if (event?.type === "message.part.updated" && properties.part?.messageID) {
           const part = properties.part
-          const messageParts = partsByMessageID.get(part.messageID) ?? new Map<string, OpenCodePartView>()
+          const messageID = part.messageID
+          if (!messageID) return
+          const messageParts = partsByMessageID.get(messageID) ?? new Map<string, OpenCodePartView>()
           messageParts.set(part.id, part)
-          partsByMessageID.set(part.messageID, messageParts)
-          if (part.messageID === assistantMessageID) renderFromParts()
+          partsByMessageID.set(messageID, messageParts)
+          if (messageID === assistantMessageID) renderFromParts()
           return
         }
 
@@ -671,7 +837,7 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
       const started = await nativeApi.invoke("opencode_session_prompt_async", {
         directory: project.path,
         sessionID: session.opencodeSessionId,
-        title: session.name,
+        title: getOpenCodeCreateTitle(session.name, session.opencodeSessionId),
         prompt: promptText,
         parts: [{ id: createOpenCodeID("part"), type: "text", text: promptText }],
         providerID: model.providerID,
@@ -696,6 +862,7 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
           opencodeModelVariant: modelPower,
         })
       }
+      void maybeSyncGeneratedTitle(started.sessionID, 1)
 
       let lastPollAt = 0
       let pollFailures = 0
@@ -714,13 +881,26 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
 
             pollFailures = 0
             if (status.assistantMessageID) assistantMessageID = status.assistantMessageID
-            if (status.content || status.toolCalls?.length || status.error) {
-              finalContent = status.content || finalContent
-              finalToolCalls = status.toolCalls?.length ? status.toolCalls : finalToolCalls
+            const statusParts = normalizeRawPartsForView(status.parts, assistantMessageID)
+            if (statusParts.length > 0 && assistantMessageID) {
+              const messageParts = partsByMessageID.get(assistantMessageID) ?? new Map<string, OpenCodePartView>()
+              statusParts.forEach((part) => messageParts.set(part.id, part))
+              partsByMessageID.set(assistantMessageID, messageParts)
+            }
+            if (statusParts.length > 0 || status.content || status.toolCalls?.length || status.error) {
+              finalParts = statusParts.length > 0 ? statusParts : finalParts
+              finalContent = statusParts.length > 0 ? extractTextFromParts(statusParts) : status.content || finalContent
+              finalToolCalls = statusParts.length > 0
+                ? extractToolCallsFromParts(statusParts)
+                : status.toolCalls?.length ? status.toolCalls : finalToolCalls
               finalError = status.error ?? finalError
+              if (assistantMessageID && finalParts.length === 0) {
+                finalParts = buildAssistantParts(assistantMessageID, finalContent, finalToolCalls)
+              }
               setLiveAssistant({
                 content: finalContent,
                 toolCalls: finalToolCalls,
+                parts: finalParts,
                 error: finalError,
               })
             }
@@ -741,16 +921,28 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
       if (activePromptRef.current !== promptRunId) return
 
       const error = finalError ? `\n\nOpenCode error: ${describeOpenCodeError(finalError)}` : ""
+      const assistantMessageIDForParts = assistantMessageID ?? createOpenCodeID("message")
+      const assistantParts = finalParts.length > 0
+        ? finalParts
+        : buildAssistantParts(assistantMessageIDForParts, finalContent, finalToolCalls)
       await appendAgentMessage(project.id, session.id, {
         role: "assistant",
         content: (finalContent || "OpenCode completed the request without returning text.") + error,
         toolCalls: finalToolCalls,
+        parts: assistantParts,
+        agent: composerMode,
+        model: { providerID: model.providerID, modelID: model.modelID },
+        error: finalError ? { name: "OpenCodeError", data: { message: describeOpenCodeError(finalError) } } : null,
       })
+      void maybeSyncGeneratedTitle(started.sessionID, 8)
     } catch (error) {
       if (activePromptRef.current !== promptRunId) return
+      const errorText = `OpenCode could not complete that request.\n\n${describeOpenCodeError(error)}`
       await appendAgentMessage(project.id, session.id, {
         role: "assistant",
-        content: `OpenCode could not complete that request.\n\n${describeOpenCodeError(error)}`,
+        content: errorText,
+        parts: buildAssistantParts(createOpenCodeID("message"), errorText, []),
+        error: { name: "OpenCodeError", data: { message: describeOpenCodeError(error) } },
       })
     } finally {
       if (removeOpencodeEventHandler) removeOpencodeEventHandler()

@@ -1,16 +1,7 @@
 import { ToolErrorCard } from "./tool-error-card"
 import { Markdown } from "./markdown"
-import { BashTool } from "./bash-tool"
-import { ReadTool } from "./read-tool"
-import { WriteTool } from "./write-tool"
-import { EditTool } from "./edit-tool"
-import { GlobTool } from "./glob-tool"
-import { GrepTool } from "./grep-tool"
-import { ListTool } from "./list-tool"
-import { WebFetchTool } from "./webfetch-tool"
-import { TodoWriteTool } from "./todo-tool"
-import { TaskTool } from "./task-tool"
 import { FallbackTool } from "./fallback-tool"
+import { ToolRegistry } from "./tool-registry"
 import type { ToolCallView } from "@/components/AgentView"
 
 export interface MessagePartProps {
@@ -105,7 +96,7 @@ function ReasoningPartDisplay({ part }: MessagePartProps) {
   )
 }
 
-function ToolPartDisplay({ part, defaultOpen }: MessagePartProps) {
+function ToolPartDisplay({ part, defaultOpen, hideDetails }: MessagePartProps) {
   if (!part.tool) return null
   if (part.tool === "todowrite") return null
   if (part.tool === "question" && part.state?.status && ["pending", "running"].includes(part.state.status)) {
@@ -141,21 +132,21 @@ function ToolPartDisplay({ part, defaultOpen }: MessagePartProps) {
     startedAt: part.state?.time?.start,
     endedAt: part.state?.time?.end,
   }
+  const RegisteredTool = ToolRegistry.render(part.tool)
 
-  // Use the specific tool components like tool-part.tsx does
   return (
     <div data-component="tool-part-wrapper">
-      {part.tool === "bash" && <BashTool toolCall={toolCall} />}
-      {part.tool === "read" && <ReadTool toolCall={toolCall} />}
-      {part.tool === "write" && <WriteTool toolCall={toolCall} />}
-      {part.tool === "edit" && <EditTool toolCall={toolCall} />}
-      {part.tool === "glob" && <GlobTool toolCall={toolCall} />}
-      {part.tool === "grep" && <GrepTool toolCall={toolCall} />}
-      {part.tool === "list" && <ListTool toolCall={toolCall} />}
-      {part.tool === "webfetch" && <WebFetchTool toolCall={toolCall} />}
-      {part.tool === "todowrite" && <TodoWriteTool toolCall={toolCall} />}
-      {part.tool === "task" && <TaskTool toolCall={toolCall} />}
-      {!["bash", "read", "write", "edit", "glob", "grep", "list", "webfetch", "todowrite", "task"].includes(part.tool) && (
+      {RegisteredTool ? (
+        <RegisteredTool
+          tool={toolCall.tool}
+          status={toolCall.status}
+          input={input}
+          output={toolCall.output ?? undefined}
+          metadata={partMetadata}
+          defaultOpen={defaultOpen}
+          hideDetails={hideDetails}
+        />
+      ) : (
         <FallbackTool toolCall={toolCall} />
       )}
     </div>

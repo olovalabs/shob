@@ -125,6 +125,11 @@ interface AppState {
       role: 'user' | 'assistant';
       content: string;
       toolCalls?: AgentMessage["toolCalls"] | null;
+      parts?: AgentMessage["parts"] | null;
+      agent?: AgentMessage["agent"];
+      model?: AgentMessage["model"];
+      time?: AgentMessage["time"];
+      error?: AgentMessage["error"];
     },
   ) => Promise<void>;
   renameSession: (projectId: string, sessionId: string, name: string) => Promise<void>;
@@ -427,6 +432,14 @@ export const useStore = create<AppState>((set, get) => ({
       role: message.role,
       content: message.content,
       toolCalls: message.toolCalls ?? null,
+      parts: message.parts ?? null,
+      agent: message.agent ?? null,
+      model: message.model ?? null,
+      time: message.time ?? {
+        created: now,
+        completed: message.role === 'assistant' ? now : undefined,
+      },
+      error: message.error ?? null,
       createdAt: now,
     };
 

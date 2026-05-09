@@ -39,8 +39,8 @@ export interface BasicToolProps {
 const SPRING = { type: "spring" as const, visualDuration: 0.35, bounce: 0 }
 
 export function BasicTool(props: BasicToolProps) {
-  const [open, setOpen] = useState(props.defaultOpen ?? !!props.children)
-  const [ready, setReady] = useState(props.defaultOpen ?? !!props.children)
+  const [open, setOpen] = useState(props.defaultOpen ?? false)
+  const [ready, setReady] = useState(props.defaultOpen ?? false)
   const pending = () => props.status === "pending" || props.status === "running"
 
   const contentRef = useRef<HTMLDivElement>(null)
@@ -51,11 +51,6 @@ export function BasicTool(props: BasicToolProps) {
   useEffect(() => {
     if (props.forceOpen) setOpen(true)
   }, [props.forceOpen])
-
-  useEffect(() => {
-    if (pending()) setOpen(true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.status])
 
   useEffect(() => {
     if (!props.defer) return
@@ -125,7 +120,7 @@ export function BasicTool(props: BasicToolProps) {
                     {!pending() && title.subtitle && (
                       <span
                         data-slot="basic-tool-tool-subtitle"
-                        className={cn(title.subtitleClass, props.clickable && "cursor-pointer")}
+                        className={cn(title.subtitleClass, props.clickable && "clickable")}
                         onClick={(e) => {
                           e.stopPropagation()
                           props.onSubtitleClick?.()
@@ -135,13 +130,11 @@ export function BasicTool(props: BasicToolProps) {
                       </span>
                     )}
                     {!pending() && title.args?.length && (
-                      <div data-slot="basic-tool-tool-args">
-                        {title.args.map((arg, i) => (
-                          <span key={i} data-slot="basic-tool-tool-arg" className={title.argsClass}>
-                            {arg}
-                          </span>
-                        ))}
-                      </div>
+                      title.args.map((arg, i) => (
+                        <span key={i} data-slot="basic-tool-tool-arg" className={title.argsClass}>
+                          {arg}
+                        </span>
+                      ))
                     )}
                   </div>
                   {!pending() && title.action && (
@@ -156,7 +149,9 @@ export function BasicTool(props: BasicToolProps) {
         </div>
       </div>
       {props.children && !props.hideDetails && !props.locked && !pending() && (
-        <ChevronDown className="h-4 w-4" data-slot="collapsible-arrow-icon" />
+        <span data-slot="collapsible-arrow">
+          <ChevronDown className="h-4 w-4" data-slot="collapsible-arrow-icon" />
+        </span>
       )}
     </div>
   )

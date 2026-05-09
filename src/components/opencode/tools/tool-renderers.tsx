@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react"
+import { useMemo, useState, type MouseEventHandler } from "react"
 import { Check, Copy, ExternalLink } from "lucide-react"
 import { ToolRegistry, type ToolProps } from "./tool-registry"
 import { BasicTool } from "./basic-tool"
 import { TextShimmer } from "./text-shimmer"
 import { DiffChanges } from "./diff-changes"
+import { Spinner } from "./spinner"
 import { getFilename } from "@/lib/utils"
 
 function getDirectory(filePath: string): string {
@@ -235,20 +236,46 @@ ToolRegistry.register({
     const agent = typeof (props.input as any)?.subagent_type === "string" ? (props.input as any).subagent_type : undefined
     const title = agent ? agent[0].toUpperCase() + agent.slice(1) : "Agent"
     const description = typeof (props.input as any)?.description === "string" ? (props.input as any).description : undefined
-    const tone = props.metadata?.color || "var(--icon-interactive-base)"
+    const sessionID = typeof props.metadata?.sessionId === "string"
+      ? props.metadata.sessionId
+      : typeof props.metadata?.sessionID === "string"
+        ? props.metadata.sessionID
+        : undefined
+    const subtitle = description || sessionID
+    const tone = typeof props.metadata?.color === "string" ? props.metadata.color : undefined
+    const running = props.status === "pending" || props.status === "running"
+    const clickable = Boolean(sessionID)
+    const openSubagent: MouseEventHandler = (event) => {
+      if (!sessionID) return
+      event.preventDefault()
+      event.stopPropagation()
+      window.dispatchEvent(new CustomEvent("shob:open-opencode-session", {
+        detail: { sessionID, title },
+      }))
+    }
 
     const trigger = (
       <div data-component="task-tool-card">
         <div data-slot="basic-tool-tool-info-structured">
           <div data-slot="basic-tool-tool-info-main">
-            <span data-component="task-tool-title" style={{ color: tone as string }}>
+            {running && (
+              <span data-component="task-tool-spinner" style={{ color: tone ?? "var(--icon-interactive-base)" }}>
+                <Spinner />
+              </span>
+            )}
+            <span data-component="task-tool-title" style={{ color: tone ?? "var(--text-strong)" }}>
               {title}
             </span>
-            {description && (
-              <span data-slot="basic-tool-tool-subtitle">{description}</span>
+            {subtitle && (
+              <span data-slot="basic-tool-tool-subtitle">{subtitle}</span>
             )}
           </div>
         </div>
+        {clickable && (
+          <div data-component="task-tool-action" title={sessionID}>
+            <ExternalLink className="h-3.5 w-3.5" />
+          </div>
+        )}
       </div>
     )
 
@@ -258,7 +285,8 @@ ToolRegistry.register({
         status={props.status}
         trigger={trigger}
         hideDetails
-        clickable
+        clickable={clickable}
+        onTriggerClick={clickable ? openSubagent : undefined}
       />
     )
   },

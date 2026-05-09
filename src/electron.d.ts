@@ -86,6 +86,7 @@ export interface ElectronOpencodePromptResult {
   content: string
   error?: unknown
   message?: unknown
+  parts?: unknown[]
   toolCalls?: Array<{
     id?: string | null
     callID?: string | null
@@ -245,6 +246,10 @@ export interface NativeCommandMap {
     args: { directory?: string; workspace?: string; title?: string; parentID?: string; permission?: unknown } | undefined
     result: { id: string; title?: string }
   }
+  opencode_session_get: {
+    args: { directory?: string; workspace?: string; sessionID: string }
+    result: { id: string; title?: string; parentID?: string; time?: { created?: number; updated?: number } }
+  }
   opencode_session_messages: {
     args: { directory?: string; workspace?: string; sessionID: string; limit?: number; before?: string }
     result: Array<{ info: unknown; parts: unknown[] }>
@@ -299,6 +304,7 @@ export interface NativeCommandMap {
       found: boolean
       completed: boolean
       content: string
+      parts: unknown[]
       toolCalls: NonNullable<ElectronOpencodePromptResult["toolCalls"]>
       error?: unknown
       assistantMessageID?: string | null

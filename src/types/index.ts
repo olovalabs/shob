@@ -9,6 +9,30 @@ export interface Project {
 
 export type SessionKind = 'terminal' | 'agent';
 
+export interface AgentMessagePart {
+  id: string;
+  messageID?: string;
+  type: string;
+  text?: string;
+  tool?: string;
+  callID?: string;
+  state?: {
+    status?: string;
+    title?: string;
+    input?: unknown;
+    output?: string;
+    error?: string;
+    raw?: string;
+    metadata?: Record<string, unknown>;
+    attachments?: unknown[];
+    time?: {
+      start?: number;
+      end?: number;
+      compacted?: number;
+    };
+  };
+}
+
 export interface AgentMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -30,6 +54,20 @@ export interface AgentMessage {
     endedAt?: number | null;
     compactedAt?: number | null;
   }> | null;
+  parts?: AgentMessagePart[] | null;
+  agent?: string | null;
+  model?: {
+    providerID?: string;
+    modelID?: string;
+  } | null;
+  time?: {
+    created?: number;
+    completed?: number;
+  } | null;
+  error?: {
+    name?: string;
+    data?: { message?: string };
+  } | null;
 }
 
 export interface Session {

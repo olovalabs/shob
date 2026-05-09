@@ -758,6 +758,7 @@ function extractAssistantSnapshot(messages: any[] | undefined, requestMessageID:
       found: false,
       completed: false,
       content: "",
+      parts: [],
       toolCalls: [],
       error: null,
       assistantMessageID: null,
@@ -768,6 +769,7 @@ function extractAssistantSnapshot(messages: any[] | undefined, requestMessageID:
     found: true,
     completed: typeof match?.info?.time?.completed === "number",
     content: extractOpenCodeText(match?.parts),
+    parts: Array.isArray(match?.parts) ? match.parts : [],
     toolCalls: extractOpenCodeToolCalls(match?.parts),
     error: match?.info?.error ?? null,
     assistantMessageID: match?.info?.id ?? null,
@@ -1404,6 +1406,14 @@ const handlers: Record<string, (payload?: any) => Promise<any> | any> = {
       body: { title, parentID, permission },
       timeoutMs: 30_000,
     }),
+  opencode_session_get: async ({ directory, workspace, sessionID }) => {
+    if (!sessionID) throw new Error("OpenCode session ID is required");
+    return opencodeRequest("GET", `/session/${encodeURIComponent(sessionID)}`, {
+      directory,
+      workspace,
+      timeoutMs: 30_000,
+    });
+  },
   opencode_session_messages: async ({ directory, workspace, sessionID, limit, before }) => {
     if (!sessionID) throw new Error("OpenCode session ID is required");
     return opencodeRequest("GET", `/session/${encodeURIComponent(sessionID)}/message`, {
@@ -1463,6 +1473,7 @@ const handlers: Record<string, (payload?: any) => Promise<any> | any> = {
       sessionID: resolvedSessionID,
       message: result,
       content: extractOpenCodeText(result?.parts),
+      parts: Array.isArray(result?.parts) ? result.parts : [],
       toolCalls: extractOpenCodeToolCalls(result?.parts),
       error: result?.info?.error ?? null,
     };
