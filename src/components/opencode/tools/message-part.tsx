@@ -96,7 +96,7 @@ function ReasoningPartDisplay({ part }: MessagePartProps) {
           <svg className="h-3 w-3 shrink-0 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
           </svg>
-          <span>Thinking</span>
+          <span>Thought</span>
         </summary>
         <div className="whitespace-pre-wrap px-1 py-2 text-[12px] leading-relaxed text-muted-foreground">{text}</div>
       </details>

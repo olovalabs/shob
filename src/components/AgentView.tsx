@@ -22,6 +22,7 @@ import type {
 } from "../electron"
 import { SessionTurn } from "@/components/opencode/tools"
 import type { AgentMessage, AgentMessagePart } from "@/types"
+import { TodoDock } from "@/components/TodoDock"
 
 
 interface AgentViewProps {
@@ -496,6 +497,67 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
     const ts = session?.lastActiveAt ?? session?.createdAt ?? null
     return ts ? formatRelativeTime(ts) : null
   }, [session?.lastActiveAt, session?.createdAt])
+
+  // Extract todos from a single todowrite part — checks input AND metadata
+  const getTodosFromPart = (p: OpenCodePartView): Array<{ id: string; content: string; status: "pending" | "in_progress" | "completed" | "cancelled" }> => {
+    type RawTodo = { id: string; content: string; status: string }
+    const fromInput = (p.state?.input as { todos?: RawTodo[] } | null)?.todos
+    const fromMeta  = (p.state?.metadata as { todos?: RawTodo[] } | null)?.todos
+    const raw = fromInput ?? fromMeta ?? []
+    return raw.map((t) => ({ id: t.id, content: t.content, status: t.status as "pending" | "in_progress" | "completed" | "cancelled" }))
+  }
+
+  // Returns the todos from the MOST RECENT todowrite call inside a parts list (null = no todowrite found)
+  const extractTodosFromParts = (parts: OpenCodePartView[]): Array<{ id: string; content: string; status: "pending" | "in_progress" | "completed" | "cancelled" }> | null => {
+    const todoParts = parts.filter((p) => p.type === "tool" && p.tool === "todowrite")
+    if (todoParts.length === 0) return null
+    // Last element = most recent call
+    const last = todoParts[todoParts.length - 1]
+    return getTodosFromPart(last)
+  }
+
+  // Returns the todos from the MOST RECENT todowrite toolcall (null = none found)
+  const extractTodosFromToolCalls = (toolCalls: ToolCallView[]): Array<{ id: string; content: string; status: "pending" | "in_progress" | "completed" | "cancelled" }> | null => {
+    const todoCalls = toolCalls.filter((tc) => tc.tool === "todowrite")
+    if (todoCalls.length === 0) return null
+    const last = todoCalls[todoCalls.length - 1]
+    type RawTodo = { id: string; content: string; status: string }
+    const fromInput = (last.input as { todos?: RawTodo[] } | null)?.todos
+    const fromMeta  = (last.metadata as { todos?: RawTodo[] } | null)?.todos
+    const raw = fromInput ?? fromMeta ?? []
+    return raw.map((t) => ({ id: t.id, content: t.content, status: t.status as "pending" | "in_progress" | "completed" | "cancelled" }))
+  }
+
+  const dockTodos = useMemo(() => {
+    // Check live assistant first (most up-to-date) when agent is thinking
+    if (isThinking) {
+      if (liveAssistant?.parts?.length) {
+        const todos = extractTodosFromParts(liveAssistant.parts)
+        if (todos !== null) return todos
+      }
+      if (liveAssistant?.toolCalls?.length) {
+        const todos = extractTodosFromToolCalls(liveAssistant.toolCalls)
+        if (todos !== null) return todos
+      }
+    }
+
+    // Walk persisted messages newest → oldest and return the first todowrite we find
+    // (todowrite is a replacement operation, so the most recent call IS the current state)
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i]
+      if (msg.role !== "assistant") continue
+      if (msg.parts?.length) {
+        const todos = extractTodosFromParts(msg.parts as OpenCodePartView[])
+        if (todos !== null) return todos
+      }
+      if (msg.toolCalls?.length) {
+        const todos = extractTodosFromToolCalls(msg.toolCalls)
+        if (todos !== null) return todos
+      }
+    }
+
+    return []
+  }, [isThinking, liveAssistant?.parts, liveAssistant?.toolCalls, messages])
 
   useEffect(() => {
     if (!isActive) return
@@ -1296,7 +1358,7 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
     >
       <div
         ref={scrollRef}
-        className="thin-scrollbar relative z-[1] flex-1 overflow-y-auto"
+        className="thin-scrollbar relative z-[1] flex-1 min-h-0 overflow-y-auto"
       >
         {messages.length === 0 ? (
           <div className="flex min-h-full w-full items-start justify-center px-6 py-14 sm:py-20">
@@ -1326,7 +1388,7 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
                   <span>main</span>
                   {lastUpdatedLabel && (
                     <>
-                      <span className="mx-1 text-muted-foreground/40">\u00b7</span>
+                      <span className="mx-1 text-muted-foreground/40">{"\u00b7"}</span>
                       <span>Last activity {lastUpdatedLabel}</span>
                     </>
                   )}
@@ -1359,6 +1421,10 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
       </div>
 
       <div className="relative z-[1] shrink-0 px-4 pb-5 pt-3 sm:px-6">
+        <TodoDock
+          todos={dockTodos}
+          live={isThinking}
+        />
         <div className="mx-auto w-full max-w-[800px] 2xl:max-w-[1000px]">
           <div className="agent-composer relative overflow-hidden rounded-[16px] border border-border/70 bg-card/85">
             <textarea

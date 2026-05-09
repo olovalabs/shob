@@ -799,7 +799,7 @@ button {
 
 [data-component="text-shimmer"] [data-slot="text-shimmer-char"] {
   display: inline-grid;
-  white-space: pre;
+  white-space: normal;
   font: inherit;
   letter-spacing: inherit;
   line-height: inherit;
@@ -808,7 +808,7 @@ button {
 [data-component="text-shimmer"] [data-slot="text-shimmer-char-base"],
 [data-component="text-shimmer"] [data-slot="text-shimmer-char-shimmer"] {
   grid-area: 1 / 1;
-  white-space: pre;
+  white-space: normal;
   transition: opacity var(--text-shimmer-swap) ease-out;
   font: inherit;
   letter-spacing: inherit;

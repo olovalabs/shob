@@ -509,50 +509,11 @@ ToolRegistry.register({
   },
 })
 
-// ── TODOWRITE ──
+// ── TODOWRITE ── (hidden from chat — todos are shown in the bottom TodoDock only)
 ToolRegistry.register({
   name: "todowrite",
-  render(props: ToolProps) {
-    const todos = (props.metadata?.todos as Array<{ status: string; content: string }> | undefined) ??
-      ((props.input as any)?.todos as Array<{ status: string; content: string }> | undefined) ??
-      []
-    const completedCount = todos.filter((t) => t.status === "completed").length
-    const subtitle = todos.length > 0 ? `${completedCount}/${todos.length}` : ""
-
-    return (
-      <BasicTool
-        icon="checklist"
-        status={props.status}
-        defaultOpen
-        hideDetails={props.hideDetails}
-        trigger={{
-          title: "Todos",
-          subtitle,
-        }}
-      >
-        {todos.length > 0 && (
-          <div className="px-2 pb-2 space-y-1">
-            {todos.map((todo, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  readOnly
-                  checked={todo.status === "completed"}
-                  className="h-3.5 w-3.5 rounded border-border"
-                />
-                <span
-                  data-slot="message-part-todo-content"
-                  data-completed={todo.status === "completed" ? "completed" : undefined}
-                  className={`text-[13px] ${todo.status === "completed" ? "line-through opacity-60" : "text-foreground"}`}
-                >
-                  {todo.content}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </BasicTool>
-    )
+  render(_props: ToolProps) {
+    return null
   },
 })
 
