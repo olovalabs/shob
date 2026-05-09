@@ -86,7 +86,7 @@ const findProjectBySessionId = (projects: Project[], sessionId: string | null) =
 
 export type CliLaunchMode = 'new-tab' | 'replace-current';
 export type AppPage = 'workspace' | 'settings';
-export type SettingsSection = 'general' | 'appearance' | 'providers' | 'cli-tools';
+export type SettingsSection = 'general' | 'appearance' | 'models' | 'providers' | 'cli-tools';
 
 interface AppState {
   activePage: AppPage;
@@ -96,6 +96,9 @@ interface AppState {
   activeSessionId: string | null;
   preferredCliId: string | null;
   preferredShell: string | null;
+  preferredOpencodeProviderId: string | null;
+  preferredOpencodeModelId: string | null;
+  preferredOpencodeVariant: string;
   cliLaunchMode: CliLaunchMode;
   appearanceThemeId: AppearanceThemeId;
   colorScheme: ColorScheme;
@@ -138,6 +141,8 @@ interface AppState {
   getCurrentCliTool: () => CliTool | null;
   setPreferredCliTool: (cliId: string | null) => void;
   setPreferredShell: (shell: string | null) => void;
+  setPreferredOpencodeModel: (providerId: string | null, modelId: string | null) => void;
+  setPreferredOpencodeVariant: (variant: string) => void;
   setCliLaunchMode: (mode: CliLaunchMode) => void;
   setAppearanceTheme: (themeId: AppearanceThemeId) => void;
   setColorScheme: (colorScheme: ColorScheme) => void;
@@ -152,6 +157,9 @@ export const useStore = create<AppState>((set, get) => ({
   activeSessionId: getStoredValue(STORAGE_KEYS.activeSessionId),
   preferredCliId: getStoredValue(STORAGE_KEYS.preferredCliId),
   preferredShell: getStoredValue(STORAGE_KEYS.preferredShell),
+  preferredOpencodeProviderId: getStoredValue(STORAGE_KEYS.preferredOpencodeProviderId),
+  preferredOpencodeModelId: getStoredValue(STORAGE_KEYS.preferredOpencodeModelId),
+  preferredOpencodeVariant: getStoredValue(STORAGE_KEYS.preferredOpencodeVariant) ?? 'high',
   cliLaunchMode: getStoredValue(STORAGE_KEYS.cliLaunchMode) === 'replace-current' ? 'replace-current' : 'new-tab',
   appearanceThemeId: normalizeAppearanceThemeId(getStoredValue(STORAGE_KEYS.appearanceThemeId) ?? DEFAULT_APPEARANCE_THEME_ID),
   colorScheme: normalizeColorScheme(getStoredValue(STORAGE_KEYS.colorScheme) ?? DEFAULT_COLOR_SCHEME),
@@ -756,6 +764,21 @@ export const useStore = create<AppState>((set, get) => ({
   setPreferredShell: (shell) => {
     setStoredValue(STORAGE_KEYS.preferredShell, shell);
     set({ preferredShell: shell });
+  },
+
+  setPreferredOpencodeModel: (providerId, modelId) => {
+    setStoredValue(STORAGE_KEYS.preferredOpencodeProviderId, providerId);
+    setStoredValue(STORAGE_KEYS.preferredOpencodeModelId, modelId);
+    set({
+      preferredOpencodeProviderId: providerId,
+      preferredOpencodeModelId: modelId,
+    });
+  },
+
+  setPreferredOpencodeVariant: (variant) => {
+    const next = variant || 'high';
+    setStoredValue(STORAGE_KEYS.preferredOpencodeVariant, next);
+    set({ preferredOpencodeVariant: next });
   },
 
   setCliLaunchMode: (mode) => {

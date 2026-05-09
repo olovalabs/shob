@@ -1,7 +1,17 @@
-import { useMemo, useState, type ReactNode } from "react"
-import { Boxes, Check, ChevronDown, Monitor, Moon, Palette, SlidersHorizontal, Sun, Terminal } from "lucide-react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { Boxes, Brain, Check, ChevronDown, Loader2, Monitor, Moon, Palette, RefreshCw, SlidersHorizontal, Sun, Terminal } from "lucide-react"
 import { CliAvatar } from "./CliAvatar"
 import { useStore, type SettingsSection } from "../store"
+import { nativeApi } from "@/services/native"
+import type { ElectronOpencodeProviderList } from "@/electron"
+import { ProviderIcon } from "@/components/opencode/ProviderIcon"
+import {
+  buildConnectedOpenCodeModelOptions,
+  makeOpenCodeModelValue,
+  parseOpenCodeModelValue,
+  pickOpenCodeModel,
+  type OpenCodeModelOption,
+} from "@/utils/opencode-models"
 import {
   APPEARANCE_THEMES,
   type AppearanceThemeId,
@@ -29,6 +39,7 @@ const SETTINGS_SECTIONS: {
 }[] = [
   { id: "general", label: "General", icon: SlidersHorizontal },
   { id: "appearance", label: "Appearance", icon: Palette },
+  { id: "models", label: "Models", icon: Brain },
   { id: "providers", label: "Providers", icon: Boxes },
   { id: "cli-tools", label: "CLI Tools", icon: Terminal },
 ]
@@ -239,6 +250,164 @@ function AppearanceSettings() {
   )
 }
 
+function ModelsSettings() {
+  const {
+    preferredOpencodeProviderId,
+    preferredOpencodeModelId,
+    preferredOpencodeVariant,
+    setPreferredOpencodeModel,
+    setPreferredOpencodeVariant,
+  } = useStore()
+  const [providerList, setProviderList] = useState<ElectronOpencodeProviderList | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState("")
+
+  const refresh = async () => {
+    setLoading(true)
+    setError("")
+    try {
+      await nativeApi.invoke("opencode_server_start", {})
+      const providers = await nativeApi.invoke("opencode_provider_list", {})
+      setProviderList(providers)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      setProviderList(null)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void refresh()
+  }, [])
+
+  const modelOptions = useMemo<OpenCodeModelOption[]>(
+    () => buildConnectedOpenCodeModelOptions(providerList),
+    [providerList],
+  )
+
+  const selectedModel = useMemo(
+    () =>
+      pickOpenCodeModel({
+        options: modelOptions,
+        providers: providerList,
+        preferredProviderID: preferredOpencodeProviderId,
+        preferredModelID: preferredOpencodeModelId,
+      }),
+    [modelOptions, preferredOpencodeModelId, preferredOpencodeProviderId, providerList],
+  )
+
+  const selectedValue =
+    selectedModel?.value ??
+    (preferredOpencodeProviderId && preferredOpencodeModelId
+      ? makeOpenCodeModelValue(preferredOpencodeProviderId, preferredOpencodeModelId)
+      : "")
+
+  const connectedProviders = useMemo(() => {
+    const connected = new Set(providerList?.connected ?? [])
+    return (providerList?.all ?? [])
+      .filter((provider) => connected.has(provider.id) && Object.keys(provider.models ?? {}).length > 0)
+      .sort((left, right) => left.name.localeCompare(right.name))
+  }, [providerList])
+
+  const selectModel = (value: string) => {
+    const model = parseOpenCodeModelValue(value, modelOptions)
+    setPreferredOpencodeModel(model.providerID || null, model.modelID || null)
+  }
+
+  return (
+    <div className="space-y-4">
+      <SettingsBlock title="Model Selection">
+        <SettingsRow title="Default Model" description="Only connected provider models are available here and in chat.">
+          <div className="flex items-center gap-2">
+            <select
+              value={selectedValue}
+              onChange={(event) => selectModel(event.target.value)}
+              disabled={loading || modelOptions.length === 0}
+              className="h-8 w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-2 text-sm outline-none"
+            >
+              {modelOptions.length === 0 ? (
+                <option value="">{loading ? "Loading connected models..." : "No connected models"}</option>
+              ) : (
+                modelOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))
+              )}
+            </select>
+            <Button type="button" size="icon-sm" variant="ghost" onClick={() => void refresh()} disabled={loading}>
+              {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            </Button>
+          </div>
+        </SettingsRow>
+
+        <SettingsRow title="Reasoning" description="Used by new OpenCode agent requests.">
+          <select
+            value={preferredOpencodeVariant}
+            onChange={(event) => setPreferredOpencodeVariant(event.target.value)}
+            className="h-8 w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-2 text-sm outline-none"
+          >
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="xhigh">XHigh</option>
+          </select>
+        </SettingsRow>
+      </SettingsBlock>
+
+      <SettingsBlock title="Connected Provider Models">
+        {loading && !providerList ? (
+          <div className="px-4 py-3 text-sm text-[var(--muted-foreground)]">
+            <Loader2 className="mr-2 inline h-3.5 w-3.5 animate-spin" />
+            Loading models...
+          </div>
+        ) : null}
+        {!loading && connectedProviders.length === 0 ? (
+          <div className="px-4 py-4 text-sm text-[var(--muted-foreground)]">
+            Connect a provider first, then its models will appear here and in the chat composer.
+          </div>
+        ) : null}
+        {connectedProviders.map((provider) => (
+          <div key={provider.id} className="border-b border-[var(--border)] px-4 py-3 last:border-b-0">
+            <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+              <ProviderIcon id={provider.id} className="h-4 w-4 shrink-0" />
+              <span>{provider.name}</span>
+              <span className="text-xs font-normal text-[var(--muted-foreground)]">{Object.keys(provider.models ?? {}).length} models</span>
+            </div>
+            <div className="grid gap-1 sm:grid-cols-2">
+              {Object.values(provider.models ?? {}).map((model) => {
+                const active = selectedModel?.providerID === provider.id && selectedModel.modelID === model.id
+                return (
+                  <button
+                    key={model.id}
+                    type="button"
+                    onClick={() => setPreferredOpencodeModel(provider.id, model.id)}
+                    className={`min-w-0 rounded-md border px-2 py-1.5 text-left text-xs transition ${
+                      active
+                        ? "border-[var(--ring)] bg-[var(--accent)] text-[var(--foreground)]"
+                        : "border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+                    }`}
+                  >
+                    <span className="block truncate font-medium">{model.name || model.id}</span>
+                    <span className="block truncate opacity-75">{model.id}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        ))}
+      </SettingsBlock>
+
+      {error ? (
+        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {error}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function ProvidersSettings() {
   return <OpenCodeProvidersSettings />
 }
@@ -406,6 +575,7 @@ export function SettingsPage() {
           <div className="mx-auto w-full max-w-5xl">
             {activeSettingsSection === "general" && <GeneralSettings />}
             {activeSettingsSection === "appearance" && <AppearanceSettings />}
+            {activeSettingsSection === "models" && <ModelsSettings />}
             {activeSettingsSection === "providers" && <ProvidersSettings />}
             {activeSettingsSection === "cli-tools" && <CliToolsSettings />}
           </div>

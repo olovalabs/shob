@@ -42,8 +42,38 @@ type OpencodeRuntime = {
   startedAt: number;
 };
 
+type OpencodeEventSubscription = {
+  id: string;
+  channel: string;
+  controller: AbortController;
+  directory?: string | null;
+  workspace?: string | null;
+  global: boolean;
+  startedAt: number;
+  queue: OpencodeEventEnvelope[];
+  coalesced: Map<string, number>;
+  staleDeltas: Set<string>;
+  flushTimer?: ReturnType<typeof setTimeout>;
+  lastFlushAt: number;
+};
+
+type OpencodeEventEnvelope = {
+  type: "open" | "event" | "error" | "closed";
+  event?: unknown;
+  directory?: string | null;
+  project?: string | null;
+  workspace?: string | null;
+  sseEvent?: string;
+  id?: string;
+  retry?: number;
+  error?: string;
+  reason?: string;
+  time: number;
+};
+
 let opencodeRuntime: OpencodeRuntime | null = null;
 let opencodeStartPromise: Promise<OpencodeRuntime> | null = null;
+const opencodeEventSubscriptions = new Map<string, OpencodeEventSubscription>();
 
 function userDataPath(...parts: string[]) {
   return path.join(app.getPath("userData"), ...parts);
@@ -95,7 +125,6 @@ function prepareOpencodeServerEnv(password: string) {
   Object.assign(process.env, {
     OPENCODE_EXPERIMENTAL_ICON_DISCOVERY: "true",
     OPENCODE_EXPERIMENTAL_FILEWATCHER: "true",
-    OPENCODE_DISABLE_MODELS_FETCH: "true",
     OPENCODE_CLIENT: "desktop",
     OPENCODE_SERVER_USERNAME: "opencode",
     OPENCODE_SERVER_PASSWORD: password,
@@ -156,6 +185,7 @@ async function startOpencodeServer(payload: { hostname?: string; port?: number; 
 
   opencodeStartPromise = (async () => {
     if (opencodeRuntime && await checkOpencodeHealth(opencodeRuntime.url, opencodeRuntime.password)) {
+      emitOpencodeLog("debug", "Reusing healthy embedded server", { url: opencodeRuntime.url });
       return opencodeRuntime;
     }
 
@@ -167,8 +197,17 @@ async function startOpencodeServer(payload: { hostname?: string; port?: number; 
     const password = payload.password?.trim() || crypto.randomBytes(18).toString("base64url");
 
     prepareOpencodeServerEnv(password);
+    emitOpencodeLog("info", "Importing embedded OpenCode server", {
+      candidates: getOpencodeServerCandidates(),
+    });
     const { modulePath, Log, Server } = await importOpencodeServer();
-    await Log.init({ level: "WARN" });
+    await Log.init({ level: "DEBUG" });
+    emitOpencodeLog("info", "Starting embedded OpenCode server", {
+      hostname,
+      port,
+      modulePath,
+      stateHome: app.getPath("userData"),
+    });
 
     const listener = await Server.listen({
       hostname,
@@ -193,12 +232,18 @@ async function startOpencodeServer(payload: { hostname?: string; port?: number; 
     while (Date.now() - startedAt < 10_000) {
       if (await checkOpencodeHealth(runtime.url, password)) {
         opencodeRuntime = runtime;
+        emitOpencodeLog("info", "Embedded OpenCode server is healthy", {
+          url: runtime.url,
+          modulePath,
+          elapsedMs: Date.now() - startedAt,
+        });
         return runtime;
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
 
     await stopOpencodeListener(listener);
+    emitOpencodeLog("error", "Embedded OpenCode server did not become healthy", { url: runtime.url });
     throw new Error(`OpenCode server started but did not become healthy at ${runtime.url}`);
   })();
 
@@ -223,7 +268,9 @@ async function stopOpencodeListener(listener?: OpencodeListener | null) {
 async function stopOpencodeServer() {
   const runtime = opencodeRuntime;
   opencodeRuntime = null;
+  stopAllOpencodeEventStreams("server stopping");
   if (runtime) {
+    emitOpencodeLog("info", "Stopping embedded OpenCode server", { url: runtime.url });
     const authorization = getOpencodeAuthHeader(runtime.password);
     const headers = new Headers();
     if (authorization) headers.set("authorization", authorization);
@@ -295,6 +342,18 @@ function formatIpcError(error: unknown) {
   return String(error);
 }
 
+function emitNativeEvent(channel: string, payload: unknown) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send("shob:event", { channel, payload });
+}
+
+function emitOpencodeLog(level: "debug" | "info" | "warn" | "error", message: string, meta?: unknown) {
+  const payload = { level, message, meta, time: Date.now() };
+  const method = level === "debug" ? "log" : level;
+  console[method](`[opencode] ${message}`, meta ?? "");
+  emitNativeEvent("opencode-log", payload);
+}
+
 async function opencodeRequest<T = any>(
   method: string,
   endpoint: string,
@@ -328,6 +387,334 @@ async function opencodeRequest<T = any>(
   return payload as T;
 }
 
+function stopAllOpencodeEventStreams(reason = "stopped") {
+  for (const subscription of opencodeEventSubscriptions.values()) {
+    flushOpencodeEventQueue(subscription);
+    subscription.controller.abort(reason);
+    emitNativeEvent(subscription.channel, {
+      type: "closed",
+      reason,
+      time: Date.now(),
+    });
+  }
+  opencodeEventSubscriptions.clear();
+}
+
+function stopOpencodeEventStream(id: string, reason = "unsubscribed") {
+  const subscription = opencodeEventSubscriptions.get(id);
+  if (!subscription) return false;
+  flushOpencodeEventQueue(subscription);
+  subscription.controller.abort(reason);
+  opencodeEventSubscriptions.delete(id);
+  emitNativeEvent(subscription.channel, {
+    type: "closed",
+    reason,
+    time: Date.now(),
+  });
+  emitOpencodeLog("debug", "Stopped OpenCode event stream", {
+    id,
+    directory: subscription.directory,
+    reason,
+  });
+  return true;
+}
+
+function normalizeComparablePath(value?: string | null) {
+  if (!value) return "";
+  const normalized = path.normalize(value).replace(/[\\/]+$/, "");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function isSameOpencodeDirectory(left?: string | null, right?: string | null) {
+  if (!left || !right) return true;
+  return normalizeComparablePath(left) === normalizeComparablePath(right);
+}
+
+function parseSseFrame(frame: string) {
+  const dataLines: string[] = [];
+  let eventName: string | undefined;
+  let eventID: string | undefined;
+  let retry: number | undefined;
+
+  for (const line of frame.split("\n")) {
+    if (line.startsWith("data:")) {
+      dataLines.push(line.replace(/^data:\s*/, ""));
+    } else if (line.startsWith("event:")) {
+      eventName = line.replace(/^event:\s*/, "");
+    } else if (line.startsWith("id:")) {
+      eventID = line.replace(/^id:\s*/, "");
+    } else if (line.startsWith("retry:")) {
+      const parsed = Number.parseInt(line.replace(/^retry:\s*/, ""), 10);
+      if (!Number.isNaN(parsed)) retry = parsed;
+    }
+  }
+
+  if (dataLines.length === 0) return undefined;
+  const raw = dataLines.join("\n");
+  let data: unknown = raw;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    // Text SSE payloads are valid too.
+  }
+
+  return { data, event: eventName, id: eventID, retry };
+}
+
+function unwrapOpencodeStreamEvent(data: unknown, subscription: OpencodeEventSubscription) {
+  const record = data && typeof data === "object" ? data as Record<string, unknown> : null;
+  if (record && "payload" in record) {
+    return {
+      event: record.payload,
+      directory: typeof record.directory === "string" ? record.directory : null,
+      project: typeof record.project === "string" ? record.project : null,
+      workspace: typeof record.workspace === "string" ? record.workspace : null,
+    };
+  }
+
+  return {
+    event: data,
+    directory: subscription.directory ?? null,
+    project: null,
+    workspace: subscription.workspace ?? null,
+  };
+}
+
+function opencodeEventType(event: unknown) {
+  return event && typeof event === "object" && "type" in event
+    ? String((event as { type?: unknown }).type)
+    : undefined;
+}
+
+function asObjectRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function opencodeEventQueueKey(envelope: OpencodeEventEnvelope) {
+  const event = asObjectRecord(envelope.event);
+  const directory = envelope.directory ?? "";
+  const properties = asObjectRecord(event?.properties);
+  if (!event) return undefined;
+  if (event.type === "session.status") return `session.status:${directory}:${properties?.sessionID ?? ""}`;
+  if (event.type === "lsp.updated") return `lsp.updated:${directory}`;
+  if (event.type === "message.part.updated") {
+    const part = asObjectRecord(properties?.part);
+    if (part?.messageID && part?.id) return `message.part.updated:${directory}:${part.messageID}:${part.id}`;
+  }
+  return undefined;
+}
+
+function opencodeDeltaKey(envelope: OpencodeEventEnvelope) {
+  const event = asObjectRecord(envelope.event);
+  if (event?.type !== "message.part.delta") return undefined;
+  const props = asObjectRecord(event.properties);
+  if (!props?.messageID || !props?.partID) return undefined;
+  return `${envelope.directory ?? ""}:${props.messageID}:${props.partID}`;
+}
+
+function flushOpencodeEventQueue(subscription: OpencodeEventSubscription) {
+  if (subscription.flushTimer) clearTimeout(subscription.flushTimer);
+  subscription.flushTimer = undefined;
+  if (subscription.queue.length === 0) return;
+
+  const events = subscription.queue;
+  const staleDeltas = subscription.staleDeltas.size > 0 ? new Set(subscription.staleDeltas) : undefined;
+  subscription.queue = [];
+  subscription.coalesced.clear();
+  subscription.staleDeltas.clear();
+  subscription.lastFlushAt = Date.now();
+
+  for (const envelope of events) {
+    const delta = staleDeltas ? opencodeDeltaKey(envelope) : undefined;
+    if (delta && staleDeltas?.has(delta)) continue;
+    emitNativeEvent(subscription.channel, envelope);
+  }
+}
+
+function queueOpencodeEvent(subscription: OpencodeEventSubscription, envelope: OpencodeEventEnvelope) {
+  if (envelope.type !== "event") {
+    emitNativeEvent(subscription.channel, envelope);
+    return;
+  }
+
+  const key = opencodeEventQueueKey(envelope);
+  if (key) {
+    const existing = subscription.coalesced.get(key);
+    if (existing !== undefined) {
+      subscription.queue[existing] = envelope;
+      const event = asObjectRecord(envelope.event);
+      if (event?.type === "message.part.updated") {
+        const part = asObjectRecord(asObjectRecord(event.properties)?.part);
+        if (part?.messageID && part?.id) {
+          subscription.staleDeltas.add(`${envelope.directory ?? ""}:${part.messageID}:${part.id}`);
+        }
+      }
+    } else {
+      subscription.coalesced.set(key, subscription.queue.length);
+      subscription.queue.push(envelope);
+    }
+  } else {
+    subscription.queue.push(envelope);
+  }
+
+  if (subscription.flushTimer) return;
+  const elapsed = Date.now() - subscription.lastFlushAt;
+  subscription.flushTimer = setTimeout(
+    () => flushOpencodeEventQueue(subscription),
+    Math.max(0, 16 - elapsed),
+  );
+}
+
+async function runOpencodeEventStream(subscription: OpencodeEventSubscription) {
+  let attempts = 0;
+  let lastEventID: string | undefined;
+
+  while (!subscription.controller.signal.aborted) {
+    attempts += 1;
+    try {
+      const runtime = await startOpencodeServer();
+      const url = subscription.global
+        ? buildOpencodeUrl(runtime, "/global/event")
+        : buildOpencodeUrl(runtime, "/event", {
+            directory: subscription.directory,
+            workspace: subscription.workspace,
+          });
+      const headers = new Headers();
+      const authorization = getOpencodeAuthHeader(runtime.password);
+      if (authorization) headers.set("authorization", authorization);
+      if (lastEventID) headers.set("last-event-id", lastEventID);
+
+      emitOpencodeLog("debug", "Opening OpenCode event stream", {
+        id: subscription.id,
+        url: url.toString(),
+        directory: subscription.directory,
+        global: subscription.global,
+      });
+
+      const response = await fetch(url, {
+        headers,
+        signal: subscription.controller.signal,
+      });
+      if (!response.ok) throw new Error(`OpenCode event stream failed: ${response.status} ${response.statusText}`);
+      if (!response.body) throw new Error("OpenCode event stream did not return a body");
+
+      queueOpencodeEvent(subscription, {
+        type: "open",
+        time: Date.now(),
+      });
+
+      attempts = 0;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      try {
+        while (!subscription.controller.signal.aborted) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          buffer = buffer.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+          const frames = buffer.split("\n\n");
+          buffer = frames.pop() ?? "";
+
+          for (const frame of frames) {
+            const parsed = parseSseFrame(frame);
+            if (!parsed) continue;
+            if (parsed.id) lastEventID = parsed.id;
+
+            const streamEvent = unwrapOpencodeStreamEvent(parsed.data, subscription);
+            if (!isSameOpencodeDirectory(streamEvent.directory, subscription.directory)) continue;
+
+            const eventType = opencodeEventType(streamEvent.event) ?? parsed.event;
+            if (eventType && eventType !== "message.part.delta") {
+              emitOpencodeLog("debug", "OpenCode event", {
+                id: subscription.id,
+                event: eventType,
+                directory: streamEvent.directory ?? subscription.directory,
+              });
+            }
+
+            queueOpencodeEvent(subscription, {
+              type: "event",
+              event: streamEvent.event,
+              directory: streamEvent.directory,
+              project: streamEvent.project,
+              workspace: streamEvent.workspace,
+              sseEvent: parsed.event,
+              id: parsed.id,
+              retry: parsed.retry,
+              time: Date.now(),
+            });
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    } catch (error) {
+      if (subscription.controller.signal.aborted) break;
+      emitOpencodeLog("warn", "OpenCode event stream interrupted; reconnecting", {
+        id: subscription.id,
+        directory: subscription.directory,
+        error: formatIpcError(error),
+      });
+      queueOpencodeEvent(subscription, {
+        type: "error",
+        error: formatIpcError(error),
+        time: Date.now(),
+      });
+      await new Promise((resolve) => setTimeout(resolve, Math.min(1000 + attempts * 250, 5000)));
+    }
+  }
+}
+
+async function startOpencodeEventStream({
+  directory,
+  workspace,
+  global = true,
+}: { directory?: string | null; workspace?: string | null; global?: boolean } = {}) {
+  await startOpencodeServer();
+  const id = crypto.randomUUID();
+  const subscription: OpencodeEventSubscription = {
+    id,
+    channel: `opencode-event:${id}`,
+    controller: new AbortController(),
+    directory,
+    workspace,
+    global,
+    startedAt: Date.now(),
+    queue: [],
+    coalesced: new Map(),
+    staleDeltas: new Set(),
+    lastFlushAt: 0,
+  };
+
+  opencodeEventSubscriptions.set(id, subscription);
+  emitOpencodeLog("info", "Starting OpenCode event stream", {
+    id,
+    directory,
+    workspace,
+    global,
+  });
+  void runOpencodeEventStream(subscription).finally(() => {
+    flushOpencodeEventQueue(subscription);
+    opencodeEventSubscriptions.delete(id);
+    emitNativeEvent(subscription.channel, {
+      type: "closed",
+      reason: "ended",
+      time: Date.now(),
+    });
+  });
+
+  return {
+    id,
+    channel: subscription.channel,
+    directory,
+    workspace,
+    global,
+    startedAt: subscription.startedAt,
+  };
+}
+
 function extractOpenCodeText(parts: any[] | undefined) {
   return (parts ?? [])
     .filter((part) => part?.type === "text" && typeof part.text === "string")
@@ -350,8 +737,12 @@ function extractOpenCodeToolCalls(parts: any[] | undefined) {
         input: state?.input ?? null,
         output: typeof state?.output === "string" ? state.output : null,
         error: typeof state?.error === "string" ? state.error : null,
+        raw: typeof state?.raw === "string" ? state.raw : null,
+        metadata: state?.metadata && typeof state.metadata === "object" ? state.metadata : null,
+        attachments: Array.isArray(state?.attachments) ? state.attachments : null,
         startedAt: typeof state?.time?.start === "number" ? state.time.start : null,
         endedAt: typeof state?.time?.end === "number" ? state.time.end : null,
+        compactedAt: typeof state?.time?.compacted === "number" ? state.time.compacted : null,
       };
     });
 }
@@ -503,7 +894,7 @@ async function detectWindowsBuildNumber() {
   try {
     const { stdout } = await execFileAsync("cmd", ["/C", "ver"]);
     const token = stdout.split(/\s+/).find((part) => /\d+\.\d+\.\d+/.test(part));
-    return token ? Number(token.replace(/[\[\]]/g, "").split(".")[2]) || null : null;
+    return token ? Number(token.replace(/\[|\]/g, "").split(".")[2]) || null : null;
   } catch {
     return null;
   }
@@ -548,11 +939,7 @@ function shouldForwardProjectWatchPath(changedPath: string) {
 }
 
 function emitProjectFsEvent(projectPath: string, paths: string[]) {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send("shob:event", {
-    channel: "project-fs-event",
-    payload: { projectPath, paths },
-  });
+  emitNativeEvent("project-fs-event", { projectPath, paths });
 }
 
 async function setProjectWatch(watchPath: string | null) {
@@ -952,6 +1339,14 @@ const handlers: Record<string, (payload?: any) => Promise<any> | any> = {
     opencodeRequest("GET", "/provider", { directory, workspace, timeoutMs: 30_000 }),
   opencode_provider_auth_methods: async ({ directory, workspace } = {}) =>
     opencodeRequest("GET", "/provider/auth", { directory, workspace, timeoutMs: 30_000 }),
+  opencode_event_subscribe: async ({ directory, workspace, global } = {}) =>
+    startOpencodeEventStream({ directory, workspace, global }),
+  opencode_event_unsubscribe: async ({ id }) => {
+    if (!id) throw new Error("OpenCode event subscription ID is required");
+    return stopOpencodeEventStream(id);
+  },
+  opencode_session_status: async ({ directory, workspace } = {}) =>
+    opencodeRequest("GET", "/session/status", { directory, workspace, timeoutMs: 30_000 }),
   opencode_global_dispose: async () =>
     opencodeRequest("POST", "/global/dispose", { timeoutMs: 30_000 }),
   opencode_config_get: async ({ directory, workspace } = {}) =>

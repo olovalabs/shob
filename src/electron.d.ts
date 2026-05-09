@@ -95,9 +95,43 @@ export interface ElectronOpencodePromptResult {
     input?: unknown
     output?: string | null
     error?: string | null
+    raw?: string | null
+    metadata?: Record<string, unknown> | null
+    attachments?: unknown[] | null
     startedAt?: number | null
     endedAt?: number | null
+    compactedAt?: number | null
   }>
+}
+
+export interface ElectronOpencodeEventSubscription {
+  id: string
+  channel: string
+  directory?: string | null
+  workspace?: string | null
+  global?: boolean
+  startedAt: number
+}
+
+export interface ElectronOpencodeEventEnvelope {
+  type: "open" | "event" | "error" | "closed"
+  event?: unknown
+  directory?: string | null
+  project?: string | null
+  workspace?: string | null
+  sseEvent?: string
+  id?: string
+  retry?: number
+  error?: string
+  reason?: string
+  time: number
+}
+
+export interface ElectronOpencodeLogEvent {
+  level: "debug" | "info" | "warn" | "error"
+  message: string
+  meta?: unknown
+  time: number
 }
 
 export interface ElectronTerminalSpawnOptions {
@@ -167,6 +201,18 @@ export interface NativeCommandMap {
   opencode_provider_auth_methods: {
     args: { directory?: string; workspace?: string } | undefined
     result: Record<string, Array<{ type: "oauth" | "api"; label: string; prompts?: unknown[] }>>
+  }
+  opencode_event_subscribe: {
+    args: { directory?: string; workspace?: string; global?: boolean } | undefined
+    result: ElectronOpencodeEventSubscription
+  }
+  opencode_event_unsubscribe: {
+    args: { id: string }
+    result: boolean
+  }
+  opencode_session_status: {
+    args: { directory?: string; workspace?: string } | undefined
+    result: Record<string, { type: "idle" | "busy" | "retry"; attempt?: number; message?: string; next?: number }>
   }
   opencode_global_dispose: { args: undefined; result: unknown }
   opencode_config_get: {

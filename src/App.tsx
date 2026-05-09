@@ -5,6 +5,7 @@ import { TitleBar } from './components/TitleBar';
 import { MainView } from './components/MainView';
 import { useStore } from './store';
 import { applyAppearanceTheme } from './theme';
+import type { ElectronOpencodeLogEvent } from './electron';
 
 class StartupErrorBoundary extends Component<
   { children: ReactNode; fallback?: ReactNode },
@@ -140,6 +141,17 @@ function App() {
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, []);
+
+  useEffect(() => {
+    const unlistenPromise = nativeApi.listen<ElectronOpencodeLogEvent>('opencode-log', ({ payload }) => {
+      const method = payload.level === 'debug' ? 'log' : payload.level;
+      console[method](`[opencode] ${payload.message}`, payload.meta ?? '');
+    });
+
+    return () => {
+      void unlistenPromise.then((unlisten) => unlisten());
     };
   }, []);
   

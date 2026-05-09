@@ -1,29 +1,26 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react"
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import {
   ArrowUp,
-  Bot,
-  Brain,
-  CheckCircle2,
   ChevronDown,
-  Circle,
-  Code2,
-  FileSearch,
   GitBranch,
-  Globe,
-  ListTree,
   Loader2,
-  PencilLine,
   Plus,
-  Search,
   Sparkles,
-  SquareTerminal,
   StopCircle,
-  Wrench,
 } from "lucide-react"
 import { useStore } from "../store"
 import { Button } from "@/components/ui/button"
 import { nativeApi } from "@/services/native"
-import type { ElectronOpencodeProviderList } from "../electron"
+import {
+  buildConnectedOpenCodeModelOptions,
+  parseOpenCodeModelValue,
+  pickOpenCodeModel,
+  type OpenCodeModelOption,
+} from "@/utils/opencode-models"
+import type {
+  ElectronOpencodeEventEnvelope,
+  ElectronOpencodeEventSubscription,
+} from "../electron"
 
 
 interface AgentViewProps {
@@ -38,14 +35,6 @@ const SUGGESTED_PROMPTS = [
   "Write unit tests for the current module",
 ] as const
 
-type ModelOption = {
-  value: string
-  label: string
-  providerID: string
-  modelID: string
-  connected: boolean
-}
-
 type ToolCallView = {
   id?: string | null
   callID?: string | null
@@ -55,28 +44,63 @@ type ToolCallView = {
   input?: unknown
   output?: string | null
   error?: string | null
+  raw?: string | null
+  metadata?: Record<string, unknown> | null
+  attachments?: unknown[] | null
   startedAt?: number | null
   endedAt?: number | null
+  compactedAt?: number | null
 }
 
-const FALLBACK_MODEL_OPTIONS: ModelOption[] = [
-  { value: "openai/gpt-5", label: "OpenAI · GPT-5", providerID: "openai", modelID: "gpt-5", connected: false },
-  { value: "openai/gpt-5.4", label: "OpenAI · GPT-5.4", providerID: "openai", modelID: "gpt-5.4", connected: false },
-  {
-    value: "openai/gpt-5.4-mini",
-    label: "OpenAI · GPT-5.4-Mini",
-    providerID: "openai",
-    modelID: "gpt-5.4-mini",
-    connected: false,
-  },
-  {
-    value: "openai/gpt-5.3-codex",
-    label: "OpenAI · GPT-5.3-Codex",
-    providerID: "openai",
-    modelID: "gpt-5.3-codex",
-    connected: false,
-  },
-]
+type OpenCodePartView = {
+  id: string
+  messageID: string
+  type: string
+  text?: string
+  tool?: string
+  callID?: string
+  state?: {
+    status?: string
+    title?: string
+    input?: unknown
+    output?: string
+    error?: string
+    raw?: string
+    metadata?: Record<string, unknown>
+    attachments?: unknown[]
+    time?: {
+      start?: number
+      end?: number
+      compacted?: number
+    }
+  }
+}
+
+type OpenCodeMessageInfo = {
+  id?: string
+  role?: string
+  parentID?: string
+  error?: unknown
+  time?: {
+    created?: number
+    completed?: number
+  }
+}
+
+type OpenCodeEventPayload = {
+  type?: string
+  properties?: {
+    sessionID?: string
+    messageID?: string
+    partID?: string
+    field?: string
+    delta?: string
+    part?: OpenCodePartView
+    info?: OpenCodeMessageInfo
+    status?: { type?: string; message?: string; attempt?: number; next?: number }
+    error?: unknown
+  }
+}
 
 const getDirectoryParts = (path: string | null | undefined) => {
   if (!path) return { parent: "", name: "" }
@@ -101,132 +125,93 @@ const formatRelativeTime = (ts: number) => {
   return `${days}d ago`
 }
 
-const buildModelOptions = (providers: ElectronOpencodeProviderList | null): ModelOption[] => {
-  if (!providers?.all?.length) return FALLBACK_MODEL_OPTIONS
-
-  const connected = new Set(providers.connected ?? [])
-  const options = providers.all.flatMap((provider) =>
-    Object.values(provider.models ?? {}).map((model) => ({
-      value: `${provider.id}/${model.id}`,
-      label: `${provider.name} · ${model.name || model.id}`,
-      providerID: provider.id,
-      modelID: model.id,
-      connected: connected.has(provider.id),
-    })),
-  )
-
-  return options
-    .sort((left, right) => {
-      if (left.connected !== right.connected) return left.connected ? -1 : 1
-      return left.label.localeCompare(right.label)
-    })
-    .slice(0, 300)
-}
-
-const pickDefaultModel = (providers: ElectronOpencodeProviderList | null, options: ModelOption[]) => {
-  for (const [providerID, modelID] of Object.entries(providers?.default ?? {})) {
-    const match = options.find((item) => item.providerID === providerID && item.modelID === modelID)
-    if (match) return match.value
-  }
-
-  return options.find((item) => item.connected)?.value ?? options[0]?.value ?? FALLBACK_MODEL_OPTIONS[0].value
-}
-
-const parseModelValue = (value: string, options: ModelOption[]) => {
-  const option = options.find((item) => item.value === value)
-  if (option) return { providerID: option.providerID, modelID: option.modelID }
-
-  const [providerID, ...modelParts] = value.split("/")
-  return {
-    providerID: providerID || "openai",
-    modelID: modelParts.join("/") || value,
-  }
-}
-
 const describeOpenCodeError = (error: unknown) => {
   if (error instanceof Error) return error.message
   if (typeof error === "string") return error
   if (error && typeof error === "object") {
-    const data = error as any
-    return data?.data?.message ?? data?.message ?? JSON.stringify(data)
+    const data = error as { data?: { message?: unknown }; message?: unknown }
+    const nested = typeof data.data?.message === "string"
+      ? data.data.message
+      : typeof data.message === "string"
+        ? data.message
+        : undefined
+    return nested ?? JSON.stringify(data)
   }
   return "OpenCode returned an unknown error"
 }
 
-const formatToolInput = (value: unknown) => {
-  if (value === null || value === undefined) return ""
-  if (typeof value === "string") return value
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
+const extractTextFromParts = (parts: OpenCodePartView[]) =>
+  parts
+    .filter((part) => part.type === "text" && typeof part.text === "string")
+    .map((part) => part.text)
+    .join("\n")
+    .trim()
+
+const extractToolCallsFromParts = (parts: OpenCodePartView[]): ToolCallView[] =>
+  parts
+    .filter((part) => part.type === "tool")
+    .map((part) => ({
+      id: part.id ?? null,
+      callID: part.callID ?? null,
+      tool: part.tool ?? "tool",
+      status: part.state?.status ?? "pending",
+      title: typeof part.state?.title === "string" ? part.state.title : null,
+      input: part.state?.input ?? null,
+      output: typeof part.state?.output === "string" ? part.state.output : null,
+      error: typeof part.state?.error === "string" ? part.state.error : null,
+      raw: typeof part.state?.raw === "string" ? part.state.raw : null,
+      metadata: part.state?.metadata ?? null,
+      attachments: Array.isArray(part.state?.attachments) ? part.state.attachments : null,
+      startedAt: typeof part.state?.time?.start === "number" ? part.state.time.start : null,
+      endedAt: typeof part.state?.time?.end === "number" ? part.state.time.end : null,
+      compactedAt: typeof part.state?.time?.compacted === "number" ? part.state.time.compacted : null,
+    }))
+
+const sortOpenCodeParts = (parts: OpenCodePartView[]) =>
+  [...parts].sort((left, right) => left.id.localeCompare(right.id))
+
+const OPEN_CODE_ID_LENGTH = 26
+let lastOpenCodeIDTimestamp = 0
+let openCodeIDCounter = 0
+
+const randomBase62 = (length: number) => {
+  const chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+  const bytes = new Uint8Array(length)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, (byte) => chars[byte % chars.length]).join("")
+}
+
+const createOpenCodeID = (type: "message" | "part") => {
+  const prefix = type === "message" ? "msg" : "prt"
+  const timestamp = Date.now()
+  if (timestamp !== lastOpenCodeIDTimestamp) {
+    lastOpenCodeIDTimestamp = timestamp
+    openCodeIDCounter = 0
   }
+
+  openCodeIDCounter += 1
+  const value = BigInt(timestamp) * BigInt(0x1000) + BigInt(openCodeIDCounter)
+  const bytes = new Uint8Array(6)
+  for (let i = 0; i < 6; i += 1) {
+    bytes[i] = Number((value >> BigInt(40 - 8 * i)) & BigInt(0xff))
+  }
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")
+  return `${prefix}_${hex}${randomBase62(OPEN_CODE_ID_LENGTH - 12)}`
 }
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
 
-const basename = (value: unknown) => {
-  if (typeof value !== "string" || !value) return undefined
-  return value.split(/[\\/]/).filter(Boolean).at(-1) ?? value
-}
-
 const stringValue = (value: unknown) => (typeof value === "string" && value ? value : undefined)
 
-const getToolInfo = (toolCall: ToolCallView) => {
-  const input = asRecord(toolCall.input)
-  const subtitle =
-    stringValue(input.description) ??
-    stringValue(input.query) ??
-    stringValue(input.url) ??
-    basename(input.filePath) ??
-    basename(input.path) ??
-    stringValue(input.pattern) ??
-    stringValue(input.name) ??
-    toolCall.title ??
-    undefined
-
-  switch (toolCall.tool) {
-    case "read":
-      return { Icon: FileSearch, title: "Read", subtitle: basename(input.filePath) ?? subtitle }
-    case "list":
-      return { Icon: ListTree, title: "List", subtitle: basename(input.path) ?? subtitle }
-    case "glob":
-      return { Icon: Search, title: "Glob", subtitle: stringValue(input.pattern) ?? subtitle }
-    case "grep":
-      return { Icon: Search, title: "Grep", subtitle: stringValue(input.pattern) ?? subtitle }
-    case "bash":
-      return { Icon: SquareTerminal, title: "Shell", subtitle }
-    case "edit":
-      return { Icon: PencilLine, title: "Edit", subtitle: basename(input.filePath) ?? subtitle }
-    case "write":
-      return { Icon: PencilLine, title: "Write", subtitle: basename(input.filePath) ?? subtitle }
-    case "apply_patch":
-      return { Icon: Code2, title: "Patch", subtitle }
-    case "webfetch":
-      return { Icon: Globe, title: "Web Fetch", subtitle: stringValue(input.url) ?? subtitle }
-    case "websearch":
-      return { Icon: Globe, title: "Web Search", subtitle: stringValue(input.query) ?? subtitle }
-    case "task":
-      return { Icon: Bot, title: "Agent", subtitle }
-    case "skill":
-      return { Icon: Brain, title: stringValue(input.name) ?? "Skill", subtitle }
-    default:
-      return { Icon: Wrench, title: toolCall.tool, subtitle }
-  }
+const normalizePathDisplay = (value: unknown) => {
+  if (typeof value !== "string" || !value) return ""
+  return value.replace(/\\/g, "/")
 }
 
-const toolStatusLabel = (status: string) => {
-  if (status === "completed") return "Completed"
-  if (status === "running") return "Running"
-  if (status === "pending") return "Pending"
-  if (status === "error") return "Error"
-  return status
-}
-
-const toolArgs = (input: unknown) => {
+const primitiveArgs = (input: unknown, omit: string[] = []) => {
   const record = asRecord(input)
-  const skip = new Set(["description", "query", "url", "filePath", "path", "pattern", "name"])
+  const skip = new Set(omit)
   return Object.entries(record)
     .filter(([key]) => !skip.has(key))
     .flatMap(([key, value]) => {
@@ -235,7 +220,21 @@ const toolArgs = (input: unknown) => {
       }
       return []
     })
-    .slice(0, 3)
+}
+
+const ANSI_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[ -/]*[@-~]`, "g")
+const stripAnsi = (value: string) => value.replace(ANSI_PATTERN, "")
+
+const titlecase = (value: string) =>
+  value
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ")
+
+const formatCount = (value: unknown, singular: string, plural = `${singular}s`) => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return ""
+  return `(${value} ${value === 1 ? singular : plural})`
 }
 
 const formatDuration = (start?: number | null, end?: number | null) => {
@@ -247,81 +246,394 @@ const formatDuration = (start?: number | null, end?: number | null) => {
   return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`
 }
 
+const toolComplete = (toolCall: ToolCallView) => toolCall.status === "completed"
+const toolRunning = (toolCall: ToolCallView) => toolCall.status === "running"
+const toolPending = (toolCall: ToolCallView) => toolCall.status === "pending"
+
+function InlineTool({
+  icon,
+  pending,
+  complete,
+  children,
+  toolCall,
+  spinner,
+}: {
+  icon: string
+  pending: string
+  complete: unknown
+  children: ReactNode
+  toolCall: ToolCallView
+  spinner?: boolean
+}) {
+  const ready = Boolean(complete) || toolComplete(toolCall)
+  const duration = formatDuration(toolCall.startedAt, toolCall.endedAt)
+  const active = toolRunning(toolCall) || toolPending(toolCall)
+  const error = toolCall.error
+
+  return (
+    <div className="pl-3">
+      <div
+        className={`flex min-h-6 items-start gap-2 rounded-md px-1.5 py-0.5 text-[12px] leading-5 ${
+          active ? "text-foreground/90" : "text-muted-foreground"
+        }`}
+      >
+        <span className="mt-0.5 inline-flex h-4 min-w-4 items-center justify-center font-mono text-[11px]">
+          {spinner && active ? <Loader2 className="size-3 animate-spin" /> : ready ? icon : "~"}
+        </span>
+        <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
+          {ready ? children : pending}
+        </span>
+        {duration ? <span className="ml-2 shrink-0 text-[11px] text-muted-foreground/75">{duration}</span> : null}
+      </div>
+      {error ? (
+        <div className="ml-7 mt-1 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
+          {error}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function ExpandablePre({
+  content,
+  maxLines = 10,
+  className = "",
+}: {
+  content: string
+  maxLines?: number
+  className?: string
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const lines = content.split(/\r?\n/)
+  const overflow = lines.length > maxLines
+  const visible = expanded || !overflow ? content : [...lines.slice(0, maxLines), "..."].join("\n")
+
+  if (!content.trim()) return null
+
+  return (
+    <div className="space-y-1">
+      <pre className={`thin-scrollbar overflow-auto whitespace-pre-wrap text-[11px] leading-5 ${className}`}>
+        {visible}
+      </pre>
+      {overflow ? (
+        <button
+          type="button"
+          className="text-[11px] font-medium text-muted-foreground hover:text-foreground"
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? "Collapse" : "Expand"}
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
+function BlockTool({
+  title,
+  children,
+  toolCall,
+  spinner,
+}: {
+  title: string
+  children: ReactNode
+  toolCall: ToolCallView
+  spinner?: boolean
+}) {
+  const error = toolCall.error
+  return (
+    <div className="my-2 border-l border-border bg-muted/25 px-3 py-2">
+      <div className="mb-2 flex items-center gap-2 text-[12px] text-muted-foreground">
+        {spinner ? <Loader2 className="size-3 animate-spin" /> : null}
+        <span className="min-w-0 truncate font-mono">{title}</span>
+      </div>
+      <div className="space-y-2 text-[12px] text-foreground/90">{children}</div>
+      {error ? (
+        <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
+          {error}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+const renderDiagnostics = (metadata: Record<string, unknown>) => {
+  const diagnostics = asRecord(metadata.diagnostics)
+  const errors = Object.values(diagnostics)
+    .flatMap((value) => (Array.isArray(value) ? value : []))
+    .filter((item) => asRecord(item).severity === 1)
+    .slice(0, 3)
+
+  if (errors.length === 0) return null
+
+  return (
+    <div className="space-y-1 rounded-md border border-destructive/25 bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
+      {errors.map((item, index) => {
+        const record = asRecord(item)
+        return <div key={index}>{String(record.message ?? "Diagnostic error")}</div>
+      })}
+    </div>
+  )
+}
+
+function ToolCallItem({ toolCall }: { toolCall: ToolCallView }) {
+  const input = asRecord(toolCall.input)
+  const metadata = asRecord(toolCall.metadata)
+  const running = toolRunning(toolCall)
+  const output = toolCall.output ?? stringValue(metadata.output) ?? ""
+
+  switch (toolCall.tool) {
+    case "bash": {
+      const command = stringValue(input.command) ?? ""
+      const description = stringValue(input.description) ?? "Shell"
+      const workdir = normalizePathDisplay(input.workdir)
+      const title = workdir && workdir !== "." && !description.includes(workdir)
+        ? `# ${description} in ${workdir}`
+        : `# ${description}`
+      const commandOutput = stripAnsi(stringValue(metadata.output) ?? toolCall.output ?? "")
+
+      if (metadata.output !== undefined || toolCall.output) {
+        return (
+          <BlockTool title={title} toolCall={toolCall} spinner={running}>
+            {command ? <div className="font-mono text-[11px] text-muted-foreground">$ {command}</div> : null}
+            <ExpandablePre content={commandOutput} />
+          </BlockTool>
+        )
+      }
+
+      return (
+        <InlineTool icon="$" pending="Writing command..." complete={command} toolCall={toolCall} spinner={running}>
+          {command || description}
+        </InlineTool>
+      )
+    }
+
+    case "write": {
+      const filePath = normalizePathDisplay(input.filePath)
+      const content = stringValue(input.content) ?? ""
+      if (metadata.diagnostics !== undefined || content) {
+        return (
+          <BlockTool title={`# Wrote ${filePath}`} toolCall={toolCall}>
+            <ExpandablePre content={content} maxLines={14} />
+            {renderDiagnostics(metadata)}
+          </BlockTool>
+        )
+      }
+      return (
+        <InlineTool icon="<-" pending="Preparing write..." complete={filePath} toolCall={toolCall}>
+          Write {filePath}
+        </InlineTool>
+      )
+    }
+
+    case "edit": {
+      const filePath = normalizePathDisplay(input.filePath)
+      const diff = stringValue(metadata.diff)
+      if (diff !== undefined) {
+        return (
+          <BlockTool title={`<- Edit ${filePath}`} toolCall={toolCall}>
+            <ExpandablePre content={diff} maxLines={18} className="font-mono" />
+            {renderDiagnostics(metadata)}
+          </BlockTool>
+        )
+      }
+      return (
+        <InlineTool icon="<-" pending="Preparing edit..." complete={filePath} toolCall={toolCall}>
+          Edit {filePath} {primitiveArgs({ replaceAll: input.replaceAll }).join(" ")}
+        </InlineTool>
+      )
+    }
+
+    case "apply_patch": {
+      const files = Array.isArray(metadata.files) ? metadata.files.map(asRecord) : []
+      if (files.length > 0) {
+        return (
+          <BlockTool title={`<- Patched ${files.length} ${files.length === 1 ? "file" : "files"}`} toolCall={toolCall}>
+            <div className="space-y-3">
+              {files.map((file, index) => {
+                const name = normalizePathDisplay(file.relativePath ?? file.filePath ?? `file-${index + 1}`)
+                const patch = stringValue(file.patch) ?? ""
+                return (
+                  <div key={`${name}-${index}`} className="space-y-1">
+                    <div className="text-[11px] font-medium text-muted-foreground">{name}</div>
+                    <ExpandablePre content={patch} maxLines={14} className="font-mono" />
+                  </div>
+                )
+              })}
+            </div>
+            {renderDiagnostics(metadata)}
+          </BlockTool>
+        )
+      }
+      return (
+        <InlineTool icon="%" pending="Preparing patch..." complete={toolComplete(toolCall)} toolCall={toolCall}>
+          Patch
+        </InlineTool>
+      )
+    }
+
+    case "read": {
+      const filePath = normalizePathDisplay(input.filePath)
+      const loaded = Array.isArray(metadata.loaded) ? metadata.loaded.filter((item): item is string => typeof item === "string") : []
+      return (
+        <>
+          <InlineTool icon="->" pending="Reading file..." complete={filePath} toolCall={toolCall} spinner={running}>
+            Read {filePath} {primitiveArgs(input, ["filePath"]).join(" ")}
+          </InlineTool>
+          {loaded.map((file) => (
+            <div key={file} className="ml-10 text-[12px] leading-5 text-muted-foreground">
+              Loaded {normalizePathDisplay(file)}
+            </div>
+          ))}
+        </>
+      )
+    }
+
+    case "grep":
+      return (
+        <InlineTool icon="*" pending="Searching content..." complete={input.pattern} toolCall={toolCall}>
+          Grep "{String(input.pattern ?? "")}" {input.path ? `in ${normalizePathDisplay(input.path)} ` : ""}
+          {formatCount(metadata.matches, "match", "matches")}
+        </InlineTool>
+      )
+
+    case "glob":
+      return (
+        <InlineTool icon="*" pending="Finding files..." complete={input.pattern} toolCall={toolCall}>
+          Glob "{String(input.pattern ?? "")}" {input.path ? `in ${normalizePathDisplay(input.path)} ` : ""}
+          {formatCount(metadata.count, "match", "matches")}
+        </InlineTool>
+      )
+
+    case "list":
+      return (
+        <InlineTool icon="->" pending="Listing directory..." complete={input.path !== undefined} toolCall={toolCall}>
+          List {normalizePathDisplay(input.path)}
+        </InlineTool>
+      )
+
+    case "webfetch":
+      return (
+        <InlineTool icon="%" pending="Fetching from the web..." complete={input.url} toolCall={toolCall}>
+          WebFetch {String(input.url ?? "")}
+        </InlineTool>
+      )
+
+    case "websearch":
+      return (
+        <InlineTool icon="<>" pending="Searching web..." complete={input.query} toolCall={toolCall}>
+          Web Search "{String(input.query ?? "")}" {formatCount(metadata.numResults, "result")}
+        </InlineTool>
+      )
+
+    case "codesearch":
+      return (
+        <InlineTool icon="<>" pending="Searching code..." complete={input.query} toolCall={toolCall}>
+          Code Search "{String(input.query ?? "")}" {formatCount(metadata.results, "result")}
+        </InlineTool>
+      )
+
+    case "todowrite": {
+      const todos = Array.isArray(input.todos)
+        ? input.todos.map(asRecord)
+        : Array.isArray(metadata.todos)
+          ? metadata.todos.map(asRecord)
+          : []
+      if (todos.length > 0) {
+        return (
+          <BlockTool title="# Todos" toolCall={toolCall}>
+            <div className="space-y-1">
+              {todos.map((todo, index) => (
+                <div key={index} className="flex gap-2 text-[12px]">
+                  <span className="w-20 shrink-0 text-muted-foreground">{String(todo.status ?? "pending")}</span>
+                  <span>{String(todo.content ?? "")}</span>
+                </div>
+              ))}
+            </div>
+          </BlockTool>
+        )
+      }
+      return (
+        <InlineTool icon="*" pending="Updating todos..." complete={toolComplete(toolCall)} toolCall={toolCall}>
+          Updating todos
+        </InlineTool>
+      )
+    }
+
+    case "task": {
+      const description = stringValue(input.description) ?? ""
+      const subagent = stringValue(input.subagent_type) ?? "general"
+      const current = stringValue(metadata.title) ?? toolCall.title ?? ""
+      const lines = [`${titlecase(subagent)} Task - ${description || "delegated work"}`]
+      if (running && current) lines.push(`  ${current}`)
+      return (
+        <InlineTool icon="|" pending="Delegating..." complete={description || toolComplete(toolCall)} toolCall={toolCall} spinner={running}>
+          {lines.join("\n")}
+        </InlineTool>
+      )
+    }
+
+    case "question": {
+      const questions = Array.isArray(input.questions) ? input.questions.map(asRecord) : []
+      const answers = Array.isArray(metadata.answers) ? metadata.answers : []
+      if (answers.length > 0) {
+        return (
+          <BlockTool title="# Questions" toolCall={toolCall}>
+            {questions.map((question, index) => (
+              <div key={index} className="space-y-1">
+                <div className="text-muted-foreground">{String(question.question ?? "")}</div>
+                <div>{Array.isArray(answers[index]) ? answers[index].join(", ") : "(no answer)"}</div>
+              </div>
+            ))}
+          </BlockTool>
+        )
+      }
+      return (
+        <InlineTool icon="->" pending="Asking questions..." complete={questions.length} toolCall={toolCall}>
+          Asked {questions.length} question{questions.length === 1 ? "" : "s"}
+        </InlineTool>
+      )
+    }
+
+    case "skill":
+      return (
+        <InlineTool icon="->" pending="Loading skill..." complete={input.name} toolCall={toolCall}>
+          Skill "{String(input.name ?? "")}"
+        </InlineTool>
+      )
+
+    default: {
+      const inputLabel = primitiveArgs(input).slice(0, 4).join(", ")
+      return (
+        <>
+          <InlineTool icon="*" pending="Calling tool..." complete={toolComplete(toolCall) || inputLabel} toolCall={toolCall} spinner={running}>
+            {toolCall.tool} {inputLabel ? `[${inputLabel}]` : ""}
+          </InlineTool>
+          {output ? (
+            <div className="ml-10 mt-1">
+              <ExpandablePre content={output} maxLines={6} className="rounded-md border border-border/60 bg-background/55 p-2" />
+            </div>
+          ) : null}
+        </>
+      )
+    }
+  }
+}
+
 const ToolCallsList = ({ toolCalls, messageID }: { toolCalls: ToolCallView[]; messageID: string }) => {
   if (!Array.isArray(toolCalls) || toolCalls.length === 0) return null
 
   return (
-    <div className="mb-3 space-y-1.5 border-l border-border/70 pl-3">
-      {toolCalls.map((toolCall, index) => {
-        const { Icon, title, subtitle } = getToolInfo(toolCall)
-        const pending = toolCall.status === "pending" || toolCall.status === "running"
-        const failed = toolCall.status === "error"
-        const args = toolArgs(toolCall.input)
-        const duration = formatDuration(toolCall.startedAt, toolCall.endedAt)
-        const input = formatToolInput(toolCall.input)
-        const hasDetails = Boolean(input || toolCall.output || toolCall.error)
-
-        return (
-          <details
-            key={`${messageID}-tool-${toolCall.id ?? toolCall.callID ?? index}`}
-            className="group rounded-lg"
-            open={pending || failed}
-            data-component="tool-part-wrapper"
-            data-tool={toolCall.tool}
-            data-status={toolCall.status}
-          >
-            <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 rounded-lg px-2 py-1.5 text-[12px] text-muted-foreground hover:bg-muted/45 [&::-webkit-details-marker]:hidden">
-              <span className="inline-flex size-4 shrink-0 items-center justify-center">
-                {pending ? (
-                  <Loader2 className="size-3.5 animate-spin text-warning" />
-                ) : failed ? (
-                  <Circle className="size-3.5 fill-destructive text-destructive" />
-                ) : (
-                  <Icon className="size-3.5 text-muted-foreground" strokeWidth={1.8} />
-                )}
-              </span>
-              <span className="min-w-0 flex items-center gap-2">
-                <span className="font-medium text-foreground/90">{title}</span>
-                {subtitle ? <span className="truncate text-muted-foreground">{subtitle}</span> : null}
-                {args.map((arg) => (
-                  <span key={arg} className="hidden rounded bg-muted/70 px-1.5 py-0.5 text-[11px] text-muted-foreground sm:inline">
-                    {arg}
-                  </span>
-                ))}
-              </span>
-              <span className="ml-auto flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
-                {duration ? <span>{duration}</span> : null}
-                <span className={failed ? "text-destructive" : pending ? "text-warning" : "text-success"}>
-                  {toolStatusLabel(toolCall.status)}
-                </span>
-                {!pending && !failed ? <CheckCircle2 className="size-3.5 text-success" /> : null}
-                {hasDetails ? (
-                  <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
-                ) : null}
-              </span>
-            </summary>
-            {hasDetails ? (
-              <div className="space-y-2 pb-2 pl-8 pr-2">
-                {input ? (
-                  <pre className="max-h-60 overflow-auto rounded-md border border-border/60 bg-background/65 p-2 text-[11px] leading-5 text-muted-foreground">
-                    {input}
-                  </pre>
-                ) : null}
-                {toolCall.output ? (
-                  <pre className="max-h-72 overflow-auto rounded-md border border-border/60 bg-background/65 p-2 text-[11px] leading-5 text-foreground/85">
-                    {toolCall.output}
-                  </pre>
-                ) : null}
-                {toolCall.error ? (
-                  <div className="rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
-                    {toolCall.error}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-          </details>
-        )
-      })}
+    <div className="mb-3 space-y-0.5 border-l border-border/70 pl-1" data-component="tool-call-timeline">
+      {toolCalls.map((toolCall, index) => (
+        <div
+          key={`${messageID}-tool-${toolCall.id ?? toolCall.callID ?? index}`}
+          data-component="tool-part-wrapper"
+          data-tool={toolCall.tool}
+          data-status={toolCall.status}
+        >
+          <ToolCallItem toolCall={toolCall} />
+        </div>
+      ))}
     </div>
   )
 }
@@ -345,13 +657,18 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
 
   const appendAgentMessage = useStore((state) => state.appendAgentMessage)
   const updateSession = useStore((state) => state.updateSession)
+  const preferredOpencodeProviderId = useStore((state) => state.preferredOpencodeProviderId)
+  const preferredOpencodeModelId = useStore((state) => state.preferredOpencodeModelId)
+  const preferredOpencodeVariant = useStore((state) => state.preferredOpencodeVariant)
+  const setPreferredOpencodeModel = useStore((state) => state.setPreferredOpencodeModel)
+  const setPreferredOpencodeVariant = useStore((state) => state.setPreferredOpencodeVariant)
 
   const [input, setInput] = useState("")
   const [isThinking, setIsThinking] = useState(false)
   const [composerMode, setComposerMode] = useState<"build" | "plan">("build")
-  const [selectedModel, setSelectedModel] = useState(FALLBACK_MODEL_OPTIONS[0].value)
-  const [modelPower, setModelPower] = useState("high")
-  const [modelOptions, setModelOptions] = useState<ModelOption[]>(FALLBACK_MODEL_OPTIONS)
+  const [selectedModel, setSelectedModel] = useState("")
+  const [modelPower, setModelPower] = useState(preferredOpencodeVariant || "high")
+  const [modelOptions, setModelOptions] = useState<OpenCodeModelOption[]>([])
   const [providerStatus, setProviderStatus] = useState<"idle" | "loading" | "ready" | "error">("idle")
   const [attachedFiles, setAttachedFiles] = useState<File[]>([])
   const [liveAssistant, setLiveAssistant] = useState<{ content: string; toolCalls: ToolCallView[]; error: unknown | null } | null>(null)
@@ -359,6 +676,8 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const activePromptRef = useRef<string | null>(null)
+  const opencodeEventHandlersRef = useRef(new Set<(payload: ElectronOpencodeEventEnvelope) => void>())
+  const opencodeEventSubscriptionRef = useRef<ElectronOpencodeEventSubscription | null>(null)
 
   const messages = useMemo(() => session?.agentMessages ?? [], [session?.agentMessages])
   const projectPathParts = useMemo(() => getDirectoryParts(project?.path), [project?.path])
@@ -376,13 +695,65 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
     const el = scrollRef.current
     if (!el) return
     el.scrollTop = el.scrollHeight
-  }, [messages.length, isThinking])
+  }, [messages.length, isThinking, liveAssistant?.content, liveAssistant?.toolCalls.length])
 
   useEffect(() => {
     return () => {
       activePromptRef.current = null
     }
   }, [sessionId])
+
+  useEffect(() => {
+    setModelPower(preferredOpencodeVariant || "high")
+  }, [preferredOpencodeVariant])
+
+  useEffect(() => {
+    if (!project?.path) return
+
+    let disposed = false
+    let subscription: ElectronOpencodeEventSubscription | null = null
+    let unlisten: (() => void) | null = null
+
+    void nativeApi.invoke("opencode_event_subscribe", {
+      directory: project.path,
+      global: true,
+    }).then(async (created) => {
+      if (disposed) {
+        void nativeApi.invoke("opencode_event_unsubscribe", { id: created.id }).catch(() => undefined)
+        return
+      }
+
+      subscription = created
+      opencodeEventSubscriptionRef.current = created
+      const cleanup = await nativeApi.listen<ElectronOpencodeEventEnvelope>(created.channel, ({ payload }) => {
+        if (payload.type === "error") {
+          console.warn("OpenCode event stream error:", payload.error)
+        }
+        for (const handler of opencodeEventHandlersRef.current) {
+          handler(payload)
+        }
+      })
+      if (disposed) {
+        cleanup()
+        void nativeApi.invoke("opencode_event_unsubscribe", { id: created.id }).catch(() => undefined)
+        return
+      }
+      unlisten = cleanup
+    }).catch((error) => {
+      console.warn("Failed to start OpenCode event stream:", error)
+    })
+
+    return () => {
+      disposed = true
+      if (unlisten) unlisten()
+      if (opencodeEventSubscriptionRef.current?.id === subscription?.id) {
+        opencodeEventSubscriptionRef.current = null
+      }
+      if (subscription) {
+        void nativeApi.invoke("opencode_event_unsubscribe", { id: subscription.id }).catch(() => undefined)
+      }
+    }
+  }, [project?.path])
 
   useEffect(() => {
     if (!isActive || !project?.path) return
@@ -392,26 +763,41 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
     nativeApi.invoke("opencode_provider_list", { directory: project.path })
       .then((providers) => {
         if (cancelled) return
-        const options = buildModelOptions(providers)
+        const options = buildConnectedOpenCodeModelOptions(providers)
         setModelOptions(options)
-        setSelectedModel((current) =>
-          options.some((option) => option.value === current)
-            ? current
-            : pickDefaultModel(providers, options),
-        )
+        setSelectedModel((current) => {
+          const picked = pickOpenCodeModel({
+            options,
+            providers,
+            currentValue: current,
+            preferredProviderID: preferredOpencodeProviderId,
+            preferredModelID: preferredOpencodeModelId,
+            sessionProviderID: session?.opencodeProviderId,
+            sessionModelID: session?.opencodeModelId,
+          })
+          return picked?.value ?? ""
+        })
         setProviderStatus("ready")
       })
       .catch((error) => {
         if (cancelled) return
         console.error("Failed to load OpenCode providers:", error)
-        setModelOptions(FALLBACK_MODEL_OPTIONS)
+        setModelOptions([])
+        setSelectedModel("")
         setProviderStatus("error")
       })
 
     return () => {
       cancelled = true
     }
-  }, [isActive, project?.path])
+  }, [
+    isActive,
+    preferredOpencodeModelId,
+    preferredOpencodeProviderId,
+    project?.path,
+    session?.opencodeModelId,
+    session?.opencodeProviderId,
+  ])
 
   const autoGrow = () => {
     const el = textareaRef.current
@@ -425,7 +811,13 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
     autoGrow()
   }, [input])
 
-  const canSubmit = (input.trim().length > 0 || attachedFiles.length > 0) && !isThinking && !!project && !!session
+  const hasSelectedConnectedModel = Boolean(selectedModel && modelOptions.some((option) => option.value === selectedModel))
+  const canSubmit =
+    (input.trim().length > 0 || attachedFiles.length > 0) &&
+    !isThinking &&
+    !!project &&
+    !!session &&
+    hasSelectedConnectedModel
 
   const handleSubmit = async () => {
     if (!canSubmit || !project || !session) return
@@ -448,21 +840,136 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
     setIsThinking(true)
     setLiveAssistant({ content: "", toolCalls: [], error: null })
 
+    let removeOpencodeEventHandler: (() => void) | null = null
+
     try {
-      const model = parseModelValue(selectedModel, modelOptions)
+      const model = parseOpenCodeModelValue(selectedModel, modelOptions)
+      if (!model.providerID || !model.modelID) {
+        throw new Error("Connect and select an OpenCode model before sending a message.")
+      }
+      setPreferredOpencodeModel(model.providerID, model.modelID)
+      setPreferredOpencodeVariant(modelPower)
+      const partsByMessageID = new Map<string, Map<string, OpenCodePartView>>()
+      const requestMessageID = createOpenCodeID("message")
+      let resolvedSessionID = session.opencodeSessionId ?? null
+      let assistantMessageID: string | null = null
+      let completedFromEvent = false
+      let eventError: unknown = null
+      let finalContent = ""
+      let finalToolCalls: ToolCallView[] = []
+      let finalError: unknown = null
+
+      const renderFromParts = () => {
+        if (!assistantMessageID) return
+        const parts = sortOpenCodeParts([...(partsByMessageID.get(assistantMessageID)?.values() ?? [])])
+        finalContent = extractTextFromParts(parts)
+        finalToolCalls = extractToolCallsFromParts(parts)
+        finalError = eventError
+        setLiveAssistant({
+          content: finalContent,
+          toolCalls: finalToolCalls,
+          error: finalError,
+        })
+      }
+
+      const handleOpencodeEvent = (payload: ElectronOpencodeEventEnvelope) => {
+        if (activePromptRef.current !== promptRunId) return
+        if (payload.type === "error") {
+          console.warn("OpenCode event stream error:", payload.error)
+          return
+        }
+        if (payload.type !== "event") return
+
+        const event = payload.event as OpenCodeEventPayload
+        const properties = event?.properties ?? {}
+        if (properties.sessionID && resolvedSessionID && properties.sessionID !== resolvedSessionID) return
+
+        if (event?.type === "session.error") {
+          finalError = properties.error ?? "OpenCode session failed."
+          eventError = finalError
+          completedFromEvent = true
+          setLiveAssistant({
+            content: finalContent,
+            toolCalls: finalToolCalls,
+            error: finalError,
+          })
+          return
+        }
+
+        if (event?.type === "message.updated") {
+          const info = properties.info
+          if (!info || info.role !== "assistant") return
+          if (info.parentID !== requestMessageID) return
+          resolvedSessionID = properties.sessionID ?? resolvedSessionID
+          assistantMessageID = info.id ?? assistantMessageID
+          completedFromEvent = typeof info.time?.completed === "number"
+          eventError = info.error ?? null
+          renderFromParts()
+          return
+        }
+
+        if (event?.type === "message.part.updated" && properties.part?.messageID) {
+          const part = properties.part
+          const messageParts = partsByMessageID.get(part.messageID) ?? new Map<string, OpenCodePartView>()
+          messageParts.set(part.id, part)
+          partsByMessageID.set(part.messageID, messageParts)
+          if (part.messageID === assistantMessageID) renderFromParts()
+          return
+        }
+
+        if (event?.type === "message.part.removed" && properties.messageID && properties.partID) {
+          const messageParts = partsByMessageID.get(properties.messageID)
+          messageParts?.delete(properties.partID)
+          if (properties.messageID === assistantMessageID) renderFromParts()
+          return
+        }
+
+        if (event?.type === "message.part.delta" && properties.messageID && properties.partID && properties.field) {
+          const messageParts = partsByMessageID.get(properties.messageID) ?? new Map<string, OpenCodePartView>()
+          const current = messageParts.get(properties.partID) ?? {
+            id: properties.partID,
+            messageID: properties.messageID,
+            type: properties.field === "text" ? "text" : "unknown",
+          }
+          const previous = typeof (current as Record<string, unknown>)[properties.field] === "string"
+            ? String((current as Record<string, unknown>)[properties.field])
+            : ""
+          messageParts.set(properties.partID, {
+            ...current,
+            type: current.type === "unknown" && properties.field === "text" ? "text" : current.type,
+            [properties.field]: `${previous}${properties.delta ?? ""}`,
+          } as OpenCodePartView)
+          partsByMessageID.set(properties.messageID, messageParts)
+          if (properties.messageID === assistantMessageID) renderFromParts()
+        }
+      }
+
+      opencodeEventHandlersRef.current.add(handleOpencodeEvent)
+      removeOpencodeEventHandler = () => {
+        opencodeEventHandlersRef.current.delete(handleOpencodeEvent)
+      }
+
       const started = await nativeApi.invoke("opencode_session_prompt_async", {
         directory: project.path,
         sessionID: session.opencodeSessionId,
         title: session.name,
         prompt: promptText,
+        parts: [{ id: createOpenCodeID("part"), type: "text", text: promptText }],
         providerID: model.providerID,
         modelID: model.modelID,
         agent: composerMode,
         variant: modelPower,
+        messageID: requestMessageID,
       })
 
       if (activePromptRef.current !== promptRunId) return
-      if (started.sessionID !== session.opencodeSessionId) {
+      resolvedSessionID = started.sessionID
+      if (
+        started.sessionID !== session.opencodeSessionId ||
+        model.providerID !== session.opencodeProviderId ||
+        model.modelID !== session.opencodeModelId ||
+        modelPower !== session.opencodeModelVariant
+      ) {
         await updateSession(project.id, session.id, {
           opencodeSessionId: started.sessionID,
           opencodeProviderId: model.providerID,
@@ -471,34 +978,48 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
         })
       }
 
-      let finalContent = ""
-      let finalToolCalls: ToolCallView[] = []
-      let finalError: unknown = null
-      const deadline = Date.now() + 1000 * 60 * 8
+      let lastPollAt = 0
+      let pollFailures = 0
 
-      while (activePromptRef.current === promptRunId && Date.now() < deadline) {
-        const status = await nativeApi.invoke("opencode_session_prompt_status", {
-          directory: project.path,
-          sessionID: started.sessionID,
-          requestMessageID: started.requestMessageID,
-        })
+      while (activePromptRef.current === promptRunId) {
+        if (completedFromEvent) break
 
-        finalContent = status.content || ""
-        finalToolCalls = status.toolCalls ?? []
-        finalError = status.error ?? null
-        setLiveAssistant({
-          content: finalContent,
-          toolCalls: finalToolCalls,
-          error: finalError,
-        })
+        if (Date.now() - lastPollAt > 500) {
+          lastPollAt = Date.now()
+          try {
+            const status = await nativeApi.invoke("opencode_session_prompt_status", {
+              directory: project.path,
+              sessionID: started.sessionID,
+              requestMessageID: started.requestMessageID,
+            })
 
-        if (status.completed) break
-        await new Promise((resolve) => setTimeout(resolve, 140))
+            pollFailures = 0
+            if (status.assistantMessageID) assistantMessageID = status.assistantMessageID
+            if (status.content || status.toolCalls?.length || status.error) {
+              finalContent = status.content || finalContent
+              finalToolCalls = status.toolCalls?.length ? status.toolCalls : finalToolCalls
+              finalError = status.error ?? finalError
+              setLiveAssistant({
+                content: finalContent,
+                toolCalls: finalToolCalls,
+                error: finalError,
+              })
+            }
+
+            if (status.completed) break
+          } catch (error) {
+            pollFailures += 1
+            console.warn("OpenCode prompt status poll failed:", error)
+            if (pollFailures >= 8 && !finalContent && finalToolCalls.length === 0) {
+              throw error
+            }
+          }
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 80))
       }
 
-      if (Date.now() >= deadline && activePromptRef.current === promptRunId) {
-        finalError = finalError ?? "Timed out waiting for OpenCode stream completion."
-      }
+      if (activePromptRef.current !== promptRunId) return
 
       const error = finalError ? `\n\nOpenCode error: ${describeOpenCodeError(finalError)}` : ""
       await appendAgentMessage(project.id, session.id, {
@@ -513,6 +1034,7 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
         content: `OpenCode could not complete that request.\n\n${describeOpenCodeError(error)}`,
       })
     } finally {
+      if (removeOpencodeEventHandler) removeOpencodeEventHandler()
       if (activePromptRef.current === promptRunId) {
         activePromptRef.current = null
         setLiveAssistant(null)
@@ -738,15 +1260,29 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
                 <div className="relative max-w-[140px]">
                   <select
                     value={selectedModel}
-                    onChange={(event) => setSelectedModel(event.target.value)}
+                    onChange={(event) => {
+                      const value = event.target.value
+                      setSelectedModel(value)
+                      const model = parseOpenCodeModelValue(value, modelOptions)
+                      if (model.providerID && model.modelID) {
+                        setPreferredOpencodeModel(model.providerID, model.modelID)
+                      }
+                    }}
+                    disabled={providerStatus === "loading" || modelOptions.length === 0}
                     className="h-7 w-full appearance-none rounded-md border border-border/70 bg-card/90 pl-2 pr-6 text-[11px] text-foreground shadow-xs outline-none transition-colors hover:bg-accent/55"
-                    title={providerStatus === "loading" ? "Loading OpenCode models" : "Model"}
+                    title={providerStatus === "loading" ? "Loading OpenCode models" : "Connected model"}
                   >
-                    {modelOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.connected ? "" : "Not connected - "}{option.label}
+                    {modelOptions.length === 0 ? (
+                      <option value="">
+                        {providerStatus === "loading" ? "Loading models..." : "Connect a model"}
                       </option>
-                    ))}
+                    ) : (
+                      modelOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.shortLabel}
+                        </option>
+                      ))
+                    )}
                   </select>
                   <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 </div>
@@ -754,7 +1290,10 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
                 <div className="relative max-w-[95px]">
                   <select
                     value={modelPower}
-                    onChange={(event) => setModelPower(event.target.value)}
+                    onChange={(event) => {
+                      setModelPower(event.target.value)
+                      setPreferredOpencodeVariant(event.target.value)
+                    }}
                     className="h-7 w-full appearance-none rounded-md border border-border/70 bg-card/90 pl-2 pr-6 text-[11px] text-foreground shadow-xs outline-none transition-colors hover:bg-accent/55"
                     title="Model power"
                   >

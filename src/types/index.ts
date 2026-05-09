@@ -23,8 +23,12 @@ export interface AgentMessage {
     input?: unknown;
     output?: string | null;
     error?: string | null;
+    raw?: string | null;
+    metadata?: Record<string, unknown> | null;
+    attachments?: unknown[] | null;
     startedAt?: number | null;
     endedAt?: number | null;
+    compactedAt?: number | null;
   }> | null;
 }
 
