@@ -13,7 +13,7 @@ export function TextShimmer({
 }) {
   const swap = 220
   const [run, setRun] = useState(active)
-  const timerRef = useRef<ReturnType<typeof setTimeout>>()
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   if (active && !run) {
     setRun(true)
@@ -24,6 +24,7 @@ export function TextShimmer({
       timerRef.current = setTimeout(() => setRun(false), swap)
       return () => {
         if (timerRef.current) clearTimeout(timerRef.current)
+        timerRef.current = null
       }
     }
   }, [active, run])

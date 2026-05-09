@@ -1,17 +1,15 @@
 import type { ToolCallView } from "@/components/AgentView"
-import {
-  BashTool,
-  ReadTool,
-  WriteTool,
-  EditTool,
-  GlobTool,
-  GrepTool,
-  ListTool,
-  WebFetchTool,
-  TodoWriteTool,
-  TaskTool,
-  FallbackTool,
-} from "./index"
+import { BashTool } from "./bash-tool"
+import { ReadTool } from "./read-tool"
+import { WriteTool } from "./write-tool"
+import { EditTool } from "./edit-tool"
+import { GlobTool } from "./glob-tool"
+import { GrepTool } from "./grep-tool"
+import { ListTool } from "./list-tool"
+import { WebFetchTool } from "./webfetch-tool"
+import { TodoWriteTool } from "./todo-tool"
+import { TaskTool } from "./task-tool"
+import { FallbackTool } from "./fallback-tool"
 
 interface PartProps {
   toolCall: ToolCallView
@@ -22,6 +20,22 @@ export function ToolPart(props: PartProps) {
   const { toolCall, className } = props
   const error = toolCall.error
 
+  const renderTool = () => {
+    switch (toolCall.tool) {
+      case "bash": return <BashTool toolCall={toolCall} />
+      case "read": return <ReadTool toolCall={toolCall} />
+      case "write": return <WriteTool toolCall={toolCall} />
+      case "edit": return <EditTool toolCall={toolCall} />
+      case "glob": return <GlobTool toolCall={toolCall} />
+      case "grep": return <GrepTool toolCall={toolCall} />
+      case "list": return <ListTool toolCall={toolCall} />
+      case "webfetch": return <WebFetchTool toolCall={toolCall} />
+      case "todowrite": return <TodoWriteTool toolCall={toolCall} />
+      case "task": return <TaskTool toolCall={toolCall} />
+      default: return <FallbackTool toolCall={toolCall} />
+    }
+  }
+
   return (
     <div
       data-component="tool-part"
@@ -29,19 +43,7 @@ export function ToolPart(props: PartProps) {
       data-status={toolCall.status}
       className={className}
     >
-      {toolCall.tool === "bash" && <BashTool toolCall={toolCall} />}
-      {toolCall.tool === "read" && <ReadTool toolCall={toolCall} />}
-      {toolCall.tool === "write" && <WriteTool toolCall={toolCall} />}
-      {toolCall.tool === "edit" && <EditTool toolCall={toolCall} />}
-      {toolCall.tool === "glob" && <GlobTool toolCall={toolCall} />}
-      {toolCall.tool === "grep" && <GrepTool toolCall={toolCall} />}
-      {toolCall.tool === "list" && <ListTool toolCall={toolCall} />}
-      {toolCall.tool === "webfetch" && <WebFetchTool toolCall={toolCall} />}
-      {toolCall.tool === "todowrite" && <TodoWriteTool toolCall={toolCall} />}
-      {toolCall.tool === "task" && <TaskTool toolCall={toolCall} />}
-      {!["bash", "read", "write", "edit", "glob", "grep", "list", "webfetch", "todowrite", "task"].includes(toolCall.tool) && (
-        <FallbackTool toolCall={toolCall} />
-      )}
+      {renderTool()}
       {error && (
         <div className="mx-2 mb-1.5 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
           {error}

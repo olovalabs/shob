@@ -1059,7 +1059,7 @@ export function OpenCodeProvidersSettings() {
                 serverStatus?.healthy ? "bg-success" : loading ? "bg-warning" : "bg-muted-foreground/45"
               }`}
             />
-            <span>{serverStatus?.healthy ? "Local OpenCode server connected" : loading ? "Starting OpenCode server" : "OpenCode server not ready"}</span>
+            <span>{serverStatus?.healthy ? "server connected" : loading ? "Starting server" : "server not ready"}</span>
           </div>
           <Button type="button" variant="ghost" size="sm" onClick={() => void refresh()} disabled={loading}>
             {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
@@ -1124,7 +1124,7 @@ export function OpenCodeProvidersSettings() {
 
           <ProviderRow
             provider={{ id: "synthetic", name: "Custom Provider" }}
-            note="Define a custom provider and model list in OpenCode config."
+            note="Define a custom provider and model list in config."
             tag={<Tag>Custom</Tag>}
             right={
               <Button type="button" size="sm" variant="secondary" onClick={() => setCustomProviderOpen(true)} disabled={loading}>

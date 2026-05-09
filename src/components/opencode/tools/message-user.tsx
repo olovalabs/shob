@@ -26,7 +26,7 @@ export function UserMessageDisplay({ text, parts, agent, model, timestamp, onCop
     onCopy?.()
   }
 
-  if (!text && attachments.length === 0) return null
+  if (!text && attachments.length === 0 && parts?.some((p) => p.type === "tool") === false) return null
 
   return (
     <div data-component="user-message">

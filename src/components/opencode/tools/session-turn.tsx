@@ -118,12 +118,9 @@ export function SessionTurn({
   const overflow = Math.max(0, edited - MAX_FILES)
   const visible = showAll ? diffs : diffs.slice(0, MAX_FILES)
 
-  if (!userMessage) return null
+  if (!userMessage || !userMessage.id) return null
 
-  const userParts = userMessage.parts?.map((p) => ({
-    ...p,
-    messageID: userMessage.id,
-  })) ?? []
+  const userParts = userMessage.parts ?? []
 
   // Check if there's a compaction divider
   const compaction = userParts.find((p) => p.type === "compaction")

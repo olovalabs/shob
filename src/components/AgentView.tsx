@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { memo, useEffect, useMemo, useRef, useState } from "react"
 import {
   ArrowUp,
   ChevronDown,
@@ -21,8 +21,7 @@ import type {
   ElectronOpencodeEventEnvelope,
   ElectronOpencodeEventSubscription,
 } from "../electron"
-import { ToolPart, SessionTurn } from "@/components/opencode/tools"
-import "@/components/opencode/tools/tool-renderers"
+import { Markdown } from "@/components/opencode/tools/markdown"
 
 
 interface AgentViewProps {
@@ -201,29 +200,74 @@ const createOpenCodeID = (type: "message" | "part") => {
   return `${prefix}_${hex}${randomBase62(OPEN_CODE_ID_LENGTH - 12)}`
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AgentMsg = any
 
+function SimpleMessage({ msg }: { msg: AgentMsg }) {
+  const [open, setOpen] = useState(false)
+  const isAssistant = msg.role === "assistant"
+  const content = msg.content ?? ""
+  const toolCalls: ToolCallView[] = msg.toolCalls ?? []
+  const hasTools = Array.isArray(toolCalls) && toolCalls.length > 0
+  const pending = toolCalls.some((tc: any) => tc.status === "pending" || tc.status === "running")
+  
+  useEffect(() => {
+    if (pending) setOpen(true)
+  }, [pending])
 
-const ToolCallsList = ({ toolCalls, messageID }: { toolCalls: ToolCallView[]; messageID: string }) => {
-  if (!Array.isArray(toolCalls) || toolCalls.length === 0) return null
+  if (!isAssistant) {
+    return (
+      <div className="py-2 px-4 mb-1">
+        <div className="text-[14px] font-medium text-foreground/90 mb-1">You</div>
+        <div className="text-[14px] leading-relaxed text-foreground/82 whitespace-pre-wrap">{content}</div>
+      </div>
+    )
+  }
 
   return (
-    <div className="mb-3 space-y-0.5 border-l border-border/70 pl-1" data-component="tool-call-timeline">
-      {toolCalls.map((toolCall, index) => (
-        <div
-          key={`${messageID}-tool-${toolCall.id ?? toolCall.callID ?? index}`}
-          data-component="tool-part-wrapper"
-          data-tool={toolCall.tool}
-          data-status={toolCall.status}
-        >
-          <ToolPart toolCall={toolCall} />
+    <div className="py-2 px-4 mb-1">
+      <div className="text-[14px] font-medium text-foreground/90 mb-1">Assistant</div>
+      {content && (
+        <div className="text-[14px] leading-relaxed text-foreground/82 whitespace-pre-wrap mb-2">
+          <Markdown text={content} />
         </div>
-      ))}
+      )}
+      
+      {hasTools && toolCalls.map((tc: ToolCallView, i: number) => {
+        const label = tc.tool?.charAt(0).toUpperCase() + tc.tool?.slice(1) || "Tool"
+        const subtitle = typeof tc.input === "object" && tc.input 
+          ? ((tc.input as any)?.filePath || (tc.input as any)?.description || (tc.input as any)?.command || JSON.stringify(tc.input).slice(0, 60))
+          : ""
+        const isPending = tc.status === "pending" || tc.status === "running"
+        
+        return (
+          <div key={tc.id ?? tc.callID ?? i} className="mb-1.5 rounded-lg border border-border/60 overflow-hidden">
+            <button
+              onClick={() => !isPending && setOpen(!open)}
+              className={`w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] ${isPending ? 'animate-pulse' : ''}`}
+              style={{ background: 'var(--card)' }}
+            >
+              <span className="font-medium text-foreground/90">{label}</span>
+              {subtitle && <span className="text-muted-foreground truncate">{subtitle}</span>}
+              {!isPending && (
+                <ChevronDown className={`ml-auto h-3.5 w-3.5 transition-transform ${open ? 'rotate-0' : '-rotate-90'}`} />
+              )}
+            </button>
+            {open && !isPending && (
+              <div className="border-t border-border/40 p-3">
+                {tc.output && (
+                  <pre className="text-[12px] text-foreground/80 whitespace-pre-wrap bg-muted/30 p-2 rounded">
+                    {tc.output.slice(0, 500)}
+                  </pre>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AgentMsg = any
 
 const convertToSessionFormat = (msgs: AgentMsg[]) => {
   const groups: Array<{ userIndex: number; userMessage: AgentMsg; assistantMessages: AgentMsg[] }> = []
@@ -258,101 +302,51 @@ const convertToSessionFormat = (msgs: AgentMsg[]) => {
   return groups
 }
 
-const convertToolCallsToParts = (toolCalls: ToolCallView[] | null | undefined) => {
-  if (!toolCalls || toolCalls.length === 0) return undefined
-  return toolCalls.map((tc) => ({
-    id: tc.callID ?? tc.id ?? tc.tool,
-    type: "tool" as const,
-    tool: tc.tool,
-    callID: tc.callID ?? tc.id ?? undefined,
-    state: {
-      status: tc.status,
-      title: tc.title ?? undefined,
-      input: tc.input as Record<string, unknown> | undefined,
-      output: tc.output ?? undefined,
-      error: tc.error ?? undefined,
-      metadata: tc.metadata as Record<string, unknown> | undefined,
-      time: {
-        start: tc.startedAt ?? undefined,
-        end: tc.endedAt ?? undefined,
-        compacted: tc.compactedAt ?? undefined,
-      },
-    },
-  }))
-}
 
 function MessageGroupRenderer({
   messages: msgs,
   isThinking,
   liveAssistant,
-  sessionId,
 }: {
   messages: AgentMsg[]
   isThinking: boolean
   liveAssistant: { content: string; toolCalls: ToolCallView[]; error: unknown } | null
-  sessionId: string
 }) {
   const groups = useMemo(() => convertToSessionFormat(msgs), [msgs])
 
-  const convertMessageForSessionTurn = useCallback((msg: AgentMsg) => ({
-    id: msg.id,
-    role: msg.role,
-    content: msg.content ?? undefined,
-    parts: convertToolCallsToParts(msg.toolCalls) as Array<{
-      id: string
-      type: string
-      text?: string
-      tool?: string
-      state?: {
-        status?: string
-        input?: unknown
-        output?: string
-        error?: string
-        metadata?: Record<string, unknown>
-      }
-    }> | undefined,
-    summary: (msg as AgentMsg).summary,
-    agent: (msg as AgentMsg).agent ?? undefined,
-    model: (msg as AgentMsg).model ?? undefined,
-    time: (msg as AgentMsg).time ?? undefined,
-    error: (msg as AgentMsg).error ?? undefined,
-  }), [])
-
   return (
     <>
-      {groups.map((group) => {
-        const convertedUser = convertMessageForSessionTurn(group.userMessage)
-        const convertedAssistants = group.assistantMessages.map(convertMessageForSessionTurn)
-        return (
-          <div key={group.userMessage.id} className="w-full">
-            <SessionTurn
-              messages={[convertedUser]}
-              userMessageIndex={0}
-              assistantMessages={convertedAssistants}
-            />
-          </div>
-        )
-      })}
+      {groups.map((group) => (
+        <div key={group.userMessage.id} className="w-full">
+          <SimpleMessage msg={group.userMessage} />
+          {group.assistantMessages.map((amsg: AgentMsg) => (
+            <SimpleMessage key={amsg.id} msg={amsg} />
+          ))}
+        </div>
+      ))}
       {isThinking && liveAssistant && (
-        <div className="w-full">
-          <div data-component="tool-part-wrapper" className="my-2">
-            <div className="flex items-center gap-2 text-[13px] text-muted-foreground mb-1">
-              <Loader2 className="size-3.5 animate-spin" />
-              <span>Thinking</span>
-            </div>
-            {liveAssistant.toolCalls.length > 0 && (
-              <ToolCallsList toolCalls={liveAssistant.toolCalls} messageID={`live-${sessionId}`} />
-            )}
-            {liveAssistant.content && (
-              <div className="whitespace-pre-wrap text-[14px] leading-relaxed text-foreground/92">
-                {liveAssistant.content}
-              </div>
-            )}
+        <div className="w-full px-4 py-3">
+          <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
+            <Loader2 className="size-3.5 animate-spin" />
+            <span>Thinking</span>
           </div>
+          {liveAssistant.toolCalls.length > 0 && liveAssistant.toolCalls.map((tc, i) => (
+            <div key={tc.id ?? i} className="mt-1 rounded-lg border border-border/60 overflow-hidden animate-pulse">
+              <div className="flex items-center gap-2 px-3 py-2 text-[13px]">
+                <span className="font-medium text-foreground/90">{tc.tool}</span>
+                <span className="text-muted-foreground truncate">{tc.status}</span>
+              </div>
+            </div>
+          ))}
+          {liveAssistant.content && (
+            <div className="mt-2 text-[14px] leading-relaxed text-foreground/82">
+              <Markdown text={liveAssistant.content} />
+            </div>
+          )}
         </div>
       )}
       {isThinking && !liveAssistant && (
-        <div className="w-full">
+        <div className="w-full px-4 py-3">
           <div className="flex items-center gap-2 text-[13px] text-muted-foreground py-4">
             <Loader2 className="size-3.5 animate-spin" />
             <span>Thinking</span>
@@ -858,7 +852,6 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
               messages={messages}
               isThinking={isThinking}
               liveAssistant={liveAssistant}
-              sessionId={sessionId}
             />
           </div>
         )}

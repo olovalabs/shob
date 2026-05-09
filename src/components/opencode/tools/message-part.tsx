@@ -1,7 +1,17 @@
-import React from "react"
-import { getTool, type ToolProps } from "./tool-registry"
-import { GenericTool } from "./basic-tool"
 import { ToolErrorCard } from "./tool-error-card"
+import { Markdown } from "./markdown"
+import { BashTool } from "./bash-tool"
+import { ReadTool } from "./read-tool"
+import { WriteTool } from "./write-tool"
+import { EditTool } from "./edit-tool"
+import { GlobTool } from "./glob-tool"
+import { GrepTool } from "./grep-tool"
+import { ListTool } from "./list-tool"
+import { WebFetchTool } from "./webfetch-tool"
+import { TodoWriteTool } from "./todo-tool"
+import { TaskTool } from "./task-tool"
+import { FallbackTool } from "./fallback-tool"
+import type { ToolCallView } from "@/components/AgentView"
 
 export interface MessagePartProps {
   part: {
@@ -73,7 +83,7 @@ function TextPartDisplay({ part, message, showCopy }: MessagePartProps) {
   return (
     <div data-component="text-part">
       <div data-slot="text-part-body">
-        <div className="whitespace-pre-wrap text-[14px] leading-[1.6] text-foreground/92">{text}</div>
+        <Markdown text={text} />
       </div>
       {showCopy && (
         <div data-slot="text-part-copy-wrapper" data-interrupted={interrupted ? "" : undefined}>
@@ -95,7 +105,7 @@ function ReasoningPartDisplay({ part }: MessagePartProps) {
   )
 }
 
-function ToolPartDisplay({ part, hideDetails, defaultOpen }: MessagePartProps) {
+function ToolPartDisplay({ part, defaultOpen }: MessagePartProps) {
   if (!part.tool) return null
   if (part.tool === "todowrite") return null
   if (part.tool === "question" && part.state?.status && ["pending", "running"].includes(part.state.status)) {
@@ -117,20 +127,37 @@ function ToolPartDisplay({ part, hideDetails, defaultOpen }: MessagePartProps) {
     )
   }
 
-  const Renderer = getTool(part.tool)
-  const toolProps: ToolProps = {
-    input,
+  // Create a ToolCallView from the part data to use with the specific tool components
+  const toolCall: ToolCallView = {
+    id: part.id,
+    callID: part.callID,
     tool: part.tool,
-    metadata: partMetadata,
+    status: part.state?.status ?? "completed",
+    title: part.state?.title,
+    input: input,
     output: part.state?.output,
-    status: part.state?.status,
-    hideDetails,
-    defaultOpen,
+    error: part.state?.error,
+    metadata: partMetadata,
+    startedAt: part.state?.time?.start,
+    endedAt: part.state?.time?.end,
   }
 
+  // Use the specific tool components like tool-part.tsx does
   return (
     <div data-component="tool-part-wrapper">
-      {Renderer ? React.createElement(Renderer, toolProps) : <GenericTool tool={part.tool} status={part.state?.status} input={input} />}
+      {part.tool === "bash" && <BashTool toolCall={toolCall} />}
+      {part.tool === "read" && <ReadTool toolCall={toolCall} />}
+      {part.tool === "write" && <WriteTool toolCall={toolCall} />}
+      {part.tool === "edit" && <EditTool toolCall={toolCall} />}
+      {part.tool === "glob" && <GlobTool toolCall={toolCall} />}
+      {part.tool === "grep" && <GrepTool toolCall={toolCall} />}
+      {part.tool === "list" && <ListTool toolCall={toolCall} />}
+      {part.tool === "webfetch" && <WebFetchTool toolCall={toolCall} />}
+      {part.tool === "todowrite" && <TodoWriteTool toolCall={toolCall} />}
+      {part.tool === "task" && <TaskTool toolCall={toolCall} />}
+      {!["bash", "read", "write", "edit", "glob", "grep", "list", "webfetch", "todowrite", "task"].includes(part.tool) && (
+        <FallbackTool toolCall={toolCall} />
+      )}
     </div>
   )
 }

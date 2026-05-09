@@ -1735,6 +1735,16 @@ button {
 }
 
 /* ═══════════════════════════════════════════════════
+   ASSISTANT MESSAGE
+   ═══════════════════════════════════════════════════ */
+[data-component="assistant-message"] {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+/* ═══════════════════════════════════════════════════
    TEXT PART
    ═══════════════════════════════════════════════════ */
 [data-component="text-part"] {
