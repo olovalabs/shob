@@ -1651,6 +1651,7 @@ async function createWindow() {
     frame: false,
     titleBarStyle: "hidden",
     backgroundColor: "#09090b",
+    icon: path.join(__dirname, "..", "electron", "icons", "icon.ico"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
