@@ -120,7 +120,7 @@ export function BasicTool(props: BasicToolProps) {
                     {!pending() && title.subtitle && (
                       <span
                         data-slot="basic-tool-tool-subtitle"
-                        className={cn(title.subtitleClass, props.clickable && "clickable")}
+                        className={cn(title.subtitleClass, props.onSubtitleClick && "clickable")}
                         onClick={(e) => {
                           e.stopPropagation()
                           props.onSubtitleClick?.()

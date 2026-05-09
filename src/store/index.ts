@@ -134,6 +134,7 @@ interface AppState {
   ) => Promise<void>;
   renameSession: (projectId: string, sessionId: string, name: string) => Promise<void>;
   updateSession: (projectId: string, sessionId: string, updates: Partial<Session>) => Promise<void>;
+  loadSubagentMessages: (projectId: string, sessionId: string, opencodeSessionId: string) => Promise<void>;
   removeSession: (projectId: string, sessionId: string) => Promise<void>;
   setActiveSession: (sessionId: string | null) => void;
   recordSessionActivity: (projectId: string, sessionId: string, at?: number) => Promise<void>;
@@ -575,7 +576,85 @@ export const useStore = create<AppState>((set, get) => ({
       ),
     }));
   },
-  
+
+  loadSubagentMessages: async (projectId: string, sessionId: string, opencodeSessionId: string) => {
+    const state = get();
+    const project = state.projects.find((p) => p.id === projectId);
+    if (!project) return;
+    const session = project.sessions.find((s) => s.id === sessionId);
+    if (!session) return;
+
+    try {
+      const rawMessages = await nativeApi.invoke("opencode_session_messages", {
+        directory: project.path,
+        sessionID: opencodeSessionId,
+      });
+
+      if (!Array.isArray(rawMessages) || rawMessages.length === 0) return;
+
+      const agentMessages: AgentMessage[] = [];
+      for (const raw of rawMessages) {
+        const msg = raw as { info?: { id?: string; role?: string; parentID?: string; time?: { created?: number; completed?: number } }; parts?: unknown[] };
+        if (!msg.info?.id || !msg.info?.role) continue;
+
+        const textParts = (msg.parts ?? []).filter((p: any) => p.type === "text") as Array<{ id: string; text?: string }>;
+        const toolParts = (msg.parts ?? []).filter((p: any) => p.type === "tool") as Array<{ id: string; tool?: string; callID?: string; state?: any }>;
+
+        const content = textParts.map((p: any) => p.text ?? "").join("\n").trim();
+        const toolCalls = toolParts.map((tp: any) => ({
+          id: tp.id ?? null,
+          callID: tp.callID ?? null,
+          tool: tp.tool ?? "tool",
+          status: tp.state?.status ?? "completed",
+          title: tp.state?.title ?? null,
+          input: tp.state?.input ?? null,
+          output: tp.state?.output ?? null,
+          error: tp.state?.error ?? null,
+          raw: tp.state?.raw ?? null,
+          metadata: tp.state?.metadata ?? null,
+          attachments: tp.state?.attachments ?? null,
+          startedAt: tp.state?.time?.start ?? null,
+          endedAt: tp.state?.time?.end ?? null,
+          compactedAt: tp.state?.time?.compacted ?? null,
+        }));
+
+        const parts = (msg.parts ?? []).map((p: any) => ({
+          id: p.id,
+          messageID: msg.info.id,
+          type: p.type,
+          text: p.text,
+          tool: p.tool,
+          callID: p.callID,
+          state: p.state,
+        }));
+
+        agentMessages.push({
+          id: msg.info.id,
+          role: msg.info.role as "user" | "assistant",
+          content: content || (msg.info.role === "assistant" ? "Subagent completed its task." : ""),
+          createdAt: msg.info.time?.created ?? Date.now(),
+          parts,
+          toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+        });
+      }
+
+      const updatedProject = {
+        ...project,
+        sessions: project.sessions.map((s) =>
+          s.id === sessionId ? { ...s, agentMessages } : s
+        ),
+      };
+
+      await api.saveProject(updatedProject);
+
+      set((currentState) => ({
+        projects: currentState.projects.map((p) => (p.id === projectId ? updatedProject : p)),
+      }));
+    } catch (error) {
+      console.warn("Failed to load subagent messages:", error);
+    }
+  },
+
   removeSession: async (projectId: string, sessionId: string) => {
     const state = get();
     const project = state.projects.find((p) => p.id === projectId);

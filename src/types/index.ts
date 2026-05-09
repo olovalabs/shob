@@ -86,6 +86,7 @@ export interface Session {
   opencodeProviderId?: string | null;
   opencodeModelId?: string | null;
   opencodeModelVariant?: string | null;
+  parentSessionId?: string | null;
 }
 
 export interface CliTool {

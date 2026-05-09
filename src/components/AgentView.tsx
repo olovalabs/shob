@@ -77,6 +77,14 @@ type OpenCodePartView = {
   }
 }
 
+type LiveAssistantState = {
+  content: string
+  toolCalls: ToolCallView[]
+  parts: OpenCodePartView[]
+  error: unknown | null
+  createdAt: number
+}
+
 type OpenCodeMessageInfo = {
   id?: string
   role?: string
@@ -390,7 +398,7 @@ function MessageGroupRenderer({
 }: {
   messages: AgentMsg[]
   isThinking: boolean
-  liveAssistant: { content: string; toolCalls: ToolCallView[]; parts: OpenCodePartView[]; error: unknown } | null
+  liveAssistant: LiveAssistantState | null
 }) {
   const groups = useMemo(() => convertToSessionFormat(msgs), [msgs])
 
@@ -406,7 +414,7 @@ function MessageGroupRenderer({
             id: liveID,
             role: "assistant",
             content: liveAssistant.content,
-            createdAt: Date.now(),
+            createdAt: liveAssistant.createdAt,
             toolCalls: liveAssistant.toolCalls,
             parts: liveAssistant.parts.length > 0
               ? liveAssistant.parts
@@ -465,12 +473,7 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
   const [modelOptions, setModelOptions] = useState<OpenCodeModelOption[]>([])
   const [providerStatus, setProviderStatus] = useState<"idle" | "loading" | "ready" | "error">("idle")
   const [attachedFiles, setAttachedFiles] = useState<File[]>([])
-  const [liveAssistant, setLiveAssistant] = useState<{
-    content: string
-    toolCalls: ToolCallView[]
-    parts: OpenCodePartView[]
-    error: unknown | null
-  } | null>(null)
+  const [liveAssistant, setLiveAssistant] = useState<LiveAssistantState | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -503,7 +506,7 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
   }, [sessionId])
 
   useEffect(() => {
-    const openSubagentSession = async (opencodeSessionID: string, label?: string) => {
+    const openSubagentSession = async (opencodeSessionID: string, label?: string, autoLoad = false) => {
       const state = useStore.getState()
       const currentProject = state.projects.find((item) => item.id === project?.id)
       if (!currentProject) return
@@ -515,6 +518,7 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
       }
 
       let title = label?.trim()
+      let parentID: string | null = null
       try {
         const info = await nativeApi.invoke("opencode_session_get", {
           directory: currentProject.path,
@@ -523,6 +527,7 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
         if (info.title && !isOpenCodeDefaultTitle(info.title)) {
           title = info.title.trim()
         }
+        parentID = typeof info.parentID === "string" ? info.parentID : null
       } catch (error) {
         console.warn("Failed to load OpenCode subagent session:", error)
       }
@@ -534,13 +539,18 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
         opencodeProviderId: session?.opencodeProviderId ?? state.preferredOpencodeProviderId,
         opencodeModelId: session?.opencodeModelId ?? state.preferredOpencodeModelId,
         opencodeModelVariant: session?.opencodeModelVariant ?? state.preferredOpencodeVariant,
+        parentSessionId: parentID ? currentProject.sessions.find((s) => s.opencodeSessionId === parentID)?.id ?? null : null,
       })
+
+      if (autoLoad) {
+        await state.loadSubagentMessages(currentProject.id, child.id, opencodeSessionID)
+      }
     }
 
     const handleOpenSubagent = (event: Event) => {
       const detail = (event as CustomEvent<{ sessionID?: unknown; title?: unknown }>).detail
       if (typeof detail?.sessionID !== "string" || !detail.sessionID) return
-      void openSubagentSession(detail.sessionID, typeof detail.title === "string" ? detail.title : undefined)
+      void openSubagentSession(detail.sessionID, typeof detail.title === "string" ? detail.title : undefined, true)
     }
 
     window.addEventListener("shob:open-opencode-session", handleOpenSubagent)
@@ -551,6 +561,42 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
     session?.opencodeModelVariant,
     session?.opencodeProviderId,
   ])
+
+  const openSubagentSessionAutoCreate = async (opencodeSessionID: string, projectId: string, parentSessionId: string) => {
+    const state = useStore.getState()
+    const currentProject = state.projects.find((item) => item.id === projectId)
+    if (!currentProject) return
+
+    const existing = currentProject.sessions.find((item) => item.kind === "agent" && item.opencodeSessionId === opencodeSessionID)
+    if (existing) return
+
+    let title: string | undefined
+    let parentOpenCodeID: string | null = null
+    try {
+      const info = await nativeApi.invoke("opencode_session_get", {
+        directory: currentProject.path,
+        sessionID: opencodeSessionID,
+      })
+      if (info.title && !isOpenCodeDefaultTitle(info.title)) {
+        title = info.title.trim()
+      }
+      parentOpenCodeID = typeof info.parentID === "string" ? info.parentID : null
+    } catch (error) {
+      console.warn("Failed to load OpenCode subagent session:", error)
+    }
+
+    const child = await state.launchAgentSession(currentProject.id)
+    await state.updateSession(currentProject.id, child.id, {
+      name: title || child.name,
+      opencodeSessionId: opencodeSessionID,
+      opencodeProviderId: session?.opencodeProviderId ?? state.preferredOpencodeProviderId,
+      opencodeModelId: session?.opencodeModelId ?? state.preferredOpencodeModelId,
+      opencodeModelVariant: session?.opencodeModelVariant ?? state.preferredOpencodeVariant,
+      parentSessionId: parentOpenCodeID ? currentProject.sessions.find((s) => s.opencodeSessionId === parentOpenCodeID)?.id ?? null : null,
+    })
+
+    await state.loadSubagentMessages(currentProject.id, child.id, opencodeSessionID)
+  }
 
   useEffect(() => {
     setModelPower(preferredOpencodeVariant || "high")
@@ -687,7 +733,7 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
     const promptRunId = crypto.randomUUID()
     activePromptRef.current = promptRunId
     setIsThinking(true)
-    setLiveAssistant({ content: "", toolCalls: [], parts: [], error: null })
+    setLiveAssistant({ content: "", toolCalls: [], parts: [], error: null, createdAt: Date.now() })
 
     let removeOpencodeEventHandler: (() => void) | null = null
 
@@ -709,6 +755,65 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
       let finalParts: OpenCodePartView[] = []
       let finalError: unknown = null
 
+      const setLiveAssistantSnapshot = (snapshot: Omit<LiveAssistantState, "createdAt">) => {
+        setLiveAssistant((current) => ({
+          ...snapshot,
+          createdAt: current?.createdAt ?? Date.now(),
+        }))
+      }
+
+      const collectAllParts = (): OpenCodePartView[] => {
+        const all: OpenCodePartView[] = []
+        for (const partsMap of partsByMessageID.values()) {
+          all.push(...partsMap.values())
+        }
+        return sortOpenCodeParts(all)
+      }
+
+      const applyPromptStatusSnapshot = (status: {
+        assistantMessageID?: string | null
+        parts?: unknown[]
+        content?: string
+        toolCalls?: ToolCallView[]
+        error?: unknown
+      }) => {
+        if (status.assistantMessageID) assistantMessageID = status.assistantMessageID
+
+        const statusParts = normalizeRawPartsForView(status.parts, assistantMessageID)
+        if (statusParts.length > 0 && assistantMessageID) {
+          const messageParts = partsByMessageID.get(assistantMessageID) ?? new Map<string, OpenCodePartView>()
+          statusParts.forEach((part) => messageParts.set(part.id, part))
+          partsByMessageID.set(assistantMessageID, messageParts)
+        }
+
+        const mergedParts = collectAllParts()
+        const hasSnapshot =
+          mergedParts.length > 0 ||
+          Boolean(status.content) ||
+          Boolean(status.toolCalls?.length) ||
+          Boolean(status.error)
+
+        if (!hasSnapshot) return
+
+        finalParts = mergedParts.length > 0 ? mergedParts : finalParts
+        finalContent = mergedParts.length > 0 ? extractTextFromParts(mergedParts) : status.content || finalContent
+        finalToolCalls = mergedParts.length > 0
+          ? extractToolCallsFromParts(mergedParts)
+          : status.toolCalls?.length ? status.toolCalls : finalToolCalls
+        finalError = status.error ?? finalError
+
+        if (finalParts.length === 0) {
+          finalParts = buildAssistantParts(assistantMessageID ?? "assistant", finalContent, finalToolCalls)
+        }
+
+        setLiveAssistantSnapshot({
+          content: finalContent,
+          toolCalls: finalToolCalls,
+          parts: finalParts,
+          error: finalError,
+        })
+      }
+
       const maybeSyncGeneratedTitle = async (opencodeSessionID: string, attempts = 1) => {
         for (let attempt = 0; attempt < attempts; attempt += 1) {
           if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 450))
@@ -729,13 +834,12 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
       }
 
       const renderFromParts = () => {
-        if (!assistantMessageID) return
-        const parts = sortOpenCodeParts([...(partsByMessageID.get(assistantMessageID)?.values() ?? [])])
+        const parts = collectAllParts()
         finalParts = parts
         finalContent = extractTextFromParts(parts)
         finalToolCalls = extractToolCallsFromParts(parts)
         finalError = eventError
-        setLiveAssistant({
+        setLiveAssistantSnapshot({
           content: finalContent,
           toolCalls: finalToolCalls,
           parts: finalParts,
@@ -770,7 +874,7 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
           finalError = properties.error ?? "OpenCode session failed."
           eventError = finalError
           completedFromEvent = true
-          setLiveAssistant({
+          setLiveAssistantSnapshot({
             content: finalContent,
             toolCalls: finalToolCalls,
             parts: finalParts,
@@ -798,14 +902,11 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
           const messageParts = partsByMessageID.get(messageID) ?? new Map<string, OpenCodePartView>()
           messageParts.set(part.id, part)
           partsByMessageID.set(messageID, messageParts)
-          if (messageID === assistantMessageID) renderFromParts()
+          renderFromParts()
           return
         }
 
         if (event?.type === "message.part.removed" && properties.messageID && properties.partID) {
-          const messageParts = partsByMessageID.get(properties.messageID)
-          messageParts?.delete(properties.partID)
-          if (properties.messageID === assistantMessageID) renderFromParts()
           return
         }
 
@@ -825,7 +926,7 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
             [properties.field]: `${previous}${properties.delta ?? ""}`,
           } as OpenCodePartView)
           partsByMessageID.set(properties.messageID, messageParts)
-          if (properties.messageID === assistantMessageID) renderFromParts()
+          renderFromParts()
         }
       }
 
@@ -880,30 +981,7 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
             })
 
             pollFailures = 0
-            if (status.assistantMessageID) assistantMessageID = status.assistantMessageID
-            const statusParts = normalizeRawPartsForView(status.parts, assistantMessageID)
-            if (statusParts.length > 0 && assistantMessageID) {
-              const messageParts = partsByMessageID.get(assistantMessageID) ?? new Map<string, OpenCodePartView>()
-              statusParts.forEach((part) => messageParts.set(part.id, part))
-              partsByMessageID.set(assistantMessageID, messageParts)
-            }
-            if (statusParts.length > 0 || status.content || status.toolCalls?.length || status.error) {
-              finalParts = statusParts.length > 0 ? statusParts : finalParts
-              finalContent = statusParts.length > 0 ? extractTextFromParts(statusParts) : status.content || finalContent
-              finalToolCalls = statusParts.length > 0
-                ? extractToolCallsFromParts(statusParts)
-                : status.toolCalls?.length ? status.toolCalls : finalToolCalls
-              finalError = status.error ?? finalError
-              if (assistantMessageID && finalParts.length === 0) {
-                finalParts = buildAssistantParts(assistantMessageID, finalContent, finalToolCalls)
-              }
-              setLiveAssistant({
-                content: finalContent,
-                toolCalls: finalToolCalls,
-                parts: finalParts,
-                error: finalError,
-              })
-            }
+            applyPromptStatusSnapshot(status)
 
             if (status.completed) break
           } catch (error) {
@@ -920,6 +998,27 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
 
       if (activePromptRef.current !== promptRunId) return
 
+      try {
+        if (completedFromEvent) {
+          await new Promise((resolve) => setTimeout(resolve, 120))
+        }
+
+        const finalStatus = await nativeApi.invoke("opencode_session_prompt_status", {
+          directory: project.path,
+          sessionID: resolvedSessionID ?? started.sessionID,
+          requestMessageID: started.requestMessageID,
+        })
+        applyPromptStatusSnapshot(finalStatus)
+      } catch (error) {
+        console.warn("OpenCode final prompt snapshot failed:", error)
+      }
+
+      if (finalParts.length > 0) {
+        finalParts = sortOpenCodeParts(finalParts)
+        finalContent = extractTextFromParts(finalParts)
+        finalToolCalls = extractToolCallsFromParts(finalParts)
+      }
+
       const error = finalError ? `\n\nOpenCode error: ${describeOpenCodeError(finalError)}` : ""
       const assistantMessageIDForParts = assistantMessageID ?? createOpenCodeID("message")
       const assistantParts = finalParts.length > 0
@@ -934,6 +1033,17 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
         model: { providerID: model.providerID, modelID: model.modelID },
         error: finalError ? { name: "OpenCodeError", data: { message: describeOpenCodeError(finalError) } } : null,
       })
+
+      for (const tc of finalToolCalls) {
+        if (tc.tool === "task") {
+          const meta = tc.metadata as Record<string, unknown> | null
+          const childSessionId = typeof meta?.sessionId === "string" ? meta.sessionId : typeof meta?.sessionID === "string" ? meta.sessionID : null
+          if (childSessionId) {
+            void openSubagentSessionAutoCreate(childSessionId, project.id, session.id)
+          }
+        }
+      }
+
       void maybeSyncGeneratedTitle(started.sessionID, 8)
     } catch (error) {
       if (activePromptRef.current !== promptRunId) return

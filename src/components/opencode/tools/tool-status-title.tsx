@@ -107,7 +107,7 @@ export function ToolStatusTitle({
             )}
             {(state.animating || !state.active) && (
               <span data-slot="tool-status-done" ref={doneRef}>
-                <TextShimmer text={doneTail} active={false} offset={0} />
+                <TextShimmer text={doneTail} active={false} offset={prefixLen} />
               </span>
             )}
           </span>

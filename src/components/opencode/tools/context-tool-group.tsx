@@ -12,6 +12,11 @@ interface ContextToolPart {
   input?: Record<string, unknown>
 }
 
+function getDirectory(path: string): string {
+  const idx = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"))
+  return idx >= 0 ? path.slice(0, idx) : path
+}
+
 export function ContextToolGroup({
   parts,
   busy,
@@ -46,18 +51,18 @@ export function ContextToolGroup({
         return { title: "Read", subtitle: filePath ? getFilename(filePath) : "", args }
       }
       case "list":
-        return { title: "List", subtitle: path }
+        return { title: "List", subtitle: getDirectory(path) }
       case "glob":
         return {
           title: "Glob",
-          subtitle: path,
+          subtitle: getDirectory(path),
           args: pattern ? ["pattern=" + pattern] : [],
         }
       case "grep": {
         const args: string[] = []
         if (pattern) args.push("pattern=" + pattern)
         if (include) args.push("include=" + include)
-        return { title: "Grep", subtitle: path, args }
+        return { title: "Grep", subtitle: getDirectory(path), args }
       }
       default:
         return { title: part.tool, subtitle: "", args: [] }
@@ -80,9 +85,9 @@ export function ContextToolGroup({
             <span data-slot="context-tool-group-summary">
               <AnimatedCountList
                 items={[
-                  { key: "read", count: summary.read, one: "read", other: "reads" },
-                  { key: "search", count: summary.search, one: "search", other: "searches" },
-                  { key: "list", count: summary.list, one: "list", other: "lists" },
+                  { key: "read", count: summary.read, one: "{{count}} read", other: "{{count}} reads" },
+                  { key: "search", count: summary.search, one: "{{count}} search", other: "{{count}} searches" },
+                  { key: "list", count: summary.list, one: "{{count}} list", other: "{{count}} lists" },
                 ]}
                 fallback=""
               />
@@ -93,11 +98,11 @@ export function ContextToolGroup({
       </CollapsibleTrigger>
       <CollapsibleContent>
         <div data-component="context-tool-group-list">
-          {parts.map((part) => {
+          {parts.map((part, index) => {
             const trigger = toolTrigger(part)
             const running = part.status === "pending" || part.status === "running"
             return (
-              <div key={`${part.tool}-${part.input?.filePath ?? part.input?.pattern ?? ""}`} data-slot="context-tool-group-item">
+              <div key={`${part.tool}-${part.input?.filePath ?? part.input?.pattern ?? index}`} data-slot="context-tool-group-item">
                 <div data-component="tool-trigger">
                   <div data-slot="basic-tool-tool-trigger-content">
                     <div data-slot="basic-tool-tool-info">

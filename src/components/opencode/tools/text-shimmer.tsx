@@ -14,20 +14,41 @@ export function TextShimmer({
   const swap = 220
   const [run, setRun] = useState(active)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  if (active && !run) {
-    setRun(true)
-  }
+  const frameRef = useRef<number | null>(null)
 
   useEffect(() => {
-    if (!active && run) {
-      timerRef.current = setTimeout(() => setRun(false), swap)
+    if (timerRef.current) {
+      clearTimeout(timerRef.current)
+      timerRef.current = null
+    }
+    if (frameRef.current !== null) {
+      cancelAnimationFrame(frameRef.current)
+      frameRef.current = null
+    }
+
+    if (active) {
+      frameRef.current = requestAnimationFrame(() => {
+        frameRef.current = null
+        setRun(true)
+      })
       return () => {
-        if (timerRef.current) clearTimeout(timerRef.current)
-        timerRef.current = null
+        if (frameRef.current !== null) cancelAnimationFrame(frameRef.current)
+        frameRef.current = null
       }
     }
-  }, [active, run])
+
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null
+      setRun(false)
+    }, swap)
+
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current)
+      timerRef.current = null
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current)
+      frameRef.current = null
+    }
+  }, [active])
 
   return (
     <span

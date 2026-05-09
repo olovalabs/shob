@@ -1,4 +1,4 @@
-import { useMemo } from "react"
+import { Fragment, useMemo } from "react"
 import { AnimatedCountLabel } from "./tool-count-label"
 
 interface CountItem {
@@ -10,25 +10,43 @@ interface CountItem {
 
 export function AnimatedCountList({
   items,
-  fallback,
+  fallback = "",
+  className,
 }: {
   items: CountItem[]
-  fallback: string
+  fallback?: string
+  className?: string
 }) {
   const visible = useMemo(() => items.filter((item) => item.count > 0), [items])
-
-  if (visible.length === 0) {
-    return <>{fallback}</>
-  }
+  const showEmpty = visible.length === 0 && fallback.length > 0
 
   return (
-    <span data-component="count-list">
-      {visible.map((item, i) => (
-        <span key={item.key} data-component="count-list-entry">
-          {i > 0 && <span data-slot="count-list-comma">, </span>}
-          <AnimatedCountLabel count={item.count} one={item.one} other={item.other} />
-        </span>
-      ))}
+    <span data-component="tool-count-summary" className={className}>
+      <span data-slot="tool-count-summary-empty" data-active={showEmpty ? "true" : "false"}>
+        <span data-slot="tool-count-summary-empty-inner">{fallback}</span>
+      </span>
+
+      {items.map((item, index) => {
+        const active = item.count > 0
+        const hasPrev = items.slice(0, index).some((previous) => previous.count > 0)
+
+        return (
+          <Fragment key={item.key}>
+            <span data-slot="tool-count-summary-prefix" data-active={active && hasPrev ? "true" : "false"}>
+              ,
+            </span>
+            <span data-slot="tool-count-summary-item" data-active={active ? "true" : "false"}>
+              <span data-slot="tool-count-summary-item-inner">
+                <AnimatedCountLabel
+                  count={Math.max(0, Math.round(item.count))}
+                  one={item.one}
+                  other={item.other}
+                />
+              </span>
+            </span>
+          </Fragment>
+        )
+      })}
     </span>
   )
 }

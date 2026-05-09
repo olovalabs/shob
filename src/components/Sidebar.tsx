@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react"
 import { nativeApi } from "../services/native"
 import {
   Folder,
+  GitBranch,
   Palette,
   PencilLine,
   Plus,
@@ -558,6 +559,7 @@ export function Sidebar() {
                               const isActiveSession = activeSessionId === session.id
                               const isRunningSession = Boolean(busySessions[session.id] || session.pendingLaunchCommand)
                               const projectAgeLabel = formatRelativeSessionTime(session.lastActiveAt ?? session.createdAt)
+                              const isSubagent = Boolean(session.parentSessionId)
 
                               return (
                                 <div key={session.id} className="group/session relative">
@@ -567,12 +569,17 @@ export function Sidebar() {
                                       setCurrentProject(project.id)
                                       setActiveSession(session.id)
                                     }}
-                                    className={`flex h-8 w-full min-w-0 items-center rounded-[8px] pl-8 pr-3 text-left transition-colors ${
+                                    className={`flex h-8 w-full min-w-0 items-center rounded-[8px] text-left transition-colors ${
+                                      isSubagent ? "pl-10" : "pl-8"
+                                    } pr-3 ${
                                       isActiveSession
                                         ? "bg-sidebar-accent text-sidebar-foreground"
                                         : "text-sidebar-foreground/82 hover:bg-sidebar-accent/80 hover:text-sidebar-foreground"
                                     }`}
                                   >
+                                    {isSubagent && (
+                                      <GitBranch className="mr-1 h-3 w-3 shrink-0 text-sidebar-foreground/40" strokeWidth={1.7} />
+                                    )}
                                     {isRunningSession && (
                                       <span className="mr-1.5 inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center">
                                         <Spinner className="h-3 w-3 text-sidebar-foreground/70" />
