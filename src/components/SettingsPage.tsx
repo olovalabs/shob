@@ -400,6 +400,7 @@ function ModelsSettings() {
                 onChange={(event) => setPreferredOpencodeVariant(event.target.value)}
                 className="h-8 w-[140px] rounded-md border border-[var(--border-weak-base)] bg-[var(--surface-inset-base)] px-2 text-sm text-[var(--text-strong)] outline-none"
               >
+                <option value="default">Default</option>
                 <option value="low">Low</option>
                 <option value="medium">Medium</option>
                 <option value="high">High</option>

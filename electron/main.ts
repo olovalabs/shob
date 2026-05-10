@@ -27,7 +27,7 @@ type OpencodeListener = {
   hostname?: string;
   port?: number;
   url?: URL | string;
-  stop?: () => Promise<void> | void;
+  stop?: (force?: boolean) => Promise<void> | void;
   close?: () => Promise<void> | void;
 };
 
@@ -55,6 +55,7 @@ type OpencodeEventSubscription = {
   staleDeltas: Set<string>;
   flushTimer?: ReturnType<typeof setTimeout>;
   lastFlushAt: number;
+  lastEventID?: string;
 };
 
 type OpencodeEventEnvelope = {
@@ -134,7 +135,8 @@ function prepareOpencodeServerEnv(password: string) {
 
 function getOpencodeAuthHeader(password = opencodeRuntime?.password) {
   if (!password) return null;
-  return `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`;
+  const username = process.env.OPENCODE_SERVER_USERNAME ?? "opencode";
+  return `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
 }
 
 async function checkOpencodeHealth(url: string, password?: string | null) {
@@ -146,7 +148,7 @@ async function checkOpencodeHealth(url: string, password?: string | null) {
     const response = await fetch(healthUrl, {
       method: "GET",
       headers,
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(5000),
     });
     return response.ok;
   } catch {
@@ -167,7 +169,7 @@ async function getOpencodeServerStatus(includeCredentials = false) {
     return { running: false, healthy: false };
   }
 
-  return {
+  const status = {
     running: true,
     healthy,
     url: runtime.url,
@@ -178,6 +180,17 @@ async function getOpencodeServerStatus(includeCredentials = false) {
     modulePath: runtime.modulePath,
     startedAt: runtime.startedAt,
   };
+
+  emitNativeEvent("opencode-server-status", {
+    running: status.running,
+    healthy: status.healthy,
+    url: status.url,
+    hostname: status.hostname,
+    port: status.port,
+    startedAt: status.startedAt,
+  });
+
+  return status;
 }
 
 async function startOpencodeServer(payload: { hostname?: string; port?: number; password?: string } = {}) {
@@ -237,6 +250,14 @@ async function startOpencodeServer(payload: { hostname?: string; port?: number; 
           modulePath,
           elapsedMs: Date.now() - startedAt,
         });
+        emitNativeEvent("opencode-server-status", {
+          running: true,
+          healthy: true,
+          url: runtime.url,
+          hostname: runtime.hostname,
+          port: runtime.port,
+          startedAt: runtime.startedAt,
+        });
         return runtime;
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -254,10 +275,10 @@ async function startOpencodeServer(payload: { hostname?: string; port?: number; 
   }
 }
 
-async function stopOpencodeListener(listener?: OpencodeListener | null) {
+async function stopOpencodeListener(listener?: OpencodeListener | null, force = false) {
   if (!listener) return;
   if (typeof listener.stop === "function") {
-    await listener.stop();
+    await listener.stop(force);
     return;
   }
   if (typeof listener.close === "function") {
@@ -268,6 +289,7 @@ async function stopOpencodeListener(listener?: OpencodeListener | null) {
 async function stopOpencodeServer() {
   const runtime = opencodeRuntime;
   opencodeRuntime = null;
+  killAllPtys();
   stopAllOpencodeEventStreams("server stopping");
   if (runtime) {
     emitOpencodeLog("info", "Stopping embedded OpenCode server", { url: runtime.url });
@@ -277,10 +299,15 @@ async function stopOpencodeServer() {
     await fetch(new URL("/global/dispose", runtime.url), {
       method: "POST",
       headers,
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(5000),
     }).catch(() => undefined);
+    emitNativeEvent("opencode-server-status", {
+      running: false,
+      healthy: false,
+      url: runtime.url,
+    });
   }
-  await stopOpencodeListener(runtime?.listener);
+  await stopOpencodeListener(runtime?.listener, true);
 }
 
 function buildOpencodeUrl(runtime: OpencodeRuntime, endpoint: string, query?: Record<string, unknown>) {
@@ -567,7 +594,6 @@ function queueOpencodeEvent(subscription: OpencodeEventSubscription, envelope: O
 
 async function runOpencodeEventStream(subscription: OpencodeEventSubscription) {
   let attempts = 0;
-  let lastEventID: string | undefined;
 
   while (!subscription.controller.signal.aborted) {
     attempts += 1;
@@ -582,13 +608,14 @@ async function runOpencodeEventStream(subscription: OpencodeEventSubscription) {
       const headers = new Headers();
       const authorization = getOpencodeAuthHeader(runtime.password);
       if (authorization) headers.set("authorization", authorization);
-      if (lastEventID) headers.set("last-event-id", lastEventID);
+      if (subscription.lastEventID) headers.set("last-event-id", subscription.lastEventID);
 
       emitOpencodeLog("debug", "Opening OpenCode event stream", {
         id: subscription.id,
         url: url.toString(),
         directory: subscription.directory,
         global: subscription.global,
+        lastEventID: subscription.lastEventID,
       });
 
       const response = await fetch(url, {
@@ -620,7 +647,7 @@ async function runOpencodeEventStream(subscription: OpencodeEventSubscription) {
           for (const frame of frames) {
             const parsed = parseSseFrame(frame);
             if (!parsed) continue;
-            if (parsed.id) lastEventID = parsed.id;
+            if (parsed.id) subscription.lastEventID = parsed.id;
 
             const streamEvent = unwrapOpencodeStreamEvent(parsed.data, subscription);
             if (!isSameOpencodeDirectory(streamEvent.directory, subscription.directory)) continue;
@@ -656,6 +683,7 @@ async function runOpencodeEventStream(subscription: OpencodeEventSubscription) {
         id: subscription.id,
         directory: subscription.directory,
         error: formatIpcError(error),
+        lastEventID: subscription.lastEventID,
       });
       queueOpencodeEvent(subscription, {
         type: "error",

@@ -162,6 +162,17 @@ export const useEventHandling = ({
     }
 
     if (event?.type === "message.part.removed" && properties.messageID && properties.partID) {
+      const messageID = properties.messageID as string
+      const partID = properties.partID as string
+      const messageParts = promptState.partsByMessageID.get(messageID)
+      if (!messageParts) return
+      messageParts.delete(partID)
+      if (messageParts.size === 0) {
+        promptState.partsByMessageID.delete(messageID)
+      } else {
+        promptState.partsByMessageID.set(messageID, messageParts)
+      }
+      renderFromParts()
       return
     }
 

@@ -53,6 +53,7 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
     modelOptions: hooks.modelOptions,
     modelPower: hooks.modelPower,
     composerMode: hooks.composerMode,
+    input: hooks.input,
     setIsThinking: hooks.setIsThinking,
     setLiveAssistant: hooks.setLiveAssistant,
     setInput: hooks.setInput,

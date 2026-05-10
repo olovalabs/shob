@@ -2,6 +2,7 @@ import { useRef, useCallback } from "react"
 import { useStore } from "@/store"
 import { nativeApi } from "@/services/native"
 import {
+  getOpenCodeRequestVariant,
   parseOpenCodeModelValue,
 } from "@/utils/opencode-models"
 import type {
@@ -28,6 +29,7 @@ export const useSubmit = ({
   modelOptions,
   modelPower,
   composerMode,
+  input,
   setIsThinking,
   setLiveAssistant,
   setInput,
@@ -52,7 +54,7 @@ export const useSubmit = ({
   const handleSubmit = useCallback(async () => {
     if (!project || !session) return
 
-    const text = ""
+    const text = input.trim()
     const attachmentLine = ""
     const promptText = `${text}${attachmentLine}`.trim()
     if (!promptText) return
@@ -72,14 +74,18 @@ export const useSubmit = ({
     setLiveAssistant({ content: "", toolCalls: [], parts: [], error: null, createdAt: Date.now() })
 
     let removeOpencodeEventHandler: (() => void) | null = null
+    let removeNativeOpencodeEventListener: (() => void) | null = null
+    let opencodeEventSubscriptionID: string | null = null
 
     try {
       const model = parseOpenCodeModelValue(selectedModel, modelOptions)
       if (!model.providerID || !model.modelID) {
         throw new Error("Connect and select an OpenCode model before sending a message.")
       }
+      const selectedOption = modelOptions.find((option) => option.value === selectedModel)
+      const requestVariant = getOpenCodeRequestVariant(modelPower, selectedOption)
       setPreferredOpencodeModel(model.providerID, model.modelID)
-      setPreferredOpencodeVariant(modelPower)
+      if (requestVariant) setPreferredOpencodeVariant(requestVariant)
 
       const promptState: PromptState = {
         partsByMessageID: new Map<string, Map<string, OpenCodePartView>>(),
@@ -109,6 +115,22 @@ export const useSubmit = ({
         opencodeEventHandlersRef.current.delete(handleOpencodeEvent)
       }
 
+      try {
+        const eventSubscription = await nativeApi.invoke("opencode_event_subscribe", {
+          directory: project.path,
+          global: true,
+        })
+        opencodeEventSubscriptionID = eventSubscription.id
+        removeNativeOpencodeEventListener = await nativeApi.listen<ElectronOpencodeEventEnvelope>(
+          eventSubscription.channel,
+          ({ payload }) => {
+            for (const handler of opencodeEventHandlersRef.current) handler(payload)
+          },
+        )
+      } catch (error) {
+        console.warn("OpenCode live event stream unavailable; falling back to polling:", error)
+      }
+
       const started = await nativeApi.invoke("opencode_session_prompt_async", {
         directory: project.path,
         sessionID: session.opencodeSessionId,
@@ -118,7 +140,7 @@ export const useSubmit = ({
         providerID: model.providerID,
         modelID: model.modelID,
         agent: composerMode,
-        variant: modelPower,
+        variant: requestVariant,
         messageID: promptState.requestMessageID,
       })
 
@@ -128,13 +150,13 @@ export const useSubmit = ({
         started.sessionID !== session.opencodeSessionId ||
         model.providerID !== session.opencodeProviderId ||
         model.modelID !== session.opencodeModelId ||
-        modelPower !== session.opencodeModelVariant
+        (requestVariant ?? null) !== (session.opencodeModelVariant ?? null)
       ) {
         await updateSession(project.id, session.id, {
           opencodeSessionId: started.sessionID,
           opencodeProviderId: model.providerID,
           opencodeModelId: model.modelID,
-          opencodeModelVariant: modelPower,
+          opencodeModelVariant: requestVariant ?? null,
         })
       }
       void titleSync.maybeSyncGeneratedTitle(started.sessionID, 1)
@@ -229,6 +251,10 @@ export const useSubmit = ({
         error: { name: "OpenCodeError", data: { message: describeOpenCodeError(error) } },
       })
     } finally {
+      if (removeNativeOpencodeEventListener) removeNativeOpencodeEventListener()
+      if (opencodeEventSubscriptionID) {
+        void nativeApi.invoke("opencode_event_unsubscribe", { id: opencodeEventSubscriptionID }).catch(() => undefined)
+      }
       if (removeOpencodeEventHandler) removeOpencodeEventHandler()
       if (activePromptRef.current === promptRunId) {
         activePromptRef.current = null
@@ -243,6 +269,7 @@ export const useSubmit = ({
     modelOptions,
     modelPower,
     composerMode,
+    input,
     setIsThinking,
     setLiveAssistant,
     setInput,

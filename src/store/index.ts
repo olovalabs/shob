@@ -167,7 +167,7 @@ export const useStore = create<AppState>((set, get) => ({
   preferredShell: getStoredValue(STORAGE_KEYS.preferredShell),
   preferredOpencodeProviderId: getStoredValue(STORAGE_KEYS.preferredOpencodeProviderId),
   preferredOpencodeModelId: getStoredValue(STORAGE_KEYS.preferredOpencodeModelId),
-  preferredOpencodeVariant: getStoredValue(STORAGE_KEYS.preferredOpencodeVariant) ?? 'high',
+  preferredOpencodeVariant: getStoredValue(STORAGE_KEYS.preferredOpencodeVariant) ?? 'default',
   visibleOpencodeModels: (() => {
     try {
       const raw = getStoredValue(STORAGE_KEYS.visibleOpencodeModels)
@@ -606,6 +606,9 @@ export const useStore = create<AppState>((set, get) => ({
       for (const raw of rawMessages) {
         const msg = raw as { info?: { id?: string; role?: string; parentID?: string; time?: { created?: number; completed?: number } }; parts?: unknown[] };
         if (!msg.info?.id || !msg.info?.role) continue;
+        const info = msg.info;
+        const messageId = info.id as string;
+        const role = info.role as "user" | "assistant";
 
         const textParts = (msg.parts ?? []).filter((p: any) => p.type === "text") as Array<{ id: string; text?: string }>;
         const toolParts = (msg.parts ?? []).filter((p: any) => p.type === "tool") as Array<{ id: string; tool?: string; callID?: string; state?: any }>;
@@ -630,7 +633,7 @@ export const useStore = create<AppState>((set, get) => ({
 
         const parts = (msg.parts ?? []).map((p: any) => ({
           id: p.id,
-          messageID: msg.info.id,
+          messageID: messageId,
           type: p.type,
           text: p.text,
           tool: p.tool,
@@ -639,10 +642,10 @@ export const useStore = create<AppState>((set, get) => ({
         }));
 
         agentMessages.push({
-          id: msg.info.id,
-          role: msg.info.role as "user" | "assistant",
-          content: content || (msg.info.role === "assistant" ? "Subagent completed its task." : ""),
-          createdAt: msg.info.time?.created ?? Date.now(),
+          id: messageId,
+          role,
+          content: content || (role === "assistant" ? "Subagent completed its task." : ""),
+          createdAt: info.time?.created ?? Date.now(),
           parts,
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
         });
@@ -878,7 +881,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   setPreferredOpencodeVariant: (variant) => {
-    const next = variant || 'high';
+    const next = variant || 'default';
     setStoredValue(STORAGE_KEYS.preferredOpencodeVariant, next);
     set({ preferredOpencodeVariant: next });
   },

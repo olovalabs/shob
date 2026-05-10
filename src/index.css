@@ -1794,9 +1794,11 @@ button {
 
 [data-slot="context-tool-group-summary"] {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   font-weight: 400;
   color: var(--text-base);
 }
@@ -1808,6 +1810,36 @@ button {
 
 [data-slot="context-tool-group-item"] {
   padding: 2px 12px;
+}
+
+[data-component="context-tool-group-list"] [data-slot="basic-tool-tool-info-main"] {
+  flex-wrap: nowrap;
+  overflow: visible;
+}
+
+[data-component="context-tool-group-list"] [data-slot="basic-tool-tool-info-structured"] {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+}
+
+[data-component="context-tool-group-list"] [data-slot="basic-tool-tool-args-block"] {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+[data-component="context-tool-group-list"] [data-slot="basic-tool-tool-subtitle"],
+[data-component="context-tool-group-list"] [data-slot="basic-tool-tool-arg"] {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* ═══════════════════════════════════════════════════
@@ -2495,8 +2527,8 @@ button {
 [data-component="user-message"] [data-slot="user-message-text"] {
   display: inline-block;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   word-break: break-word;
-  overflow: hidden;
   background: var(--surface-base);
   border: 1px solid var(--border-weak-base);
   padding: 8px 12px;
@@ -2551,6 +2583,9 @@ button {
   font-size: var(--font-size-base);
   line-height: var(--line-height-large);
   color: var(--text-strong);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 [data-component="text-part"] [data-slot="text-part-copy-wrapper"] {
@@ -2796,4 +2831,74 @@ button {
   align-items: center;
   justify-content: flex-end;
   flex-shrink: 0;
+}
+
+/* AgentView final parity overrides.
+   Keep after older flattened blocks so OpenCode-like layout wins. */
+[data-component="context-tool-group-trigger"] {
+  min-height: 24px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0;
+  padding: 0;
+  cursor: default;
+}
+
+[data-component="context-tool-group-trigger"] [data-slot="context-tool-group-title"] {
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+[data-component="context-tool-group-trigger"] [data-slot="context-tool-group-summary"] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-component="context-tool-group-list"] {
+  padding: 0 0 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+[data-component="context-tool-group-list"] [data-slot="context-tool-group-item"] {
+  min-width: 0;
+  padding: 0;
+}
+
+[data-component="context-tool-group-list"] [data-slot="basic-tool-tool-info-structured"] {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+[data-component="context-tool-group-list"] [data-slot="basic-tool-tool-info-main"] {
+  max-width: 100%;
+  min-width: 0;
+  overflow: visible;
+}
+
+[data-component="context-tool-group-list"] [data-slot="basic-tool-tool-args-block"] {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+[data-component="context-tool-group-list"] [data-slot="basic-tool-tool-subtitle"],
+[data-component="context-tool-group-list"] [data-slot="basic-tool-tool-arg"] {
+  max-width: 100%;
+  min-width: 0;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }

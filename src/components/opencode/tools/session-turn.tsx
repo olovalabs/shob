@@ -2,7 +2,6 @@ import { useMemo, useState } from "react"
 import { UserMessageDisplay } from "./message-user"
 import { AssistantMessageDisplay } from "./message-assistant"
 import { DiffChanges } from "./diff-changes"
-import { TextShimmer } from "./text-shimmer"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 
 interface SnapshotFileDiff {
@@ -167,13 +166,6 @@ export function SessionTurn({
                 working={working}
                 showReasoningSummaries={showReasoningSummaries}
               />
-            </div>
-          )}
-
-          {/* Thinking indicator */}
-          {working && allAssistantParts.length === 0 && (
-            <div data-slot="session-turn-thinking">
-              <TextShimmer text="Thinking" />
             </div>
           )}
 

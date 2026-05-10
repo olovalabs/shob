@@ -8,6 +8,8 @@ export type OpenCodeModelOption = {
   providerName: string
   modelID: string
   modelName: string
+  reasoning?: boolean
+  variants?: Record<string, Record<string, unknown>>
   source?: ElectronOpencodeProvider["source"]
 }
 
@@ -52,6 +54,8 @@ export const buildConnectedOpenCodeModelOptions = (
           providerName: provider.name,
           modelID: model.id,
           modelName,
+          reasoning: model.reasoning,
+          variants: model.variants,
           source: provider.source,
         }
       }),
@@ -96,4 +100,38 @@ export const pickOpenCodeModel = ({
   }
 
   return options[0] ?? null
+}
+
+const VARIANT_ORDER = ["low", "medium", "high", "xhigh"]
+
+export const getOpenCodeModelVariantOptions = (option: OpenCodeModelOption | null | undefined) => {
+  const variants = Object.keys(option?.variants ?? {})
+  return variants.sort((left, right) => {
+    const leftIndex = VARIANT_ORDER.indexOf(left)
+    const rightIndex = VARIANT_ORDER.indexOf(right)
+    if (leftIndex >= 0 || rightIndex >= 0) {
+      if (leftIndex < 0) return 1
+      if (rightIndex < 0) return -1
+      return leftIndex - rightIndex
+    }
+    return left.localeCompare(right)
+  })
+}
+
+export const normalizeOpenCodeModelVariant = (
+  value: string | null | undefined,
+  option: OpenCodeModelOption | null | undefined,
+) => {
+  const variants = getOpenCodeModelVariantOptions(option)
+  if (variants.length === 0) return "default"
+  if (value && value !== "default" && variants.includes(value)) return value
+  return "default"
+}
+
+export const getOpenCodeRequestVariant = (
+  value: string | null | undefined,
+  option: OpenCodeModelOption | null | undefined,
+) => {
+  const normalized = normalizeOpenCodeModelVariant(value, option)
+  return normalized === "default" ? undefined : normalized
 }

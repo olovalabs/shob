@@ -6,7 +6,6 @@ import {
   ExternalLink,
   Loader2,
   Plus,
-  RefreshCw,
   Search,
   Trash2,
 } from "lucide-react"
@@ -108,14 +107,6 @@ const methodLabel = (method?: AuthMethod) => {
   if (!method) return ""
   if (method.type === "api") return "API Key"
   return method.label || "OAuth"
-}
-
-const sourceLabel = (source?: ElectronOpencodeProvider["source"]) => {
-  if (source === "env") return "Environment"
-  if (source === "api") return "API Key"
-  if (source === "config") return "Config"
-  if (source === "custom") return "Custom"
-  return "Other"
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {

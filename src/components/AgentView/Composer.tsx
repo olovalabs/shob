@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button"
 import { TodoDock } from "@/components/TodoDock"
 import { ModelSelector } from "./ModelSelector"
 import {
+  getOpenCodeModelVariantOptions,
   parseOpenCodeModelValue,
   type OpenCodeModelOption,
 } from "@/utils/opencode-models"
@@ -61,6 +62,10 @@ export function Composer({
   setPreferredOpencodeModel,
   setPreferredOpencodeVariant,
 }: ComposerProps) {
+  const selectedOption = modelOptions.find((option) => option.value === selectedModel)
+  const variantOptions = getOpenCodeModelVariantOptions(selectedOption)
+  const showVariantControl = variantOptions.length > 0
+
   return (
     <div className="relative z-[1] shrink-0 px-4 pb-5 pt-3 sm:px-6">
       <TodoDock
@@ -149,23 +154,27 @@ export function Composer({
                 }}
               />
 
-              <div className="relative max-w-[95px]">
-                <select
-                  value={modelPower}
-                  onChange={(event) => {
-                    setModelPower(event.target.value)
-                    setPreferredOpencodeVariant(event.target.value)
-                  }}
-                  className="h-7 w-full appearance-none rounded-md border border-border/70 bg-card/90 pl-2 pr-6 text-[11px] text-foreground shadow-xs outline-none transition-colors hover:bg-accent/55"
-                  title="Model power"
-                >
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                  <option value="xhigh">XHigh</option>
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              </div>
+              {showVariantControl && (
+                <div className="relative max-w-[120px]">
+                  <select
+                    value={variantOptions.includes(modelPower) ? modelPower : "default"}
+                    onChange={(event) => {
+                      setModelPower(event.target.value)
+                      setPreferredOpencodeVariant(event.target.value)
+                    }}
+                    className="h-7 w-full appearance-none rounded-md border border-border/70 bg-card/90 pl-2 pr-6 text-[11px] capitalize text-foreground shadow-xs outline-none transition-colors hover:bg-accent/55"
+                    title="Thinking effort"
+                  >
+                    <option value="default">Default</option>
+                    {variantOptions.map((variant) => (
+                      <option key={variant} value={variant}>
+                        {variant}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                </div>
+              )}
 
               {attachedFiles.length > 0 && (
                 <span className="truncate text-[11px] text-muted-foreground">

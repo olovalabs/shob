@@ -37,6 +37,7 @@ export interface UseSubmitParams {
   modelOptions: OpenCodeModelOption[]
   modelPower: string
   composerMode: "build" | "plan"
+  input: string
   setIsThinking: (value: boolean) => void
   setLiveAssistant: (value: LiveAssistantState | null) => void
   setInput: (value: string) => void

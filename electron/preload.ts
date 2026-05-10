@@ -37,6 +37,7 @@ const allowedCommands = new Set([
   "opencode_oauth_authorize",
   "opencode_oauth_callback",
   "opencode_session_create",
+  "opencode_session_get",
   "opencode_session_messages",
   "opencode_session_prompt",
   "opencode_session_prompt_async",

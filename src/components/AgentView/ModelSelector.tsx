@@ -23,7 +23,7 @@ export function ModelSelector({ selectedModel, modelOptions, providerStatus, onS
 
   const isVisible = (option: OpenCodeModelOption) => {
     if (visibleModels.length === 0) return true
-    return visibleModels.includes(option.value)
+    return visibleModels.includes(`${option.providerID}:${option.modelID}`)
   }
 
   const filtered = useMemo(() => {

@@ -114,10 +114,14 @@ export function ContextToolGroup({
                           {!running && trigger.subtitle && (
                             <span data-slot="basic-tool-tool-subtitle">{trigger.subtitle}</span>
                           )}
-                          {!running && (trigger.args?.length ?? 0) > 0 && (trigger.args ?? []).map((arg, i) => (
-                            <span key={i} data-slot="basic-tool-tool-arg">{arg}</span>
-                          ))}
                         </div>
+                        {!running && (trigger.args?.length ?? 0) > 0 && (
+                          <div data-slot="basic-tool-tool-args-block">
+                            {(trigger.args ?? []).map((arg, i) => (
+                              <span key={i} data-slot="basic-tool-tool-arg">{arg}</span>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

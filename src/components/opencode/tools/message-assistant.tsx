@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Part } from "./message-part"
 import { ContextToolGroup } from "./context-tool-group"
 import { TextShimmer } from "./text-shimmer"
@@ -150,7 +150,7 @@ export function AssistantMessageDisplay({
             <InlineReasoningBlock
               key={item.part.id}
               text={item.part.text ?? ""}
-              isStreaming={working}
+              isStreaming={Boolean(working)}
             />
           )
         }

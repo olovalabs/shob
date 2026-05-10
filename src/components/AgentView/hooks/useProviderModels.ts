@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { nativeApi } from "@/services/native"
 import {
   buildConnectedOpenCodeModelOptions,
+  normalizeOpenCodeModelVariant,
   pickOpenCodeModel,
   type OpenCodeModelOption,
 } from "@/utils/opencode-models"
@@ -30,11 +31,14 @@ export const useProviderModels = ({
   const [modelOptions, setModelOptions] = useState<OpenCodeModelOption[]>([])
   const [providerStatus, setProviderStatus] = useState<"idle" | "loading" | "ready" | "error">("idle")
   const [selectedModel, setSelectedModel] = useState("")
-  const [modelPower, setModelPower] = useState(preferredOpencodeVariant || "high")
+  const [modelPower, setModelPower] = useState(preferredOpencodeVariant || "default")
 
   useEffect(() => {
-    setModelPower(preferredOpencodeVariant || "high")
-  }, [preferredOpencodeVariant])
+    const option = modelOptions.find((item) => item.value === selectedModel)
+    setModelPower((current) =>
+      normalizeOpenCodeModelVariant(current !== "default" ? current : preferredOpencodeVariant, option),
+    )
+  }, [modelOptions, preferredOpencodeVariant, selectedModel])
 
   useEffect(() => {
     if (!isActive || !project?.path) return

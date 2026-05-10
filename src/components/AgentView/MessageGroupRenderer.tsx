@@ -28,7 +28,7 @@ export function MessageGroupRenderer({
         const isLast = index === groups.length - 1
         const assistantMessages = group.assistantMessages.map(toTurnMessage)
 
-        if (isLast && isThinking && liveAssistant) {
+        if (isLast && isThinking && liveAssistant && assistantMessages.length === 0) {
           const liveID = "live-assistant"
           assistantMessages.push(toTurnMessage({
             id: liveID,

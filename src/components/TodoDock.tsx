@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from "react"
+import { useState, useRef, useMemo } from "react"
 import { Check, ChevronDown } from "lucide-react"
 
 interface Todo {
