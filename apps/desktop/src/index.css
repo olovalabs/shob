@@ -4659,3 +4659,6 @@ button {
   gap: 24px;
 }
 
+[data-component="assistant-message"][data-streaming="true"] {
+  content-visibility: visible;
+}

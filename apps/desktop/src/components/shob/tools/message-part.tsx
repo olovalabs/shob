@@ -66,8 +66,8 @@ export function Part(props: MessagePartProps) {
 }
 
 function TextPartDisplay({ part, working }: MessagePartProps) {
-  const text = (part.text ?? "").trim()
-  if (!text) return null
+  const text = part.text ?? ""
+  if (!text.trim()) return null
 
   return (
     <div data-component="text-part">
@@ -77,8 +77,8 @@ function TextPartDisplay({ part, working }: MessagePartProps) {
 }
 
 function ReasoningPartDisplay({ part, working }: MessagePartProps) {
-  const text = (part.text ?? "").trim()
-  if (!text) return null
+  const text = part.text ?? ""
+  if (!text.trim()) return null
 
   return (
     <Reasoning isStreaming={working} className="my-2">
@@ -125,6 +125,7 @@ function ToolPartDisplay({ part, defaultOpen, hideDetails }: MessagePartProps) {
   return (
     <div data-component="tool-part-wrapper">
       {RegisteredTool ? (
+        // eslint-disable-next-line react-hooks/static-components
         <RegisteredTool
           tool={toolCall.tool}
           status={toolCall.status}

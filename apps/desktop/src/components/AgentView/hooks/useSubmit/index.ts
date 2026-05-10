@@ -19,7 +19,7 @@ import {
 } from "../../utils"
 import type { OpenCodePartView } from "../../types"
 import type { UseSubmitParams, PromptState } from "./types"
-import { useEventHandling } from "./useEventHandling"
+import { createEventHandling } from "./useEventHandling"
 import { useTitleSync } from "./useTitleSync"
 
 export const useSubmit = ({
@@ -100,7 +100,7 @@ export const useSubmit = ({
         finalError: null,
       }
 
-      const { handleOpencodeEvent, applyPromptStatusSnapshot } = useEventHandling({
+      const { handleOpencodeEvent, applyPromptStatusSnapshot } = createEventHandling({
         promptRunId,
         activePromptRef,
         promptState,
@@ -235,7 +235,7 @@ export const useSubmit = ({
           const meta = tc.metadata as Record<string, unknown> | null
           const childSessionId = typeof meta?.sessionId === "string" ? meta.sessionId : typeof meta?.sessionID === "string" ? meta.sessionID : null
           if (childSessionId) {
-            void openSubagentSessionAutoCreate(childSessionId, project.id, session.id)
+            void openSubagentSessionAutoCreate(childSessionId, project.id)
           }
         }
       }

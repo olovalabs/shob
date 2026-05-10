@@ -1,6 +1,16 @@
-import { useEffect, useRef, useState } from "react"
-import { animate } from "motion"
-import { ChevronDown } from "lucide-react"
+import { useState } from "react"
+import {
+  BrainIcon,
+  ChevronDown,
+  CircleHelpIcon,
+  Code2Icon,
+  FileTextIcon,
+  GlobeIcon,
+  ListIcon,
+  SearchIcon,
+  TerminalIcon,
+  WrenchIcon,
+} from "lucide-react"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { cn } from "@/lib/utils"
 import { TextShimmer } from "./text-shimmer"
@@ -36,125 +46,113 @@ export interface BasicToolProps {
   clickable?: boolean
 }
 
-const SPRING = { type: "spring" as const, visualDuration: 0.35, bounce: 0 }
+const getIcon = (iconName?: string) => {
+  const className = "h-4 w-4"
+  switch (iconName) {
+    case "console":
+      return <TerminalIcon className={className} />
+    case "brain":
+      return <BrainIcon className={className} />
+    case "bubble-5":
+      return <CircleHelpIcon className={className} />
+    case "bullet-list":
+      return <ListIcon className={className} />
+    case "code-lines":
+    case "write":
+      return <Code2Icon className={className} />
+    case "glasses":
+    case "read":
+    case "file":
+      return <FileTextIcon className={className} />
+    case "magnifying-glass-menu":
+    case "task":
+      return <SearchIcon className={className} />
+    case "window-cursor":
+      return <GlobeIcon className={className} />
+    case undefined:
+      return null
+    default:
+      return <WrenchIcon className={className} />
+  }
+}
 
 export function BasicTool(props: BasicToolProps) {
   const [open, setOpen] = useState(props.defaultOpen ?? false)
-  const [ready, setReady] = useState(props.defaultOpen ?? false)
-  const pending = () => props.status === "pending" || props.status === "running"
-
-  const contentRef = useRef<HTMLDivElement>(null)
-  const initialOpen = useRef(open)
-  const frameRef = useRef<number | undefined>(undefined)
-  const heightAnimRef = useRef<ReturnType<typeof animate> | undefined>(undefined)
-
-  useEffect(() => {
-    if (props.forceOpen) setOpen(true)
-  }, [props.forceOpen])
-
-  useEffect(() => {
-    if (!props.defer) return
-    if (!open) {
-      if (frameRef.current) cancelAnimationFrame(frameRef.current)
-      setReady(false)
-      return
-    }
-    frameRef.current = requestAnimationFrame(() => {
-      frameRef.current = undefined
-      if (!open) return
-      setReady(true)
-    })
-    return () => {
-      if (frameRef.current) cancelAnimationFrame(frameRef.current)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
-
-  useEffect(() => {
-    if (!props.animated || !contentRef.current) return
-    heightAnimRef.current?.stop()
-    if (open) {
-      contentRef.current.style.overflow = "hidden"
-      heightAnimRef.current = animate(contentRef.current, { height: "auto" }, SPRING)
-      heightAnimRef.current.finished.then(() => {
-        if (!contentRef.current || !open) return
-        contentRef.current.style.overflow = "visible"
-        contentRef.current.style.height = "auto"
-      })
-    } else {
-      contentRef.current.style.overflow = "hidden"
-      heightAnimRef.current = animate(contentRef.current, { height: "0px" }, SPRING)
-    }
-    return () => {
-      heightAnimRef.current?.stop()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
+  const pending = props.status === "pending" || props.status === "running"
+  const resolvedOpen = props.forceOpen || open
 
   const handleOpenChange = (value: boolean) => {
-    if (pending()) return
+    if (pending) return
+    if (props.forceOpen && !value) return
     if (props.locked && !value) return
     setOpen(value)
   }
 
-  const renderTrigger = () => (
-    <div
-      data-component="tool-trigger"
-      data-clickable={props.clickable ? "true" : undefined}
-      data-hide-details={props.hideDetails ? "true" : undefined}
-    >
-      <div data-slot="basic-tool-tool-trigger-content">
-        <div data-slot="basic-tool-tool-info">
-          {isTriggerTitle(props.trigger) && props.trigger ? (
-            (() => {
-              const title = props.trigger as TriggerTitle
-              return (
-                <div data-slot="basic-tool-tool-info-structured">
-                  <div data-slot="basic-tool-tool-info-main">
-                    <span
-                      data-slot="basic-tool-tool-title"
-                      className={cn(title.titleClass)}
-                    >
-                      <TextShimmer text={title.title} active={pending()} />
-                    </span>
-                    {!pending() && title.subtitle && (
-                      <span
-                        data-slot="basic-tool-tool-subtitle"
-                        className={cn(title.subtitleClass, props.onSubtitleClick && "clickable")}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          props.onSubtitleClick?.()
-                        }}
-                      >
-                        {title.subtitle}
-                      </span>
-                    )}
-                    {!pending() && title.args?.length && (
-                      title.args.map((arg, i) => (
-                        <span key={i} data-slot="basic-tool-tool-arg" className={title.argsClass}>
-                          {arg}
-                        </span>
-                      ))
-                    )}
-                  </div>
-                  {!pending() && title.action && (
-                    <span data-slot="basic-tool-tool-action">{title.action}</span>
-                  )}
-                </div>
-              )
-            })()
-          ) : (
-            props.trigger
+  const renderTrigger = () => {
+    const icon = getIcon(props.icon)
+
+    return (
+      <div
+        data-component="tool-trigger"
+        data-clickable={props.clickable ? "true" : undefined}
+        data-hide-details={props.hideDetails ? "true" : undefined}
+      >
+        <div data-slot="basic-tool-tool-trigger-content">
+          {icon && (
+            <span data-slot="basic-tool-tool-indicator" aria-hidden="true">
+              {icon}
+            </span>
+          )}
+          <div data-slot="basic-tool-tool-info">
+            {renderTriggerContent()}
+          </div>
+        </div>
+        {props.children && !props.hideDetails && !props.locked && !pending && (
+          <span data-slot="collapsible-arrow">
+            <ChevronDown className="h-4 w-4" data-slot="collapsible-arrow-icon" />
+          </span>
+        )}
+      </div>
+    )
+  }
+
+  const renderTriggerContent = () => {
+    if (isTriggerTitle(props.trigger)) {
+      const title = props.trigger as TriggerTitle
+      return (
+        <div data-slot="basic-tool-tool-info-structured">
+          <div data-slot="basic-tool-tool-info-main">
+            <span data-slot="basic-tool-tool-title" className={cn(title.titleClass)}>
+              <TextShimmer text={title.title} active={pending} />
+            </span>
+            {!pending && title.subtitle && (
+              <span
+                data-slot="basic-tool-tool-subtitle"
+                className={cn(title.subtitleClass, props.onSubtitleClick && "clickable")}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  props.onSubtitleClick?.()
+                }}
+              >
+                {title.subtitle}
+              </span>
+            )}
+            {!pending && title.args?.length
+              ? title.args.map((arg, i) => (
+                  <span key={i} data-slot="basic-tool-tool-arg" className={title.argsClass}>
+                    {arg}
+                  </span>
+                ))
+              : null}
+          </div>
+          {!pending && title.action && (
+            <span data-slot="basic-tool-tool-action">{title.action}</span>
           )}
         </div>
-      </div>
-      {props.children && !props.hideDetails && !props.locked && !pending() && (
-        <span data-slot="collapsible-arrow">
-          <ChevronDown className="h-4 w-4" data-slot="collapsible-arrow-icon" />
-        </span>
-      )}
-    </div>
-  )
+      )
+    }
+    return props.trigger
+  }
 
   const triggerElement = props.triggerHref ? (
     <a href={props.triggerHref} onClick={props.onTriggerClick}>
@@ -165,29 +163,21 @@ export function BasicTool(props: BasicToolProps) {
   )
 
   return (
-    <Collapsible open={open} onOpenChange={handleOpenChange} className="tool-collapsible">
+    <Collapsible
+      className="tool-collapsible"
+      data-open={resolvedOpen ? "true" : undefined}
+      open={resolvedOpen}
+      onOpenChange={handleOpenChange}
+    >
       <CollapsibleTrigger
         data-hide-details={props.hideDetails ? "true" : undefined}
         onClick={props.onTriggerClick}
       >
         {triggerElement}
       </CollapsibleTrigger>
-      {props.animated && props.children && !props.hideDetails && (
-        <div
-          ref={contentRef}
-          data-slot="collapsible-content"
-          data-animated
-          style={{
-            height: initialOpen.current ? "auto" : "0px",
-            overflow: initialOpen.current ? "visible" : "hidden" as const,
-          }}
-        >
-          {props.children}
-        </div>
-      )}
-      {!props.animated && props.children && !props.hideDetails && (
+      {props.children && !props.hideDetails && !pending && (
         <CollapsibleContent>
-          {(!props.defer || ready) && props.children}
+          {(!props.defer || resolvedOpen) && props.children}
         </CollapsibleContent>
       )}
     </Collapsible>

@@ -20,7 +20,7 @@ interface UseEventHandlingParams {
   session: { id: string; name?: string | null }
 }
 
-export const useEventHandling = ({
+export const createEventHandling = ({
   promptRunId,
   activePromptRef,
   promptState,
@@ -29,6 +29,10 @@ export const useEventHandling = ({
   project,
   session,
 }: UseEventHandlingParams) => {
+  const liveCreatedAt = Date.now()
+  let pendingLiveSnapshot: Omit<LiveAssistantState, "createdAt"> | null = null
+  let liveSnapshotFrame: number | null = null
+
   const collectAllParts = (): OpenCodePartView[] => {
     const all: OpenCodePartView[] = []
     for (const partsMap of promptState.partsByMessageID.values()) {
@@ -38,10 +42,27 @@ export const useEventHandling = ({
   }
 
   const setLiveAssistantSnapshot = (snapshot: Omit<LiveAssistantState, "createdAt">) => {
-    setLiveAssistant({
-      ...snapshot,
-      createdAt: Date.now(),
-    })
+    pendingLiveSnapshot = snapshot
+
+    const flush = () => {
+      liveSnapshotFrame = null
+      if (activePromptRef.current !== promptRunId || !pendingLiveSnapshot) return
+      const next = pendingLiveSnapshot
+      pendingLiveSnapshot = null
+      setLiveAssistant({
+        ...next,
+        createdAt: liveCreatedAt,
+      })
+    }
+
+    if (typeof window === "undefined") {
+      flush()
+      return
+    }
+
+    if (liveSnapshotFrame === null) {
+      liveSnapshotFrame = window.requestAnimationFrame(flush)
+    }
   }
 
   const renderFromParts = () => {

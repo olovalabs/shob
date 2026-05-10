@@ -45,5 +45,5 @@ export interface UseSubmitParams {
   autoGrow: () => void
   setPreferredOpencodeModel: (providerID: string, modelID: string) => void
   setPreferredOpencodeVariant: (variant: string) => void
-  openSubagentSessionAutoCreate: (opencodeSessionID: string, projectId: string, parentSessionId: string) => Promise<void>
+  openSubagentSessionAutoCreate: (opencodeSessionID: string, projectId: string) => Promise<void>
 }

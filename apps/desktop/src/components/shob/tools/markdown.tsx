@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useMemo } from "react"
+import { useCallback, useEffect, useRef, useState, useMemo, type HTMLAttributes } from "react"
 import { marked, type Tokens } from "marked"
 import DOMPurify from "dompurify"
 import "./markdown.css"
@@ -164,30 +164,6 @@ function decorate(root: HTMLDivElement, labels: { copy: string; copied: string }
   markCodeLinks(root)
 }
 
-function elementsEqual(a: Element, b: Element): boolean {
-  if (a.tagName !== b.tagName) return false
-  if (a.attributes.length !== b.attributes.length) return false
-  const bAttrs = new Map<string, string>()
-  for (const attr of b.attributes) {
-    bAttrs.set(attr.name, attr.value)
-  }
-  for (const attr of a.attributes) {
-    if (bAttrs.get(attr.name) !== attr.value) return false
-  }
-  if (a.childNodes.length !== b.childNodes.length) return false
-  for (let i = 0; i < a.childNodes.length; i++) {
-    const ca = a.childNodes[i]
-    const cb = b.childNodes[i]
-    if (ca.nodeType !== cb.nodeType) return false
-    if (ca.nodeType === Node.TEXT_NODE) {
-      if (ca.textContent !== cb.textContent) return false
-    } else if (ca.nodeType === Node.ELEMENT_NODE) {
-      if (!elementsEqual(ca as Element, cb as Element)) return false
-    }
-  }
-  return true
-}
-
 function syncAttributes(existingEl: Element, newEl: Element) {
   const newAttrs = new Map(Array.from(newEl.attributes).map((a) => [a.name, a.value]))
   for (const attr of Array.from(existingEl.attributes)) {
@@ -240,7 +216,12 @@ function updateDomIncrementally(container: HTMLDivElement | Element, newHtml: st
   }
 }
 
-export function Markdown({ text, streaming = false }: { text: string; streaming?: boolean }) {
+type MarkdownProps = Omit<HTMLAttributes<HTMLDivElement>, "children"> & {
+  text: string
+  streaming?: boolean
+}
+
+export function Markdown({ text, streaming = false, className, ...props }: MarkdownProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null)
 
@@ -323,5 +304,5 @@ export function Markdown({ text, streaming = false }: { text: string; streaming?
     })
   }, [copiedIndex, labels])
 
-  return <div ref={containerRef} data-component="markdown" />
+  return <div {...props} ref={containerRef} data-component="markdown" className={className} />
 }

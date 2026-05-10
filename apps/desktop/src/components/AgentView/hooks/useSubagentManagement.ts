@@ -47,12 +47,15 @@ export const useSubagentManagement = ({
         }
       }
     }
-  }, [project?.id, project?.sessions.length])
+  }, [project, subagentTrackersRef])
 
   useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    el.scrollTop = el.scrollHeight
+    const frame = requestAnimationFrame(() => {
+      const el = scrollRef.current
+      if (!el) return
+      el.scrollTop = el.scrollHeight
+    })
+    return () => cancelAnimationFrame(frame)
   }, [isThinking, liveAssistantContent, liveAssistantToolCallsLength])
 
   useEffect(() => {
@@ -124,12 +127,13 @@ export const useSubagentManagement = ({
     return () => window.removeEventListener("shob:open-opencode-session", handleOpenSubagent)
   }, [
     project?.id,
+    subagentTrackersRef,
     session?.opencodeModelId,
     session?.opencodeModelVariant,
     session?.opencodeProviderId,
   ])
 
-  const openSubagentSessionAutoCreate = async (opencodeSessionID: string, projectId: string, _parentSessionId: string) => {
+  const openSubagentSessionAutoCreate = async (opencodeSessionID: string, projectId: string) => {
     const state = useStore.getState()
     const currentProject = state.projects.find((item: { id: string }) => item.id === projectId)
     if (!currentProject) return
@@ -319,7 +323,7 @@ export const useSubagentManagement = ({
     return () => {
       opencodeEventHandlersRef.delete(handleSubagentEvent)
     }
-  }, [project?.id, project?.path])
+  }, [project?.id, project?.path, subagentTrackersRef])
 
   return { scrollRef, openSubagentSessionAutoCreate }
 }

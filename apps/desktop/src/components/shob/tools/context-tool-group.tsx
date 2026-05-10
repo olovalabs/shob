@@ -1,15 +1,18 @@
 import { useMemo, useState } from "react"
-import { ChevronDown } from "lucide-react"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { ToolStatusTitle } from "./tool-status-title"
-import { AnimatedCountList } from "./tool-count-summary"
+import { Task, TaskTrigger, TaskContent, TaskItem, TaskItemFile } from "@/components/ai-elements/task"
 import { TextShimmer } from "./text-shimmer"
 import { getFilename } from "@/lib/utils"
+import { SearchIcon, CheckCircle2Icon, ListIcon, FileTextIcon } from "lucide-react"
 
-interface ContextToolPart {
-  tool: string
-  status: string
-  input?: Record<string, unknown>
+interface ToolPart {
+  id: string
+  tool?: string
+  status?: string
+  input?: unknown
+  state?: {
+    status?: string
+    input?: unknown
+  }
 }
 
 function getDirectory(path: string): string {
@@ -21,11 +24,14 @@ export function ContextToolGroup({
   parts,
   busy,
 }: {
-  parts: ContextToolPart[]
+  parts: ToolPart[]
   busy?: boolean
 }) {
-  const [open, setOpen] = useState(false)
-  const pending = busy || parts.some((p) => p.status === "pending" || p.status === "running")
+  const pending = Boolean(busy || parts.some((p) => {
+    const status = p.state?.status ?? p.status
+    return status === "pending" || status === "running"
+  }))
+  const [open, setOpen] = useState(pending)
 
   const summary = useMemo(() => {
     const read = parts.filter((p) => p.tool === "read").length
@@ -34,103 +40,76 @@ export function ContextToolGroup({
     return { read, search, list }
   }, [parts])
 
-  const toolTrigger = (part: ContextToolPart) => {
-    const input = (part.input ?? {}) as Record<string, unknown>
-    const filePath = typeof input.filePath === "string" ? input.filePath : undefined
+  const toolLine = (part: ToolPart) => {
+    const input = (part.state?.input ?? part.input ?? {}) as Record<string, unknown>
+    const tool = part.tool || "tool"
+    const filePath = typeof input.filePath === "string" ? input.filePath : ""
     const path = typeof input.path === "string" ? input.path : "/"
-    const pattern = typeof input.pattern === "string" ? input.pattern : undefined
-    const include = typeof input.include === "string" ? input.include : undefined
-    const offset = typeof input.offset === "number" ? input.offset : undefined
-    const limit = typeof input.limit === "number" ? input.limit : undefined
+    const pattern = typeof input.pattern === "string" ? input.pattern : ""
 
-    switch (part.tool) {
-      case "read": {
-        const args: string[] = []
-        if (offset !== undefined) args.push("offset=" + offset)
-        if (limit !== undefined) args.push("limit=" + limit)
-        return { title: "Read", subtitle: filePath ? getFilename(filePath) : "", args }
-      }
+    switch (tool) {
+      case "read":
+        return (
+          <TaskItem key={part.id}>
+            Read <TaskItemFile>{filePath ? getFilename(filePath) : "file"}</TaskItemFile>
+          </TaskItem>
+        )
       case "list":
-        return { title: "List", subtitle: getDirectory(path) }
+        return (
+          <TaskItem key={part.id}>
+            Listed <span className="text-foreground">{getDirectory(path)}</span>
+          </TaskItem>
+        )
       case "glob":
-        return {
-          title: "Glob",
-          subtitle: getDirectory(path),
-          args: pattern ? ["pattern=" + pattern] : [],
-        }
-      case "grep": {
-        const args: string[] = []
-        if (pattern) args.push("pattern=" + pattern)
-        if (include) args.push("include=" + include)
-        return { title: "Grep", subtitle: getDirectory(path), args }
-      }
+        return (
+          <TaskItem key={part.id}>
+            Matched <span className="text-foreground">{pattern || path || "files"}</span>
+          </TaskItem>
+        )
+      case "grep":
+        return (
+          <TaskItem key={part.id}>
+            Searched <span className="text-foreground">{pattern || "text"}</span>
+          </TaskItem>
+        )
       default:
-        return { title: part.tool, subtitle: "", args: [] }
+        return null
     }
   }
 
+  const titleParts = [
+    summary.read ? `${summary.read} read${summary.read === 1 ? "" : "s"}` : "",
+    summary.search ? `${summary.search} search${summary.search === 1 ? "" : "es"}` : "",
+    summary.list ? `${summary.list} list${summary.list === 1 ? "" : "s"}` : "",
+  ].filter(Boolean)
+
+  const title = pending
+    ? "Gathering context..."
+    : titleParts.length > 0
+      ? `Gathered ${titleParts.join(", ")}`
+      : "Gathered context"
+  let Icon = SearchIcon
+  if (!pending && summary.read > 0 && summary.search === 0 && summary.list === 0) {
+    Icon = FileTextIcon
+  } else if (!pending && summary.list > 0 && summary.search === 0) {
+    Icon = ListIcon
+  } else if (!pending) {
+    Icon = CheckCircle2Icon
+  }
+
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="tool-collapsible">
-      <CollapsibleTrigger>
-        <div data-component="context-tool-group-trigger">
-          <span data-slot="context-tool-group-title">
-            <span data-slot="context-tool-group-label">
-              <ToolStatusTitle
-                active={pending}
-                activeText="Gathering context..."
-                doneText="Gathered context"
-                split={false}
-              />
-            </span>
-            <span data-slot="context-tool-group-summary">
-              <AnimatedCountList
-                items={[
-                  { key: "read", count: summary.read, one: "{{count}} read", other: "{{count}} reads" },
-                  { key: "search", count: summary.search, one: "{{count}} search", other: "{{count}} searches" },
-                  { key: "list", count: summary.list, one: "{{count}} list", other: "{{count}} lists" },
-                ]}
-                fallback=""
-              />
-            </span>
-          </span>
-          <ChevronDown className="h-4 w-4 text-muted-foreground" data-slot="collapsible-arrow-icon" />
+    <Task open={open} onOpenChange={setOpen} className="my-1">
+      <TaskTrigger title={title} icon={<Icon className="size-4" />} />
+      <TaskContent>
+        <div className="flex flex-col gap-1.5">
+          {parts.map((part) => toolLine(part))}
+          {pending && (
+            <TaskItem>
+              <TextShimmer text="Working..." active={true} />
+            </TaskItem>
+          )}
         </div>
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        <div data-component="context-tool-group-list">
-          {parts.map((part, index) => {
-            const trigger = toolTrigger(part)
-            const running = part.status === "pending" || part.status === "running"
-            return (
-              <div key={`${part.tool}-${part.input?.filePath ?? part.input?.pattern ?? index}`} data-slot="context-tool-group-item">
-                <div data-component="tool-trigger">
-                  <div data-slot="basic-tool-tool-trigger-content">
-                    <div data-slot="basic-tool-tool-info">
-                      <div data-slot="basic-tool-tool-info-structured">
-                        <div data-slot="basic-tool-tool-info-main">
-                          <span data-slot="basic-tool-tool-title">
-                            <TextShimmer text={trigger.title} active={running} />
-                          </span>
-                          {!running && trigger.subtitle && (
-                            <span data-slot="basic-tool-tool-subtitle">{trigger.subtitle}</span>
-                          )}
-                        </div>
-                        {!running && (trigger.args?.length ?? 0) > 0 && (
-                          <div data-slot="basic-tool-tool-args-block">
-                            {(trigger.args ?? []).map((arg, i) => (
-                              <span key={i} data-slot="basic-tool-tool-arg">{arg}</span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
+      </TaskContent>
+    </Task>
   )
 }

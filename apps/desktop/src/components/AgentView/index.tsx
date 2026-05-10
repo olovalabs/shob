@@ -94,7 +94,7 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
         display: isActive ? "flex" : "none",
       }}
     >
-      <div className="relative w-full h-full min-w-0">
+      <div className="relative w-full flex-1 min-h-0">
         <div
           ref={hooks.scrollRef}
           className="thin-scrollbar relative min-w-0 w-full h-full overflow-y-auto"
