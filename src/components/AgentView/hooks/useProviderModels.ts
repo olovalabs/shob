@@ -25,7 +25,8 @@ export const useProviderModels = ({
   preferredOpencodeProviderId,
   preferredOpencodeModelId,
   preferredOpencodeVariant,
-}: UseProviderModelsParams) => {
+  visibleOpencodeModels = [],
+}: UseProviderModelsParams & { visibleOpencodeModels?: string[] }) => {
   const [modelOptions, setModelOptions] = useState<OpenCodeModelOption[]>([])
   const [providerStatus, setProviderStatus] = useState<"idle" | "loading" | "ready" | "error">("idle")
   const [selectedModel, setSelectedModel] = useState("")
@@ -77,6 +78,7 @@ export const useProviderModels = ({
     project?.path,
     session?.opencodeModelId,
     session?.opencodeProviderId,
+    visibleOpencodeModels,
   ])
 
   return { modelOptions, providerStatus, selectedModel, setSelectedModel, modelPower, setModelPower }

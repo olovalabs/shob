@@ -480,7 +480,7 @@ export function Sidebar() {
                       ? sortedSessions
                       : sortedSessions.slice(0, VISIBLE_SESSIONS_PER_PROJECT)
 
-                    const orderedSessions = useMemo(() => {
+                    const orderedSessions = (() => {
                       const childrenByParent = new Map<string, typeof sortedSessions>()
                       const roots: typeof sortedSessions = []
                       for (const s of visibleSessions) {
@@ -501,7 +501,7 @@ export function Sidebar() {
                         }
                       }
                       return result
-                    }, [visibleSessions])
+                    })()
 
                     return (
                       <section key={project.id} className="group/project min-w-0">

@@ -201,7 +201,7 @@ async function startOpencodeServer(payload: { hostname?: string; port?: number; 
       candidates: getOpencodeServerCandidates(),
     });
     const { modulePath, Log, Server } = await importOpencodeServer();
-    await Log.init({ level: "DEBUG" });
+    await Log.init({ level: "WARN" });
     emitOpencodeLog("info", "Starting embedded OpenCode server", {
       hostname,
       port,
@@ -1134,34 +1134,38 @@ async function openWithApp(target: string, cwd: string) {
 }
 
 async function getGitStatus(cwd: string) {
-  const repoRoot = (await gitOutput(["rev-parse", "--show-toplevel"], cwd)).trim();
-  const statusOutput = await gitOutput(["status", "--porcelain"], cwd);
-  let numstatOutput = "";
   try {
-    numstatOutput = await gitOutput(["diff", "--numstat", "HEAD"], cwd);
+    const repoRoot = (await gitOutput(["rev-parse", "--show-toplevel"], cwd)).trim();
+    const statusOutput = await gitOutput(["status", "--porcelain"], cwd);
+    let numstatOutput = "";
+    try {
+      numstatOutput = await gitOutput(["diff", "--numstat", "HEAD"], cwd);
+    } catch {
+      numstatOutput = "";
+    }
+
+    const counts = new Map<string, [number, number]>();
+    for (const line of numstatOutput.split(/\r?\n/)) {
+      const [additions, deletions, filePath] = line.split("\t");
+      if (filePath) counts.set(filePath, [Number(additions) || 0, Number(deletions) || 0]);
+    }
+
+    const changedFiles = [];
+    for (const line of statusOutput.split(/\r?\n/)) {
+      if (line.length < 4) continue;
+      const status = line.slice(0, 2).trim();
+      const relativePath = line.slice(3).trim().replace(/\\/g, "/");
+      const absolutePath = path.join(repoRoot, relativePath.split("/").join(path.sep));
+      const [additions, deletions] = status === "??"
+        ? [countFileLines(absolutePath), 0]
+        : (counts.get(relativePath) || [0, 0]);
+      changedFiles.push({ path: relativePath, absolutePath, status, additions, deletions });
+    }
+
+    return { repoRoot, changedFiles };
   } catch {
-    numstatOutput = "";
+    return { repoRoot: null, changedFiles: [] };
   }
-
-  const counts = new Map<string, [number, number]>();
-  for (const line of numstatOutput.split(/\r?\n/)) {
-    const [additions, deletions, filePath] = line.split("\t");
-    if (filePath) counts.set(filePath, [Number(additions) || 0, Number(deletions) || 0]);
-  }
-
-  const changedFiles = [];
-  for (const line of statusOutput.split(/\r?\n/)) {
-    if (line.length < 4) continue;
-    const status = line.slice(0, 2).trim();
-    const relativePath = line.slice(3).trim().replace(/\\/g, "/");
-    const absolutePath = path.join(repoRoot, relativePath.split("/").join(path.sep));
-    const [additions, deletions] = status === "??"
-      ? [countFileLines(absolutePath), 0]
-      : (counts.get(relativePath) || [0, 0]);
-    changedFiles.push({ path: relativePath, absolutePath, status, additions, deletions });
-  }
-
-  return { repoRoot, changedFiles };
 }
 
 function countFileLines(filePath: string) {
@@ -1303,17 +1307,25 @@ const handlers: Record<string, (payload?: any) => Promise<any> | any> = {
   read_text_file: async ({ path: filePath }) => fs.readFile(filePath, "utf8"),
   get_git_status: async ({ path: cwd }) => getGitStatus(cwd),
   get_git_branch: async ({ path: cwd }) => {
-    const head = (await gitOutput(["branch", "--show-current"], cwd)).trim();
-    const upstream = (await gitOutput(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], cwd).catch(() => ""))
-      .trim() || null;
-    const remoteName = (await gitOutput(["config", "--get", `branch.${head}.remote`], cwd).catch(() => ""))
-      .trim() || upstream?.split("/")[0] || (await gitOutput(["remote"], cwd).catch(() => "")).split(/\r?\n/).find(Boolean) || null;
-    const remoteUrl = remoteName ? await gitOutput(["remote", "get-url", remoteName], cwd).catch(() => "") : "";
-    return { repoName: parseRepoNameFromRemoteUrl(remoteUrl), head, upstream };
+    try {
+      const head = (await gitOutput(["branch", "--show-current"], cwd)).trim();
+      const upstream = (await gitOutput(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], cwd).catch(() => ""))
+        .trim() || null;
+      const remoteName = (await gitOutput(["config", "--get", `branch.${head}.remote`], cwd).catch(() => ""))
+        .trim() || upstream?.split("/")[0] || (await gitOutput(["remote"], cwd).catch(() => "")).split(/\r?\n/).find(Boolean) || null;
+      const remoteUrl = remoteName ? await gitOutput(["remote", "get-url", remoteName], cwd).catch(() => "") : "";
+      return { repoName: parseRepoNameFromRemoteUrl(remoteUrl), head, upstream };
+    } catch {
+      return { repoName: null, head: "", upstream: null };
+    }
   },
   get_git_branches: async ({ path: cwd }) => {
-    const output = await gitOutput(["for-each-ref", "--format=%(refname:short)", "refs/heads"], cwd);
-    return { branches: output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).sort() };
+    try {
+      const output = await gitOutput(["for-each-ref", "--format=%(refname:short)", "refs/heads"], cwd);
+      return { branches: output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).sort() };
+    } catch {
+      return { branches: [] };
+    }
   },
   switch_git_branch: async ({ path: cwd, branch }) => {
     try {

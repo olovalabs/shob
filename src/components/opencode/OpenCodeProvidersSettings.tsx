@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNo
 import {
   ArrowLeft,
   CircleAlert,
+  CircleX,
   ExternalLink,
   Loader2,
   Plus,
@@ -19,6 +20,7 @@ import type {
   ElectronOpencodeServerStatus,
 } from "@/electron"
 import { ProviderIcon } from "./ProviderIcon"
+import { SettingsList } from "@/components/SettingsList"
 
 type AuthPrompt =
   | {
@@ -118,9 +120,9 @@ const sourceLabel = (source?: ElectronOpencodeProvider["source"]) => {
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="flex flex-col gap-3">
-      <h2 className="px-1 text-[13px] font-semibold text-foreground">{title}</h2>
-      <div className="rounded-xl border border-border/70 bg-card/70 p-5">{children}</div>
+    <div className="flex flex-col gap-1">
+      <h2 className="px-1 text-sm font-medium text-[var(--text-strong)]">{title}</h2>
+      <SettingsList>{children}</SettingsList>
     </div>
   )
 }
@@ -145,14 +147,16 @@ function ProviderRow({
   tag?: ReactNode
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-border/60 py-3 last:border-0">
-      <div className="min-w-0 flex flex-col">
-        <div className="flex min-w-0 items-center gap-3">
-          <ProviderIcon id={provider.id} className="size-5 shrink-0 text-foreground" />
-          <span className="truncate text-[13px] font-medium text-foreground">{provider.name}</span>
+    <div className="flex flex-wrap items-center justify-between gap-4 min-h-16 py-3 border-b border-[var(--border-weak-base)] last:border-none">
+      <div className="flex flex-col min-w-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <ProviderIcon id={provider.id} className="size-5 shrink-0 text-[var(--icon-strong-base)]" />
+          <span className="truncate text-sm font-medium text-[var(--text-strong)]">{provider.name}</span>
           {tag}
         </div>
-        {note ? <span className="pl-8 text-[12px] leading-5 text-muted-foreground">{note}</span> : null}
+        {note ? (
+          <span className="pl-8 text-xs text-[var(--text-weak)] leading-5">{note}</span>
+        ) : null}
       </div>
       <div className="shrink-0">{right}</div>
     </div>
@@ -379,8 +383,8 @@ function ConnectProviderDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[520px] gap-0 p-0" showCloseButton={false}>
-        <div className="flex flex-col gap-6 px-5 pb-8 pt-4">
+      <DialogContent className="max-w-[600px] gap-0 p-0" showCloseButton={false}>
+        <div className="flex flex-col gap-6 px-6 pb-8 pt-5">
           <DialogTitle className="sr-only">{provider ? `Connect ${provider.name}` : "Connect provider"}</DialogTitle>
           <div className="flex items-center gap-3">
             <Button type="button" variant="ghost" size="icon-sm" onClick={goBack} tabIndex={-1}>
@@ -568,41 +572,62 @@ function SelectProviderDialog({
   onConnect: (id: string) => void
 }) {
   const [query, setQuery] = useState("")
+
+  useEffect(() => {
+    if (open) setQuery("")
+  }, [open])
+
   const filtered = useMemo(() => {
     const value = query.trim().toLowerCase()
     if (!value) return providers
     return providers.filter((provider) => `${provider.name} ${provider.id}`.toLowerCase().includes(value))
   }, [providers, query])
 
-  useEffect(() => {
-    if (open) setQuery("")
-  }, [open])
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[560px] p-0" showCloseButton>
-        <div className="flex flex-col gap-4 p-5">
-          <DialogTitle>Connect Provider</DialogTitle>
+      <DialogContent className="sm:max-w-[760px] overflow-hidden p-0" showCloseButton>
+        <div className="flex flex-col gap-3 p-5">
+          <DialogTitle className="text-base font-medium text-foreground">Connect Provider</DialogTitle>
           <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search providers..."
-              className="pl-8"
+              spellCheck={false}
+              className="h-9 w-full rounded-lg border border-border bg-muted/50 pl-10 pr-4 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring/30"
             />
+            {query ? (
+              <button
+                type="button"
+                onClick={() => setQuery("")}
+                className="absolute right-2 top-1/2 size-5 -translate-y-1/2 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+              >
+                <CircleX className="size-3" />
+              </button>
+            ) : null}
           </div>
-          <div className="thin-scrollbar max-h-[420px] overflow-y-auto rounded-xl border border-border/70">
-            {filtered.map((provider) => (
-              <ProviderRow
-                key={provider.id}
-                provider={provider}
-                tag={connected.has(provider.id) ? <Tag>Connected</Tag> : undefined}
-                right={
+          <div className="thin-scrollbar max-h-[420px] overflow-y-auto rounded-lg border border-border/70">
+            {filtered.length === 0 ? (
+              <div className="py-10 text-center text-sm text-muted-foreground">No providers found</div>
+            ) : (
+              filtered.map((provider) => (
+                <div
+                  key={provider.id}
+                  className="flex items-center gap-3 px-4 py-3 border-b border-border/60 last:border-0"
+                >
+                  <ProviderIcon id={provider.id} className="size-5 shrink-0 text-foreground" />
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <span className="truncate text-sm font-medium text-foreground">{provider.name}</span>
+                    {connected.has(provider.id) ? <Tag>Connected</Tag> : null}
+                  </div>
                   <Button
                     type="button"
                     size="sm"
                     variant="secondary"
+                    disabled={connected.has(provider.id)}
+                    className="shrink-0"
                     onClick={() => {
                       onOpenChange(false)
                       onConnect(provider.id)
@@ -611,12 +636,9 @@ function SelectProviderDialog({
                     <Plus className="size-3.5" />
                     Connect
                   </Button>
-                }
-              />
-            ))}
-            {filtered.length === 0 ? (
-              <div className="px-3 py-8 text-center text-sm text-muted-foreground">No providers found.</div>
-            ) : null}
+                </div>
+              ))
+            )}
           </div>
         </div>
       </DialogContent>
@@ -736,8 +758,8 @@ function CustomOpenAICompatibleDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[84vh] max-w-[560px] overflow-y-auto p-0" showCloseButton={false}>
-        <form className="flex flex-col gap-5 p-5" onSubmit={save}>
+      <DialogContent className="max-h-[84vh] max-w-[600px] overflow-y-auto p-0" showCloseButton={false}>
+        <form className="flex flex-col gap-6 p-6" onSubmit={save}>
           <div className="flex items-center gap-3">
             <Button type="button" variant="ghost" size="icon-sm" onClick={() => onOpenChange(false)} tabIndex={-1}>
               <ArrowLeft className="size-4" />
@@ -883,8 +905,8 @@ function CustomProviderDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[84vh] max-w-[560px] overflow-y-auto p-0" showCloseButton={false}>
-        <form className="flex flex-col gap-5 p-5" onSubmit={save}>
+      <DialogContent className="max-h-[84vh] max-w-[600px] overflow-y-auto p-0" showCloseButton={false}>
+        <form className="flex flex-col gap-6 p-6" onSubmit={save}>
           <div className="flex items-center gap-3">
             <Button type="button" variant="ghost" size="icon-sm" onClick={() => onOpenChange(false)} tabIndex={-1}>
               <ArrowLeft className="size-4" />
@@ -1051,7 +1073,7 @@ export function OpenCodeProvidersSettings() {
 
   return (
     <div className="thin-scrollbar flex h-full flex-col overflow-y-auto px-2 py-2">
-      <div className="flex max-w-2xl flex-col gap-5">
+      <div className="flex max-w-[720px] flex-col gap-5">
         <div className="flex items-center justify-between gap-3 px-1">
           <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
             <span

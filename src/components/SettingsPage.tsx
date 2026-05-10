@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react"
-import { Boxes, Brain, Check, ChevronDown, Loader2, Monitor, Moon, Palette, RefreshCw, SlidersHorizontal, Sun, Terminal } from "lucide-react"
+import { Boxes, Brain, Check, ChevronDown, CircleX, Loader2, Monitor, Moon, Palette, RefreshCw, Search, SlidersHorizontal, Sun, Terminal } from "lucide-react"
 import { CliAvatar } from "./CliAvatar"
 import { useStore, type SettingsSection } from "../store"
 import { nativeApi } from "@/services/native"
@@ -20,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 import {
   Select,
   SelectContent,
@@ -31,6 +32,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { OpenCodeProvidersSettings } from "@/components/opencode/OpenCodeProvidersSettings"
+import { SettingsList } from "./SettingsList"
 
 const SETTINGS_SECTIONS: {
   id: SettingsSection
@@ -261,6 +263,7 @@ function ModelsSettings() {
   const [providerList, setProviderList] = useState<ElectronOpencodeProviderList | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+  const [modelSearchQuery, setModelSearchQuery] = useState("")
 
   const refresh = async () => {
     setLoading(true)
@@ -310,100 +313,190 @@ function ModelsSettings() {
       .sort((left, right) => left.name.localeCompare(right.name))
   }, [providerList])
 
+  const filteredProviders = useMemo(() => {
+    if (!modelSearchQuery.trim()) return connectedProviders
+    const query = modelSearchQuery.trim().toLowerCase()
+    return connectedProviders
+      .map((provider) => ({
+        ...provider,
+        models: Object.fromEntries(
+          Object.entries(provider.models ?? {}).filter(
+            ([id, model]) =>
+              (model.name || id).toLowerCase().includes(query) ||
+              id.toLowerCase().includes(query) ||
+              provider.name.toLowerCase().includes(query),
+          ),
+        ),
+      }))
+      .filter((provider) => Object.keys(provider.models ?? {}).length > 0)
+  }, [connectedProviders, modelSearchQuery])
+
+  const {
+    visibleOpencodeModels,
+    toggleVisibleOpencodeModel,
+  } = useStore()
+
+  const isModelVisible = (providerId: string, modelId: string) => {
+    if (visibleOpencodeModels.length === 0) return true
+    return visibleOpencodeModels.includes(`${providerId}:${modelId}`)
+  }
+
   const selectModel = (value: string) => {
     const model = parseOpenCodeModelValue(value, modelOptions)
     setPreferredOpencodeModel(model.providerID || null, model.modelID || null)
   }
 
   return (
-    <div className="space-y-4">
-      <SettingsBlock title="Model Selection">
-        <SettingsRow title="Default Model" description="Only connected provider models are available here and in chat.">
-          <div className="flex items-center gap-2">
+    <div className="flex flex-col">
+      {/* Default Model & Reasoning */}
+      <div className="flex flex-col gap-8 max-w-[720px] mb-8">
+        <SettingsList>
+          <div className="flex flex-wrap items-center justify-between gap-4 py-3 border-b border-[var(--border-weak-base)] last:border-none">
+            <div className="min-w-0">
+              <div className="text-sm text-[var(--text-strong)]">Default Model</div>
+              <div className="text-xs text-[var(--text-weak)] mt-0.5">Only connected provider models are available here and in chat.</div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <select
+                value={selectedValue}
+                onChange={(event) => selectModel(event.target.value)}
+                disabled={loading || modelOptions.length === 0}
+                className="h-8 max-w-[260px] rounded-md border border-[var(--border-weak-base)] bg-[var(--surface-inset-base)] px-2 text-sm text-[var(--text-strong)] outline-none"
+              >
+                {modelOptions.length === 0 ? (
+                  <option value="">{loading ? "Loading connected models..." : "No connected models"}</option>
+                ) : (
+                  modelOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))
+                )}
+              </select>
+              <button
+                type="button"
+                onClick={() => void refresh()}
+                disabled={loading}
+                className="shrink-0 size-8 flex items-center justify-center rounded-md text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--accent)] disabled:opacity-50 transition-colors"
+              >
+                {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-4 py-3">
+            <div className="min-w-0">
+              <div className="text-sm text-[var(--text-strong)]">Reasoning</div>
+              <div className="text-xs text-[var(--text-weak)] mt-0.5">Used by new OpenCode agent requests.</div>
+            </div>
             <select
-              value={selectedValue}
-              onChange={(event) => selectModel(event.target.value)}
-              disabled={loading || modelOptions.length === 0}
-              className="h-8 w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-2 text-sm outline-none"
+              value={preferredOpencodeVariant}
+              onChange={(event) => setPreferredOpencodeVariant(event.target.value)}
+              className="h-8 w-[140px] rounded-md border border-[var(--border-weak-base)] bg-[var(--surface-inset-base)] px-2 text-sm text-[var(--text-strong)] outline-none"
             >
-              {modelOptions.length === 0 ? (
-                <option value="">{loading ? "Loading connected models..." : "No connected models"}</option>
-              ) : (
-                modelOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))
-              )}
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="xhigh">XHigh</option>
             </select>
-            <Button type="button" size="icon-sm" variant="ghost" onClick={() => void refresh()} disabled={loading}>
-              {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-            </Button>
           </div>
-        </SettingsRow>
+        </SettingsList>
+      </div>
 
-        <SettingsRow title="Reasoning" description="Used by new OpenCode agent requests.">
-          <select
-            value={preferredOpencodeVariant}
-            onChange={(event) => setPreferredOpencodeVariant(event.target.value)}
-            className="h-8 w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-2 text-sm outline-none"
-          >
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-            <option value="xhigh">XHigh</option>
-          </select>
-        </SettingsRow>
-      </SettingsBlock>
-
-      <SettingsBlock title="Connected Provider Models">
-        {loading && !providerList ? (
-          <div className="px-4 py-3 text-sm text-[var(--muted-foreground)]">
-            <Loader2 className="mr-2 inline h-3.5 w-3.5 animate-spin" />
-            Loading models...
-          </div>
-        ) : null}
-        {!loading && connectedProviders.length === 0 ? (
-          <div className="px-4 py-4 text-sm text-[var(--muted-foreground)]">
-            Connect a provider first, then its models will appear here and in the chat composer.
-          </div>
-        ) : null}
-        {connectedProviders.map((provider) => (
-          <div key={provider.id} className="border-b border-[var(--border)] px-4 py-3 last:border-b-0">
-            <div className="mb-2 flex items-center gap-2 text-sm font-medium">
-              <ProviderIcon id={provider.id} className="h-4 w-4 shrink-0" />
-              <span>{provider.name}</span>
-              <span className="text-xs font-normal text-[var(--muted-foreground)]">{Object.keys(provider.models ?? {}).length} models</span>
-            </div>
-            <div className="grid gap-1 sm:grid-cols-2">
-              {Object.values(provider.models ?? {}).map((model) => {
-                const active = selectedModel?.providerID === provider.id && selectedModel.modelID === model.id
-                return (
-                  <button
-                    key={model.id}
-                    type="button"
-                    onClick={() => setPreferredOpencodeModel(provider.id, model.id)}
-                    className={`min-w-0 rounded-md border px-2 py-1.5 text-left text-xs transition ${
-                      active
-                        ? "border-[var(--ring)] bg-[var(--accent)] text-[var(--foreground)]"
-                        : "border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
-                    }`}
-                  >
-                    <span className="block truncate font-medium">{model.name || model.id}</span>
-                    <span className="block truncate opacity-75">{model.id}</span>
-                  </button>
-                )
-              })}
+      {/* Model list - opencode style */}
+      <div className="flex flex-col max-w-[720px]">
+        <div className="sticky top-0 z-10 bg-[linear-gradient(to_bottom,var(--surface-stronger-non-alpha)_calc(100%_-_24px),transparent)]">
+          <div className="flex flex-col gap-4 pt-2 pb-6">
+            <h2 className="text-sm font-medium text-[var(--text-strong)]">Connected Provider Models</h2>
+            <div className="flex items-center gap-2 px-3 h-9 rounded-lg bg-[var(--surface-base)]">
+              <Search className="size-3.5 text-[var(--icon-weak)] shrink-0" />
+              <input
+                type="text"
+                value={modelSearchQuery}
+                onChange={(event) => setModelSearchQuery(event.target.value)}
+                placeholder="Search models..."
+                spellCheck={false}
+                autoCorrect="off"
+                autoComplete="off"
+                autoCapitalize="off"
+                className="flex-1 bg-transparent text-sm text-[var(--text-strong)] outline-none placeholder:text-[var(--text-weak)]"
+              />
+              {modelSearchQuery ? (
+                <button
+                  type="button"
+                  onClick={() => setModelSearchQuery("")}
+                  className="size-6 flex items-center justify-center rounded text-[var(--icon-weak)] hover:text-[var(--text-strong)] hover:bg-[var(--accent)] transition-colors"
+                >
+                  <CircleX className="size-3.5" />
+                </button>
+              ) : null}
             </div>
           </div>
-        ))}
-      </SettingsBlock>
-
-      {error ? (
-        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {error}
         </div>
-      ) : null}
+
+        <div className="flex flex-col gap-8">
+          {loading && !providerList ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <Loader2 className="size-3.5 animate-spin text-[var(--text-weak)]" />
+              <span className="text-sm text-[var(--text-weak)] mt-2">Loading models...</span>
+            </div>
+          ) : filteredProviders.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <span className="text-sm text-[var(--text-weak)]">
+                {modelSearchQuery ? "No models found" : "Connect a provider first, then its models will appear here and in the chat composer."}
+              </span>
+              {modelSearchQuery ? (
+                <span className="text-sm text-[var(--text-strong)] mt-1">&quot;{modelSearchQuery}&quot;</span>
+              ) : null}
+            </div>
+          ) : (
+            filteredProviders.map((provider) => (
+              <div key={provider.id} className="flex flex-col gap-1">
+                <div className="flex items-center gap-2 pb-2">
+                  <ProviderIcon id={provider.id} className="size-5 shrink-0 text-[var(--icon-strong-base)]" />
+                  <span className="text-sm font-medium text-[var(--text-strong)]">{provider.name}</span>
+                  <span className="text-xs text-[var(--text-weak)]">
+                    {Object.values(provider.models ?? {}).filter((m) => isModelVisible(provider.id, m.id)).length}/{Object.keys(provider.models ?? {}).length} visible
+                  </span>
+                </div>
+                <SettingsList>
+                  {Object.values(provider.models ?? {}).map((model) => {
+                    const visible = isModelVisible(provider.id, model.id)
+                    return (
+                      <div
+                        key={model.id}
+                        className="flex flex-wrap items-center justify-between gap-4 py-3 border-b border-[var(--border-weak-base)] last:border-none"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setPreferredOpencodeModel(provider.id, model.id)}
+                          className="min-w-0 text-left"
+                        >
+                          <span className={`text-sm truncate block ${visible ? "text-[var(--text-strong)]" : "text-[var(--text-weak)]"}`}>
+                            {model.name || model.id}
+                          </span>
+                        </button>
+                        <div className="shrink-0">
+                          <Switch
+                            checked={visible}
+                            onCheckedChange={() => toggleVisibleOpencodeModel(provider.id, model.id)}
+                          />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </SettingsList>
+              </div>
+            ))
+          )}
+        </div>
+
+        {error ? (
+          <div className="mt-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {error}
+          </div>
+        ) : null}
+      </div>
     </div>
   )
 }

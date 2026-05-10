@@ -99,6 +99,7 @@ interface AppState {
   preferredOpencodeProviderId: string | null;
   preferredOpencodeModelId: string | null;
   preferredOpencodeVariant: string;
+  visibleOpencodeModels: string[];
   cliLaunchMode: CliLaunchMode;
   appearanceThemeId: AppearanceThemeId;
   colorScheme: ColorScheme;
@@ -149,6 +150,7 @@ interface AppState {
   setPreferredShell: (shell: string | null) => void;
   setPreferredOpencodeModel: (providerId: string | null, modelId: string | null) => void;
   setPreferredOpencodeVariant: (variant: string) => void;
+  toggleVisibleOpencodeModel: (providerId: string, modelId: string) => void;
   setCliLaunchMode: (mode: CliLaunchMode) => void;
   setAppearanceTheme: (themeId: AppearanceThemeId) => void;
   setColorScheme: (colorScheme: ColorScheme) => void;
@@ -166,6 +168,14 @@ export const useStore = create<AppState>((set, get) => ({
   preferredOpencodeProviderId: getStoredValue(STORAGE_KEYS.preferredOpencodeProviderId),
   preferredOpencodeModelId: getStoredValue(STORAGE_KEYS.preferredOpencodeModelId),
   preferredOpencodeVariant: getStoredValue(STORAGE_KEYS.preferredOpencodeVariant) ?? 'high',
+  visibleOpencodeModels: (() => {
+    try {
+      const raw = getStoredValue(STORAGE_KEYS.visibleOpencodeModels)
+      return raw ? JSON.parse(raw) : []
+    } catch {
+      return []
+    }
+  })(),
   cliLaunchMode: getStoredValue(STORAGE_KEYS.cliLaunchMode) === 'replace-current' ? 'replace-current' : 'new-tab',
   appearanceThemeId: normalizeAppearanceThemeId(getStoredValue(STORAGE_KEYS.appearanceThemeId) ?? DEFAULT_APPEARANCE_THEME_ID),
   colorScheme: normalizeColorScheme(getStoredValue(STORAGE_KEYS.colorScheme) ?? DEFAULT_COLOR_SCHEME),
@@ -871,6 +881,17 @@ export const useStore = create<AppState>((set, get) => ({
     const next = variant || 'high';
     setStoredValue(STORAGE_KEYS.preferredOpencodeVariant, next);
     set({ preferredOpencodeVariant: next });
+  },
+
+  toggleVisibleOpencodeModel: (providerId: string, modelId: string) => {
+    set((state) => {
+      const key = `${providerId}:${modelId}`;
+      const next = state.visibleOpencodeModels.includes(key)
+        ? state.visibleOpencodeModels.filter((k) => k !== key)
+        : [...state.visibleOpencodeModels, key];
+      setStoredValue(STORAGE_KEYS.visibleOpencodeModels, JSON.stringify(next));
+      return { visibleOpencodeModels: next };
+    });
   },
 
   setCliLaunchMode: (mode) => {

@@ -1,6 +1,7 @@
 import { ArrowUp, ChevronDown, Plus, StopCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { TodoDock } from "@/components/TodoDock"
+import { ModelSelector } from "./ModelSelector"
 import {
   parseOpenCodeModelValue,
   type OpenCodeModelOption,
@@ -135,35 +136,18 @@ export function Composer({
                 </button>
               </div>
 
-              <div className="relative max-w-[140px]">
-                <select
-                  value={selectedModel}
-                  onChange={(event) => {
-                    const value = event.target.value
-                    setSelectedModel(value)
-                    const model = parseOpenCodeModelValue(value, modelOptions)
-                    if (model.providerID && model.modelID) {
-                      setPreferredOpencodeModel(model.providerID, model.modelID)
-                    }
-                  }}
-                  disabled={providerStatus === "loading" || modelOptions.length === 0}
-                  className="h-7 w-full appearance-none rounded-md border border-border/70 bg-card/90 pl-2 pr-6 text-[11px] text-foreground shadow-xs outline-none transition-colors hover:bg-accent/55"
-                  title={providerStatus === "loading" ? "Loading OpenCode models" : "Connected model"}
-                >
-                  {modelOptions.length === 0 ? (
-                    <option value="">
-                      {providerStatus === "loading" ? "Loading models..." : "Connect a model"}
-                    </option>
-                  ) : (
-                    modelOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.shortLabel}
-                      </option>
-                    ))
-                  )}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              </div>
+              <ModelSelector
+                selectedModel={selectedModel}
+                modelOptions={modelOptions}
+                providerStatus={providerStatus}
+                onSelect={(value) => {
+                  setSelectedModel(value)
+                  const model = parseOpenCodeModelValue(value, modelOptions)
+                  if (model.providerID && model.modelID) {
+                    setPreferredOpencodeModel(model.providerID, model.modelID)
+                  }
+                }}
+              />
 
               <div className="relative max-w-[95px]">
                 <select

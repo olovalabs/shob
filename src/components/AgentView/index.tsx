@@ -33,6 +33,7 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
   const preferredOpencodeProviderId = useStore((state) => state.preferredOpencodeProviderId)
   const preferredOpencodeModelId = useStore((state) => state.preferredOpencodeModelId)
   const preferredOpencodeVariant = useStore((state) => state.preferredOpencodeVariant)
+  const visibleOpencodeModels = useStore((state) => state.visibleOpencodeModels)
 
   const hooks = useAgentViewHooks({
     isActive,
@@ -42,6 +43,7 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
     preferredOpencodeProviderId: preferredOpencodeProviderId ?? undefined,
     preferredOpencodeModelId: preferredOpencodeModelId ?? undefined,
     preferredOpencodeVariant: preferredOpencodeVariant ?? undefined,
+    visibleOpencodeModels,
   })
 
   const { handleSubmit } = useSubmit({

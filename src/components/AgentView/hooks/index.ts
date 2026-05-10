@@ -20,6 +20,7 @@ interface UseAgentViewHooksParams {
   preferredOpencodeProviderId: string | undefined
   preferredOpencodeModelId: string | undefined
   preferredOpencodeVariant: string | undefined
+  visibleOpencodeModels: string[]
 }
 
 export const useAgentViewHooks = ({
@@ -30,6 +31,7 @@ export const useAgentViewHooks = ({
   preferredOpencodeProviderId,
   preferredOpencodeModelId,
   preferredOpencodeVariant,
+  visibleOpencodeModels,
 }: UseAgentViewHooksParams) => {
   const state = useAgentState({ preferredOpencodeVariant })
   const { scrollRef, openSubagentSessionAutoCreate } = useSubagentManagement({
@@ -48,6 +50,7 @@ export const useAgentViewHooks = ({
     preferredOpencodeProviderId,
     preferredOpencodeModelId,
     preferredOpencodeVariant,
+    visibleOpencodeModels,
   })
   const { textareaRef, autoGrow } = useAutoGrow({ input: state.input })
 

@@ -9,4 +9,5 @@ export const STORAGE_KEYS = {
   cliLaunchMode: 'shob.cliLaunchMode',
   appearanceThemeId: 'shob.appearance.themeId',
   colorScheme: 'shob.appearance.colorScheme',
+  visibleOpencodeModels: 'shob.opencode.visibleModels',
 } as const;
