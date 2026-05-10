@@ -1072,103 +1072,103 @@ export function OpenCodeProvidersSettings() {
   }
 
   return (
-    <div className="thin-scrollbar flex h-full flex-col overflow-y-auto px-2 py-2">
-      <div className="flex max-w-[720px] flex-col gap-5">
-        <div className="flex items-center justify-between gap-3 px-1">
-          <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
-            <span
-              className={`size-2 rounded-full ${
-                serverStatus?.healthy ? "bg-success" : loading ? "bg-warning" : "bg-muted-foreground/45"
-              }`}
-            />
-            <span>{serverStatus?.healthy ? "server connected" : loading ? "Starting server" : "server not ready"}</span>
-          </div>
-          <Button type="button" variant="ghost" size="sm" onClick={() => void refresh()} disabled={loading}>
-            {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-            Refresh
-          </Button>
+    <div className="flex min-h-0 flex-1 items-center justify-center px-4 py-8">
+      <div className="flex w-full max-w-[560px] flex-col gap-6">
+        <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+          <span
+            className={`size-2 rounded-full ${
+              serverStatus?.healthy ? "bg-success" : loading ? "bg-warning" : "bg-muted-foreground/45"
+            }`}
+          />
+          <span>{serverStatus?.healthy ? "Server connected" : loading ? "Starting server" : "Server not ready"}</span>
         </div>
 
-        <Section title="Connected">
-          {loading && !providerList ? <LoadingLine>Loading providers...</LoadingLine> : null}
-          {!loading && connectedProviders.length === 0 ? (
-            <div className="py-4 text-center text-sm text-muted-foreground">No connected providers yet.</div>
-          ) : null}
-          {connectedProviders.map((provider) => (
-            <ProviderRow
-              key={provider.id}
-              provider={provider}
-              tag={<Tag>{sourceLabel(provider.source)}</Tag>}
-              right={
-                provider.source === "env" ? (
-                  <span className="pr-3 text-[12px] text-muted-foreground">Managed by env</span>
-                ) : (
-                  <Button type="button" variant="ghost" size="sm" onClick={() => void disconnect(provider)} disabled={loading}>
-                    Disconnect
-                  </Button>
-                )
-              }
-            />
-          ))}
-        </Section>
-
-        <Section title="Popular">
-          {popularProviders.map((provider) => {
-            const note = PROVIDER_NOTES.find((item) => item.match(provider.id))?.note
-            const recommended = provider.id === "opencode" || provider.id === "opencode-go"
-            return (
+        {connectedProviders.length > 0 && (
+          <Section title="Connected">
+            {connectedProviders.map((provider) => (
               <ProviderRow
                 key={provider.id}
                 provider={provider}
-                note={note}
-                tag={recommended ? <Tag>Recommended</Tag> : undefined}
                 right={
-                  <Button type="button" size="sm" variant="secondary" onClick={() => connect(provider.id)} disabled={loading}>
-                    <Plus className="size-3.5" />
-                    Connect
-                  </Button>
+                  provider.source === "env" ? (
+                    <span className="pr-3 text-xs text-muted-foreground">Managed by env</span>
+                  ) : (
+                    <Button type="button" variant="ghost" size="sm" onClick={() => void disconnect(provider)} disabled={loading}>
+                      Disconnect
+                    </Button>
+                  )
                 }
               />
-            )
-          })}
+            ))}
+          </Section>
+        )}
 
-          <ProviderRow
-            provider={{ id: "openai", name: "OpenAI Compatible" }}
-            note="Connect any OpenAI-compatible endpoint and fetch its models."
-            tag={<Tag>Custom</Tag>}
-            right={
-              <Button type="button" size="sm" variant="secondary" onClick={() => setOpenAICompatibleOpen(true)} disabled={loading}>
-                <Plus className="size-3.5" />
-                Connect
-              </Button>
-            }
-          />
+        {popularProviders.length > 0 && (
+          <Section title="Popular">
+            {popularProviders.map((provider) => {
+              const note = PROVIDER_NOTES.find((item) => item.match(provider.id))?.note
+              const recommended = provider.id === "opencode" || provider.id === "opencode-go"
+              return (
+                <ProviderRow
+                  key={provider.id}
+                  provider={provider}
+                  note={note}
+                  tag={recommended ? <Tag>Recommended</Tag> : undefined}
+                  right={
+                    <Button type="button" size="sm" variant="secondary" onClick={() => connect(provider.id)} disabled={loading}>
+                      <Plus className="size-3.5" />
+                      Connect
+                    </Button>
+                  }
+                />
+              )
+            })}
 
-          <ProviderRow
-            provider={{ id: "synthetic", name: "Custom Provider" }}
-            note="Define a custom provider and model list in config."
-            tag={<Tag>Custom</Tag>}
-            right={
-              <Button type="button" size="sm" variant="secondary" onClick={() => setCustomProviderOpen(true)} disabled={loading}>
-                <Plus className="size-3.5" />
-                Connect
-              </Button>
-            }
-          />
-        </Section>
+            <ProviderRow
+              provider={{ id: "openai", name: "OpenAI Compatible" }}
+              note="Connect any OpenAI-compatible endpoint and fetch its models."
+              tag={<Tag>Custom</Tag>}
+              right={
+                <Button type="button" size="sm" variant="secondary" onClick={() => setOpenAICompatibleOpen(true)} disabled={loading}>
+                  <Plus className="size-3.5" />
+                  Connect
+                </Button>
+              }
+            />
 
-        <Button
-          type="button"
-          variant="ghost"
-          className="w-fit px-0 text-[13px] font-medium text-primary hover:bg-transparent"
-          onClick={() => setSelectOpen(true)}
-          disabled={loading || allProviders.length === 0}
-        >
-          View all providers
-        </Button>
+            <ProviderRow
+              provider={{ id: "synthetic", name: "Custom Provider" }}
+              note="Define a custom provider and model list in config."
+              tag={<Tag>Custom</Tag>}
+              right={
+                <Button type="button" size="sm" variant="secondary" onClick={() => setCustomProviderOpen(true)} disabled={loading}>
+                  <Plus className="size-3.5" />
+                  Connect
+                </Button>
+              }
+            />
+          </Section>
+        )}
+
+        {connectedProviders.length === 0 && popularProviders.length === 0 && !loading && (
+          <div className="flex flex-col items-center justify-center gap-4 py-12 text-center">
+            <span className="text-sm text-muted-foreground">No providers connected yet.</span>
+          </div>
+        )}
+
+        <div className="flex justify-center">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setSelectOpen(true)}
+            disabled={loading || allProviders.length === 0}
+          >
+            View all providers
+          </Button>
+        </div>
 
         {message ? (
-          <div className="rounded-xl border border-border/70 bg-card/70 px-3 py-2 text-[12px] text-muted-foreground">
+          <div className="rounded-lg border border-border/70 bg-card/70 px-3 py-2 text-xs text-muted-foreground text-center">
             {message}
           </div>
         ) : null}
@@ -1207,7 +1207,6 @@ export function OpenCodeProvidersSettings() {
         onOpenChange={setCustomProviderOpen}
         onSaved={refresh}
       />
-
     </div>
   )
 }
