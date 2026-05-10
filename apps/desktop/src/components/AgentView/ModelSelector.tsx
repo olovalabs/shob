@@ -2,7 +2,7 @@ import { useState, useMemo } from "react"
 import { ChevronDown, Search, CircleX } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Switch } from "@/components/ui/switch"
-import { ProviderIcon } from "@/components/opencode/ProviderIcon"
+import { ProviderIcon } from "@/components/shob/ProviderIcon"
 import { useStore } from "@/store"
 import type { OpenCodeModelOption } from "@/utils/opencode-models"
 

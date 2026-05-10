@@ -1,7 +1,13 @@
-import { useEffect, useMemo, useState } from "react"
+import { useMemo } from "react"
 import { Part } from "./message-part"
 import { ContextToolGroup } from "./context-tool-group"
 import { TextShimmer } from "./text-shimmer"
+import {
+  Reasoning,
+  ReasoningTrigger,
+  ReasoningContent,
+} from "@/components/ai-elements/reasoning"
+import { MessageResponse } from "@/components/ai-elements/message"
 
 const CONTEXT_GROUP_TOOLS = new Set(["read", "glob", "grep", "list"])
 
@@ -86,6 +92,43 @@ function groupParts(parts: { partID: string; part: PartData }[]): PartGroup[] {
   return result
 }
 
+/**
+ * Build an interleaved sequence that preserves the original part order but:
+ * - coalesces consecutive reasoning parts into one block
+ * - keeps tool parts and text parts in their original positions
+ */
+type InterleavedItem =
+  | { type: "reasoning"; text: string; id: string; isLast: boolean }
+  | { type: "part"; part: PartData; id: string }
+
+function buildInterleaved(filtered: PartData[]): InterleavedItem[] {
+  const coalesced: InterleavedItem[] = []
+
+  for (const p of filtered) {
+    if (p.type === "reasoning") {
+      const last = coalesced[coalesced.length - 1]
+      if (last && last.type === "reasoning") {
+        last.text = last.text + "\n" + (p.text ?? "")
+      } else {
+        coalesced.push({ type: "reasoning", text: p.text ?? "", id: p.id, isLast: false })
+      }
+    } else {
+      coalesced.push({ type: "part", part: p, id: p.id })
+    }
+  }
+
+  // Mark whether a reasoning block is the last item (for "streaming" state)
+  for (let i = 0; i < coalesced.length; i++) {
+    const item = coalesced[i]
+    if (item.type === "reasoning") {
+      // isLast only matters so reasoning knows if something comes after it;
+      // the Reasoning component handles auto-collapse itself via `isStreaming`
+    }
+  }
+
+  return coalesced
+}
+
 export function AssistantMessageDisplay({
   parts,
   messageId,
@@ -102,12 +145,6 @@ export function AssistantMessageDisplay({
     [filtered],
   )
 
-  const grouped = useMemo(
-    () =>
-      groupParts(nonReasoningParts.map((p) => ({ partID: p.id, part: p }))),
-    [nonReasoningParts],
-  )
-
   const contextGroupParts = useMemo(() => {
     return nonReasoningParts
       .filter(isContextGroupTool)
@@ -120,54 +157,41 @@ export function AssistantMessageDisplay({
 
   const showThinking = working && filtered.length === 0
 
-  const reasoningParts = useMemo(
-    () => filtered.filter((p) => p.type === "reasoning"),
-    [filtered],
-  )
+  // Build the interleaved flow preserving original part order
+  const interleaved = useMemo(() => buildInterleaved(filtered), [filtered])
 
-  const interleaved = useMemo(() => {
-    if (reasoningParts.length === 0) {
-      return nonReasoningParts.map((p) => ({ type: "part" as const, part: p, id: p.id }))
-    }
-
-    const allSorted = [...filtered].sort((a, b) => a.id.localeCompare(b.id))
-    const coalesced: Array<{ type: "part" | "reasoning", part?: PartData, text?: string, id: string }> = []
-    
-    for (const p of allSorted) {
-      if (p.type === "reasoning") {
-        const last = coalesced[coalesced.length - 1]
-        if (last && last.type === "reasoning") {
-          last.text = last.text + "\n" + (p.text ?? "")
-        } else {
-          coalesced.push({ type: "reasoning", text: p.text ?? "", id: p.id })
-        }
-      } else {
-        coalesced.push({ type: "part", part: p, id: p.id })
-      }
-    }
-    return coalesced
-  }, [filtered, reasoningParts, nonReasoningParts])
+  // Figure out if the last item in the stream is a reasoning block
+  // so we know if reasoning is still "streaming" (nothing after it yet)
+  const lastItemIsReasoning = interleaved.length > 0 && interleaved[interleaved.length - 1].type === "reasoning"
 
   return (
-    <div data-component="assistant-message" className="space-y-3">
+    <div data-component="assistant-message" className="w-full space-y-2 py-2 px-4 md:px-5">
+      {/* Context tool group (reading files, grep, etc.) */}
       {contextGroupParts.length > 0 && (
         <ContextToolGroup parts={contextGroupParts} busy={working} />
       )}
-      {interleaved.map((item) => {
+
+      {/* Interleaved stream: reasoning → tool calls → text, in original order */}
+      {interleaved.map((item, idx) => {
         if (item.type === "reasoning") {
+          // Reasoning is "streaming" only if it's the last item AND we're still working
+          const isStreamingBlock = working && idx === interleaved.length - 1
           return (
-            <InlineReasoningBlock
+            <Reasoning
               key={item.id}
-              text={item.text ?? ""}
-              isStreaming={Boolean(working)}
-            />
+              isStreaming={isStreamingBlock}
+              className="not-prose"
+            >
+              <ReasoningTrigger />
+              <ReasoningContent>{item.text}</ReasoningContent>
+            </Reasoning>
           )
         }
-        if (!item.part) return null
-        const part = nonReasoningParts.find((p) => p.id === item.part!.id)
+
+        // Tool or text part — rendered via Part which uses MessageResponse for text
+        const part = filtered.find((p) => p.id === item.part.id)
         if (!part) return null
-        const group = grouped.find((g) => g.type === "part" && g.ref.partID === part.id)
-        if (!group) return null
+
         return (
           <Part
             key={part.id}
@@ -177,40 +201,12 @@ export function AssistantMessageDisplay({
           />
         )
       })}
+
       {showThinking && (
         <div data-slot="session-turn-thinking" className="mt-2">
           <TextShimmer text="Thinking" />
         </div>
       )}
-    </div>
-  )
-}
-
-function InlineReasoningBlock({ text, isStreaming }: { text: string; isStreaming: boolean }) {
-  const [open, setOpen] = useState(true)
-
-  useEffect(() => {
-    if (!isStreaming) {
-      setOpen(false)
-    }
-  }, [isStreaming])
-
-  return (
-    <div data-component="reasoning-part" className="my-3 border-l-2 border-border/40 ml-1.5 pl-4">
-      <details open={open} className="group">
-        <summary 
-          onClick={(e) => { e.preventDefault(); setOpen((o) => !o) }} 
-          className="flex cursor-pointer list-none items-center gap-2 py-1 text-[12px] font-medium text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden"
-        >
-          <svg className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-          </svg>
-          <span>{isStreaming ? "Thinking..." : "Thought"}</span>
-        </summary>
-        <div className="whitespace-pre-wrap py-2 pr-2 text-[13px] leading-relaxed text-muted-foreground opacity-90 font-mono">
-          {text}
-        </div>
-      </details>
     </div>
   )
 }

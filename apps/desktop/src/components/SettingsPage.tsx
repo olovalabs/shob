@@ -4,7 +4,7 @@ import { CliAvatar } from "./CliAvatar"
 import { useStore, type SettingsSection } from "../store"
 import { nativeApi } from "@/services/native"
 import type { ElectronOpencodeProviderList } from "@/electron"
-import { ProviderIcon } from "@/components/opencode/ProviderIcon"
+import { ProviderIcon } from "@/components/shob/ProviderIcon"
 import {
   buildConnectedOpenCodeModelOptions,
   makeOpenCodeModelValue,
@@ -31,7 +31,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { OpenCodeProvidersSettings } from "@/components/opencode/OpenCodeProvidersSettings"
+import { OpenCodeProvidersSettings } from "@/components/shob/OpenCodeProvidersSettings"
 import { SettingsList } from "./SettingsList"
 
 const SETTINGS_SECTIONS: {
@@ -39,22 +39,22 @@ const SETTINGS_SECTIONS: {
   label: string
   icon: typeof SlidersHorizontal
 }[] = [
-  { id: "general", label: "General", icon: SlidersHorizontal },
-  { id: "appearance", label: "Appearance", icon: Palette },
-  { id: "models", label: "Models", icon: Brain },
-  { id: "providers", label: "Providers", icon: Boxes },
-  { id: "cli-tools", label: "CLI Tools", icon: Terminal },
-]
+    { id: "general", label: "General", icon: SlidersHorizontal },
+    { id: "appearance", label: "Appearance", icon: Palette },
+    { id: "models", label: "Models", icon: Brain },
+    { id: "providers", label: "Providers", icon: Boxes },
+    { id: "cli-tools", label: "CLI Tools", icon: Terminal },
+  ]
 
 const COLOR_SCHEME_OPTIONS: {
   value: ColorScheme
   label: string
   icon: typeof Monitor
 }[] = [
-  { value: "system", label: "System", icon: Monitor },
-  { value: "light", label: "Light", icon: Sun },
-  { value: "dark", label: "Dark", icon: Moon },
-]
+    { value: "system", label: "System", icon: Monitor },
+    { value: "light", label: "Light", icon: Sun },
+    { value: "dark", label: "Dark", icon: Moon },
+  ]
 
 const getShellLabel = (shell: string) => {
   const name = shell.split(/[\\/]/).pop()
@@ -218,9 +218,8 @@ function AppearanceSettings() {
                           setAppearanceTheme(theme.id as AppearanceThemeId)
                           setThemePickerOpen(false)
                         }}
-                        className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition ${
-                          isActive ? "bg-[var(--accent)] text-[var(--foreground)]" : "hover:bg-[var(--muted)]"
-                        }`}
+                        className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition ${isActive ? "bg-[var(--accent)] text-[var(--foreground)]" : "hover:bg-[var(--muted)]"
+                          }`}
                       >
                         <span className="grid grid-cols-4 gap-0.5">
                           {theme.swatches.slice(0, 4).map((swatch) => (
@@ -631,9 +630,8 @@ export function SettingsPage() {
                 variant="ghost"
                 size="default"
                 onClick={() => setActiveSettingsSection(section.id)}
-                className={`h-8 w-full justify-start gap-2 px-2 text-left ${
-                  isActive ? "bg-[var(--accent)] text-[var(--foreground)]" : "text-[var(--muted-foreground)]"
-                }`}
+                className={`h-8 w-full justify-start gap-2 px-2 text-left ${isActive ? "bg-[var(--accent)] text-[var(--foreground)]" : "text-[var(--muted-foreground)]"
+                  }`}
               >
                 <Icon className="h-4 w-4 shrink-0" strokeWidth={1.9} />
                 <span>{section.label}</span>

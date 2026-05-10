@@ -1,0 +1,123 @@
+[data-component="task"] {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: 6px;
+  border: 1px solid var(--border-weak-base, rgba(255, 255, 255, 0.08));
+  background: color-mix(in srgb, var(--background-base) 92%, transparent);
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    color 0.15s ease;
+  overflow: hidden;
+}
+
+[data-component="task"]:hover,
+[data-component="task"]:focus-visible {
+  border-color: var(--border-weak-base, rgba(255, 255, 255, 0.08));
+  background: color-mix(in srgb, var(--background-stronger) 88%, transparent);
+}
+
+/* ── Task Header ──────────────────────────────── */
+
+[data-slot="task-header"] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  min-height: 40px;
+  flex-shrink: 0;
+}
+
+[data-slot="task-header-info"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+[data-component="task"] [data-component="spinner"] {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+[data-slot="task-title"] {
+  flex-shrink: 0;
+  font-family: var(--font-family-sans);
+  font-size: 14px;
+  font-style: normal;
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-large);
+  letter-spacing: var(--letter-spacing-normal);
+  text-transform: capitalize;
+  color: var(--text-strong);
+}
+
+[data-slot="task-subtitle"] {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+  font-style: normal;
+  font-weight: var(--font-weight-regular);
+  line-height: var(--line-height-large);
+  letter-spacing: var(--letter-spacing-normal);
+  color: var(--text-base);
+}
+
+[data-slot="task-status"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--icon-weak);
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+[data-component="task"]:hover [data-slot="task-status"],
+[data-component="task"]:focus-visible [data-slot="task-status"] {
+  opacity: 1;
+}
+
+/* ── Task Progress ─────────────────────────────── */
+
+[data-slot="task-progress"] {
+  height: 3px;
+  width: 100%;
+  background-color: var(--border-weak-base);
+  overflow: hidden;
+}
+
+[data-slot="task-progress-bar"] {
+  height: 100%;
+  background-color: var(--icon-interactive-base);
+  transition: width 0.3s ease;
+}
+
+/* ── Task Content ──────────────────────────────── */
+
+[data-slot="task-content"] {
+  padding: 8px 12px 12px;
+  font-size: 13px;
+  line-height: var(--line-height-large);
+  color: var(--text-base);
+}
+
+/* ── Task Actions ──────────────────────────────── */
+
+[data-slot="task-actions"] {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border-weak-base);
+  background-color: var(--surface-weak);
+}

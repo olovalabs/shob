@@ -10,7 +10,16 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@radix-ui/react-use-controllable-state": "^1.2.2",
+    "@shob/sdk": "workspace:*",
     "@shob/ui": "workspace:*",
-    "@shob/sdk": "workspace:*"
+    "@streamdown/cjk": "^1.0.3",
+    "@streamdown/code": "^1.1.1",
+    "@streamdown/math": "^1.0.2",
+    "@streamdown/mermaid": "^1.0.2",
+    "ai": "^6.0.177",
+    "lucide-react": "^1.14.0",
+    "motion": "^12.38.0",
+    "streamdown": "^2.5.0"
   }
 }

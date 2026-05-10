@@ -50,6 +50,7 @@
 @import "../components/shell-submessage.css" layer(components);
 @import "../components/sticky-accordion-header.css" layer(components);
 @import "../components/tabs.css" layer(components);
+@import "../components/task.css" layer(components);
 @import "../components/tag.css" layer(components);
 @import "../components/text-reveal.css" layer(components);
 @import "../components/text-strikethrough.css" layer(components);

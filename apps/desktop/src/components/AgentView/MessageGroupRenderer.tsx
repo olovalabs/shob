@@ -1,5 +1,5 @@
 import { useMemo } from "react"
-import { SessionTurn } from "@/components/opencode/tools"
+import { SessionTurn } from "@/components/shob/tools"
 import type { AgentMessage } from "@/types"
 import type { LiveAssistantState, AgentMsg } from "./types"
 import {

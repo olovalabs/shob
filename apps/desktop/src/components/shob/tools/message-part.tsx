@@ -1,8 +1,15 @@
 import { ToolErrorCard } from "./tool-error-card"
-import { Markdown } from "./markdown"
 import { FallbackTool } from "./fallback-tool"
 import { ToolRegistry } from "./tool-registry"
 import type { ToolCallView } from "@/components/AgentView"
+import {
+  MessageResponse,
+} from "@/components/ai-elements/message"
+import {
+  Reasoning,
+  ReasoningTrigger,
+  ReasoningContent,
+} from "@/components/ai-elements/reasoning"
 
 export interface MessagePartProps {
   part: {
@@ -58,52 +65,26 @@ export function Part(props: MessagePartProps) {
   }
 }
 
-function TextPartDisplay({ part, message, showCopy, working }: MessagePartProps) {
+function TextPartDisplay({ part, working }: MessagePartProps) {
   const text = (part.text ?? "").trim()
   if (!text) return null
 
-  const interrupted = message?.role === "assistant" && message?.error?.name === "MessageAbortedError"
-  let meta = ""
-  if (message?.role === "assistant") {
-    const items: string[] = []
-    if (message.agent) items.push(message.agent[0].toUpperCase() + message.agent.slice(1))
-    if (message.model?.modelID) items.push(message.model.modelID)
-    if (interrupted) items.push("Interrupted")
-    meta = items.join(" · ")
-  }
-
   return (
     <div data-component="text-part">
-      <div data-slot="text-part-body">
-        <Markdown text={text} streaming={working} />
-      </div>
-      {showCopy && (
-        <div data-slot="text-part-copy-wrapper" data-interrupted={interrupted ? "" : undefined}>
-          {meta && <span data-slot="text-part-meta">{meta}</span>}
-        </div>
-      )}
+      <MessageResponse isAnimating={working}>{text}</MessageResponse>
     </div>
   )
 }
 
-function ReasoningPartDisplay({ part }: MessagePartProps) {
+function ReasoningPartDisplay({ part, working }: MessagePartProps) {
   const text = (part.text ?? "").trim()
   if (!text) return null
 
   return (
-    <div data-component="reasoning-part" className="my-3 border-l-2 border-border/40 ml-1.5 pl-4">
-      <details className="group">
-        <summary className="flex cursor-pointer list-none items-center gap-2 py-1 text-[12px] font-medium text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
-          <svg className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-          </svg>
-          <span>Thought</span>
-        </summary>
-        <div className="whitespace-pre-wrap py-2 pr-2 text-[13px] leading-relaxed text-muted-foreground opacity-90 font-mono">
-          {text}
-        </div>
-      </details>
-    </div>
+    <Reasoning isStreaming={working} className="my-2">
+      <ReasoningTrigger />
+      <ReasoningContent>{text}</ReasoningContent>
+    </Reasoning>
   )
 }
 
