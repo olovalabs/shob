@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { nativeApi } from "../services/native"
 import {
+  ChevronRight,
   Folder,
   GitBranch,
   Palette,
@@ -106,6 +107,7 @@ export function Sidebar() {
     addSession,
   } = useStore()
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({})
+  const [collapsedProjects, setCollapsedProjects] = useState<Record<string, boolean>>({})
   const [isSessionPaneVisible, setIsSessionPaneVisible] = useState(true)
   const [busySessions, setBusySessions] = useState<Record<string, boolean>>({})
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null)
@@ -427,7 +429,7 @@ export function Sidebar() {
         ) : (
           <div className="flex min-w-0 flex-1 flex-col bg-sidebar">
             <div className="group/sidebar flex h-10 shrink-0 items-center justify-between px-4">
-              <p className="text-[13px] font-medium text-sidebar-foreground/55">Projects</p>
+              <p className="text-[12px] font-medium text-sidebar-foreground/50">Projects</p>
               <div className="flex items-center gap-1 opacity-70 transition-opacity group-hover/sidebar:opacity-100">
                 <button
                   type="button"
@@ -503,18 +505,27 @@ export function Sidebar() {
                       return result
                     })()
 
+                    const isCollapsed = collapsedProjects[project.id] ?? false
+
                     return (
                       <section key={project.id} className="group/project min-w-0">
                         <div className="mb-1 flex h-7 items-center gap-1 px-2">
                           <button
                             type="button"
-                            onClick={() => setCurrentProject(project.id)}
-                            className={`flex min-w-0 flex-1 items-center gap-2 text-left text-[13px] font-semibold transition-colors ${
-                              isActiveProject ? "text-sidebar-foreground" : "text-sidebar-foreground/65 hover:text-sidebar-foreground"
+                            onClick={() => {
+                              setCurrentProject(project.id)
+                              setCollapsedProjects((prev) => ({ ...prev, [project.id]: !prev[project.id] }))
+                            }}
+                            className={`flex min-w-0 flex-1 items-center gap-1.5 text-left text-[13px] font-medium transition-colors ${
+                              isActiveProject ? "text-sidebar-foreground/90" : "text-sidebar-foreground/70 hover:text-sidebar-foreground/90"
                             }`}
                             title={project.path}
                           >
-                            <Folder className="h-4 w-4 shrink-0" strokeWidth={1.7} />
+                            <ChevronRight
+                              className={`h-3.5 w-3.5 shrink-0 text-sidebar-foreground/40 transition-transform duration-200 ${isCollapsed ? "" : "rotate-90"}`}
+                              strokeWidth={2}
+                            />
+                            <Folder className="h-[15px] w-[15px] shrink-0 text-sidebar-foreground/50" strokeWidth={1.25} />
                             <span className="truncate">{project.name}</span>
                           </button>
 
@@ -522,7 +533,7 @@ export function Sidebar() {
                             <DropdownMenuTrigger asChild>
                               <button
                                 type="button"
-                                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] text-sidebar-foreground/55 opacity-80 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground group-hover/project:opacity-100"
+                                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] text-sidebar-foreground/40 opacity-0 transition-all hover:bg-sidebar-accent hover:text-sidebar-foreground group-hover/project:opacity-100"
                                 title="Project options"
                                 aria-label={`${project.name} options`}
                               >
@@ -559,101 +570,103 @@ export function Sidebar() {
                           </DropdownMenu>
                         </div>
 
-                        <div className="space-y-0.5">
-                          {orderedSessions.length === 0 ? (
-                            <div className="ml-7 flex w-[calc(100%-1.75rem)] flex-col gap-1">
+                        {!isCollapsed && (
+                          <div className="space-y-[1px]">
+                            {orderedSessions.length === 0 ? (
+                              <div className="ml-9 flex w-[calc(100%-2.25rem)] flex-col gap-[1px]">
+                                <button
+                                  type="button"
+                                  onClick={() => handleCreateAgentSession(project.id)}
+                                  className="flex h-[30px] items-center rounded-md px-2 text-left text-[13px] font-normal text-sidebar-foreground/50 transition-colors hover:bg-sidebar-accent/30 hover:text-sidebar-foreground/90"
+                                >
+                                  Agent
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCreateTerminalSession(project.id)}
+                                  className="flex h-[30px] items-center rounded-md px-2 text-left text-[13px] font-normal text-sidebar-foreground/50 transition-colors hover:bg-sidebar-accent/30 hover:text-sidebar-foreground/90"
+                                >
+                                  Terminal
+                                </button>
+                              </div>
+                            ) : (
+                              orderedSessions.map((session, index) => {
+                                const isActiveSession = activeSessionId === session.id
+                                const isRunningSession = Boolean(busySessions[session.id] || session.pendingLaunchCommand)
+                                const projectAgeLabel = formatRelativeSessionTime(session.lastActiveAt ?? session.createdAt)
+                                const isSubagent = Boolean(session.parentSessionId)
+
+                                return (
+                                  <div key={session.id} className="group/session relative">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setCurrentProject(project.id)
+                                        setActiveSession(session.id)
+                                      }}
+                                      className={`flex h-[30px] w-full min-w-0 items-center rounded-[6px] text-left transition-colors ${
+                                        isSubagent ? "pl-12" : "pl-10"
+                                      } pr-2.5 ${
+                                        isActiveSession
+                                          ? "bg-sidebar-accent/80 text-sidebar-foreground"
+                                          : "text-sidebar-foreground/60 hover:bg-sidebar-accent/30 hover:text-sidebar-foreground/90"
+                                      }`}
+                                    >
+                                      {isSubagent && (
+                                        <GitBranch className="mr-1.5 h-[13px] w-[13px] shrink-0 text-sidebar-foreground/40" strokeWidth={1.5} />
+                                      )}
+                                      {isRunningSession && (
+                                        <span className="mr-1.5 inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                                          <Spinner className="h-[13px] w-[13px] text-sidebar-foreground/70" />
+                                        </span>
+                                      )}
+                                      <span className={`min-w-0 flex-1 truncate text-[13px] ${isActiveSession ? "font-medium" : "font-normal"}`}>
+                                        {session.name || formatSessionLabel(index)}
+                                      </span>
+                                      {projectAgeLabel && (
+                                        <span className={`ml-3 shrink-0 text-[12px] tabular-nums ${isActiveSession ? "text-sidebar-foreground/50" : "text-sidebar-foreground/40"} transition-opacity group-hover/session:opacity-0`}>
+                                          {projectAgeLabel}
+                                        </span>
+                                      )}
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onPointerDown={(event) => {
+                                        event.preventDefault()
+                                        event.stopPropagation()
+                                      }}
+                                      onClick={(event) => {
+                                        event.stopPropagation()
+                                        void removeSession(project.id, session.id)
+                                      }}
+                                      className="absolute right-1.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-[4px] text-[15px] leading-none text-sidebar-foreground/50 opacity-0 transition hover:bg-sidebar-accent hover:text-sidebar-foreground group-hover/session:opacity-100"
+                                      title="Close session"
+                                      aria-label={`Close ${session.name || formatSessionLabel(index)}`}
+                                    >
+                                      ×
+                                    </button>
+                                  </div>
+                                )
+                              })
+                            )}
+
+                            {project.sessions.length > VISIBLE_SESSIONS_PER_PROJECT && (
                               <button
                                 type="button"
-                                onClick={() => handleCreateAgentSession(project.id)}
-                                className="flex h-8 items-center rounded-[8px] px-2 text-left text-[13px] font-medium text-sidebar-foreground/55 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+                                onClick={() => {
+                                  setExpandedProjects((current) => ({
+                                    ...current,
+                                    [project.id]: !showAllSessions,
+                                  }))
+                                }}
+                                className="ml-10 mt-[1px] flex h-[30px] items-center text-left text-[12px] font-medium text-sidebar-foreground/40 transition-colors hover:text-sidebar-foreground/70"
                               >
-                                Agent
+                                {showAllSessions ? "Show less" : "Show more"}
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => handleCreateTerminalSession(project.id)}
-                                className="flex h-8 items-center rounded-[8px] px-2 text-left text-[13px] font-medium text-sidebar-foreground/55 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
-                              >
-                                Terminal
-                              </button>
-                            </div>
-                          ) : (
-                            orderedSessions.map((session, index) => {
-                              const isActiveSession = activeSessionId === session.id
-                              const isRunningSession = Boolean(busySessions[session.id] || session.pendingLaunchCommand)
-                              const projectAgeLabel = formatRelativeSessionTime(session.lastActiveAt ?? session.createdAt)
-                              const isSubagent = Boolean(session.parentSessionId)
-
-                              return (
-                                <div key={session.id} className="group/session relative">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setCurrentProject(project.id)
-                                      setActiveSession(session.id)
-                                    }}
-                                    className={`flex h-8 w-full min-w-0 items-center rounded-[8px] text-left transition-colors ${
-                                      isSubagent ? "pl-10" : "pl-8"
-                                    } pr-3 ${
-                                      isActiveSession
-                                        ? "bg-sidebar-accent text-sidebar-foreground"
-                                        : "text-sidebar-foreground/82 hover:bg-sidebar-accent/80 hover:text-sidebar-foreground"
-                                    }`}
-                                  >
-                                    {isSubagent && (
-                                      <GitBranch className="mr-1 h-3 w-3 shrink-0 text-sidebar-foreground/40" strokeWidth={1.7} />
-                                    )}
-                                    {isRunningSession && (
-                                      <span className="mr-1.5 inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-                                        <Spinner className="h-3 w-3 text-sidebar-foreground/70" />
-                                      </span>
-                                    )}
-                                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-none">
-                                      {session.name || formatSessionLabel(index)}
-                                    </span>
-                                    {projectAgeLabel && (
-                                      <span className="ml-3 shrink-0 text-[12px] leading-none text-sidebar-foreground/55 group-hover/session:opacity-0">
-                                        {projectAgeLabel}
-                                      </span>
-                                    )}
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    onPointerDown={(event) => {
-                                      event.preventDefault()
-                                      event.stopPropagation()
-                                    }}
-                                    onClick={(event) => {
-                                      event.stopPropagation()
-                                      void removeSession(project.id, session.id)
-                                    }}
-                                    className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-[5px] text-[15px] leading-none text-sidebar-foreground/55 opacity-0 transition hover:bg-sidebar-accent hover:text-sidebar-foreground group-hover/session:opacity-100"
-                                    title="Close session"
-                                    aria-label={`Close ${session.name || formatSessionLabel(index)}`}
-                                  >
-                                    ×
-                                  </button>
-                                </div>
-                              )
-                            })
-                          )}
-
-                          {project.sessions.length > VISIBLE_SESSIONS_PER_PROJECT && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setExpandedProjects((current) => ({
-                                  ...current,
-                                  [project.id]: !showAllSessions,
-                                }))
-                              }}
-                              className="ml-7 flex h-8 items-center px-2 text-left text-[13px] font-medium text-sidebar-foreground/55 transition-colors hover:text-sidebar-foreground"
-                            >
-                              {showAllSessions ? "Show less" : "Show more"}
-                            </button>
-                          )}
-                        </div>
+                            )}
+                          </div>
+                        )}
                       </section>
                     )
                   })}
