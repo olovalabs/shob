@@ -7,11 +7,13 @@ import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const root = path.resolve(__dirname, "..");
+const desktop = path.resolve(root, "apps", "desktop");
 
 const host = "127.0.0.1";
 const startPort = 5173;
 const maxPort = 5300;
-const electronMain = path.resolve("electron-dist/main.js");
+const electronMain = path.resolve(root, "electron-dist", "main.js");
 
 function isPortFree(port) {
   return new Promise((resolve) => {
@@ -62,30 +64,23 @@ function waitForHttp(url, timeoutMs = 60000) {
   });
 }
 
-function spawnCmd(command, args, extraEnv = {}) {
-  const child = spawn(command, args, {
+function spawnBun(args, cwd = root) {
+  const bun = process.platform === "win32" ? "bun.exe" : "bun";
+  const child = spawn(bun, args, {
     stdio: "inherit",
     shell: process.platform === "win32",
-    env: { ...process.env, ...extraEnv },
+    env: { ...process.env },
+    cwd,
   });
   return child;
 }
 
-function spawnBun(args, extraEnv = {}) {
-  const npmExecPath = process.env.npm_execpath;
-  if (npmExecPath && (npmExecPath.endsWith(".js") || npmExecPath.endsWith(".cjs"))) {
-    return spawnCmd(process.execPath, [npmExecPath, ...args], extraEnv);
-  }
-  return spawnCmd(process.platform === "win32" ? "bun.exe" : "bun", args, extraEnv);
-}
-
 async function ensureServerBundle() {
-  const bundlePath = path.resolve(__dirname, "..", "vendor", "opencode", "server", "dist", "node", "node.js");
+  const bundlePath = path.resolve(root, "packages", "server", "dist", "node", "node.js");
   if (fs.existsSync(bundlePath)) return;
 
   console.log("[dev] server bundle missing, building...");
   const { execFileSync } = await import("node:child_process");
-  const bunName = process.platform === "win32" ? "bun.exe" : "bun";
   const scriptPath = path.resolve(__dirname, "build-server.mjs");
   try {
     execFileSync(process.execPath, [scriptPath], { stdio: "inherit" });
@@ -93,7 +88,6 @@ async function ensureServerBundle() {
     console.error("[dev] failed to build server bundle");
     process.exit(1);
   }
-  console.log("[dev] server bundle built");
 }
 
 async function main() {
@@ -118,13 +112,15 @@ async function main() {
   process.on("SIGINT", () => shutdown(0));
   process.on("SIGTERM", () => shutdown(0));
 
-  const tsc = spawnBun(["run", "dev:electron:tsc"]);
+  // Run tsc for electron main process
+  const tsc = spawnBun(["x", "tsc", "-p", path.join(root, "apps", "desktop", "tsconfig.electron.json"), "--watch", "--preserveWatchOutput"], root);
   children.push(tsc);
   tsc.on("exit", (code) => {
     if (!shuttingDown && code !== 0) shutdown(code || 1);
   });
 
-  const vite = spawnBun(["x", "vite", "--host", host, "--port", String(port)]);
+  // Run vite dev server from desktop dir
+  const vite = spawnBun(["x", "vite", "--host", host, "--port", String(port)], desktop);
   children.push(vite);
   vite.on("exit", (code) => {
     if (!shuttingDown && code !== 0) shutdown(code || 1);
@@ -133,9 +129,8 @@ async function main() {
   await waitForFile(electronMain);
   await waitForHttp(devUrl);
 
-  const electron = spawnBun(["x", "cross-env", `VITE_DEV_SERVER_URL=${devUrl}`, "electron", "."], {
-    VITE_DEV_SERVER_URL: devUrl,
-  });
+  // Launch electron pointing to vite dev server
+  const electron = spawnBun(["x", "cross-env", `VITE_DEV_SERVER_URL=${devUrl}`, "electron", "."], root);
   children.push(electron);
 
   electron.on("exit", (code) => {

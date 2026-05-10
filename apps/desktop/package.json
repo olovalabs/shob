@@ -1,0 +1,16 @@
+{
+  "name": "@shob/desktop",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opencode-ai/ui": "workspace:*",
+    "@opencode-ai/sdk": "workspace:*"
+  }
+}

@@ -5,7 +5,7 @@ import os from "node:os";
 
 const __dirname = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1"));
 const rootDir = path.resolve(__dirname, "..");
-const serverDir = path.resolve(rootDir, "vendor", "opencode", "server");
+const serverDir = path.resolve(rootDir, "packages", "server");
 const serverDistDir = path.resolve(serverDir, "dist", "node");
 const serverBundle = path.resolve(serverDistDir, "node.js");
 
@@ -97,7 +97,7 @@ if (tryBuildFromMonorepo(bun)) {
 
 console.error("[build-server] failed to build server bundle");
 console.error("[build-server] either:");
-console.error("[build-server]   1. Run 'bun run script/build-node.ts' from the OpenCode monorepo to generate the bundle, then copy dist/node/ to vendor/opencode/server/dist/node/");
+console.error("[build-server]   1. Run 'bun run script/build-node.ts' from the OpenCode monorepo to generate the bundle, then copy dist/node/ to packages/server/dist/node/");
 console.error("[build-server]   2. Set OPENCODE_MONOREPO_PATH env var to point to the OpenCode monorepo root");
-console.error("[build-server]   3. Ensure the pre-built bundle exists in vendor/opencode/server/dist/node/");
+console.error("[build-server]   3. Ensure the pre-built bundle exists in packages/server/dist/node/");
 process.exit(1);
