@@ -20,7 +20,7 @@ import {
   Todo,
   QuestionAnswer,
   QuestionInfo,
-} from "@opencode-ai/sdk/v2"
+} from "@shob/sdk/v2"
 import { useData } from "../context"
 import { useFileComponent } from "../context/file"
 import { useDialog } from "../context/dialog"
@@ -167,34 +167,34 @@ function next(text: string, start: number) {
 
 function createPacedValue(getValue: () => string, live?: () => boolean) {
   const [value, setValue] = useState(getValue())
-  let shown = getValue()
-  let timeout: ReturnType<typeof setTimeout> | undefined
+  const shownRef = useRef(getValue())
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const clear = () => {
-    if (!timeout) return
-    clearTimeout(timeout)
-    timeout = undefined
+    if (!timeoutRef.current) return
+    clearTimeout(timeoutRef.current)
+    timeoutRef.current = undefined
   }
 
   const sync = (text: string) => {
-    shown = text
+    shownRef.current = text
     setValue(text)
   }
 
   const run = () => {
-    timeout = undefined
+    timeoutRef.current = undefined
     const text = getValue()
     if (!live?.()) {
       sync(text)
       return
     }
-    if (!text.startsWith(shown) || text.length <= shown.length) {
+    if (!text.startsWith(shownRef.current) || text.length <= shownRef.current.length) {
       sync(text)
       return
     }
-    const end = next(text, shown.length)
+    const end = next(text, shownRef.current.length)
     sync(text.slice(0, end))
-    if (end < text.length) timeout = setTimeout(run, TEXT_RENDER_PACE_MS)
+    if (end < text.length) timeoutRef.current = setTimeout(run, TEXT_RENDER_PACE_MS)
   }
 
   useEffect(() => {
@@ -204,13 +204,13 @@ function createPacedValue(getValue: () => string, live?: () => boolean) {
       sync(text)
       return
     }
-    if (!text.startsWith(shown) || text.length < shown.length) {
+    if (!text.startsWith(shownRef.current) || text.length < shownRef.current.length) {
       clear()
       sync(text)
       return
     }
-    if (text.length === shown.length || timeout) return
-    timeout = setTimeout(run, TEXT_RENDER_PACE_MS)
+    if (text.length === shownRef.current.length || timeoutRef.current) return
+    timeoutRef.current = setTimeout(run, TEXT_RENDER_PACE_MS)
   })
 
   useEffect(() => {

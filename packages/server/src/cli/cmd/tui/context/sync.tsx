@@ -17,7 +17,7 @@ import type {
   ProviderListResponse,
   ProviderAuthMethod,
   VcsInfo,
-} from "@opencode-ai/sdk/v2"
+} from "@shob/sdk/v2"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { useProject } from "@tui/context/project"
 import { useEvent } from "@tui/context/event"

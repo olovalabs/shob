@@ -137,7 +137,7 @@
                          "opencode-poe-auth":  "0.0.1",
                          "@standard-schema/spec":  "1.0.0",
                          "cross-spawn":  "*",
-                         "@opencode-ai/sdk":  "workspace:*",
+                         "@shob/sdk":  "workspace:*",
                          "solid-js":  "*",
                          "opencode-gitlab-auth":  "2.0.1",
                          "jsonc-parser":  "3.3.1",

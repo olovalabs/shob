@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@opencode-ai/ui": "workspace:*",
-    "@opencode-ai/sdk": "workspace:*"
+    "@shob/ui": "workspace:*",
+    "@shob/sdk": "workspace:*"
   }
 }

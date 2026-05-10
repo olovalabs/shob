@@ -2,7 +2,7 @@ import type { Hooks, PluginInput, Plugin as PluginInstance, PluginModule } from 
 import { Config } from "../config/config"
 import { Bus } from "../bus"
 import { Log } from "../util/log"
-import { createOpencodeClient } from "@opencode-ai/sdk"
+import { createOpencodeClient } from "@shob/sdk"
 import { Flag } from "../flag/flag"
 import { CodexAuthPlugin } from "./codex"
 import { Session } from "../session"

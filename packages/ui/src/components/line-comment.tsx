@@ -1,4 +1,4 @@
-import { useFilteredList } from "@opencode-ai/ui/hooks"
+import { useFilteredList } from "@shob/ui/hooks"
 import { getDirectory, getFilename } from "@opencode-ai/core/util/path"
 import { useState, useEffect } from "react"
 import { Button } from "./button"

@@ -80,7 +80,9 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
   const handleKeyDownWithSubmit = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault()
-      void handleSubmit()
+      if (hooks.canSubmit) {
+        void handleSubmit()
+      }
     }
   }
 

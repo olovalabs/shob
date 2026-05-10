@@ -2,7 +2,7 @@
 
 ## Objective
 
-Port the full tool-calling UI from `@opencode-ai/ui` (SolidJS) and `@opencode-ai/app` (SolidJS) into Shob (React 19) as a direct file-by-file translation. The result must match 100% in design, layout, behavior, styling, interactions, animations, and overall user experience with no differences.
+Port the full tool-calling UI from `@shob/ui` (SolidJS) and `@opencode-ai/app` (SolidJS) into Shob (React 19) as a direct file-by-file translation. The result must match 100% in design, layout, behavior, styling, interactions, animations, and overall user experience with no differences.
 
 ## Source Files
 

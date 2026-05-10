@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import type { SessionStatus } from "@opencode-ai/sdk/v2/client"
+import type { SessionStatus } from "@shob/sdk/v2/client"
 import { useI18n } from "../context/i18n"
 import { Card } from "./card"
 import { Tooltip } from "./tooltip"

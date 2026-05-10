@@ -1,5 +1,5 @@
 import { z } from "zod"
-import type { Model } from "@opencode-ai/sdk/v2"
+import type { Model } from "@shob/sdk/v2"
 
 export namespace CopilotModels {
   export const schema = z.object({

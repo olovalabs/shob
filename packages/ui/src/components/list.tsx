@@ -1,4 +1,4 @@
-import { type FilteredListProps, useFilteredList } from "@opencode-ai/ui/hooks"
+import { type FilteredListProps, useFilteredList } from "@shob/ui/hooks"
 import { useEffect, type JSX } from "react"
 import { useI18n } from "../context/i18n"
 import { Icon, type IconProps } from "./icon"

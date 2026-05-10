@@ -1,4 +1,4 @@
-import { createOpencodeClient } from "@opencode-ai/sdk/v2"
+import { createOpencodeClient } from "@shob/sdk/v2"
 import { useDialog } from "@tui/ui/dialog"
 import { DialogSelect } from "@tui/ui/dialog-select"
 import { useRoute } from "@tui/context/route"

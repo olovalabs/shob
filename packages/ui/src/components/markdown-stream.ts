@@ -30,7 +30,12 @@ export function stream(text: string, live: boolean) {
   if (!live) return [{ raw: text, src: text, mode: "full" }] satisfies Block[]
   const src = heal(text)
   if (refs(text)) return [{ raw: text, src, mode: "live" }] satisfies Block[]
-  const tokens = marked.lexer(text)
+  let tokens
+  try {
+    tokens = marked.lexer(text)
+  } catch {
+    return [{ raw: text, src, mode: "live" }] satisfies Block[]
+  }
   const tail = tokens.findLastIndex((token) => token.type !== "space")
   if (tail < 0) return [{ raw: text, src, mode: "live" }] satisfies Block[]
   const last = tokens[tail]

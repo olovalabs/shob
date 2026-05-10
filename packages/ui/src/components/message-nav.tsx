@@ -1,4 +1,4 @@
-import { UserMessage } from "@opencode-ai/sdk/v2"
+import { UserMessage } from "@shob/sdk/v2"
 import { ComponentProps } from "react"
 import { DiffChanges } from "./diff-changes"
 import { Tooltip } from "./tooltip"

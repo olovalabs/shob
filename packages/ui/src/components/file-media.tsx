@@ -1,4 +1,4 @@
-import type { FileContent } from "@opencode-ai/sdk/v2"
+import type { FileContent } from "@shob/sdk/v2"
 import { useEffect, useMemo, useState } from "react"
 import { useI18n } from "../context/i18n"
 import {

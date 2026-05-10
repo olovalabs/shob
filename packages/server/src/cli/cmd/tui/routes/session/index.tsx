@@ -31,7 +31,7 @@ import type {
   UserMessage,
   TextPart,
   ReasoningPart,
-} from "@opencode-ai/sdk/v2"
+} from "@shob/sdk/v2"
 import { useLocal } from "@tui/context/local"
 import { Locale } from "@/util/locale"
 import type { Tool } from "@/tool/tool"

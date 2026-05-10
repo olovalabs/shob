@@ -1,4 +1,4 @@
-﻿import { type DiffLineAnnotation, type SelectedLineRange } from "@pierre/diffs"
+import { type DiffLineAnnotation, type SelectedLineRange } from "@pierre/diffs"
 import { useEffect, useMemo, useState } from "react"
 import { createRoot } from "react-dom/client"
 import { useI18n } from "../context/i18n"

@@ -166,6 +166,14 @@ function decorate(root: HTMLDivElement, labels: { copy: string; copied: string }
 
 function elementsEqual(a: Element, b: Element): boolean {
   if (a.tagName !== b.tagName) return false
+  if (a.attributes.length !== b.attributes.length) return false
+  const bAttrs = new Map<string, string>()
+  for (const attr of b.attributes) {
+    bAttrs.set(attr.name, attr.value)
+  }
+  for (const attr of a.attributes) {
+    if (bAttrs.get(attr.name) !== attr.value) return false
+  }
   if (a.childNodes.length !== b.childNodes.length) return false
   for (let i = 0; i < a.childNodes.length; i++) {
     const ca = a.childNodes[i]
@@ -180,10 +188,24 @@ function elementsEqual(a: Element, b: Element): boolean {
   return true
 }
 
-function updateDomIncrementally(container: HTMLDivElement, newHtml: string, labels: { copy: string; copied: string }) {
+function syncAttributes(existingEl: Element, newEl: Element) {
+  const newAttrs = new Map(Array.from(newEl.attributes).map((a) => [a.name, a.value]))
+  for (const attr of Array.from(existingEl.attributes)) {
+    if (!newAttrs.has(attr.name)) {
+      existingEl.removeAttribute(attr.name)
+    }
+  }
+  for (const [name, value] of newAttrs) {
+    if (existingEl.getAttribute(name) !== value) {
+      existingEl.setAttribute(name, value)
+    }
+  }
+}
+
+function updateDomIncrementally(container: HTMLDivElement | Element, newHtml: string, labels: { copy: string; copied: string }) {
   const temp = document.createElement("div")
   temp.innerHTML = newHtml
-  decorate(temp, labels, () => {})
+  decorate(temp as HTMLDivElement, labels, () => {})
 
   const existingChildren = Array.from(container.childNodes)
   const newChildren = Array.from(temp.childNodes)
@@ -205,8 +227,11 @@ function updateDomIncrementally(container: HTMLDivElement, newHtml: string, labe
       } else if (existing.nodeType === Node.ELEMENT_NODE && newNode.nodeType === Node.ELEMENT_NODE) {
         const existingEl = existing as Element
         const newEl = newNode as Element
-        if (!elementsEqual(existingEl, newEl)) {
-          container.replaceChild(newEl, existing)
+        if (existingEl.tagName === newEl.tagName) {
+          syncAttributes(existingEl, newEl)
+          updateDomIncrementally(existingEl, newEl.innerHTML, labels)
+        } else {
+          container.replaceChild(newNode, existing)
         }
       } else {
         container.replaceChild(newNode, existing)
@@ -231,12 +256,24 @@ export function Markdown({ text, streaming = false }: { text: string; streaming?
   useEffect(() => {
     if (!containerRef.current) return
 
-    const blocks = stream(text, streaming)
     let sanitized = ""
-    for (const block of blocks) {
-      const rawHtml = marked.parse(block.src, { async: false }) as string
-      const safe = sanitize(rawHtml)
-      if (safe) sanitized += safe
+    try {
+      const blocks = stream(text, streaming)
+      for (const block of blocks) {
+        const rawHtml = marked.parse(block.src, { async: false }) as string
+        const safe = sanitize(rawHtml)
+        if (safe) sanitized += safe
+      }
+    } catch (error) {
+      console.warn("Markdown parse error:", error)
+      sanitized = text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;")
+        .replace(/\r\n?/g, "\n")
+        .replace(/\n/g, "<br>")
     }
 
     if (!sanitized) {
@@ -258,13 +295,22 @@ export function Markdown({ text, streaming = false }: { text: string; streaming?
 
       if (!code || !button) return
 
-      const handleClick = async () => {
-        await handleCopy(code.textContent ?? "", index)
+      button.onclick = () => {
+        void handleCopy(code.textContent ?? "", index)
       }
 
-      button.onclick = null
-      button.addEventListener("click", handleClick)
+      button.removeAttribute("data-copied")
+      button.setAttribute("aria-label", labels.copy)
+      button.setAttribute("data-tooltip", labels.copy)
+    })
+  }, [text, streaming, labels, handleCopy])
 
+  useEffect(() => {
+    if (!containerRef.current) return
+    const codeBlocks = Array.from(containerRef.current.querySelectorAll('[data-component="markdown-code"]'))
+    codeBlocks.forEach((block, index) => {
+      const button = block.querySelector('[data-slot="markdown-copy-button"]') as HTMLButtonElement | null
+      if (!button) return
       if (copiedIndex === index) {
         button.setAttribute("data-copied", "true")
         button.setAttribute("aria-label", labels.copied)
@@ -275,7 +321,7 @@ export function Markdown({ text, streaming = false }: { text: string; streaming?
         button.setAttribute("data-tooltip", labels.copy)
       }
     })
-  }, [text, copiedIndex, labels, handleCopy])
+  }, [copiedIndex, labels])
 
   return <div ref={containerRef} data-component="markdown" />
 }

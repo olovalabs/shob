@@ -1,5 +1,5 @@
 {
-  "name": "@opencode-ai/ui",
+  "name": "@shob/ui",
   "version": "1.14.41",
   "type": "module",
   "license": "MIT",
@@ -42,7 +42,7 @@
     "vite-plugin-icons-spritesheet": "3.0.1"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "workspace:*",
+    "@shob/sdk": "workspace:*",
     "@pierre/diffs": "*",
     "@shikijs/transformers": "3.9.2",
     "clsx": "^2.1.1",
