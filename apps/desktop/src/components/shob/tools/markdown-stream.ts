@@ -28,27 +28,9 @@ function heal(text: string) {
 
 export function stream(text: string, live: boolean) {
   if (!live) return [{ raw: text, src: text, mode: "full" }] satisfies Block[]
+  // During live streaming, keep text as a single block and let remend heal
+  // incomplete markdown. Splitting mid-stream causes DOM churn as the split
+  // point shifts with every keystroke.
   const src = heal(text)
-  if (refs(text)) return [{ raw: text, src, mode: "live" }] satisfies Block[]
-  let tokens
-  try {
-    tokens = marked.lexer(text)
-  } catch {
-    return [{ raw: text, src, mode: "live" }] satisfies Block[]
-  }
-  const tail = tokens.findLastIndex((token) => token.type !== "space")
-  if (tail < 0) return [{ raw: text, src, mode: "live" }] satisfies Block[]
-  const last = tokens[tail]
-  if (!last || last.type !== "code") return [{ raw: text, src, mode: "live" }] satisfies Block[]
-  const code = last as Tokens.Code
-  if (!open(code.raw)) return [{ raw: text, src, mode: "live" }] satisfies Block[]
-  const head = tokens
-    .slice(0, tail)
-    .map((token) => token.raw)
-    .join("")
-  if (!head) return [{ raw: code.raw, src: code.raw, mode: "live" }] satisfies Block[]
-  return [
-    { raw: head, src: heal(head), mode: "live" },
-    { raw: code.raw, src: code.raw, mode: "live" },
-  ] satisfies Block[]
+  return [{ raw: text, src, mode: "live" }] satisfies Block[]
 }

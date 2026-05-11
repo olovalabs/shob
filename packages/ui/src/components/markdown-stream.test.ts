@@ -13,10 +13,9 @@ describe("markdown stream", () => {
     ])
   })
 
-  test("splits an unfinished trailing code fence from stable content", () => {
+  test("keeps all content as a single block during live streaming", () => {
     expect(stream("before\n\n```ts\nconst x = 1", true)).toEqual([
-      { raw: "before\n\n", src: "before\n\n", mode: "live" },
-      { raw: "```ts\nconst x = 1", src: "```ts\nconst x = 1", mode: "live" },
+      { raw: "before\n\n```ts\nconst x = 1", src: "before\n\n```ts\nconst x = 1", mode: "live" },
     ])
   })
 
@@ -28,5 +27,9 @@ describe("markdown stream", () => {
         mode: "live",
       },
     ])
+  })
+
+  test("non-live mode returns full block unchanged", () => {
+    expect(stream("hello **world", false)).toEqual([{ raw: "hello **world", src: "hello **world", mode: "full" }])
   })
 })

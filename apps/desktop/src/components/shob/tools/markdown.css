@@ -6,6 +6,8 @@
   font-family: var(--font-family-sans);
   font-size: var(--font-size-base);
   line-height: 160%;
+  /* Prevent layout thrashing during streaming updates */
+  contain: layout style;
 
   > *:first-child {
     margin-top: 0;

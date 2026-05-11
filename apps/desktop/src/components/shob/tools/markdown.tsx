@@ -178,6 +178,30 @@ function syncAttributes(existingEl: Element, newEl: Element) {
   }
 }
 
+function nodesMatch(a: Node, b: Node): boolean {
+  if (a.nodeType !== b.nodeType) return false
+  if (a.nodeType === Node.TEXT_NODE) return true
+  if (a.nodeType === Node.ELEMENT_NODE) {
+    return (a as Element).tagName === (b as Element).tagName
+  }
+  return false
+}
+
+function updateNodeInPlace(existing: Node, incoming: Node, labels: { copy: string; copied: string }) {
+  if (existing.nodeType === Node.TEXT_NODE) {
+    if (existing.textContent !== incoming.textContent) {
+      existing.textContent = incoming.textContent
+    }
+    return
+  }
+  if (existing.nodeType === Node.ELEMENT_NODE) {
+    const existingEl = existing as Element
+    const incomingEl = incoming as Element
+    syncAttributes(existingEl, incomingEl)
+    updateDomIncrementally(existingEl, incomingEl.innerHTML, labels)
+  }
+}
+
 function updateDomIncrementally(container: HTMLDivElement | Element, newHtml: string, labels: { copy: string; copied: string }) {
   const temp = document.createElement("div")
   temp.innerHTML = newHtml
@@ -186,33 +210,41 @@ function updateDomIncrementally(container: HTMLDivElement | Element, newHtml: st
   const existingChildren = Array.from(container.childNodes)
   const newChildren = Array.from(temp.childNodes)
 
-  const maxLen = Math.max(existingChildren.length, newChildren.length)
-
-  for (let i = 0; i < maxLen; i++) {
-    if (i >= newChildren.length) {
-      container.removeChild(existingChildren[i])
-    } else if (i >= existingChildren.length) {
-      container.appendChild(newChildren[i])
+  // Greedy front+back matching to preserve DOM identity
+  let prefixLen = 0
+  while (prefixLen < existingChildren.length && prefixLen < newChildren.length) {
+    if (nodesMatch(existingChildren[prefixLen], newChildren[prefixLen])) {
+      updateNodeInPlace(existingChildren[prefixLen], newChildren[prefixLen], labels)
+      prefixLen++
     } else {
-      const existing = existingChildren[i]
-      const newNode = newChildren[i]
-      if (existing.nodeType === Node.TEXT_NODE && newNode.nodeType === Node.TEXT_NODE) {
-        if (existing.textContent !== newNode.textContent) {
-          existing.textContent = newNode.textContent
-        }
-      } else if (existing.nodeType === Node.ELEMENT_NODE && newNode.nodeType === Node.ELEMENT_NODE) {
-        const existingEl = existing as Element
-        const newEl = newNode as Element
-        if (existingEl.tagName === newEl.tagName) {
-          syncAttributes(existingEl, newEl)
-          updateDomIncrementally(existingEl, newEl.innerHTML, labels)
-        } else {
-          container.replaceChild(newNode, existing)
-        }
-      } else {
-        container.replaceChild(newNode, existing)
-      }
+      break
     }
+  }
+
+  let suffixLen = 0
+  while (
+    suffixLen < existingChildren.length - prefixLen &&
+    suffixLen < newChildren.length - prefixLen
+  ) {
+    const eIdx = existingChildren.length - 1 - suffixLen
+    const nIdx = newChildren.length - 1 - suffixLen
+    if (nodesMatch(existingChildren[eIdx], newChildren[nIdx])) {
+      updateNodeInPlace(existingChildren[eIdx], newChildren[nIdx], labels)
+      suffixLen++
+    } else {
+      break
+    }
+  }
+
+  // Remove unmatched nodes from the middle
+  for (let i = existingChildren.length - suffixLen - 1; i >= prefixLen; i--) {
+    container.removeChild(existingChildren[i])
+  }
+
+  // Insert new unmatched nodes in the middle
+  const insertBefore = container.childNodes[prefixLen] ?? null
+  for (let i = prefixLen; i < newChildren.length - suffixLen; i++) {
+    container.insertBefore(newChildren[i].cloneNode(true), insertBefore)
   }
 }
 
@@ -267,6 +299,12 @@ export function Markdown({ text, streaming = false, className, ...props }: Markd
       decorate(containerRef.current, labels, () => {})
     } else {
       updateDomIncrementally(containerRef.current, sanitized, labels)
+    }
+
+    if (streaming) {
+      containerRef.current.setAttribute("data-streaming", "true")
+    } else {
+      containerRef.current.removeAttribute("data-streaming")
     }
 
     const codeBlocks = Array.from(containerRef.current.querySelectorAll('[data-component="markdown-code"]'))

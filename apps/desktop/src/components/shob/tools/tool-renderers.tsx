@@ -1,4 +1,4 @@
-import { useMemo, useState, type MouseEventHandler } from "react"
+import { useMemo, useState, useEffect, useRef, type MouseEventHandler } from "react"
 import { Check, Copy, ExternalLink } from "lucide-react"
 import { ToolRegistry, type ToolProps } from "./tool-registry"
 import { BasicTool } from "./basic-tool"
@@ -18,30 +18,29 @@ function stripAnsi(str: string): string {
 
 // ── Shell Submessage (bash tool description animation) ──
 function ShellSubmessage({ text, animate }: { text: string; animate?: boolean }) {
-  const [width, setWidth] = useState<string | undefined>(animate ? "0px" : undefined)
-  const [blur, setBlur] = useState(animate)
+  const [ready, setReady] = useState(!animate)
+  const textRef = useRef<HTMLSpanElement>(null)
 
-  useMemo(() => {
-    if (!animate) return
-    requestAnimationFrame(() => {
-      setWidth(undefined)
-      setBlur(false)
-    })
+  useEffect(() => {
+    if (!animate || ready) {
+      setReady(true)
+      return
+    }
+    const raf = requestAnimationFrame(() => setReady(true))
+    return () => cancelAnimationFrame(raf)
   }, [animate])
 
   return (
     <span data-component="shell-submessage">
-      <span
-        data-slot="shell-submessage-width"
-        style={{ width, overflow: "hidden", whiteSpace: "nowrap", transition: "width 0.25s cubic-bezier(0.16,1,0.3,1)" }}
-      >
+      <span ref={textRef} data-slot="shell-submessage-width">
         <span data-slot="basic-tool-tool-subtitle">
           <span
             data-slot="shell-submessage-value"
             style={{
-              opacity: blur ? 0 : 1,
-              filter: blur ? "blur(2px)" : undefined,
-              transition: "opacity 0.32s ease, filter 0.32s ease",
+              clipPath: ready ? "inset(0)" : "inset(0 100% 0 0)",
+              opacity: ready ? 1 : 0,
+              filter: ready ? undefined : "blur(2px)",
+              transition: "clip-path 0.25s cubic-bezier(0.16,1,0.3,1), opacity 0.32s ease, filter 0.32s ease",
             }}
           >
             {text}
@@ -323,8 +322,8 @@ ToolRegistry.register({
               <span data-slot="basic-tool-tool-title">
                 <TextShimmer text="Shell" active={pending} />
               </span>
-              {!pending && description && (
-                <ShellSubmessage text={description} animate={sawPending} />
+              {description && (
+                <ShellSubmessage text={description} animate={pending} />
               )}
             </div>
           </div>

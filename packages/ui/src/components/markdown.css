@@ -1,4 +1,6 @@
 [data-component="markdown"] {
+  /* Prevent layout thrashing during streaming updates */
+  contain: layout style;
   /* Reset & Base Typography */
   min-width: 0;
   max-width: 100%;

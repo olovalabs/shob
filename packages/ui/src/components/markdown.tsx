@@ -319,10 +319,17 @@ export function Markdown(
       return
     }
 
+    // Skip morphdom reconciliation during streaming when HTML hasn't meaningfully changed
+    const prevHtml = container.getAttribute("data-html")
+    if (streaming && prevHtml === content) return
+
     const labels = copyLabelsRef.current
     const temp = document.createElement("div")
     temp.innerHTML = content
     decorate(temp, labels)
+
+    // Cache the current HTML before morphing so we can skip next identical update
+    if (streaming) container.setAttribute("data-html", content)
 
     morphdom(container, temp, {
       childrenOnly: true,
@@ -343,7 +350,7 @@ export function Markdown(
 
     if (!copyCleanupRef.current)
       copyCleanupRef.current = setupCodeCopy(container, () => copyLabelsRef.current)
-  }, [root, html, text, i18n])
+  }, [root, html, text, streaming, i18n])
 
   useEffect(() => {
     return () => {

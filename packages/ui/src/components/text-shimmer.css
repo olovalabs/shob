@@ -4,7 +4,7 @@
   --text-shimmer-swap: 220ms;
   --text-shimmer-index: 0;
   --text-shimmer-angle: 90deg;
-  --text-shimmer-spread: 5.2ch;
+  --text-shimmer-spread: 12ch;
   --text-shimmer-size: 360%;
   --text-shimmer-base-color: var(--text-weak);
   --text-shimmer-peak-color: var(--text-strong);
