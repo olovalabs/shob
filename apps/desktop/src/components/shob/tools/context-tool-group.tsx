@@ -99,7 +99,12 @@ export function ContextToolGroup({
 
   return (
     <Task open={open} onOpenChange={setOpen} className="my-1">
-      <TaskTrigger title={title} icon={<Icon className="size-4" />} />
+      <TaskTrigger title={title}>
+        <div className="flex w-full cursor-pointer items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground">
+          <Icon className="size-4" />
+          <p className="text-sm">{title}</p>
+        </div>
+      </TaskTrigger>
       <TaskContent>
         <div className="flex flex-col gap-1.5">
           {parts.map((part) => toolLine(part))}

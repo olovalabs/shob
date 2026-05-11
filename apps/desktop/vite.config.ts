@@ -16,10 +16,14 @@ export default defineConfig({
   server: {
     port: 5180,
     strictPort: true,
+    fs: {
+      allow: ['.', '../../packages/ui'],
+    },
   },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      '@ui': fileURLToPath(new URL('../../packages/ui/src', import.meta.url)),
     },
     dedupe: ['react', 'react-dom'],
   },

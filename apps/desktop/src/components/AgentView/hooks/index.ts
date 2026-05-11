@@ -99,6 +99,7 @@ export const useAgentViewHooks = ({
     handleSuggestion: uiHandlers.handleSuggestion,
     handlePickFiles: uiHandlers.handlePickFiles,
     handleFilesSelected: uiHandlers.handleFilesSelected,
+    handleRemoveFile: uiHandlers.handleRemoveFile,
     handleStop: uiHandlers.handleStop,
     openSubagentSessionAutoCreate,
   }

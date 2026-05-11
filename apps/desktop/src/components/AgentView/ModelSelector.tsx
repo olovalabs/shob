@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react"
 import { ChevronDown, Search, CircleX } from "lucide-react"
+import { cn } from "@/lib/utils"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Switch } from "@/components/ui/switch"
 import { ProviderIcon } from "@/components/shob/ProviderIcon"
@@ -11,9 +12,10 @@ interface ModelSelectorProps {
   modelOptions: OpenCodeModelOption[]
   providerStatus: "idle" | "loading" | "ready" | "error"
   onSelect: (value: string) => void
+  className?: string
 }
 
-export function ModelSelector({ selectedModel, modelOptions, providerStatus, onSelect }: ModelSelectorProps) {
+export function ModelSelector({ selectedModel, modelOptions, providerStatus, onSelect, className }: ModelSelectorProps) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState("")
   const visibleModels = useStore((s) => s.visibleOpencodeModels)
@@ -60,7 +62,10 @@ export function ModelSelector({ selectedModel, modelOptions, providerStatus, onS
       <PopoverTrigger asChild>
         <button
           disabled={providerStatus === "loading" || modelOptions.length === 0}
-          className="h-7 max-w-[140px] flex items-center gap-1 rounded-md border border-border/70 bg-card/90 pl-2 pr-1.5 text-[11px] text-foreground shadow-xs outline-none transition-colors hover:bg-accent/55 disabled:cursor-not-allowed disabled:opacity-50"
+          className={cn(
+            "h-7 max-w-[140px] flex items-center gap-1 rounded-md border border-border/70 bg-card/90 pl-2 pr-1.5 text-[11px] text-foreground shadow-xs outline-none transition-colors hover:bg-accent/55 disabled:cursor-not-allowed disabled:opacity-50",
+            className,
+          )}
           title={currentOption?.label ?? "Connected model"}
         >
           <span className="truncate">{label}</span>

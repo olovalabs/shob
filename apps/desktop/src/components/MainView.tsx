@@ -290,55 +290,56 @@ export function MainView() {
         <div ref={workspaceRef} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
           <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
             <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-              {isWorkspacePage ? (
-                <>
-                  <TabBar />
-                  <div
-                    className="relative min-h-0 w-full min-w-0 flex-1 overflow-hidden"
-                    style={{ display: projectSessions.length > 0 ? "block" : "none" }}
-                  >
-                    {projectSessions.map((session) => {
-                      const shouldBoot = bootedSessionIds.has(session.id)
-                      if (!shouldBoot) return null
+              <div
+                className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+                style={{ display: isWorkspacePage ? undefined : "none" }}
+              >
+                <TabBar />
+                <div
+                  className="relative min-h-0 w-full min-w-0 flex-1 overflow-hidden"
+                  style={{ display: projectSessions.length > 0 ? "block" : "none" }}
+                >
+                  {projectSessions.map((session) => {
+                    const shouldBoot = bootedSessionIds.has(session.id)
+                    if (!shouldBoot) return null
 
-                      if (session.kind === "agent") {
-                        return (
-                          <AgentView
-                            key={session.id}
-                            sessionId={session.id}
-                            isActive={session.id === activeSessionId}
-                          />
-                        )
-                      }
-
+                    if (session.kind === "agent") {
                       return (
-                        <Terminal
+                        <AgentView
                           key={session.id}
                           sessionId={session.id}
                           isActive={session.id === activeSessionId}
-                          shouldBoot={shouldBoot}
                         />
                       )
-                    })}
-                  </div>
+                    }
 
-                  {projectSessions.length === 0 && (
-                    <WelcomeScreen
-                      projects={projects}
-                      currentProject={currentProject}
-                      onOpenFolder={handleOpenFolder}
-                      onCreateSession={handleCreateSession}
-                      onSelectProject={setCurrentProject}
-                      onToggleFileTree={handleToggleFileTree}
-                    />
-                  )}
-                </>
-              ) : (
-                <SettingsPage />
-              )}
+                    return (
+                      <Terminal
+                        key={session.id}
+                        sessionId={session.id}
+                        isActive={session.id === activeSessionId}
+                        shouldBoot={shouldBoot}
+                      />
+                    )
+                  })}
+                </div>
+
+                {projectSessions.length === 0 && (
+                  <WelcomeScreen
+                    projects={projects}
+                    currentProject={currentProject}
+                    onOpenFolder={handleOpenFolder}
+                    onCreateSession={handleCreateSession}
+                    onSelectProject={setCurrentProject}
+                    onToggleFileTree={handleToggleFileTree}
+                  />
+                )}
+              </div>
+
+              {!isWorkspacePage && <SettingsPage />}
             </main>
 
-            {isWorkspacePage && isRightPanelVisible && (
+            {isRightPanelVisible && (
               <>
                 <div
                   className="workspace-divider h-full w-[5px] shrink-0"
@@ -346,11 +347,12 @@ export function MainView() {
                   aria-orientation="vertical"
                   aria-label="Resize review panel"
                   onPointerDown={handleRightPanelResizeStart}
+                  style={{ display: isWorkspacePage ? undefined : "none" }}
                 />
 
                 <aside
                   className="flex h-full shrink-0 flex-col border-l border-border bg-background"
-                  style={{ width: rightPanelWidth }}
+                  style={{ width: rightPanelWidth, display: isWorkspacePage ? undefined : "none" }}
                 >
                   <div className="flex h-10 shrink-0 items-center border-b border-border px-3">
                     <div className="relative flex min-w-0 items-center gap-1">
@@ -475,13 +477,15 @@ export function MainView() {
             )}
           </div>
 
-          {isWorkspacePage && isBottomTerminalVisible && (
-            <BottomTerminalPanel
-              projectPath={currentProject?.path}
-              height={bottomTerminalHeight}
-              onClose={() => setIsBottomTerminalVisible(false)}
-              onResizeStart={handleBottomTerminalResizeStart}
-            />
+          {isBottomTerminalVisible && (
+            <div style={{ display: isWorkspacePage ? undefined : "none" }}>
+              <BottomTerminalPanel
+                projectPath={currentProject?.path}
+                height={bottomTerminalHeight}
+                onClose={() => setIsBottomTerminalVisible(false)}
+                onResizeStart={handleBottomTerminalResizeStart}
+              />
+            </div>
           )}
         </div>
       </div>

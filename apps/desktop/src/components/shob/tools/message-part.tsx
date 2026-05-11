@@ -5,11 +5,7 @@ import type { ToolCallView } from "@/components/AgentView"
 import {
   MessageResponse,
 } from "@/components/ai-elements/message"
-import {
-  Reasoning,
-  ReasoningTrigger,
-  ReasoningContent,
-} from "@/components/ai-elements/reasoning"
+
 
 export interface MessagePartProps {
   part: {
@@ -81,14 +77,13 @@ function ReasoningPartDisplay({ part, working }: MessagePartProps) {
   if (!text.trim()) return null
 
   return (
-    <Reasoning isStreaming={working} className="my-2">
-      <ReasoningTrigger />
-      <ReasoningContent>{text}</ReasoningContent>
-    </Reasoning>
+    <div className="my-2 text-sm text-muted-foreground">
+      {text}
+    </div>
   )
 }
 
-function ToolPartDisplay({ part, defaultOpen, hideDetails }: MessagePartProps) {
+function ToolPartDisplay({ part, defaultOpen, hideDetails, working }: MessagePartProps) {
   if (!part.tool) return null
 
   const input = (part.state?.input ?? {}) as Record<string, unknown>
@@ -106,7 +101,6 @@ function ToolPartDisplay({ part, defaultOpen, hideDetails }: MessagePartProps) {
     )
   }
 
-  // Create a ToolCallView from the part data to use with the specific tool components
   const toolCall: ToolCallView = {
     id: part.id,
     callID: part.callID,
@@ -132,11 +126,11 @@ function ToolPartDisplay({ part, defaultOpen, hideDetails }: MessagePartProps) {
           input={input}
           output={toolCall.output ?? undefined}
           metadata={partMetadata}
-          defaultOpen={defaultOpen}
+          defaultOpen={defaultOpen ?? false}
           hideDetails={hideDetails}
         />
       ) : (
-        <FallbackTool toolCall={toolCall} />
+        <FallbackTool toolCall={toolCall} defaultOpen={defaultOpen} />
       )}
     </div>
   )

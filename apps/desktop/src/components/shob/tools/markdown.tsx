@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState, useMemo, type HTMLAttributes } from "react"
+import { createRoot, type Root } from "react-dom/client"
 import { marked, type Tokens } from "marked"
 import DOMPurify from "dompurify"
 import "./markdown.css"
 import { stream } from "./markdown-stream"
+import { CodeBlock, CodeBlockHeader, CodeBlockTitle, CodeBlockActions, CodeBlockCopyButton, CodeBlockFilename } from "@/components/ai-elements/code-block"
 
 const renderer = new marked.Renderer()
 renderer.link = ({ href, title, text }: Tokens.Link) => {
@@ -255,9 +257,10 @@ type MarkdownProps = Omit<HTMLAttributes<HTMLDivElement>, "children"> & {
 
 export function Markdown({ text, streaming = false, className, ...props }: MarkdownProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const codeBlockRootsRef = useRef<Map<HTMLDivElement, Root>>(new Map())
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null)
 
-  const labels = useMemo(() => ({ copy: "Copy", copied: "Copied" }), [])
+  const labels = useMemo(() => ({ copy: "Copied", copied: "Copied" }), [])
 
   const handleCopy = useCallback(async (code: string, index: number) => {
     if (!code) return
@@ -268,6 +271,13 @@ export function Markdown({ text, streaming = false, className, ...props }: Markd
 
   useEffect(() => {
     if (!containerRef.current) return
+
+    // Unmount existing code block roots before DOM update so
+    // updateDomIncrementally can diff the raw <pre> elements
+    for (const [, root] of codeBlockRootsRef.current) {
+      root.unmount()
+    }
+    codeBlockRootsRef.current = new Map()
 
     let sanitized = ""
     try {
@@ -322,6 +332,11 @@ export function Markdown({ text, streaming = false, className, ...props }: Markd
       button.setAttribute("aria-label", labels.copy)
       button.setAttribute("data-tooltip", labels.copy)
     })
+
+    // Upgrade <pre><code> blocks to CodeBlock components only when NOT streaming
+    if (!streaming) {
+      hydrateCodeBlocks(containerRef.current, codeBlockRootsRef.current)
+    }
   }, [text, streaming, labels, handleCopy])
 
   useEffect(() => {
@@ -341,6 +356,38 @@ export function Markdown({ text, streaming = false, className, ...props }: Markd
       }
     })
   }, [copiedIndex, labels])
+
+function hydrateCodeBlocks(container: HTMLDivElement, roots: Map<HTMLDivElement, Root>) {
+  const wrappers = Array.from(container.querySelectorAll('[data-component="markdown-code"]'))
+  for (const wrapper of wrappers) {
+    if (!(wrapper instanceof HTMLDivElement)) continue
+
+    const pre = wrapper.querySelector("pre")
+    const code = pre?.querySelector("code")
+    if (!code || !pre) continue
+
+    const classList = Array.from(code.classList)
+    const langClass = classList.find((c) => c.startsWith("language-"))
+    const language = langClass?.slice("language-".length) || "text"
+    const text = code.textContent ?? ""
+
+    const root = createRoot(wrapper)
+    roots.set(wrapper, root)
+
+    root.render(
+      <CodeBlock code={text} language={language as any}>
+        <CodeBlockHeader>
+          <CodeBlockTitle>
+            <CodeBlockFilename>{language}</CodeBlockFilename>
+          </CodeBlockTitle>
+          <CodeBlockActions>
+            <CodeBlockCopyButton />
+          </CodeBlockActions>
+        </CodeBlockHeader>
+      </CodeBlock>
+    )
+  }
+}
 
   return <div {...props} ref={containerRef} data-component="markdown" className={className} />
 }

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./components/shob/tools/markdown.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -161,6 +162,22 @@
   --letter-spacing-normal: 0em;
   --font-weight-regular: 400;
   --font-weight-medium: 500;
+
+  /* ── Composer / Prompt Input ───────────────────── */
+  --composer-surface: color-mix(in oklch, var(--input) 85%, transparent);
+  --composer-surface-glass: color-mix(in oklch, var(--card) 72%, transparent);
+  --composer-border: color-mix(in oklch, var(--border) 55%, transparent);
+  --composer-border-hover: color-mix(in oklch, var(--ring) 60%, var(--border) 40%);
+  --composer-border-glow: color-mix(in oklch, var(--ring) 18%, transparent);
+  --composer-icon: var(--muted-foreground);
+  --composer-icon-hover: var(--foreground);
+  --composer-button-hover: color-mix(in oklch, var(--ring) 10%, var(--input) 90%);
+  --composer-button-active: color-mix(in oklch, var(--ring) 20%, var(--input) 80%);
+  --composer-send-bg: var(--foreground);
+  --composer-send-fg: var(--background);
+  --composer-send-disabled-bg: color-mix(in oklch, var(--border) 50%, var(--input) 50%);
+  --composer-send-disabled-fg: var(--muted-foreground);
+  --composer-glow: 0 0 0 1px color-mix(in oklch, var(--ring) 12%, transparent), 0 4px 24px -6px color-mix(in oklch, var(--ring) 8%, transparent);
 }
 
 /* ═══════════════════════════════════════════════════
@@ -317,6 +334,28 @@ button {
 
 .thin-scrollbar::-webkit-scrollbar-corner {
   background: transparent;
+}
+
+.composer-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--border) 60%, transparent) transparent;
+}
+
+.composer-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.composer-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.composer-scrollbar::-webkit-scrollbar-thumb {
+  background: color-mix(in oklch, var(--border) 80%, transparent);
+  border-radius: 10px;
+}
+
+.composer-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklch, var(--border) 100%, transparent);
 }
 
 /* ═══════════════════════════════════════════════════
@@ -1981,10 +2020,20 @@ button {
 }
 
 /* ═══════════════════════════════════════════════════
-   DIAGNOSTICS
+   TERMINAL CONTAINER
    ═══════════════════════════════════════════════════ */
-[data-component="diagnostics"] {
-  padding: 4px 8px;
+[data-component="terminal-display"] {
+  background: var(--color-background);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-small);
+  line-height: 1.5;
+}
+
+/* Constrain file-icon SVG size in tool triggers */
+[data-slot="basic-tool-tool-icon"] [data-component="file-icon"] {
+  width: 16px;
+  height: 16px;
+  overflow: hidden;
 }
 
 [data-slot="diagnostic"] {

@@ -9,7 +9,8 @@
     "skipLibCheck": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@ui/*": ["../packages/ui/src/*"]
     },
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,

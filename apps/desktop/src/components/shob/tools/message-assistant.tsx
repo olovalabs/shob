@@ -3,10 +3,10 @@ import { Part } from "./message-part"
 import { ContextToolGroup } from "./context-tool-group"
 import { TextShimmer } from "./text-shimmer"
 import {
-  Reasoning,
-  ReasoningTrigger,
-  ReasoningContent,
-} from "@/components/ai-elements/reasoning"
+  Task,
+  TaskTrigger,
+  TaskContent,
+} from "@/components/ai-elements/task"
 import { Message } from "@/components/ai-elements/message"
 
 interface PartData {
@@ -108,39 +108,59 @@ export function AssistantMessageDisplay({
       data-streaming={working ? "true" : undefined}
       className="w-full max-w-full py-2 px-4 md:px-5"
     >
-      {interleaved.map((item, idx) => {
-        if (item.type === "reasoning") {
-          return (
-            <Reasoning
-              key={item.id}
-              isStreaming={Boolean(working && idx === interleaved.length - 1)}
-              className="not-prose my-1"
-            >
-              <ReasoningTrigger />
-              <ReasoningContent>{item.text}</ReasoningContent>
-            </Reasoning>
-          )
-        }
+      <Task defaultOpen={true} className="not-prose w-full">
+        <TaskTrigger
+          title={
+            working
+              ? "Working..."
+              : interleaved.length === 0
+                ? "Response"
+                : `${interleaved.filter((i) => i.type === "reasoning").length} thought${interleaved.filter((i) => i.type === "reasoning").length !== 1 ? "s" : ""}, ${interleaved.filter((i) => i.type === "context" || i.type === "part").length} tool${interleaved.filter((i) => i.type === "context" || i.type === "part").length !== 1 ? "s" : ""}`
+          }
+        />
+        <TaskContent>
+          {interleaved.map((item, idx) => {
+            if (item.type === "reasoning") {
+              return (
+                <div key={item.id} className="not-prose my-1 text-sm text-muted-foreground">
+                  {item.text}
+                </div>
+              )
+            }
 
-        if (item.type === "context") {
-          return (
-            <ContextToolGroup
-              key={item.id}
-              parts={item.parts}
-              busy={working && idx === interleaved.length - 1}
-            />
-          )
-        }
+            if (item.type === "context") {
+              return (
+                <ContextToolGroup
+                  key={item.id}
+                  parts={item.parts}
+                  busy={working && idx === interleaved.length - 1}
+                />
+              )
+            }
 
-        return (
-          <Part
-            key={item.id}
-            part={item.part}
-            message={{ id: messageId, role: "assistant" }}
-            working={working && idx === interleaved.length - 1}
-          />
-        )
-      })}
+            if (item.part.type === "tool" && item.part.tool) {
+              return (
+                <Part
+                  key={item.id}
+                  part={item.part}
+                  message={{ id: messageId, role: "assistant" }}
+                  working={working && idx === interleaved.length - 1}
+                  defaultOpen={working && idx === interleaved.length - 1}
+                />
+              )
+            }
+
+            return (
+              <Part
+                key={item.id}
+                part={item.part}
+                message={{ id: messageId, role: "assistant" }}
+                working={working && idx === interleaved.length - 1}
+              />
+            )
+          })}
+        </TaskContent>
+      </Task>
 
       {showThinking && (
         <div data-slot="session-turn-thinking">

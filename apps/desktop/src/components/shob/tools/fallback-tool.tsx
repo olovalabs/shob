@@ -4,6 +4,7 @@ import { BasicTool } from "./basic-tool"
 interface ToolProps {
   toolCall: ToolCallView
   className?: string
+  defaultOpen?: boolean
 }
 
 export function FallbackTool(props: ToolProps) {
@@ -14,6 +15,7 @@ export function FallbackTool(props: ToolProps) {
     <BasicTool
       icon="mcp"
       status={status}
+      defaultOpen={props.defaultOpen}
       trigger={{
         title: `${props.toolCall.tool} called`,
         subtitle: label(input),

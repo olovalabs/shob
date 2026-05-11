@@ -11,7 +11,7 @@ interface UseUIHandlersParams {
   setIsThinking: (value: boolean) => void
   setLiveAssistant: (value: LiveAssistantState | null) => void
   setInput: (value: string) => void
-  setAttachedFiles: (value: File[]) => void
+  setAttachedFiles: React.Dispatch<React.SetStateAction<File[]>>
   onSubmit: () => void
 }
 
@@ -55,8 +55,12 @@ export const useUIHandlers = ({
   const handleFilesSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files
     if (!files || files.length === 0) return
-    setAttachedFiles(Array.from(files))
+    setAttachedFiles((prev) => [...prev, ...Array.from(files)])
     event.target.value = ""
+  }
+
+  const handleRemoveFile = (index: number) => {
+    setAttachedFiles((prev) => prev.filter((_, i) => i !== index))
   }
 
   const handleStop = () => {
@@ -77,6 +81,7 @@ export const useUIHandlers = ({
     handleSuggestion,
     handlePickFiles,
     handleFilesSelected,
+    handleRemoveFile,
     handleStop,
   }
 }

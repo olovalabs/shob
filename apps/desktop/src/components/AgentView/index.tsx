@@ -9,6 +9,7 @@ import { EmptyState } from "./EmptyState"
 import { Composer } from "./Composer"
 import { useAgentViewHooks } from "./hooks"
 import { useSubmit } from "./hooks/useSubmit"
+import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation"
 
 function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
   const project = useStore((state) => {
@@ -95,11 +96,8 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
       }}
     >
       <div className="relative w-full flex-1 min-h-0">
-        <div
-          ref={hooks.scrollRef}
-          className="thin-scrollbar relative min-w-0 w-full h-full overflow-y-auto"
-        >
-          <div className="min-w-0 w-full">
+        <Conversation className="h-full">
+          <ConversationContent className="thin-scrollbar min-w-0 w-full">
             {messages.length === 0 ? (
               <EmptyState
                 projectPathParts={projectPathParts}
@@ -111,7 +109,7 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
               <div
                 role="log"
                 data-slot="session-turn-list"
-                className="flex flex-col items-start justify-start pb-16 transition-[margin] w-full mt-0.5 md:max-w-[800px] md:mx-auto 2xl:max-w-[1000px]"
+                className="flex flex-col items-start justify-start w-full mt-0.5 md:max-w-[800px] md:mx-auto 2xl:max-w-[1000px]"
               >
                 <MessageGroupRenderer
                   messages={messages}
@@ -120,8 +118,9 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
                 />
               </div>
             )}
-          </div>
-        </div>
+          </ConversationContent>
+          <ConversationScrollButton />
+        </Conversation>
       </div>
 
       <Composer
@@ -144,6 +143,8 @@ function AgentViewComponent({ sessionId, isActive = true }: AgentViewProps) {
         onStop={hooks.handleStop}
         onPickFiles={hooks.handlePickFiles}
         onFilesSelected={hooks.handleFilesSelected}
+        onRemoveFile={hooks.handleRemoveFile}
+        onDropFiles={(files) => hooks.setAttachedFiles((prev) => [...prev, ...files])}
         onKeyDown={handleKeyDownWithSubmit}
         textareaRef={hooks.textareaRef}
         fileInputRef={hooks.fileInputRef}

@@ -5,7 +5,54 @@ import { BasicTool } from "./basic-tool"
 import { TextShimmer } from "./text-shimmer"
 import { DiffChanges } from "./diff-changes"
 import { Spinner } from "./spinner"
+import fileIconSprite from "@ui/components/file-icons/sprite.svg"
 import { getFilename } from "@/lib/utils"
+
+// Lightweight file extension → icon name resolver (mirrors @shob/ui file-icon mappings)
+const EXTENSION_MAP: Record<string, string> = {
+  ts: "Typescript",
+  tsx: "React_ts",
+  js: "Javascript",
+  jsx: "Reactjs",
+  py: "Python",
+  rs: "Rust",
+  go: "Go",
+  java: "Java",
+  html: "Html",
+  css: "Css",
+  scss: "Sass",
+  json: "Json",
+  md: "Markdown",
+  yaml: "Yaml",
+  yml: "Yaml",
+  toml: "Toml",
+  xml: "Xml",
+  sh: "Shell",
+  bash: "Shell",
+  sql: "Sql",
+  graphql: "GraphQL",
+  docker: "Docker",
+  txt: "Document",
+}
+
+function resolveFileIcon(path: string): string {
+  const ext = path.split(".").pop()?.toLowerCase() ?? ""
+  return EXTENSION_MAP[ext] || "Document"
+}
+
+function ToolFileIcon({ filePath }: { filePath: string }) {
+  const iconName = useMemo(() => resolveFileIcon(filePath), [filePath])
+  return (
+    <svg
+      width="16"
+      height="16"
+      data-component="file-icon"
+      style={{ display: "block", flexShrink: 0, overflow: "hidden" }}
+    >
+      <use href={`${fileIconSprite}#${iconName}`} />
+    </svg>
+  )
+}
 
 function getDirectory(filePath: string): string {
   const idx = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"))
@@ -62,24 +109,34 @@ ToolRegistry.register({
     const metadata = props.metadata as { loaded?: string[] } | undefined
     const loaded = props.status === "completed" && Array.isArray(metadata?.loaded) ? metadata!.loaded!.filter((p): p is string => typeof p === "string") : []
     return (
-      <>
-        <BasicTool
-          icon="glasses"
-          status={props.status}
-          defaultOpen={props.defaultOpen}
-          hideDetails={props.hideDetails}
-          trigger={{
-            title: "Read",
-            subtitle: input?.filePath ? getFilename(input.filePath) : "",
-            args,
-          }}
-        />
+      <BasicTool
+        icon="glasses"
+        status={props.status}
+        defaultOpen={props.defaultOpen}
+        hideDetails={props.hideDetails}
+        trigger={
+          <div data-slot="basic-tool-tool-info-structured">
+            <div data-slot="basic-tool-tool-info-main">
+              <span data-slot="basic-tool-tool-icon">
+                {input?.filePath && <ToolFileIcon filePath={input.filePath} />}
+              </span>
+              <span data-slot="basic-tool-tool-title">Read</span>
+              {!props.status?.includes("pending") && !props.status?.includes("running") && input?.filePath && (
+                <span data-slot="basic-tool-tool-subtitle">{getFilename(input.filePath)}</span>
+              )}
+              {args.length > 0 && (
+                <div data-slot="basic-tool-tool-args">{args.map((a, i) => <span key={i} data-slot="basic-tool-tool-arg">{a}</span>)}</div>
+              )}
+            </div>
+          </div>
+        }
+      >
         {loaded.length > 0 && loaded.map((filepath) => (
           <div key={filepath} data-component="tool-loaded-file">
             <span>Loaded {filepath}</span>
           </div>
         ))}
-      </>
+      </BasicTool>
     )
   },
 })
@@ -373,8 +430,11 @@ ToolRegistry.register({
         trigger={
           <div data-component="edit-trigger">
             <div data-slot="message-part-title-area">
-              <div data-slot="message-part-title">
-                <span data-slot="message-part-title-text">
+              <div data-slot="basic-tool-tool-info-main">
+                <span data-slot="basic-tool-tool-icon">
+                  {input?.filePath && <ToolFileIcon filePath={input.filePath} />}
+                </span>
+                <span data-slot="basic-tool-tool-title">
                   <TextShimmer text="Edit" active={pending} />
                 </span>
                 {!pending && filename && (
@@ -424,7 +484,6 @@ ToolRegistry.register({
   render(props: ToolProps) {
     const input = props.input as { filePath?: string; content?: string } | undefined
     const metadata = props.metadata as { error?: string; diagnostics?: any } | undefined
-    const filename = input?.filePath ? getFilename(input.filePath) : ""
     const isPending = props.status === "pending" || props.status === "running"
 
     return (
@@ -433,16 +492,18 @@ ToolRegistry.register({
         status={props.status}
         defaultOpen={props.defaultOpen}
         hideDetails={props.hideDetails}
-        defer
         trigger={
           <div data-component="write-trigger">
             <div data-slot="message-part-title-area">
-              <div data-slot="message-part-title">
-                <span data-slot="message-part-title-text">
+              <div data-slot="basic-tool-tool-info-main">
+                <span data-slot="basic-tool-tool-icon">
+                  {input?.filePath && <ToolFileIcon filePath={input.filePath} />}
+                </span>
+                <span data-slot="basic-tool-tool-title">
                   <TextShimmer text="Write" active={isPending} />
                 </span>
-                {!isPending && filename && (
-                  <span data-slot="message-part-title-filename">{filename}</span>
+                {!isPending && input?.filePath && (
+                  <span data-slot="message-part-title-filename">{getFilename(input.filePath)}</span>
                 )}
               </div>
               {!isPending && input?.filePath?.includes("/") && (
