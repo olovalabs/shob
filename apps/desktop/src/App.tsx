@@ -1,4 +1,4 @@
-import { Component, startTransition, useEffect, useState } from 'react';
+import { Component, startTransition, useEffect, useState, useMemo } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { nativeApi } from './services/native';
 import { TitleBar } from './components/TitleBar';
@@ -6,6 +6,10 @@ import { MainView } from './components/MainView';
 import { useStore } from './store';
 import { applyAppearanceTheme } from './theme';
 import type { ElectronOpencodeLogEvent } from './electron';
+import { MarkedProvider } from '@shob/ui/context/marked';
+import { I18nProvider } from '@shob/ui/context/i18n';
+import { dict as en } from '@shob/ui/i18n/en';
+import type { UiI18n } from '@shob/ui/context/i18n';
 
 class StartupErrorBoundary extends Component<
   { children: ReactNode; fallback?: ReactNode },
@@ -155,20 +159,37 @@ function App() {
     };
   }, []);
   
+  const i18n = useMemo<UiI18n>(() => ({
+    locale: 'en',
+    t: (key, params) => {
+      const value = en[key] ?? String(key)
+      if (!params) return value
+      return value.replace(/{{\s*([^}]+?)\s*}}/g, (_, rawKey) => {
+        const k = String(rawKey)
+        const v = params[k]
+        return v === undefined ? '' : String(v)
+      })
+    },
+  }), [])
+
   return (
     <>
-      <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        <StartupErrorBoundary fallback={<div className="h-[40px] shrink-0 bg-chrome" />}>
-          <TitleBar />
-        </StartupErrorBoundary>
-        {isBooting ? (
-          <div className="flex-1 bg-background" />
-        ) : (
-          <StartupErrorBoundary>
-            <MainView />
-          </StartupErrorBoundary>
-        )}
-      </div>
+      <I18nProvider value={i18n}>
+        <MarkedProvider>
+          <div className="flex h-full min-h-0 flex-col overflow-hidden">
+            <StartupErrorBoundary fallback={<div className="h-[40px] shrink-0 bg-chrome" />}>
+              <TitleBar />
+            </StartupErrorBoundary>
+            {isBooting ? (
+              <div className="flex-1 bg-background" />
+            ) : (
+              <StartupErrorBoundary>
+                <MainView />
+              </StartupErrorBoundary>
+            )}
+          </div>
+        </MarkedProvider>
+      </I18nProvider>
     </>
   );
 }

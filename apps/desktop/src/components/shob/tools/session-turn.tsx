@@ -51,6 +51,28 @@ interface Message {
   }>
 }
 
+interface LivePart {
+  id: string
+  type: string
+  text?: string
+  tool?: string
+  callID?: string
+  state?: {
+    status?: string
+    title?: string
+    input?: unknown
+    output?: string
+    error?: string
+    metadata?: Record<string, unknown>
+    attachments?: unknown[]
+    time?: {
+      start?: number
+      end?: number
+      compacted?: number
+    }
+  }
+}
+
 interface SessionTurnProps {
   messages: Message[]
   userMessageIndex: number
@@ -58,6 +80,8 @@ interface SessionTurnProps {
   showReasoningSummaries?: boolean
   working?: boolean
   error?: string | null
+  liveParts?: LivePart[] | null
+  liveError?: string | null
   classes?: { root?: string; content?: string; container?: string }
 }
 
@@ -85,6 +109,8 @@ export function SessionTurn({
   showReasoningSummaries = true,
   working = false,
   error = null,
+  liveParts = null,
+  liveError = null,
   classes,
 }: SessionTurnProps) {
   const userMessage = messages[userMessageIndex]
@@ -105,15 +131,23 @@ export function SessionTurn({
       .reverse()
   }, [userMessage])
 
-  // Combine all assistant parts
   const allAssistantParts = useMemo(() => {
-    return assistantMessages.flatMap((am) =>
+    const persisted = assistantMessages.flatMap((am) =>
       (am.parts ?? []).map((p) => ({
         ...p,
         messageID: am.id,
       }))
     )
-  }, [assistantMessages])
+    if (liveParts) {
+      const liveMessageId = assistantMessages.length > 0
+        ? assistantMessages[assistantMessages.length - 1].id
+        : "live-assistant"
+      return [...persisted, ...liveParts.map((p) => ({ ...p, messageID: liveMessageId }))]
+    }
+    return persisted
+  }, [assistantMessages, liveParts])
+
+  const effectiveError = liveError ?? error
 
   const edited = diffs.length
   const overflow = Math.max(0, edited - MAX_FILES)
@@ -122,19 +156,13 @@ export function SessionTurn({
   if (!userMessage || !userMessage.id) return null
 
   const userParts = userMessage.parts ?? []
-
-  // Check if there's a compaction divider
   const compaction = userParts.find((p) => p.type === "compaction")
-
-  // Check if interrupted
   const interrupted = assistantMessages.some((m) => m.error?.name === "MessageAbortedError")
-
   const divider = compaction ? "Earlier messages compacted" : interrupted ? "Interrupted" : ""
 
   return (
     <div data-component="session-turn" className={classes?.root}>
       <div data-slot="session-turn-content" className={classes?.content}>
-        {/* User message */}
         <div data-slot="session-turn-message-container" className={classes?.container}>
           <div data-slot="session-turn-message-content" aria-live="off">
             <UserMessageDisplay
@@ -146,7 +174,6 @@ export function SessionTurn({
             />
           </div>
 
-          {/* Divider (compaction or interruption) */}
           {divider && (
             <div data-slot="session-turn-compaction">
               <div data-component="compaction-part">
@@ -159,26 +186,23 @@ export function SessionTurn({
             </div>
           )}
 
-          {/* Assistant messages */}
-          {assistantMessages.length > 0 && (
+          {(assistantMessages.length > 0 || liveParts) && (
             <div data-slot="session-turn-assistant-content">
               <AssistantMessageDisplay
                 parts={allAssistantParts}
-                messageId={assistantMessages[0]?.id ?? ""}
+                messageId={assistantMessages[0]?.id ?? "live-assistant"}
                 working={working}
                 showReasoningSummaries={showReasoningSummaries}
               />
             </div>
           )}
 
-          {/* Error */}
-          {error && (
+          {effectiveError && (
             <div className="error-card">
-              {error}
+              {effectiveError}
             </div>
           )}
 
-          {/* Diffs */}
           {edited > 0 && !working && (
             <div data-slot="session-turn-diffs" data-component="session-turn-diffs-group" data-show-all={showAll || undefined}>
               <div data-slot="session-turn-diffs-header">
@@ -196,19 +220,24 @@ export function SessionTurn({
                 <Accordion type="multiple" value={expanded} onValueChange={setExpanded}>
                   {visible.map((diff) => (
                     <AccordionItem key={diff.file} value={diff.file}>
-                      <AccordionTrigger className="px-3 py-2">
+                      <AccordionTrigger>
                         <div data-slot="session-turn-diff-trigger">
                           <span data-slot="session-turn-diff-path">
                             {diff.file.includes("/") && (
                               <span data-slot="session-turn-diff-directory">
-                                {getDirectory(diff.file)}/
+                                {`\u202A${getDirectory(diff.file)}\u202C`}
                               </span>
                             )}
                             <span data-slot="session-turn-diff-filename">{getFilename(diff.file)}</span>
                           </span>
                           <div data-slot="session-turn-diff-meta">
                             <span data-slot="session-turn-diff-changes">
-                              <DiffChanges changes={{ additions: diff.additions ?? 0, deletions: diff.deletions ?? 0 }} variant="default" />
+                              <DiffChanges changes={{ additions: diff.additions ?? 0, deletions: diff.deletions ?? 0 }} />
+                            </span>
+                            <span data-slot="session-turn-diff-chevron">
+                              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
                             </span>
                           </div>
                         </div>
@@ -216,7 +245,7 @@ export function SessionTurn({
                       <AccordionContent>
                         <div data-slot="session-turn-diff-view" data-scrollable>
                           {diff.contents && (
-                            <pre className="p-3 text-[12px] leading-relaxed text-foreground/80 whitespace-pre-wrap">
+                            <pre className="text-12-regular text-text-base whitespace-pre-wrap p-3">
                               {diff.contents}
                             </pre>
                           )}

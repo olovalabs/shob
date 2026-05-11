@@ -1,8 +1,8 @@
-import { useMemo, useState } from "react"
-import { Task, TaskTrigger, TaskContent, TaskItem, TaskItemFile } from "@/components/ai-elements/task"
+import { useMemo, useState, useCallback } from "react"
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible"
 import { TextShimmer } from "./text-shimmer"
 import { getFilename } from "@/lib/utils"
-import { SearchIcon, CheckCircle2Icon, ListIcon, FileTextIcon } from "lucide-react"
+import { ChevronDown } from "lucide-react"
 
 interface ToolPart {
   id: string
@@ -20,6 +20,72 @@ function getDirectory(path: string): string {
   return idx >= 0 ? path.slice(0, idx) : path
 }
 
+function contextToolTrigger(part: ToolPart) {
+  const input = (part.state?.input ?? part.input ?? {}) as Record<string, unknown>
+  const path = typeof input.path === "string" ? input.path : "/"
+  const filePath = typeof input.filePath === "string" ? input.filePath : undefined
+  const pattern = typeof input.pattern === "string" ? input.pattern : undefined
+  const include = typeof input.include === "string" ? input.include : undefined
+  const offset = typeof input.offset === "number" ? input.offset : undefined
+  const limit = typeof input.limit === "number" ? input.limit : undefined
+
+  const tool = part.tool ?? ""
+
+  switch (tool) {
+    case "read": {
+      const args: string[] = []
+      if (offset !== undefined) args.push(`offset=${offset}`)
+      if (limit !== undefined) args.push(`limit=${limit}`)
+      return {
+        title: "Read",
+        subtitle: filePath ? getFilename(filePath) : "",
+        args,
+      }
+    }
+    case "list":
+      return {
+        title: "List",
+        subtitle: getDirectory(path),
+      }
+    case "glob": {
+      const args: string[] = []
+      return {
+        title: "Glob",
+        subtitle: getDirectory(path),
+        args: pattern ? [`pattern=${pattern}`] : [],
+      }
+    }
+    case "grep": {
+      const args: string[] = []
+      if (pattern) args.push(`pattern=${pattern}`)
+      if (include) args.push(`include=${include}`)
+      return {
+        title: "Grep",
+        subtitle: getDirectory(path),
+        args,
+      }
+    }
+    default:
+      return {
+        title: tool,
+        subtitle: "",
+        args: [] as string[],
+      }
+  }
+}
+
+function contextToolSummary(parts: ToolPart[]) {
+  const read = parts.filter((part) => part.tool === "read").length
+  const search = parts.filter((part) => part.tool === "glob" || part.tool === "grep").length
+  const list = parts.filter((part) => part.tool === "list").length
+
+  const items: string[] = []
+  if (read) items.push(`${read} read${read !== 1 ? "s" : ""}`)
+  if (search) items.push(`${search} search${search !== 1 ? "es" : ""}`)
+  if (list) items.push(`${list} list${list !== 1 ? "s" : ""}`)
+  return items.join(", ")
+}
+
 export function ContextToolGroup({
   parts,
   busy,
@@ -27,94 +93,103 @@ export function ContextToolGroup({
   parts: ToolPart[]
   busy?: boolean
 }) {
-  const pending = Boolean(busy || parts.some((p) => {
-    const status = p.state?.status ?? p.status
-    return status === "pending" || status === "running"
-  }))
+  const pending = Boolean(
+    busy ||
+      parts.some((p) => {
+        const status = p.state?.status ?? p.status
+        return status === "pending" || status === "running"
+      }),
+  )
   const [open, setOpen] = useState(pending)
 
-  const summary = useMemo(() => {
-    const read = parts.filter((p) => p.tool === "read").length
-    const search = parts.filter((p) => p.tool === "glob" || p.tool === "grep").length
-    const list = parts.filter((p) => p.tool === "list").length
-    return { read, search, list }
-  }, [parts])
-
-  const toolLine = (part: ToolPart) => {
-    const input = (part.state?.input ?? part.input ?? {}) as Record<string, unknown>
-    const tool = part.tool || "tool"
-    const filePath = typeof input.filePath === "string" ? input.filePath : ""
-    const path = typeof input.path === "string" ? input.path : "/"
-    const pattern = typeof input.pattern === "string" ? input.pattern : ""
-
-    switch (tool) {
-      case "read":
-        return (
-          <TaskItem key={part.id}>
-            Read <TaskItemFile>{filePath ? getFilename(filePath) : "file"}</TaskItemFile>
-          </TaskItem>
-        )
-      case "list":
-        return (
-          <TaskItem key={part.id}>
-            Listed <span className="text-foreground">{getDirectory(path)}</span>
-          </TaskItem>
-        )
-      case "glob":
-        return (
-          <TaskItem key={part.id}>
-            Matched <span className="text-foreground">{pattern || path || "files"}</span>
-          </TaskItem>
-        )
-      case "grep":
-        return (
-          <TaskItem key={part.id}>
-            Searched <span className="text-foreground">{pattern || "text"}</span>
-          </TaskItem>
-        )
-      default:
-        return null
-    }
-  }
-
-  const titleParts = [
-    summary.read ? `${summary.read} read${summary.read === 1 ? "" : "s"}` : "",
-    summary.search ? `${summary.search} search${summary.search === 1 ? "" : "es"}` : "",
-    summary.list ? `${summary.list} list${summary.list === 1 ? "" : "s"}` : "",
-  ].filter(Boolean)
-
-  const title = pending
-    ? "Gathering context..."
-    : titleParts.length > 0
-      ? `Gathered ${titleParts.join(", ")}`
-      : "Gathered context"
-  let Icon = SearchIcon
-  if (!pending && summary.read > 0 && summary.search === 0 && summary.list === 0) {
-    Icon = FileTextIcon
-  } else if (!pending && summary.list > 0 && summary.search === 0) {
-    Icon = ListIcon
-  } else if (!pending) {
-    Icon = CheckCircle2Icon
-  }
+  const summary = useMemo(() => contextToolSummary(parts), [parts])
 
   return (
-    <Task open={open} onOpenChange={setOpen} className="my-1">
-      <TaskTrigger title={title}>
-        <div className="flex w-full cursor-pointer items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground">
-          <Icon className="size-4" />
-          <p className="text-sm">{title}</p>
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      className="tool-collapsible"
+      data-component="collapsible"
+      data-variant="ghost"
+    >
+      <CollapsibleTrigger asChild>
+        <div data-component="context-tool-group-trigger">
+          <span
+            data-slot="context-tool-group-title"
+            className="min-w-0 flex items-center gap-2 text-14-medium text-text-strong"
+          >
+            <span data-slot="context-tool-group-label" className="shrink-0">
+              <TextShimmer
+                text={pending ? "Gathering context..." : "Gathered context"}
+                active={pending}
+              />
+            </span>
+            <span
+              data-slot="context-tool-group-summary"
+              className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-normal text-text-base"
+            >
+              {summary}
+            </span>
+          </span>
+          <ChevronDown
+            data-slot="collapsible-arrow"
+            className={`size-3.5 transition-transform duration-150 ${open ? "rotate-0" : "-rotate-90"}`}
+          />
         </div>
-      </TaskTrigger>
-      <TaskContent>
-        <div className="flex flex-col gap-1.5">
-          {parts.map((part) => toolLine(part))}
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div data-component="context-tool-group-list">
+          {parts.map((part) => {
+            const trigger = contextToolTrigger(part)
+            const running = part.state?.status === "pending" || part.state?.status === "running" || part.status === "pending" || part.status === "running"
+            return (
+              <div key={part.id} data-slot="context-tool-group-item">
+                <div data-component="tool-trigger">
+                  <div data-slot="basic-tool-tool-trigger-content">
+                    <div data-slot="basic-tool-tool-info">
+                      <div data-slot="basic-tool-tool-info-structured">
+                        <div data-slot="basic-tool-tool-info-main">
+                          <span data-slot="basic-tool-tool-title">
+                            <TextShimmer text={trigger.title} active={running} />
+                          </span>
+                          {!running && trigger.subtitle && (
+                            <span data-slot="basic-tool-tool-subtitle">{trigger.subtitle}</span>
+                          )}
+                          {!running &&
+                            trigger.args &&
+                            trigger.args.length > 0 &&
+                            trigger.args.map((arg, i) => (
+                              <span key={i} data-slot="basic-tool-tool-arg">
+                                {arg}
+                              </span>
+                            ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
           {pending && (
-            <TaskItem>
-              <TextShimmer text="Working..." active={true} />
-            </TaskItem>
+            <div data-slot="context-tool-group-item">
+              <div data-component="tool-trigger">
+                <div data-slot="basic-tool-tool-trigger-content">
+                  <div data-slot="basic-tool-tool-info">
+                    <div data-slot="basic-tool-tool-info-structured">
+                      <div data-slot="basic-tool-tool-info-main">
+                        <span data-slot="basic-tool-tool-title">
+                          <TextShimmer text="Working..." active={true} />
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
         </div>
-      </TaskContent>
-    </Task>
+      </CollapsibleContent>
+    </Collapsible>
   )
 }

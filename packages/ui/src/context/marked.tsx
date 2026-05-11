@@ -4,7 +4,7 @@ import markedShiki from "marked-shiki"
 import katex from "katex"
 import { bundledLanguages, type BundledLanguage } from "shiki"
 import { createSimpleContext } from "./helper"
-import { getSharedHighlighter, registerCustomTheme, ThemeRegistrationResolved } from "@pierre/diffs"
+import { getSharedHighlighter, registerCustomTheme, type ThemeRegistrationResolved } from "@pierre/diffs"
 
 registerCustomTheme("OpenCode", () => {
   return Promise.resolve({

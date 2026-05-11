@@ -55,6 +55,7 @@ export const MessageContent = ({
       "group-[.is-assistant]:text-foreground",
       className
     )}
+    style={{ contain: "layout style" }}
     {...props}
   >
     {children}

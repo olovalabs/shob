@@ -2,9 +2,88 @@ import { ToolErrorCard } from "./tool-error-card"
 import { FallbackTool } from "./fallback-tool"
 import { ToolRegistry } from "./tool-registry"
 import type { ToolCallView } from "@/components/AgentView"
-import {
-  MessageResponse,
-} from "@/components/ai-elements/message"
+import { Markdown } from "@/components/shob/tools/markdown"
+import { useCallback, useEffect, useRef, useState } from "react"
+
+const TEXT_RENDER_PACE_MS = 30
+const TEXT_RENDER_SNAP = /[\s.,!?;:)\]]/
+
+function step(size: number) {
+  if (size <= 12) return 2
+  if (size <= 48) return 4
+  if (size <= 96) return 8
+  return Math.min(24, Math.ceil(size / 8))
+}
+
+function next(text: string, start: number) {
+  const end = Math.min(text.length, start + step(text.length - start))
+  const max = Math.min(text.length, end + 8)
+  for (let i = end; i < max; i++) {
+    if (TEXT_RENDER_SNAP.test(text[i] ?? "")) return i + 1
+  }
+  return end
+}
+
+function usePacedValue(getValue: () => string, live?: boolean) {
+  const [value, setValue] = useState(getValue)
+  const shownRef = useRef(getValue())
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const frameRef = useRef<number | undefined>(undefined)
+  const sourceRef = useRef(getValue())
+  const liveRef = useRef(live)
+  liveRef.current = live
+
+  const clear = useCallback(() => {
+    if (timeoutRef.current !== undefined) {
+      clearTimeout(timeoutRef.current)
+      timeoutRef.current = undefined
+    }
+    if (frameRef.current !== undefined) {
+      cancelAnimationFrame(frameRef.current)
+      frameRef.current = undefined
+    }
+  }, [])
+
+  const sync = useCallback((text: string) => {
+    if (shownRef.current === text) return
+    shownRef.current = text
+    setValue(text)
+  }, [])
+
+  const run = useCallback(() => {
+    timeoutRef.current = undefined
+    const text = getValue()
+    if (!liveRef.current) { sync(text); return }
+    if (!text.startsWith(shownRef.current) || text.length <= shownRef.current.length) { sync(text); return }
+    const end = next(text, shownRef.current.length)
+    sync(text.slice(0, end))
+    if (end < text.length) {
+      timeoutRef.current = setTimeout(run, TEXT_RENDER_PACE_MS)
+    }
+  }, [getValue, sync])
+
+  const start = useCallback(() => {
+    const text = getValue()
+    if (!liveRef.current) { clear(); sync(text); return }
+    if (!text.startsWith(shownRef.current) || text.length < shownRef.current.length) { clear(); sync(text); return }
+    if (text.length <= shownRef.current.length) return
+    if (timeoutRef.current !== undefined) return
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = undefined
+      timeoutRef.current = setTimeout(run, TEXT_RENDER_PACE_MS)
+    })
+  }, [getValue, sync, run, clear])
+
+  useEffect(() => {
+    const current = getValue()
+    if (current === sourceRef.current && !liveRef.current) return
+    sourceRef.current = current
+    start()
+  })
+
+  useEffect(() => () => clear(), [clear])
+  return value
+}
 
 
 export interface MessagePartProps {
@@ -65,20 +144,25 @@ function TextPartDisplay({ part, working }: MessagePartProps) {
   const text = part.text ?? ""
   if (!text.trim()) return null
 
+  const pacedText = usePacedValue(
+    () => part.text ?? "",
+    working ?? false,
+  )
+
   return (
     <div data-component="text-part">
-      <MessageResponse isAnimating={working}>{text}</MessageResponse>
+      <Markdown text={pacedText} cacheKey={part.id} streaming={working} />
     </div>
   )
 }
 
-function ReasoningPartDisplay({ part, working }: MessagePartProps) {
+function ReasoningPartDisplay({ part }: MessagePartProps) {
   const text = part.text ?? ""
   if (!text.trim()) return null
 
   return (
-    <div className="my-2 text-sm text-muted-foreground">
-      {text}
+    <div data-component="reasoning-part">
+      <div data-component="markdown">{text}</div>
     </div>
   )
 }

@@ -1,4 +1,5 @@
 [data-component="markdown"] {
+  contain: layout style;
   min-width: 0;
   max-width: 100%;
   overflow-wrap: break-word;
@@ -6,15 +7,16 @@
   font-family: var(--font-family-sans);
   font-size: var(--font-size-base);
   line-height: 160%;
-  /* Prevent layout thrashing during streaming updates */
-  contain: layout style;
 
-  > *:first-child {
-    margin-top: 0;
+  &[data-streaming="true"] {
+    *, *::before, *::after {
+      transition: none !important;
+      animation: none !important;
+    }
   }
-  > *:last-child {
-    margin-bottom: 0;
-  }
+
+  > *:first-child { margin-top: 0; }
+  > *:last-child { margin-bottom: 0; }
 
   h1, h2, h3, h4, h5, h6 {
     font-size: 14px;
@@ -30,9 +32,7 @@
     font-weight: var(--font-weight-medium);
   }
 
-  p {
-    margin-bottom: 12px;
-  }
+  p { margin-bottom: 12px; }
 
   a {
     color: var(--text-interactive-base);
@@ -53,32 +53,13 @@
     list-style-position: outside;
   }
 
-  ul {
-    list-style-type: disc;
-  }
+  ul { list-style-type: disc; }
+  ol { list-style-type: decimal; padding-left: 2.25rem; }
 
-  ol {
-    list-style-type: decimal;
-    padding-left: 2.25rem;
-  }
-
-  li {
-    margin-bottom: 8px;
-  }
-
-  li > p:first-child {
-    display: inline;
-    margin: 0;
-  }
-
-  li > p + p {
-    display: block;
-    margin-top: 0.5rem;
-  }
-
-  li::marker {
-    color: var(--text-weak);
-  }
+  li { margin-bottom: 8px; }
+  li > p:first-child { display: inline; margin: 0; }
+  li > p + p { display: block; margin-top: 0.5rem; }
+  li::marker { color: var(--text-weak); }
 
   li > ul, li > ol {
     margin-top: 0.25rem;
@@ -86,9 +67,7 @@
     padding-left: 1rem;
   }
 
-  li > ol {
-    padding-left: 1.75rem;
-  }
+  li > ol { padding-left: 1.75rem; }
 
   blockquote {
     border-left: 2px solid var(--border-weak-base);
@@ -111,9 +90,7 @@
     border: 0.5px solid var(--border-weak-base);
   }
 
-  [data-component="markdown-code"] {
-    position: relative;
-  }
+  [data-component="markdown-code"] { position: relative; }
 
   [data-slot="markdown-copy-button"] {
     position: absolute;
@@ -130,7 +107,6 @@
       bottom: calc(100% + 4px);
       transform: translateX(-50%);
       z-index: 1000;
-
       max-width: 320px;
       border-radius: var(--radius-sm);
       background: var(--surface-float-base);
@@ -138,26 +114,21 @@
       padding: 2px 8px;
       border: 1px solid var(--border-weak-base, rgba(0, 0, 0, 0.07));
       box-shadow: var(--shadow-md);
-
       pointer-events: none;
       white-space: nowrap;
-
       font-family: var(--font-family-sans);
       font-size: var(--font-size-small);
       font-style: normal;
       font-weight: var(--font-weight-medium);
       line-height: var(--line-height-large);
       letter-spacing: var(--letter-spacing-normal);
-
       opacity: 0;
       transition: opacity 0.15s ease;
     }
   }
 
   [data-slot="markdown-copy-button"]:hover::after,
-  [data-slot="markdown-copy-button"]:focus-visible::after {
-    opacity: 1;
-  }
+  [data-slot="markdown-copy-button"]:focus-visible::after { opacity: 1; }
 
   [data-slot="markdown-copy-button"][data-variant="secondary"] {
     box-shadow: none;
@@ -168,31 +139,18 @@
     color: var(--icon-base);
   }
 
-  [data-component="markdown-code"]:hover [data-slot="markdown-copy-button"] {
-    opacity: 1;
-  }
+  [data-component="markdown-code"]:hover [data-slot="markdown-copy-button"] { opacity: 1; }
 
-  [data-slot="markdown-copy-button"] [data-slot="check-icon"] {
-    display: none;
-  }
-
-  [data-slot="markdown-copy-button"][data-copied="true"] [data-slot="copy-icon"] {
-    display: none;
-  }
-
-  [data-slot="markdown-copy-button"][data-copied="true"] [data-slot="check-icon"] {
-    display: inline-flex;
-  }
+  [data-slot="markdown-copy-button"] [data-slot="check-icon"] { display: none; }
+  [data-slot="markdown-copy-button"][data-copied="true"] [data-slot="copy-icon"] { display: none; }
+  [data-slot="markdown-copy-button"][data-copied="true"] [data-slot="check-icon"] { display: inline-flex; }
 
   pre {
     margin-top: 12px;
     margin-bottom: 32px;
     overflow: auto;
-
     scrollbar-width: none;
-    &::-webkit-scrollbar {
-      display: none;
-    }
+    &::-webkit-scrollbar { display: none; }
   }
 
   :not(pre) > code {

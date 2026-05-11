@@ -2,12 +2,9 @@ import { useMemo } from "react"
 import { Part } from "./message-part"
 import { ContextToolGroup } from "./context-tool-group"
 import { TextShimmer } from "./text-shimmer"
-import {
-  Task,
-  TaskTrigger,
-  TaskContent,
-} from "@/components/ai-elements/task"
-import { Message } from "@/components/ai-elements/message"
+
+const CONTEXT_GROUP_TOOLS = new Set(["read", "glob", "grep", "list"])
+const HIDDEN_TOOLS = new Set(["todowrite"])
 
 interface PartData {
   id: string
@@ -15,6 +12,7 @@ interface PartData {
   text?: string
   tool?: string
   callID?: string
+  messageID?: string
   state?: {
     status?: string
     title?: string
@@ -31,60 +29,60 @@ interface PartData {
   }
 }
 
-interface AssistantMessageProps {
-  parts: PartData[]
-  messageId: string
-  working?: boolean
-  showReasoningSummaries?: boolean
+type PartGroup =
+  | { key: string; type: "part"; part: PartData }
+  | { key: string; type: "context"; parts: PartData[] }
+
+function groupParts(parts: PartData[]): PartGroup[] {
+  const result: PartGroup[] = []
+  let start = -1
+
+  const flush = (end: number) => {
+    if (start < 0) return
+    const first = parts[start]
+    const last = parts[end]
+    if (!first || !last) { start = -1; return }
+    result.push({
+      key: `context:${first.id}`,
+      type: "context",
+      parts: parts.slice(start, end + 1),
+    })
+    start = -1
+  }
+
+  parts.forEach((part, index) => {
+    if (part.type === "tool" && CONTEXT_GROUP_TOOLS.has(part.tool ?? "")) {
+      if (start < 0) start = index
+      return
+    }
+    flush(index - 1)
+    result.push({
+      key: `part:${part.messageID ?? ""}:${part.id}`,
+      type: "part",
+      part,
+    })
+  })
+
+  flush(parts.length - 1)
+  return result
 }
 
-function renderable(part: PartData, showReasoning: boolean): boolean {
-  if (part.type === "tool") return true
+function isRenderable(part: PartData, showReasoning: boolean): boolean {
+  if (part.type === "tool") {
+    if (HIDDEN_TOOLS.has(part.tool ?? "")) return false
+    if (part.tool === "question" && (part.state?.status === "pending" || part.state?.status === "running")) return false
+    return true
+  }
   if (part.type === "text") return !!part.text?.trim()
   if (part.type === "reasoning") return showReasoning && !!part.text?.trim()
   return false
 }
 
-const SIMPLE_TOOLS = new Set(["read", "glob", "grep", "list"])
-
-function isSimpleTool(part: PartData): boolean {
-  return part.type === "tool" && !!part.tool && SIMPLE_TOOLS.has(part.tool)
-}
-
-type InterleavedItem =
-  | { type: "reasoning"; id: string; text: string }
-  | { type: "context"; id: string; parts: PartData[] }
-  | { type: "part"; id: string; part: PartData }
-
-function buildInterleaved(parts: PartData[]): InterleavedItem[] {
-  const items: InterleavedItem[] = []
-
-  for (const part of parts) {
-    const last = items[items.length - 1]
-
-    if (part.type === "reasoning") {
-      const text = part.text ?? ""
-      if (last?.type === "reasoning") {
-        last.text = `${last.text}\n${text}`
-      } else {
-        items.push({ type: "reasoning", id: part.id, text })
-      }
-      continue
-    }
-
-    if (isSimpleTool(part)) {
-      if (last?.type === "context") {
-        last.parts.push(part)
-      } else {
-        items.push({ type: "context", id: part.id, parts: [part] })
-      }
-      continue
-    }
-
-    items.push({ type: "part", id: part.id, part })
-  }
-
-  return items
+interface AssistantMessageProps {
+  parts: PartData[]
+  messageId: string
+  working?: boolean
+  showReasoningSummaries?: boolean
 }
 
 export function AssistantMessageDisplay({
@@ -94,79 +92,47 @@ export function AssistantMessageDisplay({
   showReasoningSummaries = true,
 }: AssistantMessageProps) {
   const filtered = useMemo(
-    () => parts.filter((p) => renderable(p, showReasoningSummaries)),
+    () => parts.filter((p) => isRenderable(p, showReasoningSummaries)),
     [parts, showReasoningSummaries],
   )
 
-  const interleaved = useMemo(() => buildInterleaved(filtered), [filtered])
-  const showThinking = working && interleaved.length === 0
+  const grouped = useMemo(
+    () => groupParts(filtered),
+    [filtered],
+  )
+
+  const lastKey = useMemo(() => grouped.at(-1)?.key, [grouped])
+
+  const showThinking = working && grouped.length === 0
 
   return (
-    <Message
-      from="assistant"
-      data-component="assistant-message"
-      data-streaming={working ? "true" : undefined}
-      className="w-full max-w-full py-2 px-4 md:px-5"
-    >
-      <Task defaultOpen={true} className="not-prose w-full">
-        <TaskTrigger
-          title={
-            working
-              ? "Working..."
-              : interleaved.length === 0
-                ? "Response"
-                : `${interleaved.filter((i) => i.type === "reasoning").length} thought${interleaved.filter((i) => i.type === "reasoning").length !== 1 ? "s" : ""}, ${interleaved.filter((i) => i.type === "context" || i.type === "part").length} tool${interleaved.filter((i) => i.type === "context" || i.type === "part").length !== 1 ? "s" : ""}`
-          }
-        />
-        <TaskContent>
-          {interleaved.map((item, idx) => {
-            if (item.type === "reasoning") {
-              return (
-                <div key={item.id} className="not-prose my-1 text-sm text-muted-foreground">
-                  {item.text}
-                </div>
-              )
-            }
+    <div data-component="assistant-message">
+      {grouped.map((item) => {
+        if (item.type === "context") {
+          return (
+            <ContextToolGroup
+              key={item.key}
+              parts={item.parts}
+              busy={working && item.key === lastKey}
+            />
+          )
+        }
 
-            if (item.type === "context") {
-              return (
-                <ContextToolGroup
-                  key={item.id}
-                  parts={item.parts}
-                  busy={working && idx === interleaved.length - 1}
-                />
-              )
-            }
-
-            if (item.part.type === "tool" && item.part.tool) {
-              return (
-                <Part
-                  key={item.id}
-                  part={item.part}
-                  message={{ id: messageId, role: "assistant" }}
-                  working={working && idx === interleaved.length - 1}
-                  defaultOpen={working && idx === interleaved.length - 1}
-                />
-              )
-            }
-
-            return (
-              <Part
-                key={item.id}
-                part={item.part}
-                message={{ id: messageId, role: "assistant" }}
-                working={working && idx === interleaved.length - 1}
-              />
-            )
-          })}
-        </TaskContent>
-      </Task>
+        return (
+          <Part
+            key={item.key}
+            part={item.part}
+            message={{ id: messageId, role: "assistant" }}
+            working={working && item.key === lastKey}
+          />
+        )
+      })}
 
       {showThinking && (
         <div data-slot="session-turn-thinking">
           <TextShimmer text="Thinking" />
         </div>
       )}
-    </Message>
+    </div>
   )
 }

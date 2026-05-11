@@ -1,4 +1,4 @@
-import { useMemo } from "react"
+import { useMemo, useRef } from "react"
 import { SessionTurn } from "@/components/shob/tools"
 import type { AgentMessage } from "@/types"
 import type { LiveAssistantState, AgentMsg } from "./types"
@@ -21,29 +21,22 @@ export function MessageGroupRenderer({
   liveAssistant,
 }: MessageGroupRendererProps) {
   const groups = useMemo(() => convertToSessionFormat(msgs as AgentMsg[]), [msgs])
+  const livePartsRef = useRef<ReturnType<typeof buildAssistantParts> | null>(null)
+
+  if (isThinking && liveAssistant) {
+    const liveID = "live-assistant"
+    livePartsRef.current = liveAssistant.parts.length > 0
+      ? liveAssistant.parts
+      : buildAssistantParts(liveID, liveAssistant.content, liveAssistant.toolCalls)
+  } else {
+    livePartsRef.current = null
+  }
 
   return (
     <>
       {groups.map((group, index) => {
         const isLast = index === groups.length - 1
         const assistantMessages = group.assistantMessages.map(toTurnMessage)
-
-        if (isLast && isThinking && liveAssistant && assistantMessages.length === 0) {
-          const liveID = "live-assistant"
-          assistantMessages.push(toTurnMessage({
-            id: liveID,
-            role: "assistant",
-            content: liveAssistant.content,
-            createdAt: liveAssistant.createdAt,
-            toolCalls: liveAssistant.toolCalls,
-            parts: liveAssistant.parts.length > 0
-              ? liveAssistant.parts
-              : buildAssistantParts(liveID, liveAssistant.content, liveAssistant.toolCalls),
-            error: liveAssistant.error
-              ? { name: "OpenCodeError", data: { message: describeOpenCodeError(liveAssistant.error) } }
-              : null,
-          }))
-        }
 
         return (
           <div
@@ -56,7 +49,8 @@ export function MessageGroupRenderer({
               userMessageIndex={0}
               assistantMessages={assistantMessages}
               working={isThinking && isLast}
-              error={isThinking && isLast && liveAssistant?.error ? describeOpenCodeError(liveAssistant.error) : null}
+              liveParts={isLast && isThinking ? livePartsRef.current : null}
+              liveError={isLast && isThinking && liveAssistant?.error ? describeOpenCodeError(liveAssistant.error) : null}
               classes={{
                 root: "min-w-0 w-full relative",
                 content: "flex flex-col justify-between !overflow-visible",
