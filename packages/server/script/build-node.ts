@@ -1,9 +1,16 @@
 #!/usr/bin/env bun
 
-import { Script } from "@opencode-ai/script"
 import fs from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
+
+let Script = { channel: "dev" }
+try {
+  const mod = await import("@opencode-ai/script")
+  Script = mod.Script
+} catch {
+  Script.channel = process.env.OPENCODE_CHANNEL || "dev"
+}
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)

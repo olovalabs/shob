@@ -1689,7 +1689,7 @@ async function createWindow() {
     minWidth: 920,
     minHeight: 600,
     frame: false,
-    titleBarStyle: "hidden",
+    titleBarStyle: "customButtonsOnHover",
     backgroundColor: "#09090b",
     icon: path.join(__dirname, "..", "electron", "icons", "icon.ico"),
     webPreferences: {

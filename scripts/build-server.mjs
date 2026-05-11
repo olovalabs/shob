@@ -95,6 +95,22 @@ if (tryBuildFromMonorepo(bun)) {
   }
 }
 
+console.log("[build-server] monorepo not available, trying local build...");
+try {
+  execSync([bun, "run", "script/build-node.ts"].join(" "), {
+    cwd: serverDir,
+    stdio: "inherit",
+    env: { ...process.env, OPENCODE_CHANNEL: process.env.OPENCODE_CHANNEL || "dev" },
+  });
+  if (fs.existsSync(serverBundle)) {
+    console.log("[build-server] server bundle built successfully (from local)");
+    process.exit(0);
+  }
+  console.error("[build-server] local build completed but bundle not found at:", serverBundle);
+} catch (e) {
+  console.error("[build-server] local build failed:", e.message);
+}
+
 console.error("[build-server] failed to build server bundle");
 console.error("[build-server] either:");
 console.error("[build-server]   1. Run 'bun run script/build-node.ts' from the OpenCode monorepo to generate the bundle, then copy dist/node/ to packages/server/dist/node/");
