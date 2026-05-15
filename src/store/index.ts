@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { createStore } from 'solid-js/store';
 import { nativeApi } from '../services/native';
 import { api } from '../services/api';
 import { STORAGE_KEYS } from '../constants/storage';
@@ -85,13 +85,14 @@ interface AppState {
   cliTools: CliTool[];
   availableShells: string[];
   isLoading: boolean;
-  
+}
+
+interface AppActions {
   loadProjects: () => Promise<void>;
   addProject: (name: string, path: string) => Promise<Project>;
   updateProject: (projectId: string, updates: Partial<Project>) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
   setCurrentProject: (id: string | null) => void;
-  
   addSession: (projectId: string, shell: string) => Promise<Session>;
   launchCliSession: (projectId: string, cliId?: string | null) => Promise<Session>;
   renameSession: (projectId: string, sessionId: string, name: string) => Promise<void>;
@@ -101,7 +102,6 @@ interface AppState {
   recordSessionActivity: (projectId: string, sessionId: string, at?: number) => Promise<void>;
   recordSessionCommand: (projectId: string, sessionId: string, at?: number) => Promise<void>;
   recordSessionStartup: (projectId: string, sessionId: string, startupDurationMs: number, at?: number) => Promise<void>;
-  
   loadCliTools: () => Promise<void>;
   loadAvailableShells: () => Promise<void>;
   getDefaultCliTool: () => CliTool | null;
@@ -112,7 +112,7 @@ interface AppState {
   installCliTool: (cliId: string, installCommand?: string | null) => Promise<Session>;
 }
 
-export const useStore = create<AppState>((set, get) => ({
+const [store, setStore] = createStore<AppState>({
   projects: [],
   currentProjectId: getStoredValue(STORAGE_KEYS.currentProjectId),
   activeSessionId: getStoredValue(STORAGE_KEYS.activeSessionId),
@@ -122,7 +122,9 @@ export const useStore = create<AppState>((set, get) => ({
   cliTools: buildCatalogCliTools(),
   availableShells: [],
   isLoading: true,
-  
+});
+
+export const actions: AppActions = {
   loadProjects: async () => {
     try {
       const normalizedProjects = normalizeProjects(await api.getProjects());
@@ -188,22 +190,22 @@ export const useStore = create<AppState>((set, get) => ({
 
       setStoredValue(STORAGE_KEYS.currentProjectId, resolvedProjectId);
       setStoredValue(STORAGE_KEYS.activeSessionId, resolvedSessionId);
-      set((state) => ({
+      setStore({
         projects,
         currentProjectId:
-          state.currentProjectId && projects.some((project) => project.id === state.currentProjectId)
-            ? state.currentProjectId
+          store.currentProjectId && projects.some((project) => project.id === store.currentProjectId)
+            ? store.currentProjectId
             : resolvedProjectId,
         activeSessionId: resolvedSessionId,
-      }));
+      });
     } catch (error) {
       console.error('Failed to load projects:', error);
-      set({ projects: [], currentProjectId: null, activeSessionId: null });
+      setStore({ projects: [], currentProjectId: null, activeSessionId: null });
     } finally {
-      set({ isLoading: false });
+      setStore({ isLoading: false });
     }
   },
-  
+
   addProject: async (name: string, path: string) => {
     const project: Project = {
       id: crypto.randomUUID(),
@@ -216,39 +218,36 @@ export const useStore = create<AppState>((set, get) => ({
     const saved = await api.saveProject(project);
     setStoredValue(STORAGE_KEYS.currentProjectId, saved.id);
     setStoredValue(STORAGE_KEYS.activeSessionId, null);
-    set((state) => ({
-      projects: [...state.projects, saved],
+    setStore({
+      projects: [...store.projects, saved],
       currentProjectId: saved.id,
       activeSessionId: null,
-    }));
+    });
     return saved;
   },
-  
+
   deleteProject: async (id: string) => {
     await api.deleteProject(id);
-    set((state) => {
-      const projects = state.projects.filter((p) => p.id !== id);
-      const currentProjectId = state.currentProjectId === id ? projects[0]?.id ?? null : state.currentProjectId;
-      const currentProject = projects.find((project) => project.id === currentProjectId);
-      const activeSessionId =
-        state.currentProjectId === id
-          ? currentProject?.sessions[0]?.id ?? null
-          : state.activeSessionId;
+    const projects = store.projects.filter((p) => p.id !== id);
+    const currentProjectId = store.currentProjectId === id ? projects[0]?.id ?? null : store.currentProjectId;
+    const currentProject = projects.find((project) => project.id === currentProjectId);
+    const activeSessionId =
+      store.currentProjectId === id
+        ? currentProject?.sessions[0]?.id ?? null
+        : store.activeSessionId;
 
-      setStoredValue(STORAGE_KEYS.currentProjectId, currentProjectId);
-      setStoredValue(STORAGE_KEYS.activeSessionId, activeSessionId);
+    setStoredValue(STORAGE_KEYS.currentProjectId, currentProjectId);
+    setStoredValue(STORAGE_KEYS.activeSessionId, activeSessionId);
 
-      return {
-        projects,
-        currentProjectId,
-        activeSessionId,
-      };
+    setStore({
+      projects,
+      currentProjectId,
+      activeSessionId,
     });
   },
 
   updateProject: async (projectId: string, updates: Partial<Project>) => {
-    const state = get();
-    const project = state.projects.find((item) => item.id === projectId);
+    const project = store.projects.find((item) => item.id === projectId);
     if (!project) return;
 
     const updatedProject = {
@@ -260,21 +259,21 @@ export const useStore = create<AppState>((set, get) => ({
 
     await api.saveProject(updatedProject);
 
-    set((currentState) => ({
-      projects: currentState.projects.map((item) =>
+    setStore('projects', (prev) =>
+      prev.map((item) =>
         item.id === projectId ? updatedProject : item
       ),
-    }));
+    );
   },
-  
-  setCurrentProject: (id) => {
-    const project = get().projects.find((item) => item.id === id);
+
+  setCurrentProject: (id: string | null) => {
+    const project = store.projects.find((item) => item.id === id);
     const nextSessionId = project?.sessions[0]?.id ?? null;
     setStoredValue(STORAGE_KEYS.currentProjectId, id);
     setStoredValue(STORAGE_KEYS.activeSessionId, nextSessionId);
-    set({ currentProjectId: id, activeSessionId: nextSessionId });
+    setStore({ currentProjectId: id, activeSessionId: nextSessionId });
   },
-  
+
   addSession: async (projectId: string, shell: string) => {
     const createdAt = Date.now();
     const session: Session = {
@@ -288,43 +287,41 @@ export const useStore = create<AppState>((set, get) => ({
       commandCount: 0,
       startupDurationMs: null,
     };
-    
-    const state = get();
-    const project = state.projects.find((p) => p.id === projectId);
+
+    const project = store.projects.find((p) => p.id === projectId);
     if (!project) throw new Error('Project not found');
-    
+
     const updatedProject = {
       ...project,
       sessions: [...project.sessions, session],
     };
-    
+
     await api.saveProject(updatedProject);
     setStoredValue(STORAGE_KEYS.currentProjectId, projectId);
     setStoredValue(STORAGE_KEYS.activeSessionId, session.id);
-    
-    set((state) => ({
-      projects: state.projects.map((p) =>
+
+    setStore({
+      projects: store.projects.map((p) =>
         p.id === projectId ? updatedProject : p
       ),
       currentProjectId: projectId,
       activeSessionId: session.id,
-    }));
-    
+    });
+
     return session;
   },
 
   launchCliSession: async (projectId: string, cliId?: string | null) => {
-    const state = get();
     const createdAt = Date.now();
     const shell =
-      state.availableShells.find((item) => item === state.preferredShell) ??
-      state.availableShells[0] ??
-      state.preferredShell ??
+      store.availableShells.find((item) => item === store.preferredShell) ??
+      store.availableShells[0] ??
+      store.preferredShell ??
       'powershell.exe';
-    const installedCliTools = state.cliTools.filter((tool) => tool.installed);
+    const installedCliTools = store.cliTools.filter((tool) => tool.installed);
     const selectedCli =
       installedCliTools.find((tool) => tool.id === cliId) ??
-      installedCliTools.find((tool) => tool.id === state.preferredCliId) ??
+      installedCliTools.find((tool) => tool.id === store.preferredCliId) ??
       installedCliTools.find((tool) => tool.id === DEFAULT_CLI_ID) ??
       installedCliTools[0] ??
       null;
@@ -341,7 +338,7 @@ export const useStore = create<AppState>((set, get) => ({
       startupDurationMs: null,
     };
 
-    const project = state.projects.find((p) => p.id === projectId);
+    const project = store.projects.find((p) => p.id === projectId);
     if (!project) throw new Error('Project not found');
 
     const updatedProject = {
@@ -354,12 +351,12 @@ export const useStore = create<AppState>((set, get) => ({
     setStoredValue(STORAGE_KEYS.activeSessionId, session.id);
     setStoredValue(STORAGE_KEYS.preferredCliId, selectedCli?.id ?? null);
 
-    set((currentState) => ({
-      projects: currentState.projects.map((p) => (p.id === projectId ? updatedProject : p)),
+    setStore({
+      projects: store.projects.map((p) => (p.id === projectId ? updatedProject : p)),
       currentProjectId: projectId,
       activeSessionId: session.id,
-      preferredCliId: selectedCli?.id ?? currentState.preferredCliId,
-    }));
+      preferredCliId: selectedCli?.id ?? store.preferredCliId,
+    });
 
     return session;
   },
@@ -368,8 +365,7 @@ export const useStore = create<AppState>((set, get) => ({
     const trimmedName = sanitizeSessionName(name);
     if (!trimmedName) return;
 
-    const state = get();
-    const project = state.projects.find((p) => p.id === projectId);
+    const project = store.projects.find((p) => p.id === projectId);
     if (!project) return;
     const currentSession = project.sessions.find((session) => session.id === sessionId);
     if (!currentSession || currentSession.name === trimmedName) return;
@@ -385,16 +381,15 @@ export const useStore = create<AppState>((set, get) => ({
 
     await api.saveProject(updatedProject);
 
-    set((state) => ({
-      projects: state.projects.map((project) =>
+    setStore('projects', (prev) =>
+      prev.map((project) =>
         project.id === projectId ? updatedProject : project
       ),
-    }));
+    );
   },
 
   updateSession: async (projectId: string, sessionId: string, updates: Partial<Session>) => {
-    const state = get();
-    const project = state.projects.find((p) => p.id === projectId);
+    const project = store.projects.find((p) => p.id === projectId);
     if (!project) return;
     const currentSession = project.sessions.find((session) => session.id === sessionId);
     if (!currentSession) return;
@@ -418,46 +413,42 @@ export const useStore = create<AppState>((set, get) => ({
 
     await api.saveProject(updatedProject);
 
-    set((state) => ({
-      projects: state.projects.map((project) =>
+    setStore('projects', (prev) =>
+      prev.map((project) =>
         project.id === projectId ? updatedProject : project
       ),
-    }));
+    );
   },
-  
+
   removeSession: async (projectId: string, sessionId: string) => {
-    const state = get();
-    const project = state.projects.find((p) => p.id === projectId);
+    const project = store.projects.find((p) => p.id === projectId);
     if (!project) return;
     if (!project.sessions.some((session) => session.id === sessionId)) return;
-    
+
     const updatedProject = {
       ...project,
       sessions: project.sessions.filter((s) => s.id !== sessionId),
     };
-    
+
     await api.saveProject(updatedProject);
-    
-    set((state) => {
-      const activeSessionId =
-        state.activeSessionId === sessionId
-          ? updatedProject.sessions[0]?.id ?? null
-          : state.activeSessionId;
 
-      setStoredValue(STORAGE_KEYS.activeSessionId, activeSessionId);
+    const activeSessionId =
+      store.activeSessionId === sessionId
+        ? updatedProject.sessions[0]?.id ?? null
+        : store.activeSessionId;
 
-      return {
-        projects: state.projects.map((p) =>
-          p.id === projectId ? updatedProject : p
-        ),
-        activeSessionId,
-      };
+    setStoredValue(STORAGE_KEYS.activeSessionId, activeSessionId);
+
+    setStore({
+      projects: store.projects.map((p) =>
+        p.id === projectId ? updatedProject : p
+      ),
+      activeSessionId,
     });
   },
-  
-  setActiveSession: (sessionId) => {
-    const state = get();
-    const { session: activeSession } = findProjectBySessionId(state.projects, sessionId);
+
+  setActiveSession: (sessionId: string | null) => {
+    const { session: activeSession } = findProjectBySessionId(store.projects, sessionId);
     const resolvedSessionId = activeSession?.id ?? null;
 
     setStoredValue(STORAGE_KEYS.activeSessionId, resolvedSessionId);
@@ -465,15 +456,14 @@ export const useStore = create<AppState>((set, get) => ({
       setStoredValue(STORAGE_KEYS.preferredCliId, activeSession.cliTool);
     }
 
-    set({
+    setStore({
       activeSessionId: resolvedSessionId,
-      preferredCliId: activeSession?.cliTool ?? state.preferredCliId,
+      preferredCliId: activeSession?.cliTool ?? store.preferredCliId,
     });
   },
 
   recordSessionActivity: async (projectId: string, sessionId: string, at?: number) => {
-    const state = get();
-    const project = state.projects.find((item) => item.id === projectId);
+    const project = store.projects.find((item) => item.id === projectId);
     if (!project) return;
     const session = project.sessions.find((item) => item.id === sessionId);
     if (!session) return;
@@ -488,23 +478,19 @@ export const useStore = create<AppState>((set, get) => ({
       ...project,
       sessions: project.sessions.map((item) =>
         item.id === sessionId
-          ? {
-              ...item,
-              lastActiveAt: timestamp,
-            }
+          ? { ...item, lastActiveAt: timestamp }
           : item,
       ),
     };
 
     await api.saveProject(updatedProject);
-    set((currentState) => ({
-      projects: currentState.projects.map((item) => (item.id === projectId ? updatedProject : item)),
-    }));
+    setStore('projects', (prev) =>
+      prev.map((item) => (item.id === projectId ? updatedProject : item)),
+    );
   },
 
   recordSessionCommand: async (projectId: string, sessionId: string, at?: number) => {
-    const state = get();
-    const project = state.projects.find((item) => item.id === projectId);
+    const project = store.projects.find((item) => item.id === projectId);
     if (!project) return;
     const session = project.sessions.find((item) => item.id === sessionId);
     if (!session) return;
@@ -516,24 +502,19 @@ export const useStore = create<AppState>((set, get) => ({
       ...project,
       sessions: project.sessions.map((item) =>
         item.id === sessionId
-          ? {
-              ...item,
-              commandCount: nextCount,
-              lastActiveAt: timestamp,
-            }
+          ? { ...item, commandCount: nextCount, lastActiveAt: timestamp }
           : item,
       ),
     };
 
     await api.saveProject(updatedProject);
-    set((currentState) => ({
-      projects: currentState.projects.map((item) => (item.id === projectId ? updatedProject : item)),
-    }));
+    setStore('projects', (prev) =>
+      prev.map((item) => (item.id === projectId ? updatedProject : item)),
+    );
   },
 
   recordSessionStartup: async (projectId: string, sessionId: string, startupDurationMs: number, at?: number) => {
-    const state = get();
-    const project = state.projects.find((item) => item.id === projectId);
+    const project = store.projects.find((item) => item.id === projectId);
     if (!project) return;
     const session = project.sessions.find((item) => item.id === sessionId);
     if (!session) return;
@@ -546,21 +527,17 @@ export const useStore = create<AppState>((set, get) => ({
       ...project,
       sessions: project.sessions.map((item) =>
         item.id === sessionId
-          ? {
-              ...item,
-              startupDurationMs: normalizedStartup,
-              lastActiveAt: timestamp,
-            }
+          ? { ...item, startupDurationMs: normalizedStartup, lastActiveAt: timestamp }
           : item,
       ),
     };
 
     await api.saveProject(updatedProject);
-    set((currentState) => ({
-      projects: currentState.projects.map((item) => (item.id === projectId ? updatedProject : item)),
-    }));
+    setStore('projects', (prev) =>
+      prev.map((item) => (item.id === projectId ? updatedProject : item)),
+    );
   },
-  
+
   loadCliTools: async () => {
     try {
       const probeResults = await api.probeCliTools(
@@ -570,13 +547,13 @@ export const useStore = create<AppState>((set, get) => ({
         })),
       );
 
-      set({ cliTools: buildCatalogCliTools(probeResults) });
+      setStore({ cliTools: buildCatalogCliTools(probeResults) });
     } catch (error) {
       console.error('Failed to probe CLI tools:', error);
-      set({ cliTools: buildCatalogCliTools() });
+      setStore({ cliTools: buildCatalogCliTools() });
     }
   },
-  
+
   loadAvailableShells: async () => {
     try {
       const availableShells = await api.getAvailableShells();
@@ -584,56 +561,53 @@ export const useStore = create<AppState>((set, get) => ({
       const preferredShell = availableShells.find((shell) => shell === storedPreferredShell) ?? availableShells[0] ?? null;
 
       setStoredValue(STORAGE_KEYS.preferredShell, preferredShell);
-      set({ availableShells, preferredShell });
+      setStore({ availableShells, preferredShell });
     } catch (error) {
       console.error('Failed to load available shells:', error);
-      set({ availableShells: [] });
+      setStore({ availableShells: [] });
     }
   },
 
   getDefaultCliTool: () => {
-    const state = get();
-    const installedCliTools = state.cliTools.filter((tool) => tool.installed);
+    const installedCliTools = store.cliTools.filter((tool) => tool.installed);
     return (
       installedCliTools.find((tool) => tool.id === DEFAULT_CLI_ID) ??
-      state.cliTools.find((tool) => tool.id === DEFAULT_CLI_ID) ??
+      store.cliTools.find((tool) => tool.id === DEFAULT_CLI_ID) ??
       installedCliTools[0] ??
-      state.cliTools[0] ??
+      store.cliTools[0] ??
       null
     );
   },
 
   getCurrentCliTool: () => {
-    const state = get();
-    const installedCliTools = state.cliTools.filter((tool) => tool.installed);
+    const installedCliTools = store.cliTools.filter((tool) => tool.installed);
     return (
-      installedCliTools.find((tool) => tool.id === state.preferredCliId) ??
-      state.cliTools.find((tool) => tool.id === state.preferredCliId) ??
+      installedCliTools.find((tool) => tool.id === store.preferredCliId) ??
+      store.cliTools.find((tool) => tool.id === store.preferredCliId) ??
       installedCliTools.find((tool) => tool.id === DEFAULT_CLI_ID) ??
-      state.cliTools.find((tool) => tool.id === DEFAULT_CLI_ID) ??
+      store.cliTools.find((tool) => tool.id === DEFAULT_CLI_ID) ??
       installedCliTools[0] ??
-      state.cliTools[0] ??
+      store.cliTools[0] ??
       null
     );
   },
 
-  setPreferredCliTool: (cliId) => {
+  setPreferredCliTool: (cliId: string | null) => {
     setStoredValue(STORAGE_KEYS.preferredCliId, cliId);
-    set({ preferredCliId: cliId });
+    setStore({ preferredCliId: cliId });
   },
 
-  setPreferredShell: (shell) => {
+  setPreferredShell: (shell: string | null) => {
     setStoredValue(STORAGE_KEYS.preferredShell, shell);
-    set({ preferredShell: shell });
+    setStore({ preferredShell: shell });
   },
 
-  setCliLaunchMode: (mode) => {
+  setCliLaunchMode: (mode: CliLaunchMode) => {
     setStoredValue(STORAGE_KEYS.cliLaunchMode, mode);
-    set({ cliLaunchMode: mode });
+    setStore({ cliLaunchMode: mode });
   },
 
   installCliTool: async (cliId: string, installCommand?: string | null) => {
-    const state = get();
     const catalogItem = CLI_CATALOG.find((item) => item.id === cliId);
     if (!catalogItem) throw new Error(`CLI tool not found: ${cliId}`);
 
@@ -655,23 +629,23 @@ export const useStore = create<AppState>((set, get) => ({
 
     const preferredInstallShellKeyword = detectedOs === 'windows' ? 'powershell' : 'bash';
     const preferredInstallShell =
-      state.availableShells.find((item) => item.toLowerCase().includes(preferredInstallShellKeyword)) ?? null;
+      store.availableShells.find((item) => item.toLowerCase().includes(preferredInstallShellKeyword)) ?? null;
 
     const shell =
       preferredInstallShell ??
-      state.availableShells.find((item) => item === state.preferredShell) ??
-      state.availableShells[0] ??
-      state.preferredShell ??
+      store.availableShells.find((item) => item === store.preferredShell) ??
+      store.availableShells[0] ??
+      store.preferredShell ??
       (detectedOs === 'windows' ? 'powershell.exe' : 'bash');
 
     const projectId =
-      state.currentProjectId ?? state.projects[0]?.id;
+      store.currentProjectId ?? store.projects[0]?.id;
 
     if (!projectId) {
       throw new Error('No project available. Add a project first.');
     }
 
-    const project = state.projects.find((p) => p.id === projectId);
+    const project = store.projects.find((p) => p.id === projectId);
     if (!project) throw new Error('Project not found');
 
     const createdAt = Date.now();
@@ -696,12 +670,24 @@ export const useStore = create<AppState>((set, get) => ({
     setStoredValue(STORAGE_KEYS.currentProjectId, projectId);
     setStoredValue(STORAGE_KEYS.activeSessionId, session.id);
 
-    set((currentState) => ({
-      projects: currentState.projects.map((p) => (p.id === projectId ? updatedProject : p)),
+    setStore({
+      projects: store.projects.map((p) => (p.id === projectId ? updatedProject : p)),
       currentProjectId: projectId,
       activeSessionId: session.id,
-    }));
+    });
 
     return session;
   },
-}));
+};
+
+export function useStore(): AppState & AppActions;
+export function useStore<T>(selector: (state: AppState) => T): () => T;
+export function useStore<T>(selector?: (state: AppState) => T): (() => T) | (AppState & AppActions) {
+  if (!selector) {
+    return { ...store, ...actions };
+  }
+
+  return () => selector(store);
+}
+
+export { store, setStore };
