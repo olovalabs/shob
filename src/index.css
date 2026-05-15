@@ -499,8 +499,8 @@ button {
   height: 100% !important;
   /* pin hard to (0,0) — no gap */
   position: relative !important;
-  left: 0 !important;
-  top: 0 !important;
+  left: 2px !important;
+  top: 2px !important;
   margin: 0 !important;
   padding: 0 !important;
   cursor: text;
@@ -631,7 +631,7 @@ button {
   margin: 0 !important;
   padding: 0 !important;
   padding-left: 0 !important;
-  left: 0 !important;
+  left: 2px !important;
   cursor: text;
 
   /* Firefox */

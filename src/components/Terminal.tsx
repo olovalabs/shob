@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Terminal as XTerm } from "@xterm/xterm"
 import { FitAddon } from "@xterm/addon-fit"
+import { ClipboardAddon } from "@xterm/addon-clipboard"
+import { ImageAddon } from "@xterm/addon-image"
+import { LigaturesAddon } from "@xterm/addon-ligatures"
+import { ProgressAddon } from "@xterm/addon-progress"
 import { WebLinksAddon } from "@xterm/addon-web-links"
 import { SearchAddon } from "@xterm/addon-search"
 import { SerializeAddon } from "@xterm/addon-serialize"
@@ -154,6 +158,18 @@ function isPasteShortcut(event: KeyboardEvent, os: TerminalOs): boolean {
 
   if (os === "linux") {
     return event.ctrlKey && event.shiftKey && !event.metaKey
+  }
+
+  return event.ctrlKey && !event.metaKey
+}
+
+function isCopyShortcut(event: KeyboardEvent, os: TerminalOs): boolean {
+  if (event.repeat) return false
+  if (event.altKey) return false
+  if (event.key.toLowerCase() !== "c") return false
+
+  if (os === "macos") {
+    return event.metaKey && !event.ctrlKey
   }
 
   return event.ctrlKey && !event.metaKey
@@ -461,15 +477,14 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
           fontWeightBold: "700",
           lineHeight: 1.22,
           letterSpacing: 0,
-          customGlyphs: true,
-          rescaleOverlappingGlyphs: true,
           theme: getShadcnTerminalTheme(),
-          scrollback: 10000,
+          scrollback: 100000,
           smoothScrollDuration: 0,
           convertEol: false,
           drawBoldTextInBrightColors: true,
-          fastScrollSensitivity: 5,
-          scrollSensitivity: 1.15,
+          fastScrollSensitivity: 7,
+          scrollSensitivity: 1.2,
+          minimumContrastRatio: 1.2,
           windowsPty: windowsPtyOptions,
           documentOverride: terminalRef.current.ownerDocument,
           allowProposedApi: true,
@@ -479,17 +494,27 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         const searchAddon = new SearchAddon()
         const serializeAddon = new SerializeAddon()
         const unicode11Addon = new Unicode11Addon()
+        const clipboardAddon = new ClipboardAddon()
+        const imageAddon = new ImageAddon()
+        const ligaturesAddon = new LigaturesAddon()
+        const progressAddon = new ProgressAddon()
 
         term.loadAddon(fitAddon)
         term.loadAddon(new WebLinksAddon())
         term.loadAddon(searchAddon)
         term.loadAddon(serializeAddon)
         term.loadAddon(unicode11Addon)
+        try { term.loadAddon(clipboardAddon) } catch (error) { console.warn("Clipboard addon unavailable.", error) }
+        try { term.loadAddon(imageAddon) } catch (error) { console.warn("Image addon unavailable.", error) }
+        try { term.loadAddon(progressAddon) } catch (error) { console.warn("Progress addon unavailable.", error) }
 
         // Use Unicode 11 for proper TUI box drawing characters
         term.unicode.activeVersion = '11'
 
         term.open(terminalRef.current)
+
+        // Ligatures addon must be activated after terminal is opened.
+        try { term.loadAddon(ligaturesAddon) } catch (error) { console.warn("Ligatures addon unavailable.", error) }
 
         const helperTextarea = terminalRef.current.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")
         helperTextarea?.setAttribute("autocomplete", "off")
@@ -524,6 +549,8 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
           term?.scrollToBottom()
         })
         term.attachCustomKeyEventHandler((event) => {
+          const activeTerm = term
+          if (!activeTerm) return true
           if (event.type !== "keydown") return true
 
           // Custom shortcuts
@@ -532,6 +559,18 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
             event.stopPropagation()
             setShowSearch(true)
             setTimeout(() => searchInputRef.current?.focus(), 50)
+            return false
+          }
+
+          if (isCopyShortcut(event, hostInfo.os) && activeTerm.hasSelection() && typeof navigator?.clipboard?.writeText === "function") {
+            event.preventDefault()
+            event.stopPropagation()
+            const selectedText = activeTerm.getSelection()
+            if (selectedText) {
+              void navigator.clipboard.writeText(selectedText).catch((error) => {
+                console.error("Failed to copy terminal selection", error)
+              })
+            }
             return false
           }
 
