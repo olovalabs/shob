@@ -1,15 +1,12 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react"
-import { nativeApi } from "../services/native"
-import { Sidebar } from "./Sidebar"
-import { TabBar } from "./TabBar"
-import { Terminal } from "./Terminal"
-import { WelcomeScreen } from "./WelcomeScreen"
-import { useStore } from "../store"
+import { createEffect, createMemo, createSignal, lazy, Suspense } from 'solid-js'
+import { nativeApi } from '../services/native'
+import { Sidebar } from './Sidebar'
+import { TabBar } from './TabBar'
+import { Terminal } from './Terminal'
+import { WelcomeScreen } from './WelcomeScreen'
+import { useStore } from '../store'
 
-const FileTree = lazy(async () => {
-  const module = await import("./FileTree")
-  return { default: module.FileTree }
-})
+const FileTree = lazy(async () => import('./FileTree'))
 
 const folderNameFromPath = (path: string) => {
   const parts = path.split(/[\\/]/).filter(Boolean)
@@ -17,53 +14,54 @@ const folderNameFromPath = (path: string) => {
 }
 
 export function MainView() {
-  const projects = useStore((state) => state.projects)
-  const currentProject = useStore((state) =>
-    state.projects.find((project) => project.id === state.currentProjectId) ?? null,
+  const projects = useStore((s) => s.projects)
+  const currentProject = useStore((s) =>
+    s.projects.find((project) => project.id === s.currentProjectId) ?? null,
   )
-  const activeSessionId = useStore((state) => state.activeSessionId)
-  const currentProjectId = useStore((state) => state.currentProjectId)
-  const addProject = useStore((state) => state.addProject)
-  const setCurrentProject = useStore((state) => state.setCurrentProject)
-  const launchCliSession = useStore((state) => state.launchCliSession)
-  const [activeFilePath, setActiveFilePath] = useState<string | null>(null)
-  const [isFileTreeVisible, setIsFileTreeVisible] = useState(false)
-  const [bootedSessionIds, setBootedSessionIds] = useState<Set<string>>(new Set())
-  const projectSessions = useMemo(() => currentProject?.sessions ?? [], [currentProject])
-  const allSessions = useMemo(() => projects.flatMap((p) => p.sessions), [projects])
+  const activeSessionId = useStore((s) => s.activeSessionId)
+  const currentProjectId = useStore((s) => s.currentProjectId)
+  const addProject = useStore((s) => s.addProject)
+  const setCurrentProject = useStore((s) => s.setCurrentProject)
+  const launchCliSession = useStore((s) => s.launchCliSession)
+  const [activeFilePath, setActiveFilePath] = createSignal<string | null>(null)
+  const [isFileTreeVisible, setIsFileTreeVisible] = createSignal(false)
+  const [bootedSessionIds, setBootedSessionIds] = createSignal<Set<string>>(new Set())
+  const projectSessions = createMemo(() => currentProject()?.sessions ?? [])
+  const allSessions = createMemo(() => projects().flatMap((p) => p.sessions))
 
-  useEffect(() => {
+  createEffect(() => {
+    currentProjectId()
     setActiveFilePath(null)
-  }, [currentProjectId])
+  })
 
-  useEffect(() => {
-    if (!activeSessionId) return
+  createEffect(() => {
+    const sid = activeSessionId()
+    if (!sid) return
     setBootedSessionIds((current) => {
-      if (current.has(activeSessionId)) return current
+      if (current.has(sid)) return current
       const next = new Set(current)
-      next.add(activeSessionId)
+      next.add(sid)
       return next
     })
-  }, [activeSessionId])
+  })
 
-  useEffect(() => {
+  createEffect(() => {
+    const visible = isFileTreeVisible()
     window.dispatchEvent(
-      new CustomEvent("gg-file-tree-state", {
-        detail: {
-          isFileTreeVisible,
-        },
+      new CustomEvent('gg-file-tree-state', {
+        detail: { isFileTreeVisible: visible },
       }),
     )
-  }, [isFileTreeVisible])
+  })
 
-  useEffect(() => {
+  createEffect(() => {
     const handleFileTreeToggleRequest = () => {
       setIsFileTreeVisible((current) => !current)
     }
 
-    window.addEventListener("gg-toggle-file-tree", handleFileTreeToggleRequest)
-    return () => window.removeEventListener("gg-toggle-file-tree", handleFileTreeToggleRequest)
-  }, [])
+    window.addEventListener('gg-toggle-file-tree', handleFileTreeToggleRequest)
+    return () => window.removeEventListener('gg-toggle-file-tree', handleFileTreeToggleRequest)
+  })
 
   const handleFileSelect = (filePath: string | null) => {
     setActiveFilePath(filePath)
@@ -73,12 +71,12 @@ export function MainView() {
     const selected = await nativeApi.open({
       directory: true,
       multiple: false,
-      title: "Select Project Folder",
+      title: 'Select Project Folder',
     })
 
-    if (typeof selected !== "string" || !selected) return
+    if (typeof selected !== 'string' || !selected) return
 
-    const existing = projects.find((project) => project.path === selected)
+    const existing = projects().find((project) => project.path === selected)
     if (existing) {
       setCurrentProject(existing.id)
       return
@@ -89,41 +87,45 @@ export function MainView() {
   }
 
   const handleCreateSession = async () => {
-    if (!currentProjectId) return
-    await launchCliSession(currentProjectId)
+    const cpid = currentProjectId()
+    if (!cpid) return
+    await launchCliSession(cpid)
   }
 
   const handleToggleFileTree = () => {
-    if (!currentProject) return
+    if (!currentProject()) return
     setIsFileTreeVisible((current) => !current)
   }
-  
-  return (
-    <div className="flex min-h-0 flex-1 bg-background text-foreground">
-      <Sidebar />
-      <div className="min-w-0 flex-1 flex flex-col bg-background">
-        <TabBar />
-        <div className="min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
-          <div className="relative h-full w-full min-h-0 min-w-0 overflow-hidden" style={{ display: projectSessions.length > 0 ? "block" : "none" }}>
-            {allSessions.map((session) => {
-              const shouldBoot = bootedSessionIds.has(session.id)
-              if (!shouldBoot) return null
 
-              return (
-                <Terminal
-                  key={session.id}
-                  sessionId={session.id}
-                  isActive={session.id === activeSessionId}
-                  shouldBoot={shouldBoot}
-                />
-              )
-            })}
+  return (
+    <div class="flex min-h-0 flex-1 bg-background text-foreground">
+      <Sidebar />
+      <div class="min-w-0 flex-1 flex flex-col bg-background">
+        <TabBar />
+        <div class="min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+          <div class="relative h-full w-full min-h-0 min-w-0 overflow-hidden" style={{ display: projectSessions().length > 0 ? 'block' : 'none' }}>
+            {(() => {
+              const sessions = allSessions()
+              const booted = bootedSessionIds()
+              return sessions.map((session) => {
+                const shouldBoot = booted.has(session.id)
+                if (!shouldBoot) return null
+
+                return (
+                  <Terminal
+                    sessionId={session.id}
+                    isActive={session.id === activeSessionId()}
+                    shouldBoot={shouldBoot}
+                  />
+                )
+              })
+            })()}
           </div>
 
-          {projectSessions.length === 0 && (
+          {projectSessions().length === 0 && (
             <WelcomeScreen
-              projects={projects}
-              currentProject={currentProject}
+              projects={projects()}
+              currentProject={currentProject()}
               onOpenFolder={handleOpenFolder}
               onCreateSession={handleCreateSession}
               onSelectProject={setCurrentProject}
@@ -132,11 +134,14 @@ export function MainView() {
           )}
         </div>
       </div>
-      {isFileTreeVisible && (
-        <Suspense fallback={null}>
-          <FileTree selectedFilePath={activeFilePath} onFileSelect={handleFileSelect} />
-        </Suspense>
-      )}
+      {(() => {
+        if (!isFileTreeVisible()) return null
+        return (
+          <Suspense fallback={null}>
+            <FileTree selectedFilePath={activeFilePath()} onFileSelect={handleFileSelect} />
+          </Suspense>
+        )
+      })()}
     </div>
   )
 }
