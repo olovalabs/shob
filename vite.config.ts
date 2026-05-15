@@ -1,10 +1,10 @@
 import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+import solid from 'vite-plugin-solid'
 import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath, URL } from 'node:url'
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [solid(), tailwindcss()],
   build: {
     outDir: 'dist-renderer',
   },
@@ -16,6 +16,6 @@ export default defineConfig({
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
-    dedupe: ['react', 'react-dom'],
+    dedupe: ['solid-js'],
   },
 })
