@@ -832,7 +832,7 @@ export function Sidebar() {
                           </For>
                           <Show when={filteredCliTools().length === 0}>
                             <TableRow>
-                              <TableCell colspan={3} class="py-8 text-center text-sm text-muted-foreground">
+                              <TableCell colSpan={3} class="py-8 text-center text-sm text-muted-foreground">
                                 No tools found for "{cliToolSearchQuery().trim()}".
                               </TableCell>
                             </TableRow>

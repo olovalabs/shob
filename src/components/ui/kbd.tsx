@@ -1,6 +1,5 @@
-import type { JSX } from "solid-js"
-
 import { cn } from "@/lib/utils"
+import type { JSX } from "solid-js"
 
 function Kbd(props: JSX.HTMLAttributes<HTMLElement>) {
   return (
@@ -17,7 +16,7 @@ function Kbd(props: JSX.HTMLAttributes<HTMLElement>) {
 
 function KbdGroup(props: JSX.HTMLAttributes<HTMLDivElement>) {
   return (
-    <kbd
+    <div
       data-slot="kbd-group"
       class={cn("inline-flex items-center gap-1", props.class)}
       {...props}

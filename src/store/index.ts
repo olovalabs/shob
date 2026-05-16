@@ -18,6 +18,7 @@ const SESSION_CLEANUP_IDLE_MS = 1000 * 60 * 60 * 24 * 30;
 const SESSION_CLEANUP_MAX_PER_PROJECT = 40;
 const SESSION_CLEANUP_ALWAYS_KEEP = 5;
 const SESSION_ACTIVITY_PERSIST_THROTTLE_MS = 15_000;
+let launchSessionQueue: Promise<unknown> = Promise.resolve();
 
 const buildCatalogCliTools = (probeResults: CliProbeResult[] = []): CliTool[] => {
   const resultById = new Map(probeResults.map((result) => [result.id, result]));
@@ -227,6 +228,12 @@ export const actions: AppActions = {
   },
 
   deleteProject: async (id: string) => {
+    const projectToDelete = store.projects.find((project) => project.id === id);
+    await Promise.all(
+      (projectToDelete?.sessions ?? []).map((session) =>
+        nativeApi.terminal().kill(session.id).catch(() => undefined),
+      ),
+    );
     await api.deleteProject(id);
     const projects = store.projects.filter((p) => p.id !== id);
     const currentProjectId = store.currentProjectId === id ? projects[0]?.id ?? null : store.currentProjectId;
@@ -312,53 +319,66 @@ export const actions: AppActions = {
   },
 
   launchCliSession: async (projectId: string, cliId?: string | null) => {
-    const createdAt = Date.now();
-    const shell =
-      store.availableShells.find((item) => item === store.preferredShell) ??
-      store.availableShells[0] ??
-      store.preferredShell ??
-      'powershell.exe';
-    const installedCliTools = store.cliTools.filter((tool) => tool.installed);
-    const selectedCli =
-      installedCliTools.find((tool) => tool.id === cliId) ??
-      installedCliTools.find((tool) => tool.id === store.preferredCliId) ??
-      installedCliTools.find((tool) => tool.id === DEFAULT_CLI_ID) ??
-      installedCliTools[0] ??
-      null;
+    const run = async () => {
+      const createdAt = Date.now();
+      const shell =
+        store.availableShells.find((item) => item === store.preferredShell) ??
+        store.availableShells[0] ??
+        store.preferredShell ??
+        'powershell.exe';
+      const installedCliTools = store.cliTools.filter((tool) => tool.installed);
+      const selectedCli =
+        installedCliTools.find((tool) => tool.id === cliId) ??
+        installedCliTools.find((tool) => tool.id === store.preferredCliId) ??
+        installedCliTools.find((tool) => tool.id === DEFAULT_CLI_ID) ??
+        installedCliTools[0] ??
+        null;
 
-    const session: Session = {
-      id: crypto.randomUUID(),
-      name: `Terminal ${createdAt}`,
-      shell,
-      cliTool: selectedCli?.id ?? null,
-      pendingLaunchCommand: selectedCli?.matchedCommand ?? null,
-      createdAt,
-      lastActiveAt: createdAt,
-      commandCount: 0,
-      startupDurationMs: null,
+      const session: Session = {
+        id: crypto.randomUUID(),
+        name: `Terminal ${createdAt}`,
+        shell,
+        cliTool: selectedCli?.id ?? null,
+        pendingLaunchCommand: selectedCli?.matchedCommand ?? null,
+        createdAt,
+        lastActiveAt: createdAt,
+        commandCount: 0,
+        startupDurationMs: null,
+      };
+
+      const latestProjects = normalizeProjects(await api.getProjects());
+      const project =
+        latestProjects.find((p) => p.id === projectId) ??
+        store.projects.find((p) => p.id === projectId);
+      if (!project) throw new Error('Project not found');
+
+      const updatedProject = {
+        ...project,
+        sessions: [...project.sessions, session],
+      };
+
+      await api.saveProject(updatedProject);
+      setStoredValue(STORAGE_KEYS.currentProjectId, projectId);
+      setStoredValue(STORAGE_KEYS.activeSessionId, session.id);
+      setStoredValue(STORAGE_KEYS.preferredCliId, selectedCli?.id ?? null);
+
+      const nextProjects = latestProjects.length > 0
+        ? latestProjects.map((p) => (p.id === projectId ? updatedProject : p))
+        : store.projects.map((p) => (p.id === projectId ? updatedProject : p));
+
+      setStore({
+        projects: nextProjects,
+        currentProjectId: projectId,
+        activeSessionId: session.id,
+        preferredCliId: selectedCli?.id ?? store.preferredCliId,
+      });
+
+      return session;
     };
 
-    const project = store.projects.find((p) => p.id === projectId);
-    if (!project) throw new Error('Project not found');
-
-    const updatedProject = {
-      ...project,
-      sessions: [...project.sessions, session],
-    };
-
-    await api.saveProject(updatedProject);
-    setStoredValue(STORAGE_KEYS.currentProjectId, projectId);
-    setStoredValue(STORAGE_KEYS.activeSessionId, session.id);
-    setStoredValue(STORAGE_KEYS.preferredCliId, selectedCli?.id ?? null);
-
-    setStore({
-      projects: store.projects.map((p) => (p.id === projectId ? updatedProject : p)),
-      currentProjectId: projectId,
-      activeSessionId: session.id,
-      preferredCliId: selectedCli?.id ?? store.preferredCliId,
-    });
-
-    return session;
+    const next = launchSessionQueue.then(run, run);
+    launchSessionQueue = next.catch(() => undefined);
+    return next;
   },
 
   renameSession: async (projectId: string, sessionId: string, name: string) => {
@@ -424,6 +444,8 @@ export const actions: AppActions = {
     const project = store.projects.find((p) => p.id === projectId);
     if (!project) return;
     if (!project.sessions.some((session) => session.id === sessionId)) return;
+
+    await nativeApi.terminal().kill(sessionId).catch(() => undefined);
 
     const updatedProject = {
       ...project,
@@ -681,15 +703,25 @@ export const actions: AppActions = {
 };
 
 export function useStore(): AppState & AppActions;
-export function useStore<T>(selector: (state: AppState) => T): () => T;
-export function useStore<T>(selector?: (state: AppState) => T): (() => T) | (AppState & AppActions) {
+export function useStore<T>(
+  selector: (state: AppState & AppActions) => T,
+): T extends (...args: any[]) => any ? T : () => T;
+export function useStore<T>(
+  selector?: (state: AppState & AppActions) => T,
+): (T extends (...args: any[]) => any ? T : () => T) | (AppState & AppActions) {
   const combinedState = () => ({ ...store, ...actions } as AppState & AppActions);
 
   if (!selector) {
     return combinedState();
   }
 
-  return () => selector(combinedState());
+  return ((...args: unknown[]) => {
+    const selected = selector(combinedState());
+    if (typeof selected === 'function') {
+      return (selected as (...fnArgs: unknown[]) => unknown)(...args);
+    }
+    return selected;
+  }) as T extends (...args: any[]) => any ? T : () => T;
 }
 
 export { store, setStore };

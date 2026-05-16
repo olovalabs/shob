@@ -16,6 +16,7 @@ export function TabBar() {
   const projects = useStore((s) => s.projects)
   const currentProjectId = useStore((s) => s.currentProjectId)
   const activeSessionId = useStore((s) => s.activeSessionId)
+  const setCurrentProject = useStore((s) => s.setCurrentProject)
   const setActiveSession = useStore((s) => s.setActiveSession)
   const launchCliSession = useStore((s) => s.launchCliSession)
   const removeSession = useStore((s) => s.removeSession)
@@ -45,6 +46,7 @@ export function TabBar() {
                   return (
                     <TabsTrigger
                       value={session.id}
+                      onClick={() => setActiveSession(session.id)}
                       class={`chrome-tab-trigger relative group inline-flex items-center ${
                         isCompactTabs()
                           ? 'max-w-[156px] min-w-[92px] gap-1.5 px-2 text-[12px]'
@@ -91,8 +93,12 @@ export function TabBar() {
           <Button
             type="button"
             onClick={() => {
-              const cpid = currentProjectId()
-              if (cpid) launchCliSession(cpid)
+              const cpid = currentProjectId() ?? projects()[0]?.id ?? null
+              if (!cpid) return
+              if (currentProjectId() !== cpid) {
+                setCurrentProject(cpid)
+              }
+              void launchCliSession(cpid)
             }}
             variant="ghost"
             size="icon-sm"

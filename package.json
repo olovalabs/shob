@@ -56,6 +56,7 @@
     ]
   },
   "dependencies": {
+    "@ark-ui/solid": "^5.36.2",
     "@kobalte/core": "^0.13.7",
     "@lydell/node-pty": "^1.2.0-beta.12",
     "@solidjs/router": "^0.15.3",
@@ -71,11 +72,14 @@
     "@xterm/addon-webgl": "0.20.0-beta.212",
     "@xterm/headless": "6.1.0-beta.213",
     "@xterm/xterm": "6.1.0-beta.213",
+    "chart.js": "^4.5.1",
     "chokidar": "^5.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
+    "embla-carousel-solid": "^8.6.0",
     "lucide-solid": "^1.6.0",
+    "solid-chartjs": "^1.3.11",
     "solid-js": "^1.9.5",
     "solid-sonner": "^0.3.1",
     "tailwind-merge": "^3.5.0"

@@ -62,7 +62,7 @@ function TableRow({ class: className, ...props }: JSX.HTMLAttributes<HTMLTableRo
   )
 }
 
-function TableHead({ class: className, ...props }: JSX.HTMLAttributes<HTMLTableCellElement>) {
+function TableHead({ class: className, ...props }: JSX.ThHTMLAttributes<HTMLTableCellElement>) {
   return (
     <th
       data-slot="table-head"
@@ -75,7 +75,7 @@ function TableHead({ class: className, ...props }: JSX.HTMLAttributes<HTMLTableC
   )
 }
 
-function TableCell({ class: className, ...props }: JSX.HTMLAttributes<HTMLTableCellElement>) {
+function TableCell({ class: className, ...props }: JSX.TdHTMLAttributes<HTMLTableCellElement>) {
   return (
     <td
       data-slot="table-cell"

@@ -46,7 +46,16 @@ export interface ElectronTerminalSpawnOptions {
   cwd?: string
   rows: number
   cols: number
+  cursor?: number
   env?: Record<string, string>
+}
+
+export interface ElectronTerminalSpawnResult {
+  id: string
+  reused?: boolean
+  buffer?: string
+  bufferCursor?: number
+  cursor?: number
 }
 
 export interface ShobNativeApi {
@@ -64,7 +73,7 @@ export interface ShobNativeApi {
     onResized(callback: () => void): Promise<() => void>
   }
   terminal: {
-    spawn(options: ElectronTerminalSpawnOptions): Promise<{ id: string }>
+    spawn(options: ElectronTerminalSpawnOptions): Promise<ElectronTerminalSpawnResult>
     write(id: string, data: string): Promise<void>
     resize(id: string, cols: number, rows: number): Promise<void>
     kill(id: string): Promise<void>

@@ -1,33 +1,29 @@
-import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
-import { Slot } from "radix-ui"
 
 import { cn } from "@/lib/utils"
 import { Separator } from "@/components/ui/separator"
+import type { JSX } from "solid-js"
 
-function ItemGroup({ className, ...props }: React.ComponentProps<"div">) {
+function ItemGroup(props: JSX.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       role="list"
       data-slot="item-group"
-      className={cn(
+      class={cn(
         "group/item-group flex w-full flex-col gap-4 has-data-[size=sm]:gap-2.5 has-data-[size=xs]:gap-2",
-        className
+        props.class
       )}
       {...props}
     />
   )
 }
 
-function ItemSeparator({
-  className,
-  ...props
-}: React.ComponentProps<typeof Separator>) {
+function ItemSeparator(props: JSX.HTMLAttributes<HTMLHRElement>) {
   return (
     <Separator
       data-slot="item-separator"
       orientation="horizontal"
-      className={cn("my-2", className)}
+      class={cn("my-2", props.class)}
       {...props}
     />
   )
@@ -55,21 +51,19 @@ const itemVariants = cva(
   }
 )
 
-function Item({
-  className,
-  variant = "default",
-  size = "default",
-  asChild = false,
-  ...props
-}: React.ComponentProps<"div"> &
-  VariantProps<typeof itemVariants> & { asChild?: boolean }) {
-  const Comp = asChild ? Slot.Root : "div"
+interface ItemProps extends VariantProps<typeof itemVariants> {
+  class?: string
+  as?: "div" | "a"
+}
+
+function Item(props: ItemProps) {
+  const Comp = props.as ?? "div"
   return (
     <Comp
       data-slot="item"
-      data-variant={variant}
-      data-size={size}
-      className={cn(itemVariants({ variant, size, className }))}
+      data-variant={props.variant}
+      data-size={props.size}
+      class={cn(itemVariants({ variant: props.variant, size: props.size, class: props.class }))}
       {...props}
     />
   )
@@ -92,90 +86,90 @@ const itemMediaVariants = cva(
   }
 )
 
-function ItemMedia({
-  className,
-  variant = "default",
-  ...props
-}: React.ComponentProps<"div"> & VariantProps<typeof itemMediaVariants>) {
+interface ItemMediaProps extends VariantProps<typeof itemMediaVariants> {
+  class?: string
+}
+
+function ItemMedia(props: ItemMediaProps) {
   return (
     <div
       data-slot="item-media"
-      data-variant={variant}
-      className={cn(itemMediaVariants({ variant, className }))}
+      data-variant={props.variant}
+      class={cn(itemMediaVariants({ variant: props.variant, class: props.class }))}
       {...props}
     />
   )
 }
 
-function ItemContent({ className, ...props }: React.ComponentProps<"div">) {
+function ItemContent(props: JSX.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       data-slot="item-content"
-      className={cn(
+      class={cn(
         "flex flex-1 flex-col gap-1 group-data-[size=xs]/item:gap-0 [&+[data-slot=item-content]]:flex-none",
-        className
+        props.class
       )}
       {...props}
     />
   )
 }
 
-function ItemTitle({ className, ...props }: React.ComponentProps<"div">) {
+function ItemTitle(props: JSX.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       data-slot="item-title"
-      className={cn(
+      class={cn(
         "font-heading line-clamp-1 flex w-fit items-center gap-2 text-sm leading-snug font-medium underline-offset-4",
-        className
+        props.class
       )}
       {...props}
     />
   )
 }
 
-function ItemDescription({ className, ...props }: React.ComponentProps<"p">) {
+function ItemDescription(props: JSX.HTMLAttributes<HTMLParagraphElement>) {
   return (
     <p
       data-slot="item-description"
-      className={cn(
+      class={cn(
         "line-clamp-2 text-left text-sm leading-normal font-normal text-muted-foreground group-data-[size=xs]/item:text-xs [&>a]:underline [&>a]:underline-offset-4 [&>a:hover]:text-primary",
-        className
+        props.class
       )}
       {...props}
     />
   )
 }
 
-function ItemActions({ className, ...props }: React.ComponentProps<"div">) {
+function ItemActions(props: JSX.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       data-slot="item-actions"
-      className={cn("flex items-center gap-2", className)}
+      class={cn("flex items-center gap-2", props.class)}
       {...props}
     />
   )
 }
 
-function ItemHeader({ className, ...props }: React.ComponentProps<"div">) {
+function ItemHeader(props: JSX.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       data-slot="item-header"
-      className={cn(
+      class={cn(
         "flex basis-full items-center justify-between gap-2",
-        className
+        props.class
       )}
       {...props}
     />
   )
 }
 
-function ItemFooter({ className, ...props }: React.ComponentProps<"div">) {
+function ItemFooter(props: JSX.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       data-slot="item-footer"
-      className={cn(
+      class={cn(
         "flex basis-full items-center justify-between gap-2",
-        className
+        props.class
       )}
       {...props}
     />

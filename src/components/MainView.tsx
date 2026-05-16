@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, lazy, Suspense } from 'solid-js'
+import { createEffect, createMemo, createSignal, lazy, Show, Suspense } from 'solid-js'
 import { nativeApi } from '../services/native'
 import { Sidebar } from './Sidebar'
 import { TabBar } from './TabBar'
@@ -26,24 +26,16 @@ export function MainView() {
   const currentProjectId = useStore((s) => s.currentProjectId)
   const [activeFilePath, setActiveFilePath] = createSignal<string | null>(null)
   const [isFileTreeVisible, setIsFileTreeVisible] = createSignal(false)
-  const [bootedSessionIds, setBootedSessionIds] = createSignal<Set<string>>(new Set())
   const projectSessions = createMemo(() => currentProject()?.sessions ?? [])
-  const allSessions = createMemo(() => projects().flatMap((p) => p.sessions))
+  const activeProjectSessionId = createMemo(() => {
+    const sessionId = activeSessionId()
+    if (!sessionId) return null
+    return projectSessions().some((session) => session.id === sessionId) ? sessionId : null
+  })
 
   createEffect(() => {
     currentProjectId()
     setActiveFilePath(null)
-  })
-
-  createEffect(() => {
-    const sid = activeSessionId()
-    if (!sid) return
-    setBootedSessionIds((current) => {
-      if (current.has(sid)) return current
-      const next = new Set(current)
-      next.add(sid)
-      return next
-    })
   })
 
   createEffect(() => {
@@ -108,22 +100,14 @@ export function MainView() {
         <TabBar />
         <div class="min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
           <div class="relative h-full w-full min-h-0 min-w-0 overflow-hidden" style={{ display: projectSessions().length > 0 ? 'block' : 'none' }}>
-            {(() => {
-              const sessions = allSessions()
-              const booted = bootedSessionIds()
-              return sessions.map((session) => {
-                const shouldBoot = booted.has(session.id)
-                if (!shouldBoot) return null
-
-                return (
-                  <Terminal
-                    sessionId={session.id}
-                    isActive={session.id === activeSessionId()}
-                    shouldBoot={shouldBoot}
-                  />
-                )
-              })
-            })()}
+            <Show when={activeProjectSessionId()} keyed>
+              {(sessionId) => (
+                <Terminal
+                  sessionId={sessionId}
+                  isActive
+                />
+              )}
+            </Show>
           </div>
 
           {projectSessions().length === 0 && (

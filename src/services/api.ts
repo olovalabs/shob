@@ -2,10 +2,14 @@ import { invokeNative } from './native';
 import type { Project } from '../types';
 import type { CliProbeResult } from '../config/check';
 
+const toSerializableProject = (project: Project): Project =>
+  JSON.parse(JSON.stringify(project)) as Project;
+
 export const api = {
   getProjects: () => invokeNative('get_projects'),
   
-  saveProject: (project: Project) => invokeNative('save_project', { project }),
+  saveProject: (project: Project) =>
+    invokeNative('save_project', { project: toSerializableProject(project) }),
   
   deleteProject: (projectId: string) => invokeNative('delete_project', { projectId }),
 

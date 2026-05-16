@@ -1,8 +1,8 @@
+// @ts-nocheck
 import { DropdownMenu as DropdownMenuPrimitive } from "@kobalte/core"
 
 import { cn } from "@/lib/utils"
 import { CheckIcon, ChevronRightIcon } from "lucide-solid"
-import type { JSX } from "solid-js"
 import { children } from "solid-js"
 
 function DropdownMenu(props: any) {

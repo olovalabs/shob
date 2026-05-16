@@ -1,85 +1,75 @@
-"use client"
-
-import * as React from "react"
-import { OTPInput, OTPInputContext } from "input-otp"
+import { PinInput } from "@ark-ui/solid"
+import type { JSX } from "solid-js"
 
 import { cn } from "@/lib/utils"
-import { MinusIcon } from "lucide-react"
+import { MinusIcon } from "lucide-solid"
 
-function InputOTP({
-  className,
-  containerClassName,
-  ...props
-}: React.ComponentProps<typeof OTPInput> & {
+interface InputOTPProps extends Omit<PinInput.RootProps, "children"> {
+  class?: string
   containerClassName?: string
-}) {
+  children?: JSX.Element
+}
+
+function InputOTP(props: InputOTPProps) {
   return (
-    <OTPInput
+    <PinInput.Root
       data-slot="input-otp"
-      containerClassName={cn(
-        "cn-input-otp flex items-center has-disabled:opacity-50",
-        containerClassName
-      )}
-      spellCheck={false}
-      className={cn("disabled:cursor-not-allowed", className)}
+      class={cn("disabled:cursor-not-allowed", props.class)}
       {...props}
-    />
+    >
+      <div
+        class={cn(
+          "cn-input-otp flex items-center has-disabled:opacity-50",
+          props.containerClassName
+        )}
+      >
+        {props.children}
+      </div>
+    </PinInput.Root>
   )
 }
 
-function InputOTPGroup({ className, ...props }: React.ComponentProps<"div">) {
+function InputOTPGroup(props: JSX.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       data-slot="input-otp-group"
-      className={cn(
+      class={cn(
         "flex items-center rounded-lg has-aria-invalid:border-destructive has-aria-invalid:ring-3 has-aria-invalid:ring-destructive/20 dark:has-aria-invalid:ring-destructive/40",
-        className
+        props.class
       )}
       {...props}
     />
   )
 }
 
-function InputOTPSlot({
-  index,
-  className,
-  ...props
-}: React.ComponentProps<"div"> & {
+interface InputOTPSlotProps extends Omit<JSX.InputHTMLAttributes<HTMLInputElement>, "index"> {
   index: number
-}) {
-  const inputOTPContext = React.useContext(OTPInputContext)
-  const { char, hasFakeCaret, isActive } = inputOTPContext?.slots[index] ?? {}
+  class?: string
+}
 
+function InputOTPSlot(props: InputOTPSlotProps) {
+  const { index, ...rest } = props
   return (
-    <div
-      data-slot="input-otp-slot"
-      data-active={isActive}
-      className={cn(
-        "relative flex size-8 items-center justify-center border-y border-r border-input text-sm transition-all outline-none first:rounded-l-lg first:border-l last:rounded-r-lg aria-invalid:border-destructive data-[active=true]:z-10 data-[active=true]:border-ring data-[active=true]:ring-3 data-[active=true]:ring-ring/50 data-[active=true]:aria-invalid:border-destructive data-[active=true]:aria-invalid:ring-destructive/20 dark:bg-input/30 dark:data-[active=true]:aria-invalid:ring-destructive/40",
-        className
+    <PinInput.Input
+      index={index}
+      class={cn(
+        "relative flex size-8 items-center justify-center border-y border-r border-input text-sm transition-all outline-none first:rounded-l-lg first:border-l last:rounded-r-lg aria-invalid:border-destructive data-[state=selected]:z-10 data-[state=selected]:border-ring data-[state=selected]:ring-3 data-[state=selected]:ring-ring/50 data-[state=selected]:aria-invalid:border-destructive data-[state=selected]:aria-invalid:ring-destructive/20 dark:bg-input/30 dark:data-[state=selected]:aria-invalid:ring-destructive/40",
+        props.class
       )}
-      {...props}
-    >
-      {char}
-      {hasFakeCaret && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="h-4 w-px animate-caret-blink bg-foreground duration-1000" />
-        </div>
-      )}
-    </div>
+      {...rest}
+    />
   )
 }
 
-function InputOTPSeparator({ ...props }: React.ComponentProps<"div">) {
+function InputOTPSeparator(props: JSX.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       data-slot="input-otp-separator"
-      className="flex items-center [&_svg:not([class*='size-'])]:size-4"
+      class="flex items-center [&_svg:not([class*='size-'])]:size-4"
       role="separator"
       {...props}
     >
-      <MinusIcon
-      />
+      <MinusIcon />
     </div>
   )
 }

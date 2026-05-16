@@ -1,11 +1,12 @@
-import * as React from "react"
+// @ts-nocheck
 import { cva, type VariantProps } from "class-variance-authority"
-import { Toggle as TogglePrimitive } from "radix-ui"
+import { createSignal } from "solid-js"
 
 import { cn } from "@/lib/utils"
+import type { JSX } from "solid-js"
 
 const toggleVariants = cva(
-  "group/toggle inline-flex items-center justify-center gap-1 rounded-lg text-sm font-medium whitespace-nowrap transition-all outline-none hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 aria-pressed:bg-muted data-[state=on]:bg-muted dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "group/toggle inline-flex items-center justify-center gap-1 rounded-lg text-sm font-medium whitespace-nowrap transition-all outline-none hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 aria-pressed:bg-muted dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
@@ -25,18 +26,36 @@ const toggleVariants = cva(
   }
 )
 
-function Toggle({
-  className,
-  variant = "default",
-  size = "default",
-  ...props
-}: React.ComponentProps<typeof TogglePrimitive.Root> &
-  VariantProps<typeof toggleVariants>) {
+interface ToggleProps extends VariantProps<typeof toggleVariants>, Omit<JSX.ButtonHTMLAttributes<HTMLButtonElement>, "size" | "onChange"> {
+  class?: string
+  pressed?: boolean
+  defaultPressed?: boolean
+  onChange?: (pressed: boolean) => void
+  disabled?: boolean
+}
+
+function Toggle(props: ToggleProps) {
+  const [internalPressed, setInternalPressed] = createSignal(props.defaultPressed ?? false)
+  const pressed = () => props.pressed ?? internalPressed()
+
+  const handleClick = (e: MouseEvent) => {
+    const newPressed = !pressed()
+    if (!("pressed" in props)) {
+      setInternalPressed(newPressed)
+    }
+    props.onChange?.(newPressed)
+    if (typeof props.onClick === "function") {
+      props.onClick(e as any)
+    }
+  }
+
   return (
-    <TogglePrimitive.Root
+    <button
       data-slot="toggle"
-      className={cn(toggleVariants({ variant, size, className }))}
-      {...props}
+      aria-pressed={pressed()}
+      class={cn(toggleVariants({ variant: props.variant, size: props.size, class: props.class }))}
+      onClick={handleClick}
+      disabled={props.disabled}
     />
   )
 }

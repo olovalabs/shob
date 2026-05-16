@@ -1,30 +1,49 @@
-"use client"
-
-import * as React from "react"
-import { Progress as ProgressPrimitive } from "radix-ui"
+import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
 
-function Progress({
-  className,
-  value,
-  ...props
-}: React.ComponentProps<typeof ProgressPrimitive.Root>) {
+const progressVariants = cva(
+  "relative flex w-full items-center overflow-hidden rounded-full bg-muted",
+  {
+    variants: {
+      size: {
+        default: "h-2",
+        sm: "h-1",
+        lg: "h-3",
+      },
+    },
+    defaultVariants: {
+      size: "default",
+    },
+  }
+)
+
+interface ProgressProps extends VariantProps<typeof progressVariants> {
+  class?: string
+  value?: number
+  max?: number
+  getValueLabel?: (value: number, max: number) => string
+}
+
+function Progress(props: ProgressProps) {
   return (
-    <ProgressPrimitive.Root
+    <div
       data-slot="progress"
-      className={cn(
-        "relative flex h-1 w-full items-center overflow-x-hidden rounded-full bg-muted",
-        className
-      )}
+      data-size={props.size}
+      class={cn(progressVariants({ size: props.size }), props.class)}
+      role="progressbar"
+      aria-valuenow={props.value}
+      aria-valuemin={0}
+      aria-valuemax={props.max ?? 100}
+      aria-valuetext={props.getValueLabel?.(props.value ?? 0, props.max ?? 100) ?? `${props.value ?? 0}%`}
       {...props}
     >
-      <ProgressPrimitive.Indicator
+      <div
         data-slot="progress-indicator"
-        className="size-full flex-1 bg-primary transition-all"
-        style={{ transform: `translateX(-${100 - (value || 0)}%)` }}
+        class="size-full flex-1 bg-primary transition-all"
+        style={{ transform: `translateX(-${100 - (props.value ?? 0)}%)` }}
       />
-    </ProgressPrimitive.Root>
+    </div>
   )
 }
 

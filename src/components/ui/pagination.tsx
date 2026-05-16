@@ -1,119 +1,106 @@
-import * as React from "react"
-
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { ChevronLeftIcon, ChevronRightIcon, MoreHorizontalIcon } from "lucide-react"
+import { ChevronLeftIcon, ChevronRightIcon, MoreHorizontalIcon } from "lucide-solid"
+import type { JSX } from "solid-js"
 
-function Pagination({ className, ...props }: React.ComponentProps<"nav">) {
+function Pagination(props: JSX.HTMLAttributes<HTMLElement>) {
   return (
     <nav
       role="navigation"
       aria-label="pagination"
       data-slot="pagination"
-      className={cn("mx-auto flex w-full justify-center", className)}
+      class={cn("mx-auto flex w-full justify-center", props.class)}
       {...props}
     />
   )
 }
 
-function PaginationContent({
-  className,
-  ...props
-}: React.ComponentProps<"ul">) {
+function PaginationContent(props: JSX.HTMLAttributes<HTMLUListElement>) {
   return (
     <ul
       data-slot="pagination-content"
-      className={cn("flex items-center gap-0.5", className)}
+      class={cn("flex items-center gap-0.5", props.class)}
       {...props}
     />
   )
 }
 
-function PaginationItem({ ...props }: React.ComponentProps<"li">) {
+function PaginationItem(props: JSX.LiHTMLAttributes<HTMLLIElement>) {
   return <li data-slot="pagination-item" {...props} />
 }
 
-type PaginationLinkProps = {
+interface PaginationLinkProps extends Omit<JSX.AnchorHTMLAttributes<HTMLAnchorElement>, "size"> {
   isActive?: boolean
-} & Pick<React.ComponentProps<typeof Button>, "size"> &
-  React.ComponentProps<"a">
+  size?: "default" | "sm" | "lg" | "icon"
+}
 
-function PaginationLink({
-  className,
-  isActive,
-  size = "icon",
-  ...props
-}: PaginationLinkProps) {
+function PaginationLink(props: PaginationLinkProps) {
   return (
     <Button
       asChild
-      variant={isActive ? "outline" : "ghost"}
-      size={size}
-      className={cn(className)}
+      variant={props.isActive ? "outline" : "ghost"}
+      size={props.size ?? "icon"}
+      class={cn(props.class)}
     >
       <a
-        aria-current={isActive ? "page" : undefined}
+        aria-current={props.isActive ? "page" : undefined}
         data-slot="pagination-link"
-        data-active={isActive}
+        data-active={props.isActive}
         {...props}
       />
     </Button>
   )
 }
 
-function PaginationPrevious({
-  className,
-  text = "Previous",
-  ...props
-}: React.ComponentProps<typeof PaginationLink> & { text?: string }) {
+interface PaginationPreviousProps extends Omit<JSX.AnchorHTMLAttributes<HTMLAnchorElement>, "size"> {
+  text?: string
+}
+
+function PaginationPrevious(props: PaginationPreviousProps) {
   return (
     <PaginationLink
       aria-label="Go to previous page"
       size="default"
-      className={cn("pl-1.5!", className)}
+      class={cn("pl-1.5!", props.class)}
       {...props}
     >
       <ChevronLeftIcon data-icon="inline-start" />
-      <span className="hidden sm:block">{text}</span>
+      <span class="hidden sm:block">{props.text ?? "Previous"}</span>
     </PaginationLink>
   )
 }
 
-function PaginationNext({
-  className,
-  text = "Next",
-  ...props
-}: React.ComponentProps<typeof PaginationLink> & { text?: string }) {
+interface PaginationNextProps extends Omit<JSX.AnchorHTMLAttributes<HTMLAnchorElement>, "size"> {
+  text?: string
+}
+
+function PaginationNext(props: PaginationNextProps) {
   return (
     <PaginationLink
       aria-label="Go to next page"
       size="default"
-      className={cn("pr-1.5!", className)}
+      class={cn("pr-1.5!", props.class)}
       {...props}
     >
-      <span className="hidden sm:block">{text}</span>
+      <span class="hidden sm:block">{props.text ?? "Next"}</span>
       <ChevronRightIcon data-icon="inline-end" />
     </PaginationLink>
   )
 }
 
-function PaginationEllipsis({
-  className,
-  ...props
-}: React.ComponentProps<"span">) {
+function PaginationEllipsis(props: JSX.HTMLAttributes<HTMLSpanElement>) {
   return (
     <span
       aria-hidden
       data-slot="pagination-ellipsis"
-      className={cn(
+      class={cn(
         "flex size-8 items-center justify-center [&_svg:not([class*='size-'])]:size-4",
-        className
+        props.class
       )}
       {...props}
     >
-      <MoreHorizontalIcon
-      />
-      <span className="sr-only">More pages</span>
+      <MoreHorizontalIcon />
+      <span class="sr-only">More pages</span>
     </span>
   )
 }

@@ -2,9 +2,6 @@ import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js"
 import { Terminal as XTerm } from "@xterm/xterm"
 import { FitAddon } from "@xterm/addon-fit"
 import { ClipboardAddon } from "@xterm/addon-clipboard"
-import { ImageAddon } from "@xterm/addon-image"
-import { LigaturesAddon } from "@xterm/addon-ligatures"
-import { ProgressAddon } from "@xterm/addon-progress"
 import { WebLinksAddon } from "@xterm/addon-web-links"
 import { SearchAddon } from "@xterm/addon-search"
 import { SerializeAddon } from "@xterm/addon-serialize"
@@ -21,7 +18,6 @@ import "@xterm/xterm/css/xterm.css"
 interface TerminalProps {
   sessionId: string
   isActive?: boolean
-  shouldBoot?: boolean
 }
 
 interface RerunCliEventDetail {
@@ -37,8 +33,10 @@ interface TerminalHostInfo {
 type TerminalOs = TerminalHostInfo["os"]
 
 interface IPty {
+  reused: boolean
   write(data: string): void
   resize(cols: number, rows: number): void
+  dispose(): void
   kill(): void
   onData(callback: (chunk: string) => void): void
 }
@@ -98,41 +96,76 @@ async function spawnNativePty(options: {
   cwd?: string
   rows: number
   cols: number
+  cursor?: number
   env: Record<string, string>
 }): Promise<IPty> {
   const terminal = nativeApi.terminal()
-  const { id } = await terminal.spawn({
+  const id = options.sessionId
+  const dataCallbacks = new Set<(chunk: string) => void>()
+  const pendingChunks: string[] = []
+  let disposed = false
+
+  const offData = terminal.onData(id, (data) => {
+    if (disposed) return
+    if (dataCallbacks.size === 0) {
+      pendingChunks.push(data)
+      return
+    }
+
+    for (const callback of dataCallbacks) callback(data)
+  })
+  const offExit = terminal.onExit(id, () => {
+    dataCallbacks.clear()
+    pendingChunks.length = 0
+    offData()
+    offExit()
+  })
+
+  const dispose = () => {
+    if (disposed) return
+    disposed = true
+    offData()
+    offExit()
+    dataCallbacks.clear()
+    pendingChunks.length = 0
+  }
+
+  const spawned = await terminal.spawn({
     id: options.sessionId,
     shell: options.shell,
     cwd: options.cwd,
     rows: options.rows,
     cols: options.cols,
+    cursor: options.cursor,
     env: options.env,
+  }).catch((error) => {
+    dispose()
+    throw error
   })
-  const dataCallbacks = new Set<(chunk: string) => void>()
-  const offData = terminal.onData(id, (data) => {
-    for (const callback of dataCallbacks) callback(data)
-  })
-  const offExit = terminal.onExit(id, () => {
-    dataCallbacks.clear()
-    offData()
-    offExit()
-  })
+  if (spawned.buffer) {
+    pendingChunks.unshift(spawned.buffer)
+  }
 
   return {
+    reused: Boolean(spawned.reused),
     write: (data) => {
       void terminal.write(id, data)
     },
     resize: (cols, rows) => {
       void terminal.resize(id, cols, rows)
     },
+    dispose,
     kill: () => {
-      offData()
-      offExit()
-      dataCallbacks.clear()
+      dispose()
       void terminal.kill(id)
     },
     onData: (callback) => {
+      if (pendingChunks.length > 0) {
+        const replay = pendingChunks.join("")
+        pendingChunks.length = 0
+        callback(replay)
+      }
+
       dataCallbacks.add(callback)
     },
   }
@@ -264,7 +297,10 @@ function parseCliInvocation(input: string): { cliTool: string; promptText: strin
   }
 }
 
-export function Terminal({ sessionId, isActive = true, shouldBoot = true }: TerminalProps) {
+export function Terminal(props: TerminalProps) {
+  const sessionId = props.sessionId
+  const isActive = () => props.isActive ?? true
+
   let terminalRef: HTMLDivElement | undefined
   let xtermRef: XTerm | null = null
   let fitAddonRef: FitAddon | null = null
@@ -289,6 +325,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
   let lastPtySizeRef: { rows: number; cols: number } | null = null
   let lastPersistedActivityAtRef = 0
   let startupDurationMsRef: number | null = null
+  let hasInitializedSessionStateRef = false
 
   const sessionProjectId = useStore((state) => {
     const project = state.projects.find((item) => item.sessions.some((session) => session.id === sessionId))
@@ -313,9 +350,11 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
   const recordSessionStartup = useStore((state) => state.recordSessionStartup)
 
   const fitTerminal = () => {
+    if (!isActive()) return
     if (fitRafRef !== null) return
     fitRafRef = requestAnimationFrame(() => {
       fitRafRef = null
+      if (!isActive()) return
       const fit = fitAddonRef
       const term = xtermRef
       if (fit && term) {
@@ -339,11 +378,47 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
     })
   }
 
+  const safelyScrollToBottomAndFocus = (term: XTerm | null, shouldFocus = false) => {
+    if (!term) return
+    try {
+      if (!term.element || !term.textarea) return
+      term.scrollToBottom()
+      if (shouldFocus) term.focus()
+    } catch {
+      // Ignore teardown timing issues from xterm internals.
+    }
+  }
+
+  const updateTerminalInputState = (active: boolean) => {
+    const helperTextarea =
+      xtermRef?.textarea ?? terminalRef?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")
+
+    if (helperTextarea) {
+      if (active) {
+        helperTextarea.removeAttribute("tabindex")
+        helperTextarea.removeAttribute("aria-hidden")
+      } else {
+        helperTextarea.setAttribute("tabindex", "-1")
+        helperTextarea.setAttribute("aria-hidden", "true")
+      }
+    }
+
+    if (!active && terminalRef) {
+      const activeElement = terminalRef.ownerDocument.activeElement
+      if (activeElement instanceof HTMLElement && terminalRef.contains(activeElement)) {
+        activeElement.blur()
+      }
+    }
+  }
+
   createEffect(() => {
-    // Reset state when sessionId changes
-    sessionId // track dependency
+    if (hasInitializedSessionStateRef) return
+    const initialSession = session()
+    if (!initialSession) return
+
+    hasInitializedSessionStateRef = true
     awaitingPromptTitleRef = false
-    hasNamedFromPromptRef = !session() || !DEFAULT_SESSION_NAME_PATTERN.test(session()!.name)
+    hasNamedFromPromptRef = !DEFAULT_SESSION_NAME_PATTERN.test(initialSession.name)
     hasFlushedPendingLaunchRef = false
     hasRecordedStartupMetricRef = false
     inputBufferRef = ""
@@ -351,8 +426,8 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
     captureEscapePendingRef = false
     spawnStartedAtRef = null
     lastPtySizeRef = null
-    lastPersistedActivityAtRef = session()?.lastActiveAt ?? 0
-    startupDurationMsRef = typeof session()?.startupDurationMs === "number" ? session()!.startupDurationMs : null
+    lastPersistedActivityAtRef = initialSession.lastActiveAt ?? 0
+    startupDurationMsRef = typeof initialSession.startupDurationMs === "number" ? initialSession.startupDurationMs ?? null : null
     ptyKilledRef = false
   })
 
@@ -368,7 +443,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
   })
 
   onMount(() => {
-    if (!terminalRef || !session() || !shouldBoot) return
+    if (!terminalRef || !session()) return
 
     const bootSession = session()!
     const bootProjectId = sessionProjectId()
@@ -411,6 +486,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
     }
 
     const pasteFromClipboard = async () => {
+      if (!isActive()) return
       if (!term || !supportsClipboardRead()) return
 
       try {
@@ -418,29 +494,26 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         if (!text) return
         const safePasteText = sanitizeClipboardPasteText(text)
         if (!safePasteText) return
-        term.focus()
+        safelyScrollToBottomAndFocus(term, true)
         const pty = ptyRef
         if (pty && !ptyKilledRef) {
           try { pty.write(safePasteText) } catch { /* ignore */ }
         } else {
           term.paste(safePasteText)
         }
-        term.scrollToBottom()
+        safelyScrollToBottomAndFocus(term, false)
       } catch (error) {
         console.error("Failed to paste clipboard text into terminal", error)
       }
     }
 
     const bootTerminal = async () => {
-      console.log("[Terminal] bootTerminal starting...", { sessionId, cancelled, hasTermRef: !!terminalRef })
       try {
         if (cancelled || !terminalRef) {
-          console.log("[Terminal] bootTerminal early exit - cancelled or no ref")
           return
         }
 
         const hostInfo = await nativeApi.invoke("get_terminal_host_info") as TerminalHostInfo
-        console.log("[Terminal] hostInfo:", hostInfo)
         const isWindows = hostInfo.os === "windows"
         const windowsBuildNumber =
           typeof hostInfo.windowsBuildNumber === "number" && hostInfo.windowsBuildNumber > 0
@@ -485,42 +558,18 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         const serializeAddon = new SerializeAddon()
         const unicode11Addon = new Unicode11Addon()
         const clipboardAddon = new ClipboardAddon()
-        const imageAddon = new ImageAddon()
-        const ligaturesAddon = new LigaturesAddon()
-        let ligaturesLoaded = false
-        const tryLoadLigatures = () => {
-          if (ligaturesLoaded) return
-          if (document.visibilityState !== "visible") return
-          try {
-            term?.loadAddon(ligaturesAddon)
-            ligaturesLoaded = true
-          } catch (error) {
-            console.warn("Ligatures addon unavailable.", error)
-          }
-        }
-        const progressAddon = new ProgressAddon()
-
         term.loadAddon(fitAddon)
         term.loadAddon(new WebLinksAddon())
         term.loadAddon(searchAddon)
         term.loadAddon(serializeAddon)
         term.loadAddon(unicode11Addon)
         try { term.loadAddon(clipboardAddon) } catch (error) { console.warn("Clipboard addon unavailable.", error) }
-        try { term.loadAddon(imageAddon) } catch (error) { console.warn("Image addon unavailable.", error) }
-        try { term.loadAddon(progressAddon) } catch (error) { console.warn("Progress addon unavailable.", error) }
 
         term.unicode.activeVersion = '11'
 
         term.open(terminalRef)
 
-        tryLoadLigatures()
-        const handleVisibilityChange = () => {
-          tryLoadLigatures()
-        }
-        document.addEventListener("visibilitychange", handleVisibilityChange)
-        removeVisibilityChangeListener = () => {
-          document.removeEventListener("visibilitychange", handleVisibilityChange)
-        }
+        removeVisibilityChangeListener = null
 
         const helperTextarea = terminalRef.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")
         helperTextarea?.setAttribute("autocomplete", "off")
@@ -528,9 +577,10 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         helperTextarea?.setAttribute("autocapitalize", "off")
         helperTextarea?.setAttribute("spellcheck", "false")
         helperTextarea?.setAttribute("data-gramm", "false")
+        updateTerminalInputState(isActive())
 
-        if (isActive) {
-          term.focus()
+        if (isActive()) {
+          safelyScrollToBottomAndFocus(term, true)
         }
 
         xtermRef = term
@@ -538,25 +588,20 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         searchAddonRef = searchAddon
         serializeAddonRef = serializeAddon
 
-        fitTerminal()
-        fitTimeouts.push(
-          ...FIT_SETTLE_DELAYS_MS.map((delay) =>
-            window.setTimeout(() => {
-              fitTerminal()
-            }, delay),
-          ),
-        )
-
-        initPty(isWindows, windowsBuildNumber)
+        void initPty()
 
         term.onData(handleData)
         term.onBinary(handleBinaryData)
-        term.onKey(() => {
-          term?.scrollToBottom()
-        })
         term.attachCustomKeyEventHandler((event) => {
           const activeTerm = term
           if (!activeTerm) return true
+          if (!isActive()) {
+            if (event.type === "keydown") {
+              event.preventDefault()
+              event.stopPropagation()
+            }
+            return false
+          }
           if (event.type !== "keydown") return true
 
           if (event.key === "f" && (hostInfo.os === "macos" ? event.metaKey : event.ctrlKey) && !event.shiftKey && !event.altKey) {
@@ -588,6 +633,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
           return false
         })
         term.attachCustomWheelEventHandler((event) => {
+          if (!isActive()) return false
           term?.focus()
           event.stopPropagation()
           return true
@@ -604,14 +650,6 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
       }
     }
 
-    if ("fonts" in document) {
-      document.fonts.ready
-        .then(() => {
-          if (!cancelled) fitTerminal()
-        })
-        .catch(() => { })
-    }
-
     const handleWindowResize = () => fitTerminal()
     window.addEventListener("resize", handleWindowResize)
 
@@ -620,20 +658,9 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
     })
     resizeObserver.observe(terminalRef)
 
-    const initPty = async (ptyIsWindows: boolean, ptyWindowsBuildNumber: number | null) => {
-      console.log("[Terminal] initPty starting...", { sessionId, ptyIsWindows, ptyWindowsBuildNumber, hasTerm: !!term, spawnInFlight: spawnInFlightRef })
+    const initPty = async () => {
       if (!term || spawnInFlightRef) {
-        console.log("[Terminal] initPty early exit - no term or spawn in flight")
         return
-      }
-
-      try {
-        const savedOutput = await api.loadSessionOutput(sessionId)
-        if (savedOutput && !cancelled) {
-          term.write(savedOutput)
-        }
-      } catch (err) {
-        console.error('Failed to load session output', err)
       }
 
       if (cancelled) return
@@ -657,11 +684,11 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         }
         ptyRef = null
 
-        if (ptyIsWindows) {
-          await new Promise(resolve => window.setTimeout(resolve, 100))
+        try {
+          fitAddonRef?.fit()
+        } catch {
+          // Keep startup moving even if the container has not been measured yet.
         }
-
-        fitAddonRef?.fit()
         const spawnRows = Math.max(24, term.rows || 24)
         const spawnCols = Math.max(80, term.cols || 80)
 
@@ -670,8 +697,10 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         }
 
         spawnStartedAtRef = Date.now()
-
-        const useConpty: boolean = Boolean(ptyIsWindows && ptyWindowsBuildNumber && ptyWindowsBuildNumber >= 17763)
+        const restoredOutput = await api.loadSessionOutput(sessionId).catch(() => "")
+        if (restoredOutput) {
+          queueTerminalWrite(restoredOutput)
+        }
 
         const pty = await spawnNativePty({
           sessionId,
@@ -679,6 +708,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
           cwd: bootProjectPath || undefined,
           rows: spawnRows,
           cols: spawnCols,
+          cursor: restoredOutput.length,
           env: {
             TERM: "xterm-256color",
             COLORTERM: "truecolor",
@@ -689,7 +719,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         ptyRef = pty
         ptyKilledRef = false
         lastPtySizeRef = { rows: spawnRows, cols: spawnCols }
-        console.log("[Terminal] PTY spawned successfully", { sessionId, rows: spawnRows, cols: spawnCols, useConpty })
+
         fitTerminal()
         fitTimeouts.push(
           ...FIT_SETTLE_DELAYS_MS.map((delay) =>
@@ -698,6 +728,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
             }, delay + 40),
           ),
         )
+
         pty.onData((chunk) => {
           const data = decodePtyChunk(chunk, decoderRef)
           if (!data) return
@@ -758,12 +789,14 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
     }
 
     const handlePointerDown = (event: PointerEvent) => {
+      if (!isActive()) return
       if (event.button !== 0) return
       if ((event.target as HTMLElement | null)?.closest("a")) return
       term?.focus()
     }
 
     const handleContextMenu = (event: MouseEvent) => {
+      if (!isActive()) return
       if ((event.target as HTMLElement | null)?.closest("a")) return
       if (!supportsClipboardRead()) return
 
@@ -884,6 +917,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
     }
 
     const handleData = (data: string) => {
+      if (!isActive()) return
       const currentProjectId = sessionProjectId()
       const currentSession = session()
 
@@ -933,6 +967,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
     }
 
     const handleBinaryData = (data: string) => {
+      if (!isActive()) return
       if (!data) return
       const pty = ptyRef
       if (pty && !ptyKilledRef) {
@@ -942,23 +977,9 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
 
     void bootTerminal()
 
-    const handleBeforeUnload = () => {
-      if (serializeAddonRef) {
-        const currentOutput = serializeAddonRef.serialize()
-        if (currentOutput) {
-          void api.saveSessionOutput(sessionId, currentOutput).catch(console.error)
-        }
-      }
-    }
-
-    window.addEventListener("beforeunload", handleBeforeUnload)
-
     onCleanup(() => {
       cancelled = true
       removeVisibilityChangeListener?.()
-
-      handleBeforeUnload()
-      window.removeEventListener("beforeunload", handleBeforeUnload)
 
       for (const timeoutId of fitTimeouts) {
         clearTimeout(timeoutId)
@@ -975,47 +996,18 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
       term?.element?.removeEventListener("contextmenu", handleContextMenu, true)
       spawnInFlightRef = false
       const pty = ptyRef
-      if (pty && !ptyKilledRef) {
-        ptyKilledRef = true
-        try { pty.kill() } catch { /* ignore */ }
+      if (pty) {
+        try { pty.dispose() } catch { /* ignore */ }
       }
       ptyRef = null
       term?.dispose()
+      if (xtermRef === term) {
+        xtermRef = null
+      }
+      fitAddonRef = null
+      searchAddonRef = null
+      serializeAddonRef = null
     })
-  })
-
-  createEffect(() => {
-    if (!isActive) return
-
-    const timer = window.setTimeout(() => {
-      requestAnimationFrame(() => {
-        const term = xtermRef
-        if (!term) return
-
-        if (fitAddonRef) {
-          fitAddonRef.fit()
-          const nextSize = { rows: term.rows, cols: term.cols }
-          const lastSize = lastPtySizeRef
-
-          if (!lastSize || lastSize.rows !== nextSize.rows || lastSize.cols !== nextSize.cols) {
-            lastPtySizeRef = nextSize
-            const pty = ptyRef
-            if (pty && !ptyKilledRef) {
-              try {
-                pty.resize(nextSize.cols, nextSize.rows)
-              } catch (e) {
-                console.warn("PTY resize failed:", e)
-              }
-            }
-          }
-        }
-
-        term.scrollToBottom()
-        term.focus()
-      })
-    }, 50)
-
-    onCleanup(() => window.clearTimeout(timer))
   })
 
   onMount(() => {
@@ -1109,6 +1101,26 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
     onCleanup(() => window.removeEventListener("gg-rerun-cli-current-session", handleRerunCurrentCli as EventListener))
   })
 
+  createEffect(() => {
+    const active = isActive()
+    updateTerminalInputState(active)
+
+    const term = xtermRef
+    if (!term) return
+
+    if (!active) {
+      setShowSearch(false)
+      return
+    }
+
+    window.setTimeout(() => {
+      if (!isActive()) return
+      updateTerminalInputState(true)
+      fitTerminal()
+      safelyScrollToBottomAndFocus(term, true)
+    }, 0)
+  })
+
   const handleSearchNext = () => {
     if (searchAddonRef && searchQuery()) {
       searchAddonRef.findNext(searchQuery())
@@ -1143,10 +1155,12 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
   return (
     <Card
       class="terminal-container absolute inset-0 h-full w-full min-h-0 min-w-0 overflow-hidden rounded-none border-0 bg-background p-0"
-      data-active={isActive ? "true" : "false"}
+      data-active={isActive() ? "true" : "false"}
+      aria-hidden={isActive() ? undefined : "true"}
+      inert={isActive() ? undefined : true}
       style={{
-        visibility: isActive ? "visible" : "hidden",
-        "pointer-events": isActive ? "auto" : "none",
+        display: isActive() ? "flex" : "none",
+        "pointer-events": isActive() ? "auto" : "none",
       }}
     >
       <div class="absolute right-4 top-2 z-10 flex items-center gap-1 opacity-0 transition-opacity hover:opacity-100 group-hover:opacity-100 terminal-toolbar">

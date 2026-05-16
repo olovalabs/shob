@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { Select as SelectPrimitive } from "@kobalte/core"
 
 import { cn } from "@/lib/utils"
@@ -46,7 +47,7 @@ function SelectContent(props: any) {
       >
         <SelectScrollUpButton />
         <SelectPrimitive.Listbox>
-          {resolvedChildren()}
+          {() => resolvedChildren()}
         </SelectPrimitive.Listbox>
         <SelectScrollDownButton />
       </SelectPrimitive.Content>

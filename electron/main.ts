@@ -9,6 +9,16 @@ import pty from "@lydell/node-pty";
 import chokidar from "chokidar";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
+import {
+  appendSessionOutput,
+  closeSessionDatabase,
+  deleteProject as deletePersistedProject,
+  initSessionDatabase,
+  loadProjects as loadPersistedProjects,
+  loadSessionOutput as loadPersistedSessionOutput,
+  saveProject as savePersistedProject,
+  saveSessionOutput as savePersistedSessionOutput,
+} from "./session-db.js";
 
 const execFileAsync = promisify(execFile);
 const isDev = !app.isPackaged;
@@ -17,11 +27,22 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 type ProjectWatcher = Awaited<ReturnType<typeof chokidar.watch>> | null;
+type PtyRuntime = {
+  proc: any;
+  outputQueue: { chunks: string[]; scheduled: boolean };
+  persistQueue: { chunks: string[]; timer: NodeJS.Timeout | null };
+  buffer: string;
+  bufferCursor: number;
+  cursor: number;
+  status: "running" | "exited";
+};
+
 let mainWindow: BrowserWindow | null = null;
 let projectWatcher: ProjectWatcher = null;
 let lastWatcherOperationAt = 0;
-const ptyProcesses = new Map<string, any>();
-const ptyOutputQueues = new Map<string, { chunks: string[]; scheduled: boolean }>();
+const ptySessions = new Map<string, PtyRuntime>();
+const PTY_REPLAY_BUFFER_LIMIT = 2 * 1024 * 1024;
+const PTY_OUTPUT_FLUSH_DELAY_MS = 500;
 
 function userDataPath(...parts: string[]) {
   return path.join(app.getPath("userData"), ...parts);
@@ -29,38 +50,7 @@ function userDataPath(...parts: string[]) {
 
 async function ensureDataDirs() {
   await fs.mkdir(userDataPath("sessions"), { recursive: true });
-}
-
-async function readJson<T>(filePath: string, fallback: T): Promise<T> {
-  try {
-    return JSON.parse(await fs.readFile(filePath, "utf8"));
-  } catch {
-    return fallback;
-  }
-}
-
-async function writeJsonAtomic(filePath: string, value: unknown) {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  const tempPath = `${filePath}.${process.pid}.tmp`;
-  await fs.writeFile(tempPath, JSON.stringify(value, null, 2));
-  await fs.rename(tempPath, filePath);
-}
-
-function projectsPath() {
-  return userDataPath("projects.json");
-}
-
-async function loadProjects() {
-  return readJson(projectsPath(), []);
-}
-
-async function saveProjects(projects: unknown[]) {
-  await writeJsonAtomic(projectsPath(), projects);
-}
-
-function sessionOutputPath(sessionId: string) {
-  const safeId = String(sessionId).replace(/[^a-zA-Z0-9._-]/g, "_");
-  return userDataPath("sessions", `${safeId}.log`);
+  initSessionDatabase();
 }
 
 function normalizeOs() {
@@ -243,9 +233,51 @@ async function setProjectWatch(watchPath: string | null) {
   lastWatcherOperationAt = Date.now();
 }
 
+function trimPtyReplayBuffer(session: PtyRuntime) {
+  if (session.buffer.length <= PTY_REPLAY_BUFFER_LIMIT) return;
+  const excess = session.buffer.length - PTY_REPLAY_BUFFER_LIMIT;
+  session.buffer = session.buffer.slice(excess);
+  session.bufferCursor += excess;
+}
+
+function flushPersistedPtyOutput(id: string, session: PtyRuntime) {
+  if (session.persistQueue.timer) {
+    clearTimeout(session.persistQueue.timer);
+    session.persistQueue.timer = null;
+  }
+
+  if (session.persistQueue.chunks.length === 0) return;
+
+  const payload = session.persistQueue.chunks.join("");
+  session.persistQueue.chunks.length = 0;
+
+  try {
+    appendSessionOutput(id, payload);
+  } catch (error) {
+    console.warn("Failed to persist terminal output", { id, error });
+  }
+}
+
+function schedulePersistedPtyOutput(id: string, session: PtyRuntime) {
+  if (session.persistQueue.timer) return;
+
+  session.persistQueue.timer = setTimeout(() => {
+    flushPersistedPtyOutput(id, session);
+  }, PTY_OUTPUT_FLUSH_DELAY_MS);
+}
+
 function queuePtyOutput(id: string, data: string) {
-  const item = ptyOutputQueues.get(id);
-  if (!item) return;
+  const session = ptySessions.get(id);
+  if (!session || session.status !== "running") return;
+
+  session.cursor += data.length;
+  session.buffer += data;
+  trimPtyReplayBuffer(session);
+
+  session.persistQueue.chunks.push(data);
+  schedulePersistedPtyOutput(id, session);
+
+  const item = session.outputQueue;
   item.chunks.push(data);
   if (item.scheduled) return;
   item.scheduled = true;
@@ -258,20 +290,44 @@ function queuePtyOutput(id: string, data: string) {
   });
 }
 
+function getPtyReplayFromCursor(session: PtyRuntime, cursor: unknown) {
+  const requested =
+    typeof cursor === "number" && Number.isFinite(cursor)
+      ? Math.max(0, Math.floor(cursor))
+      : session.bufferCursor;
+
+  if (requested <= session.bufferCursor) return session.buffer;
+  if (requested >= session.cursor) return "";
+
+  return session.buffer.slice(requested - session.bufferCursor);
+}
+
+function finishPty(id: string, session: PtyRuntime) {
+  if (session.status === "exited") return;
+
+  session.status = "exited";
+  if (ptySessions.get(id) === session) {
+    ptySessions.delete(id);
+  }
+  session.outputQueue.chunks.length = 0;
+  session.outputQueue.scheduled = false;
+  flushPersistedPtyOutput(id, session);
+  mainWindow?.webContents.send("shob:terminal-exit", { id });
+}
+
 function killPty(id: string) {
-  const proc = ptyProcesses.get(id);
-  if (!proc) return;
-  ptyProcesses.delete(id);
-  ptyOutputQueues.delete(id);
+  const session = ptySessions.get(id);
+  if (!session) return;
+  finishPty(id, session);
   try {
-    proc.kill();
+    session.proc.kill();
   } catch {
     // best effort cleanup
   }
 }
 
 function killAllPtys() {
-  for (const id of [...ptyProcesses.keys()]) killPty(id);
+  for (const id of [...ptySessions.keys()]) killPty(id);
 }
 
 async function revealInFinder(targetPath: string) {
@@ -400,28 +456,18 @@ async function getGitFileState(filePath: string) {
 }
 
 const handlers: Record<string, (payload?: any) => Promise<any> | any> = {
-  get_projects: async () => loadProjects(),
+  get_projects: async () => loadPersistedProjects(),
   save_project: async ({ project }) => {
-    const projects = await loadProjects();
-    const index = projects.findIndex((item: any) => item.id === project.id);
-    if (index >= 0) projects[index] = project;
-    else projects.push(project);
-    await saveProjects(projects);
-    return project;
+    return savePersistedProject(project);
   },
   delete_project: async ({ projectId }) => {
-    const projects = await loadProjects();
-    await saveProjects(projects.filter((project: any) => project.id !== projectId));
+    deletePersistedProject(projectId);
   },
   save_session_output: async ({ sessionId, output }) => {
-    await fs.writeFile(sessionOutputPath(sessionId), output || "");
+    savePersistedSessionOutput(sessionId, output || "");
   },
   load_session_output: async ({ sessionId }) => {
-    try {
-      return await fs.readFile(sessionOutputPath(sessionId), "utf8");
-    } catch {
-      return "";
-    }
+    return loadPersistedSessionOutput(sessionId);
   },
   read_image_data_url: async ({ path: imagePath }) => {
     const bytes = await fs.readFile(imagePath);
@@ -514,35 +560,77 @@ function registerIpc() {
 
   ipcMain.handle("shob:terminal-spawn", async (_event, options) => {
     const id = options.id || crypto.randomUUID();
-    killPty(id);
+    const existing = ptySessions.get(id);
+    if (existing && existing.status === "running") {
+      const cols = Math.max(2, Number(options.cols) || 80);
+      const rows = Math.max(2, Number(options.rows) || 24);
+      let resized = true;
+      try {
+        existing.proc.resize(cols, rows);
+      } catch {
+        resized = false;
+      }
+
+      if (resized && ptySessions.get(id) === existing && existing.status === "running") {
+        return {
+          id,
+          reused: true,
+          buffer: getPtyReplayFromCursor(existing, options.cursor),
+          bufferCursor: existing.bufferCursor,
+          cursor: existing.cursor,
+        };
+      }
+
+      finishPty(id, existing);
+      try {
+        existing.proc.kill();
+      } catch {
+        // best effort cleanup before replacing a broken PTY
+      }
+    }
+
     const proc = pty.spawn(options.shell, options.args || [], {
       name: "xterm-256color",
       cwd: options.cwd || os.homedir(),
       cols: Math.max(2, Number(options.cols) || 80),
       rows: Math.max(2, Number(options.rows) || 24),
-      env: { ...process.env, ...(options.env || {}) },
+      env: {
+        ...process.env,
+        ...(options.env || {}),
+        SHOB_SESSION_ID: id,
+        SHOB_TERMINAL_SESSION: id,
+      },
     });
 
-    ptyProcesses.set(id, proc);
-    ptyOutputQueues.set(id, { chunks: [], scheduled: false });
+    const runtime: PtyRuntime = {
+      proc,
+      outputQueue: { chunks: [], scheduled: false },
+      persistQueue: { chunks: [], timer: null },
+      buffer: "",
+      bufferCursor: 0,
+      cursor: 0,
+      status: "running",
+    };
+
+    ptySessions.set(id, runtime);
     proc.onData((data: string) => queuePtyOutput(id, data));
     proc.onExit(() => {
-      ptyProcesses.delete(id);
-      ptyOutputQueues.delete(id);
-      mainWindow?.webContents.send("shob:terminal-exit", { id });
+      finishPty(id, runtime);
     });
 
-    return { id };
+    return { id, reused: false, buffer: "", bufferCursor: 0, cursor: 0 };
   });
 
   ipcMain.handle("shob:terminal-write", (_event, id, data) => {
-    const proc = ptyProcesses.get(id);
-    if (proc) proc.write(data);
+    const session = ptySessions.get(id);
+    if (session?.status === "running") session.proc.write(data);
   });
 
   ipcMain.handle("shob:terminal-resize", (_event, id, cols, rows) => {
-    const proc = ptyProcesses.get(id);
-    if (proc) proc.resize(Math.max(2, Number(cols) || 80), Math.max(2, Number(rows) || 24));
+    const session = ptySessions.get(id);
+    if (session?.status === "running") {
+      session.proc.resize(Math.max(2, Number(cols) || 80), Math.max(2, Number(rows) || 24));
+    }
   });
 
   ipcMain.handle("shob:terminal-kill", (_event, id) => {
@@ -595,6 +683,7 @@ app.whenReady().then(() => {
 
 app.on("before-quit", async () => {
   await handlers.cleanup_runtime();
+  closeSessionDatabase();
 });
 
 app.on("window-all-closed", () => {

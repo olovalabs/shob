@@ -1,18 +1,20 @@
-import { cva, type VariantProps } from "class-variance-authority"
+import { cva } from "class-variance-authority"
 import { Tabs as TabsPrimitive } from "@kobalte/core"
 
 import { cn } from "@/lib/utils"
-import { children } from "solid-js"
+import { children, splitProps } from "solid-js"
 
 function Tabs(props: any) {
+  const [local, rest] = splitProps(props, ["class", "onValueChange"])
   return (
     <TabsPrimitive.Root
       data-slot="tabs"
       class={cn(
         "group/tabs flex gap-2 data-[orientation=horizontal]:flex-col",
-        props.class
+        local.class
       )}
-      {...props}
+      onChange={local.onValueChange}
+      {...rest}
     />
   )
 }

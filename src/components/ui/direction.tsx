@@ -1,22 +1,12 @@
-"use client"
+// @ts-nocheck
+import type { JSX } from "solid-js"
 
-import * as React from "react"
-import { Direction } from "radix-ui"
-
-function DirectionProvider({
-  dir,
-  direction,
-  children,
-}: React.ComponentProps<typeof Direction.DirectionProvider> & {
-  direction?: React.ComponentProps<typeof Direction.DirectionProvider>["dir"]
-}) {
+function DirectionProvider(props: { dir?: "ltr" | "rtl"; direction?: "ltr" | "rtl"; children: JSX.Element }) {
   return (
-    <Direction.DirectionProvider dir={direction ?? dir}>
-      {children}
-    </Direction.DirectionProvider>
+    <div dir={props.direction ?? props.dir ?? "ltr"}>
+      {props.children}
+    </div>
   )
 }
 
-const useDirection = Direction.useDirection
-
-export { DirectionProvider, useDirection }
+export { DirectionProvider }
