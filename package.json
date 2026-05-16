@@ -7,8 +7,8 @@
   "scripts": {
     "dev": "node scripts/dev-electron.mjs",
     "electron": "node scripts/dev-electron.mjs",
-    "build": "pnpm run build:renderer && pnpm run build:electron:tsc",
-    "build:electron": "pnpm run build && electron-builder",
+    "build": "bun run build:renderer && bun run build:electron:tsc",
+    "build:electron": "bun run build && electron-builder",
     "lint": "eslint .",
     "preview": "vite preview",
     "prepare": "husky",
@@ -49,11 +49,6 @@
     "commitizen": {
       "path": "./node_modules/cz-git"
     }
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "electron"
-    ]
   },
   "dependencies": {
     "@ark-ui/solid": "^5.36.2",
