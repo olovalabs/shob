@@ -4,7 +4,8 @@ import { Sidebar } from './Sidebar'
 import { TabBar } from './TabBar'
 import { Terminal } from './Terminal'
 import { WelcomeScreen } from './WelcomeScreen'
-import { store, useStore } from '../store'
+import { SettingsPage } from './SettingsPage'
+import { useStore } from '../store'
 
 const FileTree = lazy(async () => {
   const mod = await import('./FileTree')
@@ -17,21 +18,16 @@ const folderNameFromPath = (path: string) => {
 }
 
 export function MainView() {
-  const store = useStore()
+  const appStore = useStore()
   const projects = useStore((s) => s.projects)
   const currentProject = useStore((s) =>
     s.projects.find((project) => project.id === s.currentProjectId) ?? null,
   )
-  const activeSessionId = useStore((s) => s.activeSessionId)
   const currentProjectId = useStore((s) => s.currentProjectId)
   const [activeFilePath, setActiveFilePath] = createSignal<string | null>(null)
   const [isFileTreeVisible, setIsFileTreeVisible] = createSignal(false)
+  const [activePage, setActivePage] = createSignal<'workspace' | 'settings'>('workspace')
   const projectSessions = createMemo(() => currentProject()?.sessions ?? [])
-  const activeProjectSessionId = createMemo(() => {
-    const sessionId = activeSessionId()
-    if (!sessionId) return null
-    return projectSessions().some((session) => session.id === sessionId) ? sessionId : null
-  })
 
   createEffect(() => {
     currentProjectId()
@@ -71,21 +67,21 @@ export function MainView() {
 
     const existing = projects().find((project) => project.path === selected)
     if (existing) {
-      store.setCurrentProject(existing.id)
+      appStore.setCurrentProject(existing.id)
       return
     }
 
-    const created = await store.addProject(folderNameFromPath(selected), selected)
-    store.setCurrentProject(created.id)
+    const created = await appStore.addProject(folderNameFromPath(selected), selected)
+    appStore.setCurrentProject(created.id)
   }
 
   const handleCreateSession = async () => {
     const cpid = currentProjectId() ?? projects()[0]?.id ?? null
     if (!cpid) return
     if (currentProjectId() !== cpid) {
-      store.setCurrentProject(cpid)
+      appStore.setCurrentProject(cpid)
     }
-    await store.launchCliSession(cpid)
+    await appStore.launchCliSession(cpid)
   }
 
   const handleToggleFileTree = () => {
@@ -95,29 +91,38 @@ export function MainView() {
 
   return (
     <div class="flex min-h-0 flex-1 bg-background text-foreground">
-      <Sidebar />
+      <Sidebar
+        onOpenSettingsPage={() => setActivePage('settings')}
+        onOpenWorkspacePage={() => setActivePage('workspace')}
+      />
       <div class="min-w-0 flex-1 flex flex-col bg-background">
-        <TabBar />
-        <div class="min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
-          <div class="relative h-full w-full min-h-0 min-w-0 overflow-hidden" style={{ display: projectSessions().length > 0 ? 'block' : 'none' }}>
-            <For each={projectSessions()}>
-              {(session) => (
-                <Terminal sessionId={session.id} />
-              )}
-            </For>
-          </div>
+        {activePage() === 'workspace' ? (
+          <>
+            <TabBar />
+            <div class="min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+              <div class="relative h-full w-full min-h-0 min-w-0 overflow-hidden" style={{ display: projectSessions().length > 0 ? 'block' : 'none' }}>
+                <For each={projectSessions()}>
+                  {(session) => (
+                    <Terminal sessionId={session.id} />
+                  )}
+                </For>
+              </div>
 
-          {projectSessions().length === 0 && (
-            <WelcomeScreen
-              projects={projects()}
-              currentProject={currentProject()}
-              onOpenFolder={handleOpenFolder}
-              onCreateSession={handleCreateSession}
-              onSelectProject={store.setCurrentProject}
-              onToggleFileTree={handleToggleFileTree}
-            />
-          )}
-        </div>
+              {projectSessions().length === 0 && (
+                <WelcomeScreen
+                  projects={projects()}
+                  currentProject={currentProject()}
+                  onOpenFolder={handleOpenFolder}
+                  onCreateSession={handleCreateSession}
+                  onSelectProject={appStore.setCurrentProject}
+                  onToggleFileTree={handleToggleFileTree}
+                />
+              )}
+            </div>
+          </>
+        ) : (
+          <SettingsPage />
+        )}
       </div>
       {(() => {
         if (!isFileTreeVisible()) return null
