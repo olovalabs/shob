@@ -1,145 +1,100 @@
-import { Component, startTransition, useEffect, useState } from 'react';
-import type { ErrorInfo, ReactNode } from 'react';
-import { nativeApi } from './services/native';
-import { TitleBar } from './components/TitleBar';
-import { MainView } from './components/MainView';
-import { useStore } from './store';
-
-class StartupErrorBoundary extends Component<
-  { children: ReactNode; fallback?: ReactNode },
-  { hasError: boolean }
-> {
-  state = { hasError: false };
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('Startup render crashed:', error, errorInfo);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        this.props.fallback ?? (
-          <div className="flex flex-1 items-center justify-center bg-black text-sm text-zinc-300">
-            Startup failed to render. Please restart the app.
-          </div>
-        )
-      );
-    }
-
-    return this.props.children;
-  }
-}
+import { createSignal, onCleanup, onMount, ErrorBoundary } from 'solid-js'
+import { nativeApi } from './services/native'
+import { TitleBar } from './components/TitleBar'
+import { MainView } from './components/MainView'
+import { useStore } from './store'
 
 function App() {
-  const { loadProjects, loadCliTools, loadAvailableShells } = useStore();
-  const [isBooting, setIsBooting] = useState(true);
+  const { loadProjects, loadCliTools, loadAvailableShells } = useStore()
+  const [isBooting, setIsBooting] = createSignal(true)
 
-  useEffect(() => {
-    let cancelled = false;
-    const BOOT_TIMEOUT_MS = 4000;
+  onMount(() => {
+    const BOOT_TIMEOUT_MS = 4000
 
     const initialize = async () => {
       try {
         await Promise.race([
           loadProjects(),
           new Promise<void>((resolve) => {
-            window.setTimeout(resolve, BOOT_TIMEOUT_MS);
+            window.setTimeout(resolve, BOOT_TIMEOUT_MS)
           }),
-        ]);
+        ])
       } catch (error) {
-        console.error('App boot initialization failed:', error);
+        console.error('App boot initialization failed:', error)
       }
 
-      if (cancelled) return;
-
-      startTransition(() => {
-        setIsBooting(false);
-      });
-    };
-
-    void initialize();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [loadProjects]);
-
-  useEffect(() => {
-    if (isBooting) {
-      return;
+      setIsBooting(false)
     }
 
-    let cancelled = false;
-    let timeoutId: number | null = null;
-    let idleId: number | null = null;
+    void initialize()
+  })
+
+  onMount(() => {
+    let timeoutId: number | null = null
+    let idleId: number | null = null
 
     const runDeferredInitialization = () => {
-      void Promise.allSettled([loadCliTools(), loadAvailableShells()]);
-    };
+      void Promise.allSettled([loadCliTools(), loadAvailableShells()])
+    }
 
     const scheduleDeferredInitialization = () => {
-      if (cancelled) return;
-
       if (typeof window.requestIdleCallback === 'function') {
         idleId = window.requestIdleCallback(() => {
-          if (!cancelled) {
-            runDeferredInitialization();
-          }
-        }, { timeout: 1500 });
-        return;
+          runDeferredInitialization()
+        }, { timeout: 1500 })
+        return
       }
 
       timeoutId = window.setTimeout(() => {
-        if (!cancelled) {
-          runDeferredInitialization();
-        }
-      }, 250);
-    };
+        runDeferredInitialization()
+      }, 250)
+    }
 
-    timeoutId = window.setTimeout(scheduleDeferredInitialization, 150);
+    timeoutId = window.setTimeout(scheduleDeferredInitialization, 150)
 
-    return () => {
-      cancelled = true;
+    onCleanup(() => {
       if (timeoutId !== null) {
-        window.clearTimeout(timeoutId);
+        window.clearTimeout(timeoutId)
       }
       if (idleId !== null && typeof window.cancelIdleCallback === 'function') {
-        window.cancelIdleCallback(idleId);
+        window.cancelIdleCallback(idleId)
       }
-    };
-  }, [isBooting, loadCliTools, loadAvailableShells]);
+    })
+  })
 
-  useEffect(() => {
+  onMount(() => {
     const handleBeforeUnload = () => {
-      void nativeApi.invoke('cleanup_runtime').catch(() => {});
-    };
+      void nativeApi.invoke('cleanup_runtime').catch(() => {})
+    }
 
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, []);
-  
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    onCleanup(() => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    })
+  })
+
+  const fallback = (
+    <div class="flex flex-1 items-center justify-center bg-black text-sm text-zinc-300">
+      Startup failed to render. Please restart the app.
+    </div>
+  )
+
   return (
     <>
-      <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        <StartupErrorBoundary fallback={<div className="h-[40px] shrink-0 bg-[#121212]" />}>
+      <div class="flex h-full min-h-0 flex-col overflow-hidden">
+        <ErrorBoundary fallback={fallback}>
           <TitleBar />
-        </StartupErrorBoundary>
-        {isBooting ? (
-          <div className="flex-1 bg-black" />
+        </ErrorBoundary>
+        {isBooting() ? (
+          <div class="flex-1 bg-black" />
         ) : (
-          <StartupErrorBoundary>
+          <ErrorBoundary fallback={fallback}>
             <MainView />
-          </StartupErrorBoundary>
+          </ErrorBoundary>
         )}
       </div>
     </>
-  );
+  )
 }
 
-export default App;
+export default App

@@ -1,10 +1,12 @@
+import type { JSX } from "solid-js"
+
 import { cn } from "@/lib/utils"
 
-function Skeleton({ className, ...props }: React.ComponentProps<"div">) {
+function Skeleton(props: JSX.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       data-slot="skeleton"
-      className={cn("animate-pulse rounded-md bg-muted", className)}
+      class={cn("animate-pulse rounded-md bg-muted", props.class)}
       {...props}
     />
   )

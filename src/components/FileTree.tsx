@@ -1,11 +1,12 @@
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  memo,
-} from "react"
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  onMount,
+  For,
+  Show,
+} from "solid-js"
 import { nativeApi } from "../services/native"
 import {
   Check,
@@ -17,7 +18,7 @@ import {
   RefreshCw,
   Search,
   X,
-} from "lucide-react"
+} from "lucide-solid"
 import { useStore } from "../store"
 import { Button } from "@/components/ui/button"
 
@@ -262,7 +263,6 @@ const getStatusTone = (statusCode: string) => {
   return ""
 }
 
-/** Compute diff counts for a tree entry, including nested changes for directories. */
 function getDiffCounts(
   entry: FileTreeEntry,
   changeMap: Record<string, GitFileChange>,
@@ -289,7 +289,6 @@ function getDiffCounts(
   return { additions, deletions, statusCode, effectiveChange }
 }
 
-/** Recursively collect all loaded entries into a flat list. */
 function flattenLoadedTree(
   entries: FileTreeEntry[],
   childrenByPath: Record<string, FileTreeEntry[]>,
@@ -320,28 +319,28 @@ function ContextMenu({
   projectPath: string
   onClose: () => void
 }) {
-  const ref = useRef<HTMLDivElement>(null)
+  let ref: HTMLDivElement | undefined
 
-  useEffect(() => {
+  onMount(() => {
     const onMouseDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+      if (ref && !ref.contains(e.target as Node)) onClose()
     }
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose()
     }
     document.addEventListener("mousedown", onMouseDown, true)
     document.addEventListener("keydown", onKeyDown)
-    return () => {
+    onCleanup(() => {
       document.removeEventListener("mousedown", onMouseDown, true)
       document.removeEventListener("keydown", onKeyDown)
-    }
-  }, [onClose])
+    })
+  })
 
-  const relativePath = useMemo(() => {
+  const relativePath = createMemo(() => {
     const normalized = normalizePath(state.entry.path)
     const base = normalizePath(projectPath).replace(/\/+$/, "")
     return normalized.startsWith(base) ? normalized.slice(base.length + 1) : normalized
-  }, [state.entry.path, projectPath])
+  })
 
   const copyText = async (text: string) => {
     try { await navigator.clipboard.writeText(text) } catch { /* silent */ }
@@ -357,7 +356,7 @@ function ContextMenu({
 
   const menuItems: MenuItem[] = [
     { label: "Copy Absolute Path", action: () => void copyText(state.entry.path) },
-    { label: "Copy Relative Path", action: () => void copyText(relativePath) },
+    { label: "Copy Relative Path", action: () => void copyText(relativePath()) },
     { label: "Copy Filename", action: () => void copyText(state.entry.name) },
     null,
     { label: "Reveal in File Manager", action: () => void revealInFinder() },
@@ -367,17 +366,16 @@ function ContextMenu({
     <div
       ref={ref}
       role="menu"
-      className="fixed z-50 min-w-[190px] rounded-md border bg-popover py-1 text-[13px] shadow-md"
-      style={{ top: state.y, left: state.x }}
+      class="fixed z-50 min-w-[190px] rounded-md border bg-popover py-1 text-[13px] shadow-md"
+      style={{ top: `${state.y}px`, left: `${state.x}px` }}
     >
-      {menuItems.map((item, i) =>
+      {menuItems.map((item) =>
         item === null ? (
-          <div key={`sep-${i}`} className="my-1 border-t border-border" />
+          <div class="my-1 border-t border-border" />
         ) : (
           <button
-            key={item.label}
             role="menuitem"
-            className="flex w-full items-center px-3 py-1.5 text-left text-popover-foreground hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:outline-none"
+            class="flex w-full items-center px-3 py-1.5 text-left text-popover-foreground hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:outline-none"
             onClick={item.action}
           >
             {item.label}
@@ -389,7 +387,7 @@ function ContextMenu({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SearchResults — flat filtered list shown while search query is active
+// SearchResults
 // ─────────────────────────────────────────────────────────────────────────────
 
 function SearchResults({
@@ -413,76 +411,75 @@ function SearchResults({
   iconLookup: IconLookup
   projectPath: string
   onFileSelect: (path: string | null) => void
-  onContextMenu: (e: React.MouseEvent, entry: FileTreeEntry) => void
+  onContextMenu: (e: MouseEvent, entry: FileTreeEntry) => void
 }) {
   const normalizedProject = normalizePath(projectPath).replace(/\/+$/, "")
   const lowerQuery = query.toLowerCase()
 
-  const matches = useMemo(() => {
+  const matches = createMemo(() => {
     const all = flattenLoadedTree(rootEntries, childrenByPath)
     return all
       .filter((e) => !e.isDirectory && e.name.toLowerCase().includes(lowerQuery))
-      .slice(0, 200) // cap results for performance
-  }, [rootEntries, childrenByPath, lowerQuery])
-
-  if (matches.length === 0) {
-    return (
-      <p className="px-3 py-4 text-[12px] text-muted-foreground">
-        No files matching <span className="font-medium">"{query}"</span> in loaded tree.
-      </p>
-    )
-  }
+      .slice(0, 200)
+  })
 
   return (
-    <div className="flex flex-col gap-px py-1">
-      {matches.map((entry) => {
-        const { additions, deletions, statusCode } = getDiffCounts(entry, changeMap, allChanges)
-        const changedTextClass = getStatusTone(statusCode)
-        const hasDiff = additions > 0 || deletions > 0
-        const relDir = normalizePath(entry.path)
-          .replace(`${normalizedProject}/`, "")
-          .replace(`/${entry.name}`, "") || "."
+    <Show when={matches().length > 0} fallback={
+      <p class="px-3 py-4 text-[12px] text-muted-foreground">
+        No files matching <span class="font-medium">"{query}"</span> in loaded tree.
+      </p>
+    }>
+      <div class="flex flex-col gap-px py-1">
+        <For each={matches()}>
+          {(entry) => {
+            const { additions, deletions, statusCode } = getDiffCounts(entry, changeMap, allChanges)
+            const changedTextClass = getStatusTone(statusCode)
+            const hasDiff = additions > 0 || deletions > 0
+            const relDir = normalizePath(entry.path)
+              .replace(`${normalizedProject}/`, "")
+              .replace(`/${entry.name}`, "") || "."
 
-        return (
-          <Button
-            key={entry.path}
-            type="button"
-            variant="ghost"
-            onClick={() => onFileSelect(entry.path)}
-            onContextMenu={(e) => onContextMenu(e, entry)}
-            className={`flex min-h-8 w-full flex-col items-start gap-0 rounded-[6px] px-3 py-1 text-left text-[13px] hover:bg-accent/50 ${selectedFilePath === entry.path ? "bg-accent text-accent-foreground" : ""
-              }`}
-          >
-            <span className={`flex w-full items-center gap-1.5 truncate font-medium ${changedTextClass || "text-foreground"}`}>
-              <img
-                src={getFileIcon(entry.name, iconLookup)}
-                alt=""
-                className="h-3.5 w-3.5 shrink-0 opacity-90"
-                onError={(e) => { e.currentTarget.src = iconPath("default_file.svg") }}
-              />
-              {entry.name}
-              {hasDiff && (
-                <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-[11px] font-normal">
-                  {additions > 0 && <span className="text-[#22c55e]">+{additions}</span>}
-                  {deletions > 0 && <span className="text-[#ef4444]">-{deletions}</span>}
+            return (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => onFileSelect(entry.path)}
+                onContextMenu={(e: MouseEvent) => onContextMenu(e, entry)}
+                class={`flex min-h-8 w-full flex-col items-start gap-0 rounded-[6px] px-3 py-1 text-left text-[13px] hover:bg-accent/50 ${selectedFilePath === entry.path ? "bg-accent text-accent-foreground" : ""
+                  }`}
+              >
+                <span class={`flex w-full items-center gap-1.5 truncate font-medium ${changedTextClass || "text-foreground"}`}>
+                  <img
+                    src={getFileIcon(entry.name, iconLookup)}
+                    alt=""
+                    class="h-3.5 w-3.5 shrink-0 opacity-90"
+                    onError={(e) => { e.currentTarget.src = iconPath("default_file.svg") }}
+                  />
+                  {entry.name}
+                  <Show when={hasDiff}>
+                    <span class="ml-auto inline-flex shrink-0 items-center gap-1 text-[11px] font-normal">
+                      <Show when={additions > 0}><span class="text-[#22c55e]">+{additions}</span></Show>
+                      <Show when={deletions > 0}><span class="text-[#ef4444]">-{deletions}</span></Show>
+                    </span>
+                  </Show>
                 </span>
-              )}
-            </span>
-            <span className="max-w-full truncate text-[11px] text-muted-foreground">{relDir}</span>
-          </Button>
-        )
-      })}
-      {matches.length === 200 && (
-        <p className="px-3 py-1.5 text-[11px] text-muted-foreground">
-          Showing first 200 results — refine your query to see more.
-        </p>
-      )}
-    </div>
+                <span class="max-w-full truncate text-[11px] text-muted-foreground">{relDir}</span>
+              </Button>
+            )
+          }}
+        </For>
+        <Show when={matches().length === 200}>
+          <p class="px-3 py-1.5 text-[11px] text-muted-foreground">
+            Showing first 200 results — refine your query to see more.
+          </p>
+        </Show>
+      </div>
+    </Show>
   )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TreeNode — memoized to avoid subtree re-renders on unrelated state changes
+// TreeNode
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface TreeNodeProps {
@@ -498,10 +495,10 @@ interface TreeNodeProps {
   iconLookup: IconLookup
   onToggle: (entry: FileTreeEntry) => void
   onFileSelect: (filePath: string | null) => void
-  onContextMenu: (e: React.MouseEvent, entry: FileTreeEntry) => void
+  onContextMenu: (e: MouseEvent, entry: FileTreeEntry) => void
 }
 
-const TreeNode = memo(function TreeNode({
+function TreeNode({
   entry,
   depth,
   isRoot,
@@ -516,9 +513,9 @@ const TreeNode = memo(function TreeNode({
   onFileSelect,
   onContextMenu,
 }: TreeNodeProps) {
-  const isExpanded = expandedPaths[entry.path]
-  const children = childrenByPath[entry.path] ?? []
-  const isLoading = loadingPaths[entry.path]
+  const isExpanded = () => expandedPaths[entry.path]
+  const children = () => childrenByPath[entry.path] ?? []
+  const isLoading = () => loadingPaths[entry.path]
 
   const { additions, deletions, statusCode } = getDiffCounts(entry, changeMap, allChanges)
   const hasDiffCounts = additions > 0 || deletions > 0
@@ -535,66 +532,67 @@ const TreeNode = memo(function TreeNode({
         <Button
           type="button"
           onClick={() => onToggle(entry)}
-          onContextMenu={(e) => onContextMenu(e, entry)}
+          onContextMenu={(e: MouseEvent) => onContextMenu(e, entry)}
           variant="ghost"
-          className="group flex min-h-7 w-full items-center gap-1 justify-start py-[3px] pr-2 text-left text-[13px] hover:bg-accent/50"
-          style={{ paddingLeft: getNodePadding(depth, DIRECTORY_BASE_PADDING) }}
+          class="group flex min-h-7 w-full items-center gap-1 justify-start py-[3px] pr-2 text-left text-[13px] hover:bg-accent/50"
+          style={{ "padding-left": getNodePadding(depth, DIRECTORY_BASE_PADDING) }}
         >
-          <span className="inline-flex w-4 justify-center text-muted-foreground">
-            {isExpanded
-              ? <ChevronDown className="h-3.5 w-3.5" strokeWidth={1.8} />
-              : <ChevronRight className="h-3.5 w-3.5" strokeWidth={1.8} />}
+          <span class="inline-flex w-4 justify-center text-muted-foreground">
+            {isExpanded()
+              ? <ChevronDown class="h-3.5 w-3.5" stroke-width={1.8} />
+              : <ChevronRight class="h-3.5 w-3.5" stroke-width={1.8} />}
           </span>
           <img
-            src={getFolderIcon(Boolean(isExpanded), Boolean(isRoot))}
+            src={getFolderIcon(Boolean(isExpanded()), Boolean(isRoot))}
             alt=""
-            className="h-4 w-4 shrink-0 opacity-95"
+            class="h-4 w-4 shrink-0 opacity-95"
             onError={(e) => {
               e.currentTarget.src = iconPath(isRoot ? "default_root_folder.svg" : "default_folder.svg")
             }}
           />
-          <span className={`truncate ${changedTextClass || "text-inherit"} ${hasNestedChange ? "font-medium" : ""}`}>
+          <span class={`truncate ${changedTextClass || "text-inherit"} ${hasNestedChange ? "font-medium" : ""}`}>
             {entry.name}
           </span>
-          {hasDiffCounts && (
-            <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-[11px]">
-              {additions > 0 && <span className="text-[#22c55e]">+{additions}</span>}
-              {deletions > 0 && <span className="text-[#ef4444]">-{deletions}</span>}
+          <Show when={hasDiffCounts}>
+            <span class="ml-auto inline-flex shrink-0 items-center gap-1 text-[11px]">
+              <Show when={additions > 0}><span class="text-[#22c55e]">+{additions}</span></Show>
+              <Show when={deletions > 0}><span class="text-[#ef4444]">-{deletions}</span></Show>
             </span>
-          )}
+          </Show>
         </Button>
 
-        {isExpanded && (
-          <div className="ml-[15px] border-l border-border/50">
-            {isLoading ? (
+        <Show when={isExpanded()}>
+          <div class="ml-[15px] border-l border-border/50">
+            <Show when={isLoading()} fallback={
+              <For each={children()}>
+                {(child) => (
+                  <TreeNode
+                    entry={child}
+                    depth={depth + 1}
+                    isRoot={false}
+                    expandedPaths={expandedPaths}
+                    loadingPaths={loadingPaths}
+                    childrenByPath={childrenByPath}
+                    selectedFilePath={selectedFilePath}
+                    changeMap={changeMap}
+                    allChanges={allChanges}
+                    iconLookup={iconLookup}
+                    onToggle={onToggle}
+                    onFileSelect={onFileSelect}
+                    onContextMenu={onContextMenu}
+                  />
+                )}
+              </For>
+            }>
               <div
-                className="py-1 text-[12px] text-muted-foreground"
-                style={{ paddingLeft: getNodePadding(depth, LOADING_BASE_PADDING) }}
+                class="py-1 text-[12px] text-muted-foreground"
+                style={{ "padding-left": getNodePadding(depth, LOADING_BASE_PADDING) }}
               >
                 Loading...
               </div>
-            ) : (
-              children.map((child) => (
-                <TreeNode
-                  key={child.path}
-                  entry={child}
-                  depth={depth + 1}
-                  isRoot={false}
-                  expandedPaths={expandedPaths}
-                  loadingPaths={loadingPaths}
-                  childrenByPath={childrenByPath}
-                  selectedFilePath={selectedFilePath}
-                  changeMap={changeMap}
-                  allChanges={allChanges}
-                  iconLookup={iconLookup}
-                  onToggle={onToggle}
-                  onFileSelect={onFileSelect}
-                  onContextMenu={onContextMenu}
-                />
-              ))
-            )}
+            </Show>
           </div>
-        )}
+        </Show>
       </div>
     )
   }
@@ -603,246 +601,212 @@ const TreeNode = memo(function TreeNode({
     <Button
       type="button"
       onClick={() => onFileSelect(entry.path)}
-      onContextMenu={(e) => onContextMenu(e, entry)}
+      onContextMenu={(e: MouseEvent) => onContextMenu(e, entry)}
       variant="ghost"
-      className={`group flex min-h-7 w-full items-center gap-1 rounded-[6px] justify-start py-[3px] pr-2 text-left text-[13px] ${selectedFilePath === entry.path
+      class={`group flex min-h-7 w-full items-center gap-1 rounded-[6px] justify-start py-[3px] pr-2 text-left text-[13px] ${selectedFilePath === entry.path
         ? "bg-accent text-accent-foreground"
         : statusCode
           ? "bg-transparent text-foreground/80 hover:bg-accent/50"
           : "text-muted-foreground hover:bg-accent/50"
         }`}
-      style={{ paddingLeft: getNodePadding(depth, FILE_BASE_PADDING) }}
+      style={{ "padding-left": getNodePadding(depth, FILE_BASE_PADDING) }}
     >
       <img
         src={getFileIcon(entry.name, iconLookup)}
         alt=""
-        className="h-4 w-4 shrink-0 opacity-95"
+        class="h-4 w-4 shrink-0 opacity-95"
         onError={(e) => { e.currentTarget.src = iconPath("default_file.svg") }}
       />
-      <span className={`truncate ${changedTextClass || "text-inherit"}`}>{entry.name}</span>
-      {hasDiffCounts && (
-        <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-[11px]">
-          {additions > 0 && <span className="text-[#22c55e]">+{additions}</span>}
-          {deletions > 0 && <span className="text-[#ef4444]">-{deletions}</span>}
+      <span class={`truncate ${changedTextClass || "text-inherit"}`}>{entry.name}</span>
+      <Show when={hasDiffCounts}>
+        <span class="ml-auto inline-flex shrink-0 items-center gap-1 text-[11px]">
+          <Show when={additions > 0}><span class="text-[#22c55e]">+{additions}</span></Show>
+          <Show when={deletions > 0}><span class="text-[#ef4444]">-{deletions}</span></Show>
         </span>
-      )}
+      </Show>
     </Button>
   )
-})
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FileTree
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function FileTree({ selectedFilePath, onFileSelect }: FileTreeProps) {
-  const { projects, currentProjectId } = useStore()
-  const currentProject = useMemo(
-    () => projects.find((p) => p.id === currentProjectId) ?? null,
-    [projects, currentProjectId],
+  const projects = useStore((s) => s.projects)
+  const currentProjectId = useStore((s) => s.currentProjectId)
+  const currentProject = createMemo(
+    () => projects().find((p) => p.id === currentProjectId()) ?? null,
   )
 
-  const [rootEntries, setRootEntries] = useState<FileTreeEntry[]>([])
-  const [childrenByPath, setChildrenByPath] = useState<Record<string, FileTreeEntry[]>>({})
-  const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({})
-  const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({})
-  const [error, setError] = useState<string | null>(null)
-  const [gitStatus, setGitStatus] = useState<GitStatusSummary | null>(null)
-  const [copiedPath, setCopiedPath] = useState(false)
-  const [availableIconNames, setAvailableIconNames] = useState<string[]>([])
-  const [searchQuery, setSearchQuery] = useState("")
-  const [searchOpen, setSearchOpen] = useState(false)
-  const [isRefreshing, setIsRefreshing] = useState(false)
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const [rootEntries, setRootEntries] = createSignal<FileTreeEntry[]>([])
+  const [childrenByPath, setChildrenByPath] = createSignal<Record<string, FileTreeEntry[]>>({})
+  const [expandedPaths, setExpandedPaths] = createSignal<Record<string, boolean>>({})
+  const [loadingPaths, setLoadingPaths] = createSignal<Record<string, boolean>>({})
+  const [error, setError] = createSignal<string | null>(null)
+  const [gitStatus, setGitStatus] = createSignal<GitStatusSummary | null>(null)
+  const [copiedPath, setCopiedPath] = createSignal(false)
+  const [availableIconNames, setAvailableIconNames] = createSignal<string[]>([])
+  const [searchQuery, setSearchQuery] = createSignal("")
+  const [searchOpen, setSearchOpen] = createSignal(false)
+  const [isRefreshing, setIsRefreshing] = createSignal(false)
+  const [contextMenu, setContextMenu] = createSignal<ContextMenuState | null>(null)
 
-  // ── Refs ─────────────────────────────────────────────────────────────────
-  // Key fix: store expandedPaths in a ref so refreshTree doesn't need it as a
-  // dep, preventing the FS event listener from re-registering on every expand.
-  const expandedPathsRef = useRef<Record<string, boolean>>({})
-  const searchInputRef = useRef<HTMLInputElement>(null)
+  let expandedPathsRef: Record<string, boolean> = {}
+  let searchInputRef: HTMLInputElement | undefined
 
-  /** Synced setter — keeps both state (for renders) and ref (for callbacks) in step. */
-  const setExpandedPathsSynced = useCallback(
-    (updater: Record<string, boolean> | ((prev: Record<string, boolean>) => Record<string, boolean>)) => {
-      setExpandedPaths((prev) => {
-        const next = typeof updater === "function" ? updater(prev) : updater
-        expandedPathsRef.current = next
-        return next
-      })
-    },
-    [],
-  )
+  const setExpandedPathsSynced = (
+    updater: Record<string, boolean> | ((prev: Record<string, boolean>) => Record<string, boolean>),
+  ) => {
+    setExpandedPaths((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater
+      expandedPathsRef = next
+      return next
+    })
+  }
 
-  // ── Derived ───────────────────────────────────────────────────────────────
+  const iconLookup = createMemo(() => buildIconLookup(availableIconNames()))
 
-  const iconLookup = useMemo(() => buildIconLookup(availableIconNames), [availableIconNames])
-
-  const changeMap = useMemo(
+  const changeMap = createMemo(
     () =>
       Object.fromEntries(
-        (gitStatus?.changedFiles ?? []).map((c) => [
+        (gitStatus()?.changedFiles ?? []).map((c) => [
           normalizePath(c.absolutePath).toLowerCase(),
           c,
         ]),
       ),
-    [gitStatus],
   )
 
-  const allChanges = useMemo(() => Object.values(changeMap), [changeMap])
+  const allChanges = createMemo(() => Object.values(changeMap()))
 
-  const changedFileCount = gitStatus?.changedFiles.length ?? 0
+  const changedFileCount = () => gitStatus()?.changedFiles.length ?? 0
 
-  // ── Sorting / merging helpers ─────────────────────────────────────────────
+  const entryHasChanges = (entryPath: string) => isChangedPath(entryPath, changeMap())
 
-  const entryHasChanges = useCallback(
-    (entryPath: string) => isChangedPath(entryPath, changeMap),
-    [changeMap],
-  )
+  const sortEntries = (entries: FileTreeEntry[]) =>
+    [...entries].sort((a, b) => {
+      const ac = entryHasChanges(a.path)
+      const bc = entryHasChanges(b.path)
+      if (ac !== bc) return ac ? -1 : 1
+      if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
+      return a.name.localeCompare(b.name)
+    })
 
-  const sortEntries = useCallback(
-    (entries: FileTreeEntry[]) =>
-      [...entries].sort((a, b) => {
-        const ac = entryHasChanges(a.path)
-        const bc = entryHasChanges(b.path)
-        if (ac !== bc) return ac ? -1 : 1
-        if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
-        return a.name.localeCompare(b.name)
-      }),
-    [entryHasChanges],
-  )
+  const mergeDeletedEntries = (entries: FileTreeEntry[], dirPath: string) => {
+    const normalizedDir = normalizePath(dirPath).replace(/\/+$/, "")
+    const existingByName = new Map(entries.map((e) => [e.name.toLowerCase(), e]))
+    const synthetic = new Map<string, FileTreeEntry>()
 
-  const mergeDeletedEntries = useCallback(
-    (entries: FileTreeEntry[], dirPath: string) => {
-      const normalizedDir = normalizePath(dirPath).replace(/\/+$/, "")
-      const existingByName = new Map(entries.map((e) => [e.name.toLowerCase(), e]))
-      const synthetic = new Map<string, FileTreeEntry>()
+    for (const change of gitStatus()?.changedFiles ?? []) {
+      if (change.status.trim().charAt(0) !== "D") continue
+      const normalizedDeleted = normalizePath(change.absolutePath)
+      if (!normalizedDeleted.startsWith(normalizedDir)) continue
+      const remainder = normalizedDeleted.slice(normalizedDir.length).replace(/^\/+/, "")
+      if (!remainder) continue
+      const segments = remainder.split("/").filter(Boolean)
+      if (segments.length === 0) continue
+      const immediateName = segments[0]
+      const key = immediateName.toLowerCase()
+      if (existingByName.has(key) || synthetic.has(key)) continue
+      const isDirectory = segments.length > 1
+      synthetic.set(key, {
+        name: immediateName,
+        path: isDirectory
+          ? `${normalizedDir}/${immediateName}`
+          : normalizedDeleted,
+        isDirectory,
+        isVirtual: true,
+        isDeleted: !isDirectory,
+      })
+    }
 
-      for (const change of gitStatus?.changedFiles ?? []) {
-        if (change.status.trim().charAt(0) !== "D") continue
-        const normalizedDeleted = normalizePath(change.absolutePath)
-        if (!normalizedDeleted.startsWith(normalizedDir)) continue
-        const remainder = normalizedDeleted.slice(normalizedDir.length).replace(/^\/+/, "")
-        if (!remainder) continue
-        const segments = remainder.split("/").filter(Boolean)
-        if (segments.length === 0) continue
-        const immediateName = segments[0]
-        const key = immediateName.toLowerCase()
-        if (existingByName.has(key) || synthetic.has(key)) continue
-        const isDirectory = segments.length > 1
-        synthetic.set(key, {
-          name: immediateName,
-          path: isDirectory
-            ? `${normalizedDir}/${immediateName}`
-            : normalizedDeleted,
-          isDirectory,
-          isVirtual: true,
-          isDeleted: !isDirectory,
-        })
-      }
+    return [...entries, ...synthetic.values()]
+  }
 
-      return [...entries, ...synthetic.values()]
-    },
-    [gitStatus],
-  )
-
-  // ── Data loading ──────────────────────────────────────────────────────────
-
-  const loadDirectory = useCallback(
-    async (path: string) => {
-      setLoadingPaths((p) => ({ ...p, [path]: true }))
-      try {
-        const entries = await nativeApi.invoke("list_directory", { path }).catch(() => []) as FileTreeEntry[]
-        const sorted = sortEntries(mergeDeletedEntries(entries, path))
-        setChildrenByPath((p) => ({ ...p, [path]: sorted }))
-        return sorted
-      } finally {
-        setLoadingPaths((p) => ({ ...p, [path]: false }))
-      }
-    },
-    [mergeDeletedEntries, sortEntries],
-  )
-
-  const loadGitStatus = useCallback(async () => {
-    if (!currentProject?.path) { setGitStatus(null); return }
+  const loadDirectory = async (path: string) => {
+    setLoadingPaths((p) => ({ ...p, [path]: true }))
     try {
-      const summary = await nativeApi.invoke("get_git_status", { path: currentProject.path }) as GitStatusSummary
+      const entries = await nativeApi.invoke("list_directory", { path }).catch(() => []) as FileTreeEntry[]
+      const sorted = sortEntries(mergeDeletedEntries(entries, path))
+      setChildrenByPath((p) => ({ ...p, [path]: sorted }))
+      return sorted
+    } finally {
+      setLoadingPaths((p) => ({ ...p, [path]: false }))
+    }
+  }
+
+  const loadGitStatus = async () => {
+    const project = currentProject()
+    if (!project?.path) { setGitStatus(null); return }
+    try {
+      const summary = await nativeApi.invoke("get_git_status", { path: project.path }) as GitStatusSummary
       setGitStatus(summary)
     } catch {
       setGitStatus(null)
     }
-  }, [currentProject?.path])
+  }
 
-  /**
-   * Refresh the tree without resetting expanded state.
-   * Uses `expandedPathsRef` instead of state to avoid re-creation on every expand.
-   */
-  const refreshTree = useCallback(
-    async (options?: { resetExpanded?: boolean }) => {
-      if (!currentProject?.path) {
-        setRootEntries([])
-        setChildrenByPath({})
+  const refreshTree = async (options?: { resetExpanded?: boolean }) => {
+    const project = currentProject()
+    if (!project?.path) {
+      setRootEntries([])
+      setChildrenByPath({})
+      setExpandedPathsSynced({})
+      setError(null)
+      return
+    }
+
+    try {
+      setError(null)
+
+      if (options?.resetExpanded) {
         setExpandedPathsSynced({})
-        setError(null)
-        return
+        setChildrenByPath({})
       }
 
-      try {
-        setError(null)
+      const rawRoot = await nativeApi.invoke("list_directory", { path: project.path }) as FileTreeEntry[]
+      const root = sortEntries(mergeDeletedEntries(rawRoot, project.path))
 
-        if (options?.resetExpanded) {
-          setExpandedPathsSynced({})
-          setChildrenByPath({})
-        }
+      const expandedList = Object.entries(expandedPathsRef)
+        .filter(([, v]) => v)
+        .map(([path]) => path)
 
-        const rawRoot = await nativeApi.invoke("list_directory", { path: currentProject.path }) as FileTreeEntry[]
-        const root = sortEntries(mergeDeletedEntries(rawRoot, currentProject.path))
+      const nextChildren: Record<string, FileTreeEntry[]> = {}
+      await Promise.all(
+        expandedList.map(async (path) => {
+          const entries = await nativeApi.invoke("list_directory", { path }).catch(() => []) as FileTreeEntry[]
+          nextChildren[path] = sortEntries(mergeDeletedEntries(entries, path))
+        }),
+      )
 
-        // Re-load all currently expanded directories using the ref (stable reference)
-        const expandedList = Object.entries(expandedPathsRef.current)
-          .filter(([, v]) => v)
-          .map(([path]) => path)
+      setRootEntries(root)
+      setChildrenByPath(nextChildren)
 
-        const nextChildren: Record<string, FileTreeEntry[]> = {}
-        await Promise.all(
-          expandedList.map(async (path) => {
-            const entries = await nativeApi.invoke("list_directory", { path }).catch(() => []) as FileTreeEntry[]
-            nextChildren[path] = sortEntries(mergeDeletedEntries(entries, path))
-          }),
-        )
-
-        setRootEntries(root)
-        setChildrenByPath(nextChildren)
-
-        if (selectedFilePath) {
-          const visible = new Set<string>()
-          const collect = (items: FileTreeEntry[]) => {
-            for (const item of items) {
-              visible.add(item.path)
-              if (item.isDirectory && nextChildren[item.path]) collect(nextChildren[item.path])
-            }
+      if (selectedFilePath) {
+        const visible = new Set<string>()
+        const collect = (items: FileTreeEntry[]) => {
+          for (const item of items) {
+            visible.add(item.path)
+            if (item.isDirectory && nextChildren[item.path]) collect(nextChildren[item.path])
           }
-          collect(root)
-          if (!visible.has(selectedFilePath)) onFileSelect(null)
         }
-      } catch (err) {
-        setRootEntries([])
-        setError(String(err))
+        collect(root)
+        if (!visible.has(selectedFilePath)) onFileSelect(null)
       }
-    },
-    // expandedPaths deliberately excluded — we use the ref instead
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [currentProject?.path, selectedFilePath, onFileSelect, mergeDeletedEntries, sortEntries],
-  )
+    } catch (err) {
+      setRootEntries([])
+      setError(String(err))
+    }
+  }
 
-  const handleManualRefresh = useCallback(async () => {
+  const handleManualRefresh = async () => {
     setIsRefreshing(true)
     await Promise.all([refreshTree(), loadGitStatus()])
     setIsRefreshing(false)
-  }, [refreshTree, loadGitStatus])
-
-  // ── Effects ───────────────────────────────────────────────────────────────
+  }
 
   // Load icon manifest
-  useEffect(() => {
+  onMount(() => {
     let disposed = false
     fetch("/vscode-icons/manifest.json")
       .then((r) => r.ok ? r.json() : [])
@@ -852,50 +816,49 @@ export function FileTree({ selectedFilePath, onFileSelect }: FileTreeProps) {
         }
       })
       .catch(() => { if (!disposed) setAvailableIconNames([]) })
-    return () => { disposed = true }
-  }, [])
+    onCleanup(() => { disposed = true })
+  })
 
   // Reset tree when project changes
-  useEffect(() => {
+  createEffect(() => {
+    currentProject()?.path // track dependency
     void refreshTree({ resetExpanded: true })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentProject?.path])
+  })
 
   // Load git status when project changes
-  useEffect(() => {
+  createEffect(() => {
+    currentProject()?.path // track dependency
     void loadGitStatus()
-  }, [loadGitStatus])
+  })
 
-  // Start/stop filesystem watch (debounced to prevent OS errors on rapid changes)
-  useEffect(() => {
+  // Start/stop filesystem watch
+  onMount(() => {
     let timeoutId: number | null = null
     let isCancelled = false
 
     const setupWatcher = async () => {
-      // Small delay to batch rapid path changes
       await new Promise(resolve => { timeoutId = window.setTimeout(resolve, 50) })
       if (isCancelled) return
-      void nativeApi.invoke("set_project_watch", { path: currentProject?.path ?? null }).catch(console.error)
+      void nativeApi.invoke("set_project_watch", { path: currentProject()?.path ?? null }).catch(console.error)
     }
 
     void setupWatcher()
 
-    return () => {
+    onCleanup(() => {
       isCancelled = true
       if (timeoutId) window.clearTimeout(timeoutId)
       void nativeApi.invoke("set_project_watch", { path: null }).catch(console.error)
-    }
-  }, [currentProject?.path])
+    })
+  })
 
   // Listen for FS events and debounce refresh
-  useEffect(() => {
-    if (!currentProject?.path) return
-
+  onMount(() => {
     let fsTimer: number | null = null
     let gitTimer: number | null = null
 
     const unlistenPromise = nativeApi.listen<ProjectFsEvent>("project-fs-event", (event) => {
-      if (event.payload.projectPath !== currentProject.path) return
+      const project = currentProject()
+      if (!project || event.payload.projectPath !== project.path) return
       const relevant = event.payload.paths.filter((p) => !isIgnoredProjectEventPath(p))
       if (relevant.length === 0) return
 
@@ -906,270 +869,275 @@ export function FileTree({ selectedFilePath, onFileSelect }: FileTreeProps) {
       gitTimer = window.setTimeout(() => { gitTimer = null; void loadGitStatus() }, DEBOUNCE_GIT_MS)
     })
 
-    return () => {
+    onCleanup(() => {
       if (fsTimer) window.clearTimeout(fsTimer)
       if (gitTimer) window.clearTimeout(gitTimer)
       void unlistenPromise.then((u) => u())
-    }
-  }, [currentProject?.path, refreshTree, loadGitStatus])
+    })
+  })
 
   // Copy path toast reset
-  useEffect(() => {
-    if (!copiedPath) return
+  createEffect(() => {
+    if (!copiedPath()) return
     const t = window.setTimeout(() => setCopiedPath(false), 1400)
-    return () => window.clearTimeout(t)
-  }, [copiedPath])
+    onCleanup(() => window.clearTimeout(t))
+  })
 
   // Focus search input when opened
-  useEffect(() => {
-    if (searchOpen) searchInputRef.current?.focus()
+  createEffect(() => {
+    if (searchOpen()) searchInputRef?.focus()
     else setSearchQuery("")
-  }, [searchOpen])
+  })
 
-  // ── Handlers ──────────────────────────────────────────────────────────────
-
-  const handleToggle = useCallback(async (entry: FileTreeEntry) => {
+  const handleToggle = async (entry: FileTreeEntry) => {
     if (!entry.isDirectory) return
-    const willExpand = !expandedPathsRef.current[entry.path]
+    const willExpand = !expandedPathsRef[entry.path]
     setExpandedPathsSynced((prev) => ({ ...prev, [entry.path]: willExpand }))
 
-    if (willExpand && !childrenByPath[entry.path]) {
+    if (willExpand && !childrenByPath()[entry.path]) {
       try {
         await loadDirectory(entry.path)
       } catch (err) {
         setError(String(err))
       }
     }
-  }, [childrenByPath, loadDirectory, setExpandedPathsSynced])
+  }
 
-  const handleCollapseAll = useCallback(() => {
+  const handleCollapseAll = () => {
     setExpandedPathsSynced({})
-  }, [setExpandedPathsSynced])
+  }
 
-  /** Expand only directories that contain git-changed files. */
-  const handleExpandChanged = useCallback(async () => {
-    if (!currentProject?.path || allChanges.length === 0) return
+  const handleExpandChanged = async () => {
+    const project = currentProject()
+    const changes = allChanges()
+    if (!project?.path || changes.length === 0) return
 
     const dirsToExpand = new Set<string>()
 
-    for (const change of allChanges) {
+    for (const change of changes) {
       const changedPath = normalizePath(change.absolutePath)
-      const projectRoot = normalizePath(currentProject.path).replace(/\/+$/, "")
+      const projectRoot = normalizePath(project.path).replace(/\/+$/, "")
       if (!changedPath.startsWith(projectRoot)) continue
 
       const relative = changedPath.slice(projectRoot.length + 1)
       const segments = relative.split("/")
 
-      // Expand every ancestor directory
       for (let i = 1; i < segments.length; i++) {
         dirsToExpand.add(`${projectRoot}/${segments.slice(0, i).join("/")}`)
       }
     }
 
-    const nextExpanded = { ...expandedPathsRef.current }
+    const nextExpanded = { ...expandedPathsRef }
     for (const dir of dirsToExpand) nextExpanded[dir] = true
     setExpandedPathsSynced(nextExpanded)
 
-    // Load any directories that haven't been loaded yet
     await Promise.all(
       [...dirsToExpand].map(async (dir) => {
-        if (!childrenByPath[dir]) {
+        if (!childrenByPath()[dir]) {
           try { await loadDirectory(dir) } catch { /* silent */ }
         }
       }),
     )
-  }, [currentProject?.path, allChanges, childrenByPath, loadDirectory, setExpandedPathsSynced])
+  }
 
-  const handleCopyProjectPath = useCallback(async () => {
-    if (!currentProject?.path) return
+  const handleCopyProjectPath = async () => {
+    const project = currentProject()
+    if (!project?.path) return
     try {
-      await navigator.clipboard.writeText(currentProject.path)
+      await navigator.clipboard.writeText(project.path)
       setCopiedPath(true)
     } catch {
       setCopiedPath(false)
     }
-  }, [currentProject?.path])
+  }
 
-  const handleContextMenu = useCallback((e: React.MouseEvent, entry: FileTreeEntry) => {
+  const handleContextMenu = (e: MouseEvent, entry: FileTreeEntry) => {
     e.preventDefault()
     e.stopPropagation()
     setContextMenu({ x: e.clientX, y: e.clientY, entry })
-  }, [])
+  }
 
-  const handleCloseContextMenu = useCallback(() => setContextMenu(null), [])
+  const handleCloseContextMenu = () => setContextMenu(null)
 
-  // ── Render ────────────────────────────────────────────────────────────────
-
-  const isSearching = searchOpen && searchQuery.trim().length > 0
+  const isSearching = () => searchOpen() && searchQuery().trim().length > 0
 
   return (
-    <aside className="flex h-full w-[332px] flex-col border-l bg-muted/40 text-foreground">
+    <aside class="flex h-full w-[332px] flex-col border-l bg-muted/40 text-foreground">
 
       {/* ── Toolbar ───────────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-1 border-b px-2 py-1.5">
-        <span className="flex-1 truncate text-[12px] font-medium text-foreground/80">
+      <div class="flex items-center gap-1 border-b px-2 py-1.5">
+        <span class="flex-1 truncate text-[12px] font-medium text-foreground/80">
           Explorer
         </span>
 
-        {changedFileCount > 0 && !searchOpen && (
+        <Show when={changedFileCount() > 0 && !searchOpen()}>
           <span
-            className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"
-            title={`${changedFileCount} changed file${changedFileCount !== 1 ? "s" : ""}`}
+            class="inline-flex items-center gap-1 text-[11px] text-muted-foreground"
+            title={`${changedFileCount()} changed file${changedFileCount() !== 1 ? "s" : ""}`}
           >
-            <GitBranch className="h-3 w-3" />
-            {changedFileCount}
+            <GitBranch class="h-3 w-3" />
+            {changedFileCount()}
           </span>
-        )}
+        </Show>
 
         <Button
           type="button"
           variant="ghost"
           size="icon-xs"
-          className="h-6 w-6"
-          title={searchOpen ? "Close search" : "Search files (Ctrl+F)"}
+          class="h-6 w-6"
+          title={searchOpen() ? "Close search" : "Search files (Ctrl+F)"}
           onClick={() => setSearchOpen((v) => !v)}
         >
-          {searchOpen ? <X className="h-3.5 w-3.5" /> : <Search className="h-3.5 w-3.5" />}
+          <Show when={searchOpen()} fallback={<Search class="h-3.5 w-3.5" />}>
+            <X class="h-3.5 w-3.5" />
+          </Show>
         </Button>
 
-        {changedFileCount > 0 && (
+        <Show when={changedFileCount() > 0}>
           <Button
             type="button"
             variant="ghost"
             size="icon-xs"
-            className="h-6 w-6"
+            class="h-6 w-6"
             title="Expand changed files"
             onClick={() => void handleExpandChanged()}
           >
-            <GitBranch className="h-3.5 w-3.5" />
+            <GitBranch class="h-3.5 w-3.5" />
           </Button>
-        )}
+        </Show>
 
         <Button
           type="button"
           variant="ghost"
           size="icon-xs"
-          className="h-6 w-6"
+          class="h-6 w-6"
           title="Collapse all"
           onClick={handleCollapseAll}
         >
-          <ChevronsUpDown className="h-3.5 w-3.5" />
+          <ChevronsUpDown class="h-3.5 w-3.5" />
         </Button>
 
         <Button
           type="button"
           variant="ghost"
           size="icon-xs"
-          className={`h-6 w-6 ${isRefreshing ? "animate-spin" : ""}`}
+          class={`h-6 w-6 ${isRefreshing() ? "animate-spin" : ""}`}
           title="Refresh"
-          disabled={isRefreshing}
+          disabled={isRefreshing()}
           onClick={() => void handleManualRefresh()}
         >
-          <RefreshCw className="h-3.5 w-3.5" />
+          <RefreshCw class="h-3.5 w-3.5" />
         </Button>
       </div>
 
       {/* ── Search bar ────────────────────────────────────────────────────── */}
-      {searchOpen && (
-        <div className="border-b px-2 py-1.5">
-          <div className="relative flex items-center">
-            <Search className="pointer-events-none absolute left-2 h-3 w-3 text-muted-foreground" />
+      <Show when={searchOpen()}>
+        <div class="border-b px-2 py-1.5">
+          <div class="relative flex items-center">
+            <Search class="pointer-events-none absolute left-2 h-3 w-3 text-muted-foreground" />
             <input
               ref={searchInputRef}
               type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              value={searchQuery()}
+              onInput={(e) => setSearchQuery(e.currentTarget.value)}
               onKeyDown={(e) => { if (e.key === "Escape") setSearchOpen(false) }}
               placeholder="Filter files…"
-              className="w-full rounded-md border bg-background py-1 pl-6 pr-2 text-[13px] outline-none focus:ring-1 focus:ring-ring"
+              class="w-full rounded-md border bg-background py-1 pl-6 pr-2 text-[13px] outline-none focus:ring-1 focus:ring-ring"
             />
-            {searchQuery && (
+            <Show when={searchQuery()}>
               <button
-                className="absolute right-2 text-muted-foreground hover:text-foreground"
+                class="absolute right-2 text-muted-foreground hover:text-foreground"
                 onClick={() => setSearchQuery("")}
                 tabIndex={-1}
               >
-                <X className="h-3 w-3" />
+                <X class="h-3 w-3" />
               </button>
-            )}
+            </Show>
           </div>
         </div>
-      )}
+      </Show>
 
       {/* ── Tree / Search results ─────────────────────────────────────────── */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-[10px] py-2">
-        {!currentProject ? (
-          <p className="px-2 py-3 text-sm text-muted-foreground">Select a project to see its files.</p>
-        ) : error ? (
-          <p className="px-2 py-3 text-sm text-destructive">{error}</p>
-        ) : isSearching ? (
-          <SearchResults
-            query={searchQuery.trim()}
-            rootEntries={rootEntries}
-            childrenByPath={childrenByPath}
-            selectedFilePath={selectedFilePath}
-            changeMap={changeMap}
-            allChanges={allChanges}
-            iconLookup={iconLookup}
-            projectPath={currentProject.path}
-            onFileSelect={onFileSelect}
-            onContextMenu={handleContextMenu}
-          />
-        ) : rootEntries.length === 0 ? (
-          <p className="px-2 py-3 text-sm text-muted-foreground">This folder is empty.</p>
-        ) : (
-          rootEntries.map((entry) => (
-            <TreeNode
-              key={entry.path}
-              entry={entry}
-              depth={0}
-              isRoot
-              expandedPaths={expandedPaths}
-              loadingPaths={loadingPaths}
-              childrenByPath={childrenByPath}
-              selectedFilePath={selectedFilePath}
-              changeMap={changeMap}
-              allChanges={allChanges}
-              iconLookup={iconLookup}
-              onToggle={handleToggle}
-              onFileSelect={onFileSelect}
-              onContextMenu={handleContextMenu}
-            />
-          ))
-        )}
+      <div class="min-h-0 flex-1 overflow-y-auto px-[10px] py-2">
+        <Show when={currentProject()} fallback={
+          <p class="px-2 py-3 text-sm text-muted-foreground">Select a project to see its files.</p>
+        }>
+          <Show when={!error()} fallback={
+            <p class="px-2 py-3 text-sm text-destructive">{error()}</p>
+          }>
+            <Show when={isSearching()} fallback={
+              <Show when={rootEntries().length > 0} fallback={
+                <p class="px-2 py-3 text-sm text-muted-foreground">This folder is empty.</p>
+              }>
+                <For each={rootEntries()}>
+                  {(entry) => (
+                    <TreeNode
+                      entry={entry}
+                      depth={0}
+                      isRoot
+                      expandedPaths={expandedPaths()}
+                      loadingPaths={loadingPaths()}
+                      childrenByPath={childrenByPath()}
+                      selectedFilePath={selectedFilePath}
+                      changeMap={changeMap()}
+                      allChanges={allChanges()}
+                      iconLookup={iconLookup()}
+                      onToggle={handleToggle}
+                      onFileSelect={onFileSelect}
+                      onContextMenu={handleContextMenu}
+                    />
+                  )}
+                </For>
+              </Show>
+            }>
+              <SearchResults
+                query={searchQuery().trim()}
+                rootEntries={rootEntries()}
+                childrenByPath={childrenByPath()}
+                selectedFilePath={selectedFilePath}
+                changeMap={changeMap()}
+                allChanges={allChanges()}
+                iconLookup={iconLookup()}
+                projectPath={currentProject()!.path}
+                onFileSelect={onFileSelect}
+                onContextMenu={handleContextMenu}
+              />
+            </Show>
+          </Show>
+        </Show>
       </div>
 
       {/* ── Footer ────────────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-2 border-t px-3 py-2.5">
+      <div class="flex items-center gap-2 border-t px-3 py-2.5">
         <span
-          className="min-w-0 flex-1 truncate text-[12px] text-muted-foreground"
-          title={currentProject?.path ?? ""}
+          class="min-w-0 flex-1 truncate text-[12px] text-muted-foreground"
+          title={currentProject()?.path ?? ""}
         >
-          {currentProject?.path ?? "No project selected"}
+          {currentProject()?.path ?? "No project selected"}
         </span>
         <Button
           type="button"
           onClick={() => void handleCopyProjectPath()}
-          disabled={!currentProject?.path}
+          disabled={!currentProject()?.path}
           variant="ghost"
           size="icon-xs"
-          className="h-5 w-5 shrink-0"
-          title={copiedPath ? "Copied!" : "Copy path"}
+          class="h-5 w-5 shrink-0"
+          title={copiedPath() ? "Copied!" : "Copy path"}
         >
-          {copiedPath
-            ? <Check className="h-3.5 w-3.5" strokeWidth={2} />
-            : <Copy className="h-3.5 w-3.5" strokeWidth={1.9} />}
+          <Show when={copiedPath()} fallback={<Copy class="h-3.5 w-3.5" stroke-width={1.9} />}>
+            <Check class="h-3.5 w-3.5" stroke-width={2} />
+          </Show>
         </Button>
       </div>
 
-      {/* ── Context menu (portal-free, fixed-position) ────────────────────── */}
-      {contextMenu && currentProject && (
+      {/* ── Context menu ──────────────────────────────────────────────────── */}
+      <Show when={contextMenu() && currentProject()}>
         <ContextMenu
-          state={contextMenu}
-          projectPath={currentProject.path}
+          state={contextMenu()!}
+          projectPath={currentProject()!.path}
           onClose={handleCloseContextMenu}
         />
-      )}
+      </Show>
     </aside>
   )
 }

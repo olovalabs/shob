@@ -6,7 +6,10 @@ import { Terminal } from './Terminal'
 import { WelcomeScreen } from './WelcomeScreen'
 import { useStore } from '../store'
 
-const FileTree = lazy(async () => import('./FileTree'))
+const FileTree = lazy(async () => {
+  const mod = await import('./FileTree')
+  return { default: mod.FileTree }
+})
 
 const folderNameFromPath = (path: string) => {
   const parts = path.split(/[\\/]/).filter(Boolean)
@@ -14,15 +17,13 @@ const folderNameFromPath = (path: string) => {
 }
 
 export function MainView() {
+  const store = useStore()
   const projects = useStore((s) => s.projects)
   const currentProject = useStore((s) =>
     s.projects.find((project) => project.id === s.currentProjectId) ?? null,
   )
   const activeSessionId = useStore((s) => s.activeSessionId)
   const currentProjectId = useStore((s) => s.currentProjectId)
-  const addProject = useStore((s) => s.addProject)
-  const setCurrentProject = useStore((s) => s.setCurrentProject)
-  const launchCliSession = useStore((s) => s.launchCliSession)
   const [activeFilePath, setActiveFilePath] = createSignal<string | null>(null)
   const [isFileTreeVisible, setIsFileTreeVisible] = createSignal(false)
   const [bootedSessionIds, setBootedSessionIds] = createSignal<Set<string>>(new Set())
@@ -78,18 +79,21 @@ export function MainView() {
 
     const existing = projects().find((project) => project.path === selected)
     if (existing) {
-      setCurrentProject(existing.id)
+      store.setCurrentProject(existing.id)
       return
     }
 
-    const created = await addProject(folderNameFromPath(selected), selected)
-    setCurrentProject(created.id)
+    const created = await store.addProject(folderNameFromPath(selected), selected)
+    store.setCurrentProject(created.id)
   }
 
   const handleCreateSession = async () => {
-    const cpid = currentProjectId()
+    const cpid = currentProjectId() ?? projects()[0]?.id ?? null
     if (!cpid) return
-    await launchCliSession(cpid)
+    if (currentProjectId() !== cpid) {
+      store.setCurrentProject(cpid)
+    }
+    await store.launchCliSession(cpid)
   }
 
   const handleToggleFileTree = () => {
@@ -128,7 +132,7 @@ export function MainView() {
               currentProject={currentProject()}
               onOpenFolder={handleOpenFolder}
               onCreateSession={handleCreateSession}
-              onSelectProject={setCurrentProject}
+              onSelectProject={store.setCurrentProject}
               onToggleFileTree={handleToggleFileTree}
             />
           )}

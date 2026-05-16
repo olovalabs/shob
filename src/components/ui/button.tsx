@@ -1,6 +1,6 @@
-import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
-import { Slot } from "radix-ui"
+import { Button as KobalteButton } from "@kobalte/core"
+import type { JSX } from "solid-js"
 
 import { cn } from "@/lib/utils"
 
@@ -41,24 +41,32 @@ const buttonVariants = cva(
   }
 )
 
+interface ButtonProps extends VariantProps<typeof buttonVariants> {
+  class?: string
+  children?: JSX.Element
+  disabled?: boolean
+  type?: "button" | "submit" | "reset"
+  onClick?: (e: MouseEvent) => void
+  onPointerDown?: (e: PointerEvent) => void
+  title?: string
+  "aria-label"?: string
+  "aria-pressed"?: boolean
+  style?: JSX.CSSProperties
+  [key: string]: any
+}
+
 function Button({
-  className,
+  class: className,
   variant = "default",
   size = "default",
-  asChild = false,
   ...props
-}: React.ComponentProps<"button"> &
-  VariantProps<typeof buttonVariants> & {
-    asChild?: boolean
-  }) {
-  const Comp = asChild ? Slot.Root : "button"
-
+}: ButtonProps) {
   return (
-    <Comp
+    <KobalteButton.Root
       data-slot="button"
       data-variant={variant}
       data-size={size}
-      className={cn(buttonVariants({ variant, size, className }))}
+      class={cn(buttonVariants({ variant, size, className }))}
       {...props}
     />
   )

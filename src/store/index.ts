@@ -683,11 +683,13 @@ export const actions: AppActions = {
 export function useStore(): AppState & AppActions;
 export function useStore<T>(selector: (state: AppState) => T): () => T;
 export function useStore<T>(selector?: (state: AppState) => T): (() => T) | (AppState & AppActions) {
+  const combinedState = () => ({ ...store, ...actions } as AppState & AppActions);
+
   if (!selector) {
-    return { ...store, ...actions };
+    return combinedState();
   }
 
-  return () => selector(store);
+  return () => selector(combinedState());
 }
 
 export { store, setStore };

@@ -35,19 +35,37 @@ const terminalExitSubscriptions = new Map<string, Set<() => void>>();
 ipcRenderer.on("shob:event", (_event, message) => {
   const listeners = eventSubscriptions.get(message.channel);
   if (!listeners) return;
-  for (const listener of listeners) listener({ payload: message.payload });
+  for (const listener of listeners) {
+    Promise.resolve()
+      .then(() => listener({ payload: message.payload }))
+      .catch((error) => {
+      console.error("shob:event listener failed", error);
+    });
+  }
 });
 
 ipcRenderer.on("shob:terminal-data", (_event, message) => {
   const listeners = terminalDataSubscriptions.get(message.id);
   if (!listeners) return;
-  for (const listener of listeners) listener(message.data);
+  for (const listener of listeners) {
+    Promise.resolve()
+      .then(() => listener(message.data))
+      .catch((error) => {
+      console.error("shob:terminal-data listener failed", error);
+    });
+  }
 });
 
 ipcRenderer.on("shob:terminal-exit", (_event, message) => {
   const listeners = terminalExitSubscriptions.get(message.id);
   if (!listeners) return;
-  for (const listener of listeners) listener();
+  for (const listener of listeners) {
+    Promise.resolve()
+      .then(() => listener())
+      .catch((error) => {
+      console.error("shob:terminal-exit listener failed", error);
+    });
+  }
 });
 
 function subscribe<T>(map: Map<string, Set<(value: T) => void>>, key: string, callback: (value: T) => void) {

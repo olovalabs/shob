@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js"
 import { Terminal as XTerm } from "@xterm/xterm"
 import { FitAddon } from "@xterm/addon-fit"
 import { ClipboardAddon } from "@xterm/addon-clipboard"
@@ -10,7 +10,7 @@ import { SearchAddon } from "@xterm/addon-search"
 import { SerializeAddon } from "@xterm/addon-serialize"
 import { Unicode11Addon } from "@xterm/addon-unicode11"
 import { nativeApi } from "../services/native"
-import { Search, X, ArrowUp, ArrowDown, Save, Trash2 } from "lucide-react"
+import { Search, X, ArrowUp, ArrowDown, Save, Trash2 } from "lucide-solid"
 import { CLI_ALIAS_TO_ID } from "../config/check"
 import { useStore } from "../store"
 import { api } from "../services/api"
@@ -265,30 +265,31 @@ function parseCliInvocation(input: string): { cliTool: string; promptText: strin
 }
 
 export function Terminal({ sessionId, isActive = true, shouldBoot = true }: TerminalProps) {
-  const terminalRef = useRef<HTMLDivElement>(null)
-  const xtermRef = useRef<XTerm | null>(null)
-  const fitAddonRef = useRef<FitAddon | null>(null)
-  const searchAddonRef = useRef<SearchAddon | null>(null)
-  const serializeAddonRef = useRef<SerializeAddon | null>(null)
-  const ptyRef = useRef<IPty | null>(null)
-  const ptyKilledRef = useRef(false)
-  const searchInputRef = useRef<HTMLInputElement>(null)
-  const [showSearch, setShowSearch] = useState(false)
-  const [searchQuery, setSearchQuery] = useState("")
-  const decoderRef = useRef(new TextDecoder())
-  const inputBufferRef = useRef("")
-  const awaitingPromptTitleRef = useRef(false)
-  const hasNamedFromPromptRef = useRef(false)
-  const hasFlushedPendingLaunchRef = useRef(false)
-  const hasRecordedStartupMetricRef = useRef(false)
-  const captureModeRef = useRef<CaptureMode>("text")
-  const captureEscapePendingRef = useRef(false)
-  const fitRafRef = useRef<number | null>(null)
-  const spawnInFlightRef = useRef(false)
-  const spawnStartedAtRef = useRef<number | null>(null)
-  const lastPtySizeRef = useRef<{ rows: number; cols: number } | null>(null)
-  const lastPersistedActivityAtRef = useRef(0)
-  const startupDurationMsRef = useRef<number | null>(null)
+  let terminalRef: HTMLDivElement | undefined
+  let xtermRef: XTerm | null = null
+  let fitAddonRef: FitAddon | null = null
+  let searchAddonRef: SearchAddon | null = null
+  let serializeAddonRef: SerializeAddon | null = null
+  let ptyRef: IPty | null = null
+  let ptyKilledRef = false
+  let searchInputRef: HTMLInputElement | undefined
+  const [showSearch, setShowSearch] = createSignal(false)
+  const [searchQuery, setSearchQuery] = createSignal("")
+  const decoderRef = new TextDecoder()
+  let inputBufferRef = ""
+  let awaitingPromptTitleRef = false
+  let hasNamedFromPromptRef = false
+  let hasFlushedPendingLaunchRef = false
+  let hasRecordedStartupMetricRef = false
+  let captureModeRef: CaptureMode = "text"
+  let captureEscapePendingRef = false
+  let fitRafRef: number | null = null
+  let spawnInFlightRef = false
+  let spawnStartedAtRef: number | null = null
+  let lastPtySizeRef: { rows: number; cols: number } | null = null
+  let lastPersistedActivityAtRef = 0
+  let startupDurationMsRef: number | null = null
+
   const sessionProjectId = useStore((state) => {
     const project = state.projects.find((item) => item.sessions.some((session) => session.id === sessionId))
     return project?.id ?? null
@@ -310,40 +311,24 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
   const recordSessionActivity = useStore((state) => state.recordSessionActivity)
   const recordSessionCommand = useStore((state) => state.recordSessionCommand)
   const recordSessionStartup = useStore((state) => state.recordSessionStartup)
-  const latestSessionRef = useRef(session)
-  const latestSessionProjectIdRef = useRef(sessionProjectId)
-  const latestSessionProjectPathRef = useRef(sessionProjectPath)
 
-  useEffect(() => {
-    latestSessionRef.current = session
-  }, [session])
-
-  useEffect(() => {
-    latestSessionProjectIdRef.current = sessionProjectId
-  }, [sessionProjectId])
-
-  useEffect(() => {
-    latestSessionProjectPathRef.current = sessionProjectPath
-  }, [sessionProjectPath])
-
-  const fitTerminal = useCallback(() => {
-    if (fitRafRef.current !== null) return
-    fitRafRef.current = requestAnimationFrame(() => {
-      fitRafRef.current = null
-      const fit = fitAddonRef.current
-      const term = xtermRef.current
+  const fitTerminal = () => {
+    if (fitRafRef !== null) return
+    fitRafRef = requestAnimationFrame(() => {
+      fitRafRef = null
+      const fit = fitAddonRef
+      const term = xtermRef
       if (fit && term) {
         fit.fit()
         const nextSize = { rows: term.rows, cols: term.cols }
-        const lastSize = lastPtySizeRef.current
+        const lastSize = lastPtySizeRef
         if (lastSize && lastSize.rows === nextSize.rows && lastSize.cols === nextSize.cols) {
           return
         }
 
-        lastPtySizeRef.current = nextSize
-        // Guard against resizing killed PTY (causes Windows OS errors)
-        const pty = ptyRef.current
-        if (pty && !ptyKilledRef.current) {
+        lastPtySizeRef = nextSize
+        const pty = ptyRef
+        if (pty && !ptyKilledRef) {
           try {
             pty.resize(nextSize.cols, nextSize.rows)
           } catch (e) {
@@ -352,38 +337,42 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         }
       }
     })
-  }, [])
+  }
 
-  useEffect(() => {
-    awaitingPromptTitleRef.current = false
-    hasNamedFromPromptRef.current = !session || !DEFAULT_SESSION_NAME_PATTERN.test(session.name)
-    hasFlushedPendingLaunchRef.current = false
-    hasRecordedStartupMetricRef.current = false
-    inputBufferRef.current = ""
-    captureModeRef.current = "text"
-    captureEscapePendingRef.current = false
-    spawnStartedAtRef.current = null
-    lastPtySizeRef.current = null
-    lastPersistedActivityAtRef.current = session?.lastActiveAt ?? 0
-    startupDurationMsRef.current = typeof session?.startupDurationMs === "number" ? session.startupDurationMs : null
-    ptyKilledRef.current = false
-  }, [sessionId])
+  createEffect(() => {
+    // Reset state when sessionId changes
+    sessionId // track dependency
+    awaitingPromptTitleRef = false
+    hasNamedFromPromptRef = !session() || !DEFAULT_SESSION_NAME_PATTERN.test(session()!.name)
+    hasFlushedPendingLaunchRef = false
+    hasRecordedStartupMetricRef = false
+    inputBufferRef = ""
+    captureModeRef = "text"
+    captureEscapePendingRef = false
+    spawnStartedAtRef = null
+    lastPtySizeRef = null
+    lastPersistedActivityAtRef = session()?.lastActiveAt ?? 0
+    startupDurationMsRef = typeof session()?.startupDurationMs === "number" ? session()!.startupDurationMs : null
+    ptyKilledRef = false
+  })
 
-  useEffect(() => {
-    if (!session || DEFAULT_SESSION_NAME_PATTERN.test(session.name)) return
-    hasNamedFromPromptRef.current = true
-  }, [session?.name])
+  createEffect(() => {
+    const s = session()
+    if (!s || DEFAULT_SESSION_NAME_PATTERN.test(s.name)) return
+    hasNamedFromPromptRef = true
+  })
 
-  useEffect(() => {
-    startupDurationMsRef.current = typeof session?.startupDurationMs === "number" ? session.startupDurationMs : null
-  }, [session?.startupDurationMs])
+  createEffect(() => {
+    const s = session()
+    startupDurationMsRef = typeof s?.startupDurationMs === "number" ? s.startupDurationMs : null
+  })
 
-  useEffect(() => {
-    if (!terminalRef.current || !session || !shouldBoot) return
+  onMount(() => {
+    if (!terminalRef || !session() || !shouldBoot) return
 
-    const bootSession = session
-    const bootProjectId = sessionProjectId
-    const bootProjectPath = sessionProjectPath
+    const bootSession = session()!
+    const bootProjectId = sessionProjectId()
+    const bootProjectPath = sessionProjectPath()
 
     let cancelled = false
     const fitTimeouts: number[] = []
@@ -392,6 +381,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
     let writeFlushScheduled = false
     let isWriteInFlight = false
     const pendingWriteChunks: string[] = []
+    let removeVisibilityChangeListener: (() => void) | null = null
 
     const scheduleTerminalFlush = () => {
       if (writeFlushScheduled || isWriteInFlight) return
@@ -429,8 +419,8 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         const safePasteText = sanitizeClipboardPasteText(text)
         if (!safePasteText) return
         term.focus()
-        const pty = ptyRef.current
-        if (pty && !ptyKilledRef.current) {
+        const pty = ptyRef
+        if (pty && !ptyKilledRef) {
           try { pty.write(safePasteText) } catch { /* ignore */ }
         } else {
           term.paste(safePasteText)
@@ -442,9 +432,9 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
     }
 
     const bootTerminal = async () => {
-      console.log("[Terminal] bootTerminal starting...", { sessionId, cancelled, hasTermRef: !!terminalRef.current })
+      console.log("[Terminal] bootTerminal starting...", { sessionId, cancelled, hasTermRef: !!terminalRef })
       try {
-        if (cancelled || !terminalRef.current) {
+        if (cancelled || !terminalRef) {
           console.log("[Terminal] bootTerminal early exit - cancelled or no ref")
           return
         }
@@ -486,7 +476,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
           scrollSensitivity: 1.2,
           minimumContrastRatio: 1.2,
           windowsPty: windowsPtyOptions,
-          documentOverride: terminalRef.current.ownerDocument,
+          documentOverride: terminalRef.ownerDocument,
           allowProposedApi: true,
         })
 
@@ -497,6 +487,17 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         const clipboardAddon = new ClipboardAddon()
         const imageAddon = new ImageAddon()
         const ligaturesAddon = new LigaturesAddon()
+        let ligaturesLoaded = false
+        const tryLoadLigatures = () => {
+          if (ligaturesLoaded) return
+          if (document.visibilityState !== "visible") return
+          try {
+            term?.loadAddon(ligaturesAddon)
+            ligaturesLoaded = true
+          } catch (error) {
+            console.warn("Ligatures addon unavailable.", error)
+          }
+        }
         const progressAddon = new ProgressAddon()
 
         term.loadAddon(fitAddon)
@@ -508,15 +509,20 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         try { term.loadAddon(imageAddon) } catch (error) { console.warn("Image addon unavailable.", error) }
         try { term.loadAddon(progressAddon) } catch (error) { console.warn("Progress addon unavailable.", error) }
 
-        // Use Unicode 11 for proper TUI box drawing characters
         term.unicode.activeVersion = '11'
 
-        term.open(terminalRef.current)
+        term.open(terminalRef)
 
-        // Ligatures addon must be activated after terminal is opened.
-        try { term.loadAddon(ligaturesAddon) } catch (error) { console.warn("Ligatures addon unavailable.", error) }
+        tryLoadLigatures()
+        const handleVisibilityChange = () => {
+          tryLoadLigatures()
+        }
+        document.addEventListener("visibilitychange", handleVisibilityChange)
+        removeVisibilityChangeListener = () => {
+          document.removeEventListener("visibilitychange", handleVisibilityChange)
+        }
 
-        const helperTextarea = terminalRef.current.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")
+        const helperTextarea = terminalRef.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")
         helperTextarea?.setAttribute("autocomplete", "off")
         helperTextarea?.setAttribute("autocorrect", "off")
         helperTextarea?.setAttribute("autocapitalize", "off")
@@ -527,10 +533,10 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
           term.focus()
         }
 
-        xtermRef.current = term
-        fitAddonRef.current = fitAddon
-        searchAddonRef.current = searchAddon
-        serializeAddonRef.current = serializeAddon
+        xtermRef = term
+        fitAddonRef = fitAddon
+        searchAddonRef = searchAddon
+        serializeAddonRef = serializeAddon
 
         fitTerminal()
         fitTimeouts.push(
@@ -553,12 +559,11 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
           if (!activeTerm) return true
           if (event.type !== "keydown") return true
 
-          // Custom shortcuts
           if (event.key === "f" && (hostInfo.os === "macos" ? event.metaKey : event.ctrlKey) && !event.shiftKey && !event.altKey) {
             event.preventDefault()
             event.stopPropagation()
             setShowSearch(true)
-            setTimeout(() => searchInputRef.current?.focus(), 50)
+            setTimeout(() => searchInputRef?.focus(), 50)
             return false
           }
 
@@ -592,8 +597,8 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         term.element?.addEventListener("contextmenu", handleContextMenu, true)
       } catch (err) {
         if (!cancelled) {
-          if (terminalRef.current) {
-            terminalRef.current.textContent = `Error: ${String(err)}`
+          if (terminalRef) {
+            terminalRef.textContent = `Error: ${String(err)}`
           }
         }
       }
@@ -613,11 +618,11 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
     const resizeObserver = new ResizeObserver(() => {
       fitTerminal()
     })
-    resizeObserver.observe(terminalRef.current)
+    resizeObserver.observe(terminalRef)
 
     const initPty = async (ptyIsWindows: boolean, ptyWindowsBuildNumber: number | null) => {
-      console.log("[Terminal] initPty starting...", { sessionId, ptyIsWindows, ptyWindowsBuildNumber, hasTerm: !!term, spawnInFlight: spawnInFlightRef.current })
-      if (!term || spawnInFlightRef.current) {
+      console.log("[Terminal] initPty starting...", { sessionId, ptyIsWindows, ptyWindowsBuildNumber, hasTerm: !!term, spawnInFlight: spawnInFlightRef })
+      if (!term || spawnInFlightRef) {
         console.log("[Terminal] initPty early exit - no term or spawn in flight")
         return
       }
@@ -643,35 +648,31 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         return
       }
 
-      spawnInFlightRef.current = true
+      spawnInFlightRef = true
       try {
-        // Kill existing PTY safely
-        const existingPty = ptyRef.current
-        if (existingPty && !ptyKilledRef.current) {
-          ptyKilledRef.current = true
+        const existingPty = ptyRef
+        if (existingPty && !ptyKilledRef) {
+          ptyKilledRef = true
           try { existingPty.kill() } catch { /* ignore */ }
         }
-        ptyRef.current = null
-        
-        // Small delay to let ConPTY cleanup on Windows (prevents OS error 87)
+        ptyRef = null
+
         if (ptyIsWindows) {
           await new Promise(resolve => window.setTimeout(resolve, 100))
         }
-        
-        fitAddonRef.current?.fit()
+
+        fitAddonRef?.fit()
         const spawnRows = Math.max(24, term.rows || 24)
         const spawnCols = Math.max(80, term.cols || 80)
-        
-        // Ensure we have valid dimensions
+
         if (spawnRows === 0 || spawnCols === 0) {
           throw new Error("Invalid terminal dimensions")
         }
-        
-        spawnStartedAtRef.current = Date.now()
-        
-        // Only use ConPTY on Windows 10 1809+ (build 17763+)
+
+        spawnStartedAtRef = Date.now()
+
         const useConpty: boolean = Boolean(ptyIsWindows && ptyWindowsBuildNumber && ptyWindowsBuildNumber >= 17763)
-        
+
         const pty = await spawnNativePty({
           sessionId,
           shell: resolvedShell,
@@ -685,9 +686,9 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
           },
         })
 
-        ptyRef.current = pty
-        ptyKilledRef.current = false
-        lastPtySizeRef.current = { rows: spawnRows, cols: spawnCols }
+        ptyRef = pty
+        ptyKilledRef = false
+        lastPtySizeRef = { rows: spawnRows, cols: spawnCols }
         console.log("[Terminal] PTY spawned successfully", { sessionId, rows: spawnRows, cols: spawnCols, useConpty })
         fitTerminal()
         fitTimeouts.push(
@@ -698,25 +699,25 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
           ),
         )
         pty.onData((chunk) => {
-          const data = decodePtyChunk(chunk, decoderRef.current)
+          const data = decodePtyChunk(chunk, decoderRef)
           if (!data) return
 
           if (
-            latestSessionProjectIdRef.current &&
-            spawnStartedAtRef.current &&
-            !hasRecordedStartupMetricRef.current &&
-            startupDurationMsRef.current === null
+            sessionProjectId() &&
+            spawnStartedAtRef &&
+            !hasRecordedStartupMetricRef &&
+            startupDurationMsRef === null
           ) {
-            hasRecordedStartupMetricRef.current = true
-            const startupDurationMs = Math.max(0, Date.now() - spawnStartedAtRef.current)
-            recordSessionStartup(latestSessionProjectIdRef.current, sessionId, startupDurationMs, Date.now()).catch(console.error)
+            hasRecordedStartupMetricRef = true
+            const startupDurationMs = Math.max(0, Date.now() - spawnStartedAtRef)
+            void Promise.resolve(recordSessionStartup(sessionProjectId()!, sessionId, startupDurationMs, Date.now())).catch(console.error)
           }
 
-          if (latestSessionProjectIdRef.current) {
+          if (sessionProjectId()) {
             const now = Date.now()
-            if (now - lastPersistedActivityAtRef.current >= ACTIVITY_THROTTLE_MS) {
-              recordSessionActivity(latestSessionProjectIdRef.current, sessionId, now).catch(console.error)
-              lastPersistedActivityAtRef.current = now
+            if (now - lastPersistedActivityAtRef >= ACTIVITY_THROTTLE_MS) {
+              void Promise.resolve(recordSessionActivity(sessionProjectId()!, sessionId, now)).catch(console.error)
+              lastPersistedActivityAtRef = now
             }
           }
 
@@ -728,10 +729,10 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
           queueTerminalWrite(data)
         })
 
-        if (bootSession.pendingLaunchCommand && !hasFlushedPendingLaunchRef.current) {
+        if (bootSession.pendingLaunchCommand && !hasFlushedPendingLaunchRef) {
           const pendingLaunchKey = `${sessionId}:${bootSession.pendingLaunchCommand}`
           if (launchedPendingCommandKeys.has(pendingLaunchKey)) {
-            hasFlushedPendingLaunchRef.current = true
+            hasFlushedPendingLaunchRef = true
             if (bootProjectId) {
               await updateSession(bootProjectId, sessionId, { pendingLaunchCommand: null })
             }
@@ -739,12 +740,12 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
           }
 
           launchedPendingCommandKeys.add(pendingLaunchKey)
-          hasFlushedPendingLaunchRef.current = true
-          awaitingPromptTitleRef.current = true
+          hasFlushedPendingLaunchRef = true
+          awaitingPromptTitleRef = true
           if (bootProjectId) {
             await updateSession(bootProjectId, sessionId, { pendingLaunchCommand: null })
           }
-          if (!ptyKilledRef.current) {
+          if (!ptyKilledRef) {
             try { pty.write(`${bootSession.pendingLaunchCommand}\r`) } catch { /* ignore */ }
           }
         }
@@ -752,7 +753,7 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         console.error("[Terminal] initPty error:", err)
         term?.writeln(`\x1b[31mError: ${err}\x1b[0m`)
       } finally {
-        spawnInFlightRef.current = false
+        spawnInFlightRef = false
       }
     }
 
@@ -779,9 +780,9 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
         const char = rawInput[index]
         const code = char.charCodeAt(0)
 
-        if (captureModeRef.current === "text") {
+        if (captureModeRef === "text") {
           if (char === "\x1b") {
-            captureModeRef.current = "escape"
+            captureModeRef = "escape"
             continue
           }
 
@@ -796,50 +797,50 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
           continue
         }
 
-        if (captureModeRef.current === "escape") {
+        if (captureModeRef === "escape") {
           if (char === "[") {
-            captureModeRef.current = "csi"
+            captureModeRef = "csi"
           } else if (char === "]") {
-            captureModeRef.current = "osc"
+            captureModeRef = "osc"
           } else if (char === "P") {
-            captureModeRef.current = "dcs"
+            captureModeRef = "dcs"
           } else if (char === "_" || char === "^" || char === "X") {
-            captureModeRef.current = "string"
+            captureModeRef = "string"
           } else {
-            captureModeRef.current = "text"
+            captureModeRef = "text"
           }
           continue
         }
 
-        if (captureModeRef.current === "csi") {
+        if (captureModeRef === "csi") {
           if (code >= 0x40 && code <= 0x7e) {
-            captureModeRef.current = "text"
+            captureModeRef = "text"
           }
           continue
         }
 
         if (
-          captureModeRef.current === "osc" ||
-          captureModeRef.current === "dcs" ||
-          captureModeRef.current === "string"
+          captureModeRef === "osc" ||
+          captureModeRef === "dcs" ||
+          captureModeRef === "string"
         ) {
-          if (captureEscapePendingRef.current) {
-            captureEscapePendingRef.current = false
+          if (captureEscapePendingRef) {
+            captureEscapePendingRef = false
             if (char === "\\") {
-              captureModeRef.current = "text"
+              captureModeRef = "text"
             } else if (char === "\x1b") {
-              captureEscapePendingRef.current = true
+              captureEscapePendingRef = true
             }
             continue
           }
 
           if (char === "\x07") {
-            captureModeRef.current = "text"
+            captureModeRef = "text"
             continue
           }
 
           if (char === "\x1b") {
-            captureEscapePendingRef.current = true
+            captureEscapePendingRef = true
           }
         }
       }
@@ -848,8 +849,8 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
     }
 
     const commitBufferedInput = (rawInput: string) => {
-      const currentSession = latestSessionRef.current
-      const currentProjectId = latestSessionProjectIdRef.current
+      const currentSession = session()
+      const currentProjectId = sessionProjectId()
       if (!currentProjectId || !currentSession) return
 
       const submittedText = normalizeInputForSessionTitle(rawInput).trim()
@@ -858,46 +859,46 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
 
       const normalizedText = toSessionTitle(submittedText)
       if (!normalizedText) return
-      recordSessionCommand(currentProjectId, sessionId, now).catch(console.error)
-      lastPersistedActivityAtRef.current = now
+      void Promise.resolve(recordSessionCommand(currentProjectId, sessionId, now)).catch(console.error)
+      lastPersistedActivityAtRef = now
 
       const cliInvocation = parseCliInvocation(submittedText)
 
       if (cliInvocation) {
-        awaitingPromptTitleRef.current = true
+        awaitingPromptTitleRef = true
 
         if (currentSession.cliTool !== cliInvocation.cliTool) {
-          updateSession(currentProjectId, sessionId, { cliTool: cliInvocation.cliTool }).catch(console.error)
+          void Promise.resolve(updateSession(currentProjectId, sessionId, { cliTool: cliInvocation.cliTool })).catch(console.error)
         }
 
-        if (cliInvocation.promptText && !hasNamedFromPromptRef.current) {
-          awaitingPromptTitleRef.current = false
-          hasNamedFromPromptRef.current = true
-          renameSession(currentProjectId, sessionId, toSessionTitle(cliInvocation.promptText)).catch(console.error)
+        if (cliInvocation.promptText && !hasNamedFromPromptRef) {
+          awaitingPromptTitleRef = false
+          hasNamedFromPromptRef = true
+          void Promise.resolve(renameSession(currentProjectId, sessionId, toSessionTitle(cliInvocation.promptText))).catch(console.error)
         }
-      } else if (!hasNamedFromPromptRef.current && (awaitingPromptTitleRef.current || Boolean(currentSession.cliTool))) {
-        awaitingPromptTitleRef.current = false
-        hasNamedFromPromptRef.current = true
-        renameSession(currentProjectId, sessionId, normalizedText).catch(console.error)
+      } else if (!hasNamedFromPromptRef && (awaitingPromptTitleRef || Boolean(currentSession.cliTool))) {
+        awaitingPromptTitleRef = false
+        hasNamedFromPromptRef = true
+        void Promise.resolve(renameSession(currentProjectId, sessionId, normalizedText)).catch(console.error)
       }
     }
 
     const handleData = (data: string) => {
-      const currentProjectId = latestSessionProjectIdRef.current
-      const currentSession = latestSessionRef.current
+      const currentProjectId = sessionProjectId()
+      const currentSession = session()
 
       if (currentProjectId) {
         const now = Date.now()
-        if (now - lastPersistedActivityAtRef.current >= ACTIVITY_THROTTLE_MS) {
-          recordSessionActivity(currentProjectId, sessionId, now).catch(console.error)
-          lastPersistedActivityAtRef.current = now
+        if (now - lastPersistedActivityAtRef >= ACTIVITY_THROTTLE_MS) {
+          void Promise.resolve(recordSessionActivity(currentProjectId, sessionId, now)).catch(console.error)
+          lastPersistedActivityAtRef = now
         }
       }
 
       const shouldCaptureForNaming =
         Boolean(currentProjectId) &&
         Boolean(currentSession) &&
-        (!hasNamedFromPromptRef.current || awaitingPromptTitleRef.current || Boolean(currentSession?.cliTool))
+        (!hasNamedFromPromptRef || awaitingPromptTitleRef || Boolean(currentSession?.cliTool))
 
       if (shouldCaptureForNaming) {
         const cappedData = data.length > MAX_NAMING_CAPTURE_CHARS ? data.slice(0, MAX_NAMING_CAPTURE_CHARS) : data
@@ -907,34 +908,34 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
           const char = normalizedData[index]
 
           if (char === "\r" || char === "\n") {
-            if (inputBufferRef.current) {
-              commitBufferedInput(inputBufferRef.current)
-              inputBufferRef.current = ""
+            if (inputBufferRef) {
+              commitBufferedInput(inputBufferRef)
+              inputBufferRef = ""
             }
             continue
           }
 
           if (char === "\u007f" || char === "\b") {
-            inputBufferRef.current = inputBufferRef.current.slice(0, -1)
+            inputBufferRef = inputBufferRef.slice(0, -1)
             continue
           }
 
           if (char >= " ") {
-            inputBufferRef.current += char
+            inputBufferRef += char
           }
         }
       }
 
-      const pty = ptyRef.current
-      if (pty && !ptyKilledRef.current) {
+      const pty = ptyRef
+      if (pty && !ptyKilledRef) {
         try { pty.write(data) } catch { /* ignore */ }
       }
     }
 
     const handleBinaryData = (data: string) => {
       if (!data) return
-      const pty = ptyRef.current
-      if (pty && !ptyKilledRef.current) {
+      const pty = ptyRef
+      if (pty && !ptyKilledRef) {
         try { pty.write(data) } catch { /* ignore */ }
       }
     }
@@ -942,20 +943,20 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
     void bootTerminal()
 
     const handleBeforeUnload = () => {
-      if (serializeAddonRef.current) {
-        const currentOutput = serializeAddonRef.current.serialize()
+      if (serializeAddonRef) {
+        const currentOutput = serializeAddonRef.serialize()
         if (currentOutput) {
-          api.saveSessionOutput(sessionId, currentOutput).catch(console.error)
+          void api.saveSessionOutput(sessionId, currentOutput).catch(console.error)
         }
       }
     }
 
     window.addEventListener("beforeunload", handleBeforeUnload)
 
-    return () => {
+    onCleanup(() => {
       cancelled = true
+      removeVisibilityChangeListener?.()
 
-      // Save session output on unmount
       handleBeforeUnload()
       window.removeEventListener("beforeunload", handleBeforeUnload)
 
@@ -964,56 +965,42 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
       }
       window.removeEventListener("resize", handleWindowResize)
       resizeObserver.disconnect()
-      if (fitRafRef.current !== null) {
-        cancelAnimationFrame(fitRafRef.current)
-        fitRafRef.current = null
+      if (fitRafRef !== null) {
+        cancelAnimationFrame(fitRafRef)
+        fitRafRef = null
       }
       writeFlushScheduled = false
       pendingWriteChunks.length = 0
       term?.element?.removeEventListener("pointerdown", handlePointerDown)
       term?.element?.removeEventListener("contextmenu", handleContextMenu, true)
-      spawnInFlightRef.current = false
-      // Kill PTY safely to avoid Windows OS errors
-      const pty = ptyRef.current
-      if (pty && !ptyKilledRef.current) {
-        ptyKilledRef.current = true
+      spawnInFlightRef = false
+      const pty = ptyRef
+      if (pty && !ptyKilledRef) {
+        ptyKilledRef = true
         try { pty.kill() } catch { /* ignore */ }
       }
-      ptyRef.current = null
+      ptyRef = null
       term?.dispose()
-    }
-  }, [
-    sessionId,
-    session?.shell,
-    sessionProjectId,
-    sessionProjectPath,
-    renameSession,
-    updateSession,
-    recordSessionActivity,
-    recordSessionCommand,
-    recordSessionStartup,
-    shouldBoot,
-  ])
+    })
+  })
 
-  useEffect(() => {
+  createEffect(() => {
     if (!isActive) return
 
     const timer = window.setTimeout(() => {
       requestAnimationFrame(() => {
-        const term = xtermRef.current
+        const term = xtermRef
         if (!term) return
 
-        // Force a resize calculation when the tab becomes active to ensure TUIs re-render correctly
-        if (fitAddonRef.current) {
-          fitAddonRef.current.fit()
+        if (fitAddonRef) {
+          fitAddonRef.fit()
           const nextSize = { rows: term.rows, cols: term.cols }
-          const lastSize = lastPtySizeRef.current
+          const lastSize = lastPtySizeRef
 
           if (!lastSize || lastSize.rows !== nextSize.rows || lastSize.cols !== nextSize.cols) {
-            lastPtySizeRef.current = nextSize
-            // Guard against resizing killed PTY (causes Windows OS errors)
-            const pty = ptyRef.current
-            if (pty && !ptyKilledRef.current) {
+            lastPtySizeRef = nextSize
+            const pty = ptyRef
+            if (pty && !ptyKilledRef) {
               try {
                 pty.resize(nextSize.cols, nextSize.rows)
               } catch (e) {
@@ -1028,22 +1015,22 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
       })
     }, 50)
 
-    return () => window.clearTimeout(timer)
-  }, [isActive, fitTerminal])
+    onCleanup(() => window.clearTimeout(timer))
+  })
 
-  useEffect(() => {
+  onMount(() => {
     const handleRerunCurrentCli = (event: Event) => {
       const detail = (event as CustomEvent<RerunCliEventDetail>).detail
       if (!detail || detail.sessionId !== sessionId) return
-      const currentSession = latestSessionRef.current
-      const currentProjectPath = latestSessionProjectPathRef.current
+      const currentSession = session()
+      const currentProjectPath = sessionProjectPath()
       if (!currentSession) return
 
-      const term = xtermRef.current
+      const term = xtermRef
       if (!term) return
 
       const run = async () => {
-        if (spawnInFlightRef.current) return
+        if (spawnInFlightRef) return
 
         const resolvedShell = resolveAllowlistedShell(currentSession.shell)
         if (!resolvedShell) {
@@ -1054,34 +1041,30 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
           return
         }
 
-        // Fetch host info for Windows ConPTY check
         const hostInfo = await nativeApi.invoke("get_terminal_host_info") as TerminalHostInfo
         const isWindows = hostInfo.os === "windows"
 
-        spawnInFlightRef.current = true
+        spawnInFlightRef = true
         try {
-          // Kill existing PTY safely
-          const existingPty = ptyRef.current
-          if (existingPty && !ptyKilledRef.current) {
-            ptyKilledRef.current = true
+          const existingPty = ptyRef
+          if (existingPty && !ptyKilledRef) {
+            ptyKilledRef = true
             try { existingPty.kill() } catch { /* ignore */ }
           }
-          ptyRef.current = null
-          
-          // Small delay to let ConPTY cleanup on Windows (prevents OS error 87)
+          ptyRef = null
+
           if (isWindows) {
             await new Promise(resolve => window.setTimeout(resolve, 100))
           }
-          
-          fitAddonRef.current?.fit()
+
+          fitAddonRef?.fit()
           const spawnRows = Math.max(24, term.rows || 24)
           const spawnCols = Math.max(80, term.cols || 80)
-          
-          // Ensure we have valid dimensions
+
           if (spawnRows === 0 || spawnCols === 0) {
             throw new Error("Invalid terminal dimensions")
           }
-          
+
           const pty = await spawnNativePty({
             sessionId,
             shell: resolvedShell,
@@ -1094,28 +1077,28 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
               TERM_PROGRAM: "shob",
             },
           })
-          ptyRef.current = pty
-          ptyKilledRef.current = false
-          lastPtySizeRef.current = { rows: spawnRows, cols: spawnCols }
+          ptyRef = pty
+          ptyKilledRef = false
+          lastPtySizeRef = { rows: spawnRows, cols: spawnCols }
           fitTerminal()
           pty.onData((chunk) => {
-            const data = decodePtyChunk(chunk, decoderRef.current)
+            const data = decodePtyChunk(chunk, decoderRef)
             if (!data) return
             window.dispatchEvent(
               new CustomEvent("gg-pty-data", {
                 detail: { sessionId, data },
               }),
             )
-            xtermRef.current?.write(data)
+            xtermRef?.write(data)
           })
-          if (!ptyKilledRef.current) {
+          if (!ptyKilledRef) {
             try { pty.write(`${detail.command}\r`) } catch { /* ignore */ }
           }
-          awaitingPromptTitleRef.current = true
+          awaitingPromptTitleRef = true
         } catch (error) {
           term.writeln(`\x1b[31mError: ${error}\x1b[0m`)
         } finally {
-          spawnInFlightRef.current = false
+          spawnInFlightRef = false
         }
       }
 
@@ -1123,24 +1106,24 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
     }
 
     window.addEventListener("gg-rerun-cli-current-session", handleRerunCurrentCli as EventListener)
-    return () => window.removeEventListener("gg-rerun-cli-current-session", handleRerunCurrentCli as EventListener)
-  }, [sessionId])
+    onCleanup(() => window.removeEventListener("gg-rerun-cli-current-session", handleRerunCurrentCli as EventListener))
+  })
 
   const handleSearchNext = () => {
-    if (searchAddonRef.current && searchQuery) {
-      searchAddonRef.current.findNext(searchQuery)
+    if (searchAddonRef && searchQuery()) {
+      searchAddonRef.findNext(searchQuery())
     }
   }
 
   const handleSearchPrev = () => {
-    if (searchAddonRef.current && searchQuery) {
-      searchAddonRef.current.findPrevious(searchQuery)
+    if (searchAddonRef && searchQuery()) {
+      searchAddonRef.findPrevious(searchQuery())
     }
   }
 
   const handleSaveOutput = () => {
-    if (serializeAddonRef.current) {
-      const output = serializeAddonRef.current.serialize()
+    if (serializeAddonRef) {
+      const output = serializeAddonRef.serialize()
       const blob = new Blob([output], { type: "text/plain" })
       const url = URL.createObjectURL(blob)
       const a = document.createElement("a")
@@ -1152,67 +1135,67 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
   }
 
   const handleClearTerminal = () => {
-    if (xtermRef.current) {
-      xtermRef.current.clear()
+    if (xtermRef) {
+      xtermRef.clear()
     }
   }
 
   return (
     <Card
-      className="terminal-container absolute inset-0 h-full w-full min-h-0 min-w-0 overflow-hidden rounded-none border-0 bg-background p-0"
+      class="terminal-container absolute inset-0 h-full w-full min-h-0 min-w-0 overflow-hidden rounded-none border-0 bg-background p-0"
       data-active={isActive ? "true" : "false"}
       style={{
         visibility: isActive ? "visible" : "hidden",
-        pointerEvents: isActive ? "auto" : "none",
+        "pointer-events": isActive ? "auto" : "none",
       }}
     >
-      <div className="absolute right-4 top-2 z-10 flex items-center gap-1 opacity-0 transition-opacity hover:opacity-100 group-hover:opacity-100 terminal-toolbar">
+      <div class="absolute right-4 top-2 z-10 flex items-center gap-1 opacity-0 transition-opacity hover:opacity-100 group-hover:opacity-100 terminal-toolbar">
         <Button
           type="button"
           onClick={() => {
             setShowSearch(true)
-            setTimeout(() => searchInputRef.current?.focus(), 50)
+            setTimeout(() => searchInputRef?.focus(), 50)
           }}
           variant="secondary"
           size="icon-xs"
-          className="h-6 w-6 bg-background/80 backdrop-blur"
+          class="h-6 w-6 bg-background/80 backdrop-blur"
           title="Search (Ctrl+F)"
         >
-          <Search className="h-3.5 w-3.5" />
+          <Search class="h-3.5 w-3.5" />
         </Button>
         <Button
           type="button"
           onClick={handleClearTerminal}
           variant="secondary"
           size="icon-xs"
-          className="h-6 w-6 bg-background/80 backdrop-blur"
+          class="h-6 w-6 bg-background/80 backdrop-blur"
           title="Clear Terminal"
         >
-          <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
+          <Trash2 class="h-3.5 w-3.5 text-muted-foreground" />
         </Button>
         <Button
           type="button"
           onClick={handleSaveOutput}
           variant="secondary"
           size="icon-xs"
-          className="h-6 w-6 bg-background/80 backdrop-blur"
+          class="h-6 w-6 bg-background/80 backdrop-blur"
           title="Save Output"
         >
-          <Save className="h-3.5 w-3.5 text-muted-foreground" />
+          <Save class="h-3.5 w-3.5 text-muted-foreground" />
         </Button>
       </div>
 
-      {showSearch && (
-        <div className="absolute right-4 top-10 z-20 flex items-center gap-1 rounded-md border bg-popover px-2 py-1.5 shadow-md">
+      <Show when={showSearch()}>
+        <div class="absolute right-4 top-10 z-20 flex items-center gap-1 rounded-md border bg-popover px-2 py-1.5 shadow-md">
           <input
             ref={searchInputRef}
-            className="w-40 bg-transparent px-1 text-sm outline-none placeholder:text-muted-foreground"
+            class="w-40 bg-transparent px-1 text-sm outline-none placeholder:text-muted-foreground"
             placeholder="Find..."
-            value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value)
-              if (searchAddonRef.current && e.target.value) {
-                searchAddonRef.current.findNext(e.target.value)
+            value={searchQuery()}
+            onInput={(e) => {
+              setSearchQuery(e.currentTarget.value)
+              if (searchAddonRef && e.currentTarget.value) {
+                searchAddonRef.findNext(e.currentTarget.value)
               }
             }}
             onKeyDown={(e) => {
@@ -1221,52 +1204,54 @@ export function Terminal({ sessionId, isActive = true, shouldBoot = true }: Term
                 else handleSearchNext()
               } else if (e.key === "Escape") {
                 setShowSearch(false)
-                xtermRef.current?.focus()
+                xtermRef?.focus()
               }
             }}
           />
-          <div className="flex items-center gap-0.5 border-l pl-1">
+          <div class="flex items-center gap-0.5 border-l pl-1">
             <Button
               type="button"
               onClick={handleSearchPrev}
               variant="ghost"
               size="icon-xs"
-              className="h-6 w-6"
+              class="h-6 w-6"
             >
-              <ArrowUp className="h-3.5 w-3.5" />
+              <ArrowUp class="h-3.5 w-3.5" />
             </Button>
             <Button
               type="button"
               onClick={handleSearchNext}
               variant="ghost"
               size="icon-xs"
-              className="h-6 w-6"
+              class="h-6 w-6"
             >
-              <ArrowDown className="h-3.5 w-3.5" />
+              <ArrowDown class="h-3.5 w-3.5" />
             </Button>
             <Button
               type="button"
               onClick={() => {
                 setShowSearch(false)
-                xtermRef.current?.focus()
+                xtermRef?.focus()
               }}
               variant="ghost"
               size="icon-xs"
-              className="h-6 w-6"
+              class="h-6 w-6"
             >
-              <X className="h-3.5 w-3.5" />
+              <X class="h-3.5 w-3.5" />
             </Button>
           </div>
         </div>
-      )}
+      </Show>
 
       <div
         ref={terminalRef}
-        className="terminal-wrapper h-full w-full min-h-0 min-w-0 overflow-hidden"
+        class="terminal-wrapper h-full w-full min-h-0 min-w-0 overflow-hidden"
         style={{
-          backgroundColor: "#09090b",
+          "background-color": "#09090b",
         }}
       />
     </Card>
   )
 }
+
+

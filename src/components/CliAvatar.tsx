@@ -1,4 +1,4 @@
-import { Bot } from "lucide-react"
+import { Bot } from "lucide-solid"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { getCliDisplayLabel, getCliIconAsset, getCliFallbackText } from "../config/cli-ui"
 
@@ -6,7 +6,7 @@ interface CliAvatarProps {
   cliId?: string | null
   label?: string | null
   size?: "sm" | "md"
-  className?: string
+  class?: string
 }
 
 const sizeClasses = {
@@ -14,17 +14,17 @@ const sizeClasses = {
   md: "h-7 w-7",
 } as const
 
-export function CliAvatar({ cliId, label, size = "md", className = "" }: CliAvatarProps) {
+export function CliAvatar({ cliId, label, size = "md", class: className = "" }: CliAvatarProps) {
   const logo = getCliIconAsset(cliId)
   const resolvedLabel = label ?? getCliDisplayLabel(cliId) ?? "CLI"
   const sizeClass = sizeClasses[size]
 
   return (
-    <Avatar className={`${sizeClass} ${className}`} data-size={size}>
+    <Avatar class={`${sizeClass} ${className}`} data-size={size}>
       {logo && <AvatarImage src={logo} alt={resolvedLabel} />}
-      <AvatarFallback className="text-[8px] bg-muted/50">
+      <AvatarFallback class="text-[8px] bg-muted/50">
         {cliId ? (
-          <Bot className={size === "sm" ? "h-3 w-3" : "h-4 w-4"} strokeWidth={1.9} />
+          <Bot class={size === "sm" ? "h-3 w-3" : "h-4 w-4"} stroke-width={1.9} />
         ) : (
           getCliFallbackText(cliId, resolvedLabel)
         )}
