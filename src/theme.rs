@@ -991,13 +991,15 @@ pub fn load_palette(scheme: PaletteScheme, dark: bool) -> ColorPalette {
     match scheme {
         PaletteScheme::Warp => load_warp_palette(dark),
         PaletteScheme::Github => load_github_palette(dark),
-        PaletteScheme::MidnightGarden if dark => terminal::ColorPaletteBuilder::from_palette(load_warp_palette(true))
-            .background(0x00, 0x15, 0x36)
-            .foreground(0xea, 0xf3, 0xff)
-            .cursor(0x39, 0xa8, 0xf5)
-            // Some agent CLIs paint their panels with this fixed dark surface.
-            .background_override((0x0f, 0x12, 0x16), (0x0a, 0x21, 0x47))
-            .build(),
+        PaletteScheme::MidnightGarden if dark => {
+            terminal::ColorPaletteBuilder::from_palette(load_warp_palette(true))
+                .background(0x00, 0x15, 0x36)
+                .foreground(0xea, 0xf3, 0xff)
+                .cursor(0x39, 0xa8, 0xf5)
+                // Some agent CLIs paint their panels with this fixed dark surface.
+                .background_override((0x0f, 0x12, 0x16), (0x0a, 0x21, 0x47))
+                .build()
+        }
         PaletteScheme::MidnightGarden => load_warp_palette(false),
     }
 }
@@ -1070,22 +1072,49 @@ mod tests {
         let palette = ThemeColors::complete_defaults(PaletteScheme::MidnightGarden)
             .palette(PaletteScheme::MidnightGarden, true);
         let colors = alacritty_terminal::term::color::Colors::default();
-        let source = alacritty_terminal::vte::ansi::Color::Spec(
-            alacritty_terminal::vte::ansi::Rgb { r: 15, g: 18, b: 22 });
+        let source =
+            alacritty_terminal::vte::ansi::Color::Spec(alacritty_terminal::vte::ansi::Rgb {
+                r: 15,
+                g: 18,
+                b: 22,
+            });
         let mapped = palette.map_background(palette.resolve(source, &colors));
-        assert_eq!(terminal::hsla_to_rgb(mapped), alacritty_terminal::vte::ansi::Rgb { r: 10, g: 33, b: 71 });
+        assert_eq!(
+            terminal::hsla_to_rgb(mapped),
+            alacritty_terminal::vte::ansi::Rgb {
+                r: 10,
+                g: 33,
+                b: 71
+            }
+        );
     }
 
     #[test]
     fn midnight_garden_switches_default_colors_and_round_trips() {
         let mut colors = ThemeColors::complete_defaults(PaletteScheme::Warp);
         colors.change_scheme(PaletteScheme::Warp, PaletteScheme::MidnightGarden);
-        let tokens = colors.tokens(gpui_component::ThemeMode::Dark, PaletteScheme::MidnightGarden);
+        let tokens = colors.tokens(
+            gpui_component::ThemeMode::Dark,
+            PaletteScheme::MidnightGarden,
+        );
         assert_eq!(tokens.pane_bg, rgba(0x001536ff).into());
-        assert_eq!(colors.palette(PaletteScheme::MidnightGarden, true).background(), load_palette(PaletteScheme::MidnightGarden, true).background());
-        assert_eq!(serde_json::to_string(&PaletteScheme::MidnightGarden).unwrap(), "\"midnight_garden\"");
+        assert_eq!(
+            colors
+                .palette(PaletteScheme::MidnightGarden, true)
+                .background(),
+            load_palette(PaletteScheme::MidnightGarden, true).background()
+        );
+        assert_eq!(
+            serde_json::to_string(&PaletteScheme::MidnightGarden).unwrap(),
+            "\"midnight_garden\""
+        );
         colors.change_scheme(PaletteScheme::MidnightGarden, PaletteScheme::Warp);
-        assert_eq!(colors.dark.style, ThemeColors::complete_defaults(PaletteScheme::Warp).dark.style);
+        assert_eq!(
+            colors.dark.style,
+            ThemeColors::complete_defaults(PaletteScheme::Warp)
+                .dark
+                .style
+        );
     }
 
     #[test]

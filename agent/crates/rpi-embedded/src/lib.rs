@@ -1396,7 +1396,8 @@ async fn run_session(
             Command::Steer(text) => {
                 let timestamp = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default().as_millis() as i64;
+                    .unwrap_or_default()
+                    .as_millis() as i64;
                 let message = AgentMessage::User(rpi_ai::types::UserMessage::new(text, timestamp));
                 if let Err(error) = harness.steer(message).await {
                     let _ = events.send(SessionEvent::Error(error.to_string())).await;

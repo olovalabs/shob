@@ -14,16 +14,26 @@ fn bundled_browser() -> Result<Option<std::path::PathBuf>, String> {
         return Ok(None);
     }
     let base = directories::BaseDirs::new().ok_or("Cannot locate the user cache directory")?;
-    let dir = base.cache_dir().join("kathamo").join("agent-browser-0.43.0");
+    let dir = base
+        .cache_dir()
+        .join("kathamo")
+        .join("agent-browser-0.43.0");
     std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-    let path = dir.join(if cfg!(windows) { "agent-browser.exe" } else { "agent-browser" });
-    if std::fs::metadata(&path).map_or(true, |metadata| metadata.len() != BUNDLED_BROWSER.len() as u64) {
+    let path = dir.join(if cfg!(windows) {
+        "agent-browser.exe"
+    } else {
+        "agent-browser"
+    });
+    if std::fs::metadata(&path).map_or(true, |metadata| {
+        metadata.len() != BUNDLED_BROWSER.len() as u64
+    }) {
         let temp = dir.join(format!("agent-browser-{}.tmp", std::process::id()));
         std::fs::write(&temp, BUNDLED_BROWSER).map_err(|error| error.to_string())?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o755)).map_err(|error| error.to_string())?;
+            std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o755))
+                .map_err(|error| error.to_string())?;
         }
         std::fs::rename(&temp, &path).map_err(|error| error.to_string())?;
     }
@@ -47,9 +57,14 @@ pub(crate) fn has_browser_mention(prompt: &str) -> bool {
 fn browser_prompt(prompt: &str) -> String {
     if has_browser_mention(prompt) {
         let executable = match bundled_browser() {
-            Ok(Some(path)) => format!(" Use this bundled executable for every agent-browser command: {}. Quote the path appropriately for the shell.", path.display()),
+            Ok(Some(path)) => format!(
+                " Use this bundled executable for every agent-browser command: {}. Quote the path appropriately for the shell.",
+                path.display()
+            ),
             Ok(None) => " This development build uses agent-browser from PATH.".to_string(),
-            Err(error) => format!(" The bundled executable could not be prepared: {error}. Report this error to the user."),
+            Err(error) => format!(
+                " The bundled executable could not be prepared: {error}. Report this error to the user."
+            ),
         };
         format!("{prompt}\n\n{BROWSER_INSTRUCTIONS}{executable}")
     } else {
@@ -323,7 +338,9 @@ impl AgentBridge {
 
     pub(crate) fn poll_requests(&self) -> Vec<Request> {
         match &self.backend {
-            Backend::Embedded(bridge) => std::iter::from_fn(|| bridge.requests.try_recv().ok()).filter(Request::alive).collect(),
+            Backend::Embedded(bridge) => std::iter::from_fn(|| bridge.requests.try_recv().ok())
+                .filter(Request::alive)
+                .collect(),
             Backend::Rpc(bridge) => bridge.poll_requests(),
         }
     }
@@ -486,7 +503,10 @@ fn composer_tool_hook(
         let asks_user = matches!(name, QUESTION | FORM);
         if !asks_user
             && (!require_approval
-                || matches!(name, "read" | "find" | "grep" | "ls" | rpi_embedded::task_list::NAME))
+                || matches!(
+                    name,
+                    "read" | "find" | "grep" | "ls" | rpi_embedded::task_list::NAME
+                ))
         {
             return Box::pin(async { None });
         }
@@ -495,11 +515,13 @@ fn composer_tool_hook(
         let sender = sender.clone();
         let approvals = approvals.clone();
         Box::pin(async move {
-            let deny = |reason: &str| Some(rpi_embedded::BeforeToolCallResult {
-                block: true,
-                reason: Some(reason.to_owned()),
-                ..Default::default()
-            });
+            let deny = |reason: &str| {
+                Some(rpi_embedded::BeforeToolCallResult {
+                    block: true,
+                    reason: Some(reason.to_owned()),
+                    ..Default::default()
+                })
+            };
             let scope = (name.clone(), args.to_string());
             if !asks_user && approvals.lock().unwrap().contains(&scope) {
                 return None;
@@ -510,7 +532,10 @@ fn composer_tool_hook(
                     Err(error) => return deny(error),
                 };
                 agent_interaction::request(
-                    args["title"].as_str().unwrap_or("Agent question").into(), None, fields, false,
+                    args["title"].as_str().unwrap_or("Agent question").into(),
+                    None,
+                    fields,
+                    false,
                 )
             } else {
                 agent_interaction::request(
@@ -527,15 +552,18 @@ fn composer_tool_hook(
             let response = smol::future::race(async { reply.recv().await.ok() }, async {
                 cancelled.cancelled().await;
                 None
-            }).await;
+            })
+            .await;
             if cancelled.is_cancelled() {
                 return deny("Operation cancelled.");
             }
             match response {
-                Some(Response::Submit(answer)) if asks_user => Some(rpi_embedded::BeforeToolCallResult {
-                    args: Some(serde_json::json!({"answer": answer})),
-                    ..Default::default()
-                }),
+                Some(Response::Submit(answer)) if asks_user => {
+                    Some(rpi_embedded::BeforeToolCallResult {
+                        args: Some(serde_json::json!({"answer": answer})),
+                        ..Default::default()
+                    })
+                }
                 Some(Response::AllowOnce) if !asks_user => None,
                 Some(Response::AllowSession) if !asks_user => {
                     approvals.lock().unwrap().insert(scope);
@@ -739,17 +767,28 @@ mod tests {
         let Some(path) = super::bundled_browser().unwrap() else {
             return;
         };
-        let output = std::process::Command::new(&path).arg("--version").output().unwrap();
+        let output = std::process::Command::new(&path)
+            .arg("--version")
+            .output()
+            .unwrap();
         assert!(output.status.success());
         assert!(String::from_utf8_lossy(&output.stdout).contains("0.43.0"));
         assert!(super::browser_prompt("@browser test").contains(&path.display().to_string()));
     }
     #[test]
     fn browser_mention_enriches_only_matching_prompts() {
-        for prompt in ["@browser open example.com", "Please use @browser, then summarize."] {
+        for prompt in [
+            "@browser open example.com",
+            "Please use @browser, then summarize.",
+        ] {
             assert!(super::browser_prompt(prompt).contains(super::BROWSER_INSTRUCTIONS));
         }
-        for prompt in ["hello", "user@browser.com", "@browser-extension", "@browser2"] {
+        for prompt in [
+            "hello",
+            "user@browser.com",
+            "@browser-extension",
+            "@browser2",
+        ] {
             assert_eq!(super::browser_prompt(prompt), prompt);
         }
     }

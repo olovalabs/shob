@@ -82,7 +82,9 @@ impl RpcAgentBridge {
     }
 
     pub(crate) fn poll_requests(&self) -> Vec<Request> {
-        std::iter::from_fn(|| self.requests.try_recv().ok()).filter(Request::alive).collect()
+        std::iter::from_fn(|| self.requests.try_recv().ok())
+            .filter(Request::alive)
+            .collect()
     }
 
     pub(crate) fn session_id(&self) -> Option<String> {
@@ -339,7 +341,8 @@ impl RpcAgentBridge {
     }
 
     pub(crate) fn steer(&self, text: &str) -> Result<(), String> {
-        self.writer.send_json(json!({"type":"queue_message","deliverAs":"steer","message":text}))
+        self.writer
+            .send_json(json!({"type":"queue_message","deliverAs":"steer","message":text}))
     }
 
     pub(crate) fn cancel(&mut self) -> Result<(), String> {
@@ -398,39 +401,72 @@ fn handle_native_dialog(
 ) -> Option<(String, smol::channel::Sender<Response>)> {
     let id = record["requestId"].as_str()?.to_owned();
     let ui = &record["ui"];
-    let question = ui["questions"].as_array().and_then(|questions| questions.first()).unwrap_or(ui);
-    let prompt = question["question"].as_str()
-        .or_else(|| question["title"].as_str()).unwrap_or("Extension request");
-    let options: Vec<String> = question["options"].as_array().or_else(|| ui["options"].as_array())
-        .into_iter().flatten().filter_map(|option| option.as_str().or_else(|| option["title"].as_str()))
-        .map(str::to_owned).collect();
+    let question = ui["questions"]
+        .as_array()
+        .and_then(|questions| questions.first())
+        .unwrap_or(ui);
+    let prompt = question["question"]
+        .as_str()
+        .or_else(|| question["title"].as_str())
+        .unwrap_or("Extension request");
+    let options: Vec<String> = question["options"]
+        .as_array()
+        .or_else(|| ui["options"].as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|option| option.as_str().or_else(|| option["title"].as_str()))
+        .map(str::to_owned)
+        .collect();
     let choices = !options.is_empty();
     let permission = ui["purpose"] == "permission";
     let confirm = !choices && ui["kind"] == "confirm";
-    let custom = !permission && (!choices || question["allowFreeform"] == true
-        || question["allow_custom"] == true || ui["allowFreeform"] == true);
+    let custom = !permission
+        && (!choices
+            || question["allowFreeform"] == true
+            || question["allow_custom"] == true
+            || ui["allowFreeform"] == true);
     let fields = if confirm {
         Vec::new()
     } else {
         vec![Field {
             label: prompt.to_owned(),
-            kind: if !choices { Kind::Text }
-                else if !permission && (question["allowMultiple"] == true || question["multiple"] == true || ui["allowMultiple"] == true) { Kind::Multiple }
-                else { Kind::Single },
+            kind: if !choices {
+                Kind::Text
+            } else if !permission
+                && (question["allowMultiple"] == true
+                    || question["multiple"] == true
+                    || ui["allowMultiple"] == true)
+            {
+                Kind::Multiple
+            } else {
+                Kind::Single
+            },
             options: options.clone(),
             required: true,
             custom,
         }]
     };
-    let title = if confirm { prompt } else if permission { "Permission request" } else { "Extension question" };
+    let title = if confirm {
+        prompt
+    } else if permission {
+        "Permission request"
+    } else {
+        "Extension question"
+    };
     let (mut request, reply) = agent_interaction::request(
-        title.into(), question["context"].as_str().or_else(|| ui["message"].as_str()).map(str::to_owned),
-        fields, confirm,
+        title.into(),
+        question["context"]
+            .as_str()
+            .or_else(|| ui["message"].as_str())
+            .map(str::to_owned),
+        fields,
+        confirm,
     );
     request.allow_session = false;
     let close = request.reply.clone();
     if requests.try_send(request).is_err() {
-        let _ = writer.send_json(json!({"type":"ui_dialog_response","requestId":id,"cancelled":true}));
+        let _ =
+            writer.send_json(json!({"type":"ui_dialog_response","requestId":id,"cancelled":true}));
         return None;
     }
     super::signal_wake();
@@ -441,17 +477,26 @@ fn handle_native_dialog(
             Ok(Response::Submit(values)) => {
                 let value = &values[0]["value"];
                 let chosen = value.as_array().is_some()
-                    || value.as_str().is_some_and(|text| options.iter().any(|option| option == text));
+                    || value
+                        .as_str()
+                        .is_some_and(|text| options.iter().any(|option| option == text));
                 let answer = if chosen {
-                    let values = value.as_array().cloned().unwrap_or_else(|| vec![value.clone()]);
+                    let values = value
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_else(|| vec![value.clone()]);
                     json!({"kind":"selector","values":values})
                 } else {
                     json!({"kind":"input","value":value,"text":value,"values":[value]})
                 };
                 json!({"type":"ui_dialog_response","requestId":reply_id,"answer":answer})
             }
-            Ok(Response::AllowOnce) => json!({"type":"ui_dialog_response","requestId":reply_id,"answer":true}),
-            Ok(Response::Deny) => json!({"type":"ui_dialog_response","requestId":reply_id,"cancelled":true}),
+            Ok(Response::AllowOnce) => {
+                json!({"type":"ui_dialog_response","requestId":reply_id,"answer":true})
+            }
+            Ok(Response::Deny) => {
+                json!({"type":"ui_dialog_response","requestId":reply_id,"cancelled":true})
+            }
             _ => return,
         };
         let _ = writer.send_json(message);
@@ -472,23 +517,42 @@ fn handle_extension_ui(
                 Vec::new()
             } else {
                 vec![Field {
-                    label: if method == "select" { "Choose an option" } else { "Your response" }.into(),
-                    kind: if method == "select" { Kind::Single } else { Kind::Text },
-                    options: record["options"].as_array().into_iter().flatten()
-                        .filter_map(Value::as_str).map(str::to_owned).collect(),
+                    label: if method == "select" {
+                        "Choose an option"
+                    } else {
+                        "Your response"
+                    }
+                    .into(),
+                    kind: if method == "select" {
+                        Kind::Single
+                    } else {
+                        Kind::Text
+                    },
+                    options: record["options"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect(),
                     required: method == "select",
                     custom: false,
                 }]
             };
             let (mut request, receiver) = agent_interaction::request(
-                record["title"].as_str().unwrap_or("Extension request").into(),
+                record["title"]
+                    .as_str()
+                    .unwrap_or("Extension request")
+                    .into(),
                 record["message"].as_str().map(str::to_owned),
-                fields, method == "confirm",
+                fields,
+                method == "confirm",
             );
             request.allow_session = false;
             let id = record["id"].clone();
             if requests.try_send(request).is_err() {
-                let _ = writer.send_json(json!({"type":"extension_ui_response","id":id,"cancelled":true}));
+                let _ = writer
+                    .send_json(json!({"type":"extension_ui_response","id":id,"cancelled":true}));
                 return;
             }
             super::signal_wake();
@@ -498,7 +562,9 @@ fn handle_extension_ui(
                 let mut result = json!({"type":"extension_ui_response","id":id});
                 match receiver.recv_blocking() {
                     Ok(Response::Submit(values)) => result["value"] = values[0]["value"].clone(),
-                    Ok(Response::AllowOnce | Response::AllowSession) => result["confirmed"] = json!(true),
+                    Ok(Response::AllowOnce | Response::AllowSession) => {
+                        result["confirmed"] = json!(true)
+                    }
                     _ if confirm => result["confirmed"] = json!(false),
                     _ => result["cancelled"] = json!(true),
                 }

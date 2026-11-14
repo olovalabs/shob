@@ -368,8 +368,16 @@ impl ColorPaletteBuilder {
     /// Replace one known application background while this palette is active.
     pub fn background_override(mut self, source: (u8, u8, u8), replacement: (u8, u8, u8)) -> Self {
         self.palette.background_override = Some((
-            rgb_to_hsla(Rgb { r: source.0, g: source.1, b: source.2 }),
-            rgb_to_hsla(Rgb { r: replacement.0, g: replacement.1, b: replacement.2 }),
+            rgb_to_hsla(Rgb {
+                r: source.0,
+                g: source.1,
+                b: source.2,
+            }),
+            rgb_to_hsla(Rgb {
+                r: replacement.0,
+                g: replacement.1,
+                b: replacement.2,
+            }),
         ));
         self
     }

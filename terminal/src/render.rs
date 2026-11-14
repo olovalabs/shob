@@ -1624,10 +1624,19 @@ mod tests {
     fn themed_panel_background_preserves_foregrounds_and_other_colors() {
         use alacritty_terminal::vte::ansi::Rgb;
         let palette = ColorPalette::builder()
-            .background_override((15, 18, 22), (10, 33, 71)).build();
+            .background_override((15, 18, 22), (10, 33, 71))
+            .build();
         let renderer = TerminalRenderer::new("monospace".into(), px(14.0), 1.2, palette.clone());
-        let source = Color::Spec(Rgb { r: 15, g: 18, b: 22 });
-        let unrelated = Color::Spec(Rgb { r: 40, g: 44, b: 52 });
+        let source = Color::Spec(Rgb {
+            r: 15,
+            g: 18,
+            b: 22,
+        });
+        let unrelated = Color::Spec(Rgb {
+            r: 40,
+            g: 44,
+            b: 52,
+        });
         let mut panel = Cell::default();
         panel.c = 'a';
         panel.fg = source;
@@ -1635,10 +1644,35 @@ mod tests {
         let mut other = Cell::default();
         other.c = 'b';
         other.bg = unrelated;
-        let (backgrounds, runs) = renderer.layout_row(0, vec![panel, other].into_iter().enumerate(), &Colors::default());
-        assert_eq!(crate::colors::hsla_to_rgb(backgrounds[0].color), Rgb { r: 10, g: 33, b: 71 });
-        assert_eq!(crate::colors::hsla_to_rgb(backgrounds[1].color), Rgb { r: 40, g: 44, b: 52 });
-        assert_eq!(crate::colors::hsla_to_rgb(runs[0].fg_color), Rgb { r: 15, g: 18, b: 22 });
+        let (backgrounds, runs) = renderer.layout_row(
+            0,
+            vec![panel, other].into_iter().enumerate(),
+            &Colors::default(),
+        );
+        assert_eq!(
+            crate::colors::hsla_to_rgb(backgrounds[0].color),
+            Rgb {
+                r: 10,
+                g: 33,
+                b: 71
+            }
+        );
+        assert_eq!(
+            crate::colors::hsla_to_rgb(backgrounds[1].color),
+            Rgb {
+                r: 40,
+                g: 44,
+                b: 52
+            }
+        );
+        assert_eq!(
+            crate::colors::hsla_to_rgb(runs[0].fg_color),
+            Rgb {
+                r: 15,
+                g: 18,
+                b: 22
+            }
+        );
         let default = ColorPalette::default();
         let unchanged = default.resolve(source, &Colors::default());
         assert_eq!(default.map_background(unchanged), unchanged);
