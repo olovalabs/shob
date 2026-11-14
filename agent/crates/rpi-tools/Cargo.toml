@@ -1,0 +1,86 @@
+[package]
+name = "rpi-tools"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/rpi-tools"
+description = "Built-in agent tools (read/write/edit/bash/grep/find/ls) + ExecutionEnv, Rust port of pi harness tools"
+readme = "README.md"
+keywords = ["agent", "llm", "ai", "claude", "tools"]
+categories = [
+    "api-bindings",
+    "asynchronous",
+    "development-tools",
+    "artificial-intelligence",
+]
+
+[dependencies]
+rpi-agent = { workspace = true }
+rpi-ai = { workspace = true }
+# For the env-var names the host and its plugins share (see `HOST_PRIVATE_ENV`).
+# The SDK's optional `json` feature is left on deliberately: `rpi-tools` already
+# depends on serde_json directly (below), so turning it off saves nothing and
+# only invites the "default-features is ignored" warning. The point of this edge
+# is the shared names, not the dependency size.
+rpi-plugin-sdk = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+jsonschema = { workspace = true }
+schemars = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+base64 = { workspace = true }
+tempfile = { workspace = true }
+uuid = { workspace = true }
+
+# M4: path resolution, diff/patch, fuzzy-match normalization, shell detection
+dirs = "5"
+similar = { version = "2", features = ["text"] }
+unicode-normalization = "0.1"
+# Shell output that is not UTF-8: the Windows console code page (GBK etc.).
+encoding_rs = "0.8"
+codepage = "0.1"
+regex = { workspace = true }
+globset = { workspace = true }
+ignore = "0.4.23"
+grep-regex = "0.1.14"
+grep-searcher = "0.1.17"
+grep-matcher = "0.1.8"
+# Image processing (resize, convert, EXIF). Image's default features minus
+# `avif` and `rayon`: rpi never encodes AVIF, and the AVIF encoder stack
+# (ravif -> rav1e -> aligned) needs Rust 1.85+ and stays in Cargo.lock even when
+# unused. Decoders are unchanged.
+image = { version = "0.25", default-features = false, features = ["bmp", "dds", "exr", "ff", "gif", "hdr", "ico", "jpeg", "png", "pnm", "qoi", "tga", "tiff", "webp"] }
+# SIMD Lanczos3 (runtime CPU detection): about 10x faster than `image`'s resize.
+fast_image_resize = { version = "5", default-features = false, features = ["image"] }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = []
+webp = ["image/webp"]
+
+[target.'cfg(windows)'.dependencies]
+# Already locked transitively; safe file-identity handles let receipts share one
+# reader across appends while still detecting atomic pathname replacement.
+same-file = "1.0.6"
+rpi-plugin-sdk = { workspace = true, features = ["process"] }
+win32job = "2"
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["process", "signal"] }
+
+[dev-dependencies]
+base64 = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

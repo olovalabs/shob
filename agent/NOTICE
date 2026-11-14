@@ -1,0 +1,38 @@
+rpi
+===
+
+This crate family is a Rust port of the TypeScript `pi` SDK, not a verbatim
+copy of it.
+
+Upstream project
+----------------
+
+    pi — https://github.com/earendil-works/pi
+    Copyright (c) 2025 Mario Zechner
+    Licensed under the MIT License.
+
+The `rpi-*` crates re-implement the original MIT-licensed TypeScript SDK in
+Rust. The license text in `LICENSE` therefore carries both the upstream
+copyright notice and the notice for the Rust port, as required by the MIT
+License's retention clause.
+
+Native provider catalog and wire-protocol adaptations
+----------------------------------------------------
+
+    Oh My Pi — https://github.com/can1357/oh-my-pi
+    Reference revision: 73d7521269a1212fc2b2790a2e8c08424496c953
+    Copyright (c) 2025 Mario Zechner
+    Copyright (c) 2025-2026 Can Bölük
+    Copyright (c) 2026 Stencil Labs, Inc.
+    Licensed under the MIT License; retained in LICENSE.
+
+The provider catalog data and native Rust protocol/authentication adaptations
+follow this MIT-licensed reference. No OMP executable, JavaScript runtime, or
+TypeScript provider implementation is loaded to execute these providers.
+
+Third-party dependencies
+------------------------
+
+Runtime dependencies and their licenses are listed by `cargo metadata` and on
+each crate's crates.io page. Vendored or copied source, where it exists, keeps
+its original attribution in the file header.

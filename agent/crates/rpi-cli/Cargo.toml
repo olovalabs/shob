@@ -1,0 +1,116 @@
+[package]
+name = "rpi-cli"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/rpi-cli"
+description = "Terminal coding-agent CLI (the `rpi` binary) built on the rpi-* library crates"
+readme = "README.md"
+keywords = ["agent", "llm", "ai", "claude", "cli"]
+categories = [
+    "command-line-interface",
+    "api-bindings",
+    "development-tools",
+    "artificial-intelligence",
+]
+
+[dependencies]
+rpi-telemetry = { workspace = true }
+rpi-ai = { workspace = true, features = ["providers"] }
+rpi-runtime = { workspace = true }
+rpi-agent = { workspace = true }
+rpi-tools = { workspace = true }
+rpi-harness = { workspace = true }
+rpi-tui = { workspace = true }
+rpi-plugin-sdk = { workspace = true, features = ["binary"] }
+rpi-extensions = { workspace = true }
+tokio = { workspace = true, features = ["signal", "io-std", "net"] }
+tokio-util = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+fs2 = { workspace = true }
+globset = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+semver = { workspace = true }
+indexmap = { workspace = true }
+schemars = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+reqwest = { workspace = true }
+sha2 = "0.10"
+percent-encoding = "2"
+flate2 = "1"
+tar = "0.4"
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
+dirs = { workspace = true }
+rpassword = { workspace = true }
+tempfile = { workspace = true }
+crossterm = { version = "0.27", features = ["events"] }
+base64 = { workspace = true }
+png = { workspace = true }
+# arboard 3.x does not build on Android/Termux (no `Clipboard` in `platform`).
+# Gate the dep to non-Android targets so `cargo install` on Termux still works;
+# the `clipboard` feature becomes a harmless no-op there.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+arboard = { version = "3", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Pipes",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_System_DataExchange",
+    "Win32_UI_Shell",
+] }
+
+[target.'cfg(unix)'.dependencies]
+# `nix::sys::signal::raise` for the Ctrl+Z suspend (`app.suspend`).
+nix = { version = "0.29", features = ["signal"] }
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--cfg", "docsrs"]
+
+# `cargo binstall rpi-cli` support. The release workflow publishes
+# `rpi-v<version>-<target>.tar.gz` (`.zip` on Windows) with the `rpi` binary at
+# the archive root, plus a sibling `.sha256`. The URL has to be built from
+# `{ bin }` rather than `{ name }`, because the assets are named after the
+# binary (`rpi`) while the crate is `rpi-cli`. Default `pkg-fmt` is `tgz`; only
+# the Windows target needs the zip override.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ bin }-v{ version }-{ target }.{ archive-format }"
+bin-dir = "{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+
+[features]
+default = ["clipboard"]
+# Enables real clipboard support for `/copy` and image paste (best-effort).
+clipboard = ["dep:arboard"]
+# Explicit new-session print opt-in only; never enabled by default.
+experimental-native-store = ["rpi-harness/experimental-native-store"]
+
+[dev-dependencies]
+criterion = "0.5"
+rusqlite.workspace = true
+
+[[bench]]
+name = "serialization"
+harness = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "rpi"
+path = "src/bin/rpi.rs"

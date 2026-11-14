@@ -1,0 +1,78 @@
+[package]
+name = "kathamo"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.94.1"
+description = "GPU-accelerated terminal emulator built for developers orchestrating AI coding agents"
+readme = "README.md"
+license = "(MIT OR Apache-2.0) AND GPL-3.0-or-later"
+
+[dependencies]
+# Exact engine pins: the local gpui-component 0.5.1 fork and gpui-kit 0.9.0
+# (the last gpui-kit release on the gpui-fast 0.1.13 generation) share them.
+gpui = { package = "gpui-fast", version = "=0.1.13" }
+gpui_platform = { package = "gpui-fast-platform", version = "=0.1.13", features = ["wayland", "x11"] }
+gpui-component = { version = "0.5.1", features = ["tree-sitter-languages"] }
+gpui-component-assets = "0.5.1"
+gpui-kit = { version = "=0.9.0", features = ["gpui-fast"] }
+terminal = { path = "terminal" }
+rpi-embedded = { path = "agent/crates/rpi-embedded" }
+rust-embed = "8.12.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+smol = "2"
+jsonc-parser = { version = "0.33.1", default-features = false, features = ["cst", "serde_json", "serde"] }
+directories = "6"
+url = "2"
+portable-pty = "0.9"
+alacritty_terminal = "0.25.1"
+anyhow = "1"
+base64 = "0.22"
+parking_lot = "0.12"
+rfd = "0.15"
+libc = "0.2"
+regex = "1"
+pulldown-cmark = "0.12"
+toml = "1"
+unicode-width = "0.2"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+
+[dev-dependencies]
+tree-sitter = "0.25"
+gpui = { package = "gpui-fast", version = "0.1.13", features = ["test-support"] }
+gpui_platform = { package = "gpui-fast-platform", version = "0.1.13", features = ["test-support", "wayland", "x11"] }
+
+[patch.crates-io]
+gpui-component = { path = "components" }
+
+[profile.dev]
+opt-level = 1
+debug = 1
+split-debuginfo = "unpacked"
+incremental = false
+
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+
+[profile.dev.package.kathamo]
+opt-level = 2
+
+[profile.dev.package.gpui-fast]
+opt-level = 3
+
+[profile.dev.package.gpui-component]
+opt-level = 3
+
+[profile.dev.package.terminal]
+opt-level = 3
+
+[profile.dev.package.alacritty_terminal]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+# Strip symbols from the release binary: smaller artifact, faster loads.
+strip = true

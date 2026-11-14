@@ -1,0 +1,9 @@
+(comment) @comment
+(string) @string
+(int_lit) @number
+(float_lit) @number
+(type) @type
+(message_name) @type
+(enum_name) @type
+(service_name) @type
+(rpc_name) @function

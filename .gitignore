@@ -1,0 +1,28 @@
+# Build and dependency artifacts
+target/
+**/target/
+
+# IDE and editor files
+.idea/
+.vscode/
+.commandcode/
+*.swp
+*.swo
+*~
+*.bak
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Testing and coverage
+coverage/
+*.lcov
+
+# Node / JS integration test artifacts
+node_modules/
+
+# Agent runtime artifacts
+.rpi/
+

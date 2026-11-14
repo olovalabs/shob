@@ -1,0 +1,229 @@
+use crate::{highlighter::HighlightTheme, scroll::ScrollbarShow};
+use gpui::{px, App, Global, Hsla, Pixels, SharedString, Window, WindowAppearance};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use std::{
+    ops::{Deref, DerefMut},
+    rc::Rc,
+    sync::Arc,
+};
+
+mod color;
+mod registry;
+mod schema;
+mod theme_color;
+
+pub use color::*;
+pub use registry::*;
+pub use schema::*;
+pub use theme_color::*;
+
+pub fn init(cx: &mut App) {
+    registry::init(cx);
+
+    Theme::sync_system_appearance(None, cx);
+    Theme::sync_scrollbar_appearance(cx);
+}
+
+pub trait ActiveTheme {
+    fn theme(&self) -> &Theme;
+}
+
+impl ActiveTheme for App {
+    #[inline(always)]
+    fn theme(&self) -> &Theme {
+        Theme::global(self)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Theme {
+    pub colors: ThemeColor,
+    pub highlight_theme: Arc<HighlightTheme>,
+    pub light_theme: Rc<ThemeConfig>,
+    pub dark_theme: Rc<ThemeConfig>,
+
+    pub mode: ThemeMode,
+
+    pub font_family: SharedString,
+
+    pub font_size: Pixels,
+
+    pub mono_font_family: SharedString,
+
+    pub mono_font_size: Pixels,
+
+    pub radius: Pixels,
+
+    pub radius_lg: Pixels,
+    pub shadow: bool,
+    pub transparent: Hsla,
+
+    pub scrollbar_show: ScrollbarShow,
+
+    pub tile_grid_size: Pixels,
+
+    pub tile_shadow: bool,
+
+    pub tile_radius: Pixels,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self::from(&ThemeColor::default())
+    }
+}
+
+impl Deref for Theme {
+    type Target = ThemeColor;
+
+    fn deref(&self) -> &Self::Target {
+        &self.colors
+    }
+}
+
+impl DerefMut for Theme {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.colors
+    }
+}
+
+impl Global for Theme {}
+
+impl Theme {
+
+    #[inline(always)]
+    pub fn global(cx: &App) -> &Theme {
+        cx.global::<Theme>()
+    }
+
+    #[inline(always)]
+    pub fn global_mut(cx: &mut App) -> &mut Theme {
+        cx.global_mut::<Theme>()
+    }
+
+    #[inline(always)]
+    pub fn is_dark(&self) -> bool {
+        self.mode.is_dark()
+    }
+
+    pub fn theme_name(&self) -> &SharedString {
+        if self.is_dark() {
+            &self.dark_theme.name
+        } else {
+            &self.light_theme.name
+        }
+    }
+
+    pub fn sync_system_appearance(window: Option<&mut Window>, cx: &mut App) {
+
+        let appearance = window
+            .as_ref()
+            .map(|window| window.appearance())
+            .unwrap_or_else(|| cx.window_appearance());
+
+        Self::change(appearance, window, cx);
+    }
+
+    pub fn sync_scrollbar_appearance(cx: &mut App) {
+        Theme::global_mut(cx).scrollbar_show = if cx.should_auto_hide_scrollbars() {
+            ScrollbarShow::Scrolling
+        } else {
+            ScrollbarShow::Hover
+        };
+    }
+
+    pub fn change(mode: impl Into<ThemeMode>, window: Option<&mut Window>, cx: &mut App) {
+        let mode = mode.into();
+        if !cx.has_global::<Theme>() {
+            let mut theme = Theme::default();
+            theme.light_theme = ThemeRegistry::global(cx).default_light_theme().clone();
+            theme.dark_theme = ThemeRegistry::global(cx).default_dark_theme().clone();
+            cx.set_global(theme);
+        }
+
+        let theme = cx.global_mut::<Theme>();
+        theme.mode = mode;
+        if mode.is_dark() {
+            theme.apply_config(&theme.dark_theme.clone());
+        } else {
+            theme.apply_config(&theme.light_theme.clone());
+        }
+
+        if let Some(window) = window {
+            window.refresh();
+        }
+    }
+
+    #[inline]
+    pub fn editor_background(&self) -> Hsla {
+        self.highlight_theme
+            .style
+            .editor_background
+            .unwrap_or(self.background)
+    }
+}
+
+impl From<&ThemeColor> for Theme {
+    fn from(colors: &ThemeColor) -> Self {
+        Theme {
+            mode: ThemeMode::default(),
+            transparent: Hsla::transparent_black(),
+            font_family: ".SystemUIFont".into(),
+            font_size: px(16.),
+            mono_font_family: if cfg!(target_os = "macos") {
+
+                "Menlo".into()
+            } else if cfg!(target_os = "windows") {
+                "Consolas".into()
+            } else {
+                "DejaVu Sans Mono".into()
+            },
+            mono_font_size: px(13.),
+            radius: px(6.),
+            radius_lg: px(8.),
+            shadow: true,
+            scrollbar_show: ScrollbarShow::default(),
+            tile_grid_size: px(8.),
+            tile_shadow: true,
+            tile_radius: px(0.),
+            colors: *colors,
+            light_theme: Rc::new(ThemeConfig::default()),
+            dark_theme: Rc::new(ThemeConfig::default()),
+            highlight_theme: HighlightTheme::default_light(),
+        }
+    }
+}
+
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, PartialOrd, Eq, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeMode {
+    #[default]
+    Light,
+    Dark,
+}
+
+impl ThemeMode {
+    #[inline(always)]
+    pub fn is_dark(&self) -> bool {
+        matches!(self, Self::Dark)
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            ThemeMode::Light => "light",
+            ThemeMode::Dark => "dark",
+        }
+    }
+}
+
+impl From<WindowAppearance> for ThemeMode {
+    fn from(appearance: WindowAppearance) -> Self {
+        match appearance {
+            WindowAppearance::Dark | WindowAppearance::VibrantDark => Self::Dark,
+            WindowAppearance::Light | WindowAppearance::VibrantLight => Self::Light,
+        }
+    }
+}

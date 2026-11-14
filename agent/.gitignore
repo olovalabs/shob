@@ -1,0 +1,32 @@
+.reference/
+.idea/
+.vscode/
+.gitignore
+
+# Locally-created pi sessions (from running the `pi` binary against this repo)
+.pi/
+
+# Release/publish run logs (stdouts captured during `task publish` etc.)
+*-publish.log
+task-*.log
+release-*.log
+.claude/*
+target/*
+
+# Benchmark scratch: the npm-installed native pi that scripts/bench-vs-pi.mjs
+# compares against (~400 MiB of node_modules).
+.bench/
+
+# Static frontend deployment bundle
+.deploy/
+.codegraph
+.rpi/*
+!.rpi/skills/
+.rpi/skills/*
+!.rpi/skills/rpi-extension-authoring/
+!.rpi/skills/rpi-extension-authoring/SKILL.md
+!.rpi/skills/rpi-release/
+!.rpi/skills/rpi-release/SKILL.md
+website/.rpi/*
+.git/rpi-release-helper.exe
+publish-*.log

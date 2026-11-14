@@ -1,0 +1,26 @@
+[package]
+name = "rpi-embedded"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "In-process agent sessions, catalog and login for embedding rpi in a host UI"
+
+[dependencies]
+base64 = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+sha2 = "0.10"
+tempfile = { workspace = true }
+uuid = { workspace = true }
+rpi-agent = { workspace = true }
+rpi-ai = { workspace = true }
+rpi-cli = { path = "../rpi-cli" }
+rpi-extensions = { workspace = true }
+rpi-harness = { workspace = true }
+rpi-runtime = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }

@@ -1,0 +1,28 @@
+[package]
+name = "rpi-runtime"
+edition.workspace = true
+rust-version = "1.94.1"
+license.workspace = true
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Embeddable model catalog, credential resolution and provider execution bindings"
+readme = "README.md"
+
+[dependencies]
+rpi-ai = { workspace = true, features = ["providers"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+indexmap = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+aws-config = "1.13.2"
+aws-credential-types = "1"
+google-cloud-auth = "1.18.0"
+http = "1"
+
+[dev-dependencies]
+tempfile = { workspace = true }

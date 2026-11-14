@@ -1,0 +1,52 @@
+[package]
+name = "rpi-harness"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/rpi-harness"
+description = "Session tree + JSONL persistence + compaction + AgentHarness loop, Rust port of pi harness layer"
+readme = "README.md"
+keywords = ["agent", "llm", "ai", "claude", "harness"]
+categories = ["api-bindings", "asynchronous", "artificial-intelligence"]
+
+[features]
+# Explicit construction only; no CLI/Web routing or migration.
+experimental-native-store = ["rusqlite/hooks"]
+
+[dependencies]
+rpi-telemetry = { workspace = true }
+rpi-ai = { workspace = true }
+rpi-agent = { workspace = true }
+rpi-tools = { workspace = true }
+rpi-durable = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = { workspace = true }
+yaml_serde = { workspace = true }
+schemars = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+rusqlite = { workspace = true }
+sha2 = "0.10.9"
+
+[dev-dependencies]
+# Test-only SQL authorization probe for the managed-layout experiment.
+rusqlite = { workspace = true, features = ["hooks"] }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
+rpi-telemetry = { workspace = true }
+rpi-ai = { workspace = true }
+rpi-agent = { workspace = true }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

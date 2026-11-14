@@ -1,0 +1,682 @@
+# Simple release workflow: each platform builds its binary and uploads it
+# straight to the GitHub Release. There is deliberately no plan / global /
+# host barrier, so a slow or long-queued runner (usually macOS) can never hold
+# up the other platforms -- Linux and Windows go live as soon as they are
+# built, macOS follows whenever its runner frees up.
+#
+# Cutting a release:
+#   1. bump `version` in Cargo.toml and commit
+#   2. git tag v<version> && git push --follow-tags
+# Pushing the tag creates the release and starts every job below.
+# `workflow_dispatch` builds everything without uploading (smoke test).
+
+name: Release
+
+permissions:
+  contents: write
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-linux:
+    name: linux x86_64
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libxkbcommon-x11-dev \
+            libxkbcommon-dev \
+            libfontconfig1-dev \
+            libfreetype6-dev \
+            libxcb1-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare bundled agent-browser
+        shell: bash
+        run: bash scripts/prepare-agent-browser.sh
+
+      - name: Check tag matches Cargo version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          test "${GITHUB_REF_NAME#v}" = "$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)"
+
+      - name: Build
+        run: cargo build --release -p kathamo
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          TARGET=x86_64-unknown-linux-gnu
+          rm -rf "dist/kathamo-$TARGET"
+          mkdir -p "dist/kathamo-$TARGET"
+          cp target/release/kathamo "dist/kathamo-$TARGET/"
+          cp README.md "dist/kathamo-$TARGET/" 2>/dev/null || true
+          tar czf "kathamo-$TARGET.tar.gz" -C dist "kathamo-$TARGET"
+          sha256sum "kathamo-$TARGET.tar.gz" > "kathamo-$TARGET.tar.gz.sha256"
+          ls -lh "kathamo-$TARGET.tar.gz"
+
+      - name: Upload to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            kathamo-x86_64-unknown-linux-gnu.tar.gz
+            kathamo-x86_64-unknown-linux-gnu.tar.gz.sha256
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+  build-windows:
+    name: windows x86_64
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare bundled agent-browser
+        shell: bash
+        run: bash scripts/prepare-agent-browser.sh
+
+      - name: Check tag matches Cargo version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          test "${GITHUB_REF_NAME#v}" = "$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)"
+
+      - name: Build
+        run: cargo build --release -p kathamo
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $t = "x86_64-pc-windows-msvc"
+          Remove-Item -Recurse -Force "dist/kathamo-$t" -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path "dist/kathamo-$t" | Out-Null
+          Copy-Item "target/release/kathamo.exe" "dist/kathamo-$t/"
+          Copy-Item "README.md" "dist/kathamo-$t/" -ErrorAction SilentlyContinue
+          Compress-Archive -Path "dist/kathamo-$t" -DestinationPath "kathamo-$t.zip" -Force
+          ((Get-FileHash "kathamo-$t.zip" -Algorithm SHA256).Hash.ToLower() + "  kathamo-$t.zip`n") | Out-File -FilePath "kathamo-$t.zip.sha256" -NoNewline -Encoding ascii
+          # Standalone exe next to the zip, so users can grab it directly.
+          Copy-Item "target/release/kathamo.exe" "kathamo-$t.exe"
+          ((Get-FileHash "kathamo-$t.exe" -Algorithm SHA256).Hash.ToLower() + "  kathamo-$t.exe`n") | Out-File -FilePath "kathamo-$t.exe.sha256" -NoNewline -Encoding ascii
+          Get-ChildItem "kathamo-$t.*"
+
+      - name: Upload to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            kathamo-x86_64-pc-windows-msvc.zip
+            kathamo-x86_64-pc-windows-msvc.zip.sha256
+            kathamo-x86_64-pc-windows-msvc.exe
+            kathamo-x86_64-pc-windows-msvc.exe.sha256
+
+  build-macos:
+    name: macos apple-silicon
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare bundled agent-browser
+        shell: bash
+        run: bash scripts/prepare-agent-browser.sh
+
+      - name: Check tag matches Cargo version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          test "${GITHUB_REF_NAME#v}" = "$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)"
+
+      - name: Build
+        run: cargo build --release -p kathamo
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          TARGET=aarch64-apple-darwin
+          rm -rf "dist/kathamo-$TARGET"
+          mkdir -p "dist/kathamo-$TARGET"
+          cp target/release/kathamo "dist/kathamo-$TARGET/"
+          cp README.md "dist/kathamo-$TARGET/" 2>/dev/null || true
+          tar czf "kathamo-$TARGET.tar.gz" -C dist "kathamo-$TARGET"
+          shasum -a 256 "kathamo-$TARGET.tar.gz" > "kathamo-$TARGET.tar.gz.sha256"
+          ls -lh "kathamo-$TARGET.tar.gz"
+
+      - name: Upload to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            kathamo-aarch64-apple-darwin.tar.gz
+            kathamo-aarch64-apple-darwin.tar.gz.sha256
+
+  # MSI installer for Windows, built from the zip that build-windows
+  # already uploaded. Needs ONLY build-windows, so a queued macOS or
+  # Linux runner can never delay it.
+  windows-packages:
+    name: windows MSI installer
+    needs: build-windows
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download WiX v3 binaries
+        id: wix
+        run: |
+          $wixZip = Join-Path $env:TEMP "wix314-binaries.zip"
+          $wixDir = Join-Path $env:TEMP "wix314"
+          Invoke-WebRequest -Uri "https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip" -OutFile $wixZip
+          Remove-Item -Recurse -Force $wixDir -ErrorAction SilentlyContinue
+          Expand-Archive -Path $wixZip -DestinationPath $wixDir -Force
+          # WiX v3 has no wix.exe (unified CLI is v4+ only) — it uses
+          # candle.exe (compile) + light.exe (link).
+          $candle = Get-ChildItem -Path $wixDir -Recurse -Filter "candle.exe" | Select-Object -First 1
+          $light = Get-ChildItem -Path $wixDir -Recurse -Filter "light.exe" | Select-Object -First 1
+          if (-not $candle) { Write-Error "candle.exe not found in $wixDir"; Get-ChildItem -Recurse $wixDir | Select-Object -First 30; exit 1 }
+          if (-not $light) { Write-Error "light.exe not found in $wixDir"; exit 1 }
+          Write-Output "wixDir=$($candle.DirectoryName)" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+
+      - name: Download the Windows zip
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          New-Item -ItemType Directory -Force -Path "target/distrib" | Out-Null
+          gh release download "$TAG" -p "kathamo-x86_64-pc-windows-msvc.zip" -D "target/distrib/"
+        shell: pwsh
+
+      - name: Extract the zip
+        run: |
+          $zip = Get-ChildItem "target/distrib/kathamo-x86_64-pc-windows-msvc.zip" | Select-Object -First 1
+          $extract = Join-Path $env:TEMP "kathamo-msi"
+          Remove-Item -Recurse -Force $extract -ErrorAction SilentlyContinue
+          Expand-Archive -Path $zip.FullName -DestinationPath $extract -Force
+          Write-Output "extract=$extract"
+        shell: pwsh
+
+      - name: Build MSI installer
+        run: |
+          $extract = Join-Path $env:TEMP "kathamo-msi"
+          $exe = Get-ChildItem "$extract/kathamo.exe" -Recurse | Select-Object -First 1
+          if (-not $exe) { Write-Error "kathamo.exe not found in zip"; exit 1 }
+          $wixDir = "${{ steps.wix.outputs.wixDir }}"
+          $candle = Join-Path $wixDir "candle.exe"
+          $light = Join-Path $wixDir "light.exe"
+          if (-not (Test-Path $candle)) { Write-Error "candle.exe not found at $candle"; exit 1 }
+          if (-not (Test-Path $light)) { Write-Error "light.exe not found at $light"; exit 1 }
+
+          $ver = "${{ github.ref_name }}".TrimStart("v")
+
+          # Generate the WiX source file for the installer
+          $wxs = @"
+          <?xml version="1.0" encoding="UTF-8"?>
+          <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+            <Product Id="*" Name="kathamo" Language="1033" Version="$ver" Manufacturer="olovalabs" UpgradeCode="AF6CCD6E-1A15-4EF8-81B6-7BC71C0BEA46">
+              <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" />
+              <MajorUpgrade DowngradeErrorMessage="A newer version of kathamo is already installed." />
+              <MediaTemplate EmbedCab="yes" />
+              <Feature Id="ProductFeature" Title="kathamo" Level="1">
+                <ComponentGroupRef Id="ProductComponents" />
+              </Feature>
+            </Product>
+            <Fragment>
+              <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+                <Component Id="kathamo.exe" Guid="8CD2BADD-7F87-4013-B283-16A4859EF571">
+                  <File Id="kathamo.exe" Source="$($exe.FullName)" KeyPath="yes" />
+                </Component>
+              </ComponentGroup>
+            </Fragment>
+            <Fragment>
+              <Directory Id="TARGETDIR" Name="SourceDir">
+                <Directory Id="ProgramFilesFolder">
+                  <Directory Id="INSTALLFOLDER" Name="kathamo" />
+                </Directory>
+              </Directory>
+            </Fragment>
+          </Wix>
+          "@
+          $wxs | Out-File -FilePath "$extract\kathamo.wxs" -Encoding utf8
+
+          # Build the MSI the WiX v3 way: candle (compile) then light (link).
+          & $candle "$extract\kathamo.wxs" -out "$extract\kathamo.wixobj"
+          & $light "$extract\kathamo.wixobj" -out "kathamo-x86_64-pc-windows-msvc.msi"
+          $msiHash = (Get-FileHash "kathamo-x86_64-pc-windows-msvc.msi" -Algorithm SHA256).Hash.ToLower()
+          "$msiHash  kathamo-x86_64-pc-windows-msvc.msi`n" | Out-File -FilePath "kathamo-x86_64-pc-windows-msvc.msi.sha256" -NoNewline -Encoding ascii
+          Get-ChildItem "kathamo-x86_64-pc-windows-msvc.msi*"
+
+      - name: Upload MSI to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            kathamo-x86_64-pc-windows-msvc.msi
+            kathamo-x86_64-pc-windows-msvc.msi.sha256
+          fail_on_unmatched_files: true
+
+  # .deb / .rpm / Arch / AppImage, built from the Linux tarball that
+  # build-linux already uploaded. Needs ONLY build-linux, so a queued macOS
+  # or Windows runner can never delay Linux packages.
+  linux-packages:
+    name: deb, rpm, Arch and AppImage
+    needs: build-linux
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      # The source tree is needed for the .desktop file and the logo. The app
+      # writes a per-user copy of both at runtime; an installed package has
+      # to ship them properly instead.
+      - uses: actions/checkout@v6
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            desktop-file-utils \
+            file \
+            imagemagick \
+            jq \
+            rpm \
+            zstd
+
+      # The release already exists by now: build-linux created it when it
+      # uploaded the tarball, so just download that instead of passing
+      # artifacts between jobs.
+      - name: Download the Linux binary tarball
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p target/distrib
+          gh release download "$TAG" -p "kathamo-x86_64-unknown-linux-gnu.tar.gz" -D target/distrib/
+
+      # Builds a FUSE-less `payload/` tree that the four packagers below all
+      # read from, so none of them has to know where the tarball came from.
+      - name: Lay out the payload
+        id: payload
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          TARBALL=$(ls target/distrib/kathamo-x86_64-unknown-linux-gnu.tar.gz)
+          VERSION="${TAG#v}"
+          if [ -z "$VERSION" ]; then
+            echo "::error::could not read the version out of $TAG"
+            exit 1
+          fi
+
+          # Cargo semver allows a prerelease suffix, but each packager spells one
+          # differently and two of them reject a hyphen outright:
+          #
+          #   * Debian and RPM use `~`, which sorts *before* everything, i.e.
+          #     before the bare 0.1.0 -- the documented way to spell a Debian
+          #     pre-release. rpmbuild additionally refuses `-` in Version at
+          #     all (rpmverParse accepts only alphanumerics and . + ~ ^).
+          #   * Arch forbids `-`, `/`, `:` and whitespace in pkgver
+          #     (check_pkgver in makepkg's lint_pkgbuild/pkgver.sh), so only
+          #     the hyphens are swapped for dots, which is the usual Arch
+          #     pre-release spelling: 0.1.0.alpha.1
+          #
+          # A plain 0.1.0 has no suffix and passes through all three unchanged.
+          BASE="${VERSION%%-*}"
+          PRERELEASE=""
+          case "$VERSION" in
+            *-*) PRERELEASE="${VERSION#*-}" ;;
+          esac
+          if [ -n "$PRERELEASE" ]; then
+            DEB_VERSION="$BASE~$PRERELEASE"
+            RPM_VERSION="$BASE~$PRERELEASE"
+            ARCH_PKGVER="$BASE.${PRERELEASE//-/.}"
+          else
+            DEB_VERSION="$BASE"
+            RPM_VERSION="$BASE"
+            ARCH_PKGVER="$BASE"
+          fi
+
+          {
+            echo "version=$VERSION"
+            echo "deb_version=$DEB_VERSION"
+            echo "rpm_version=$RPM_VERSION"
+            echo "arch_pkgver=$ARCH_PKGVER"
+          } >> "$GITHUB_OUTPUT"
+          echo "cargo=$VERSION deb=$DEB_VERSION rpm=$RPM_VERSION arch=$ARCH_PKGVER"
+
+          extract=$(mktemp -d)
+          # The tarball keeps everything under a single top-level directory, so
+          # strip it rather than assuming a bare binary at the root.
+          tar xzf "$TARBALL" -C "$extract" --strip-components=1
+
+          # Assert rather than assume: an empty package is much worse than a
+          # red build.
+          if [ ! -x "$extract/kathamo" ]; then
+            echo "::error::no kathamo binary in $TARBALL"
+            ls -l "$extract"
+            exit 1
+          fi
+          file "$extract/kathamo"
+
+          # usr/, and only usr/. Nothing may be left at the root of payload/:
+          # dpkg-deb and rpmbuild would faithfully install it at /.
+          install -Dm755 "$extract/kathamo" payload/usr/bin/kathamo
+          rm -rf "$extract"
+
+          # Icons at the sizes a panel is likely to ask for. hicolor is keyed by
+          # exact pixel size, so one 1024x1024 file fails a 32x32 request on
+          # toolkits that do a strict lookup. The fallback is a hard error on
+          # purpose -- silently shipping the 1024x1024 PNG under every size
+          # label would defeat the point of shipping the sizes at all.
+          for size in 16 24 32 48 64 128 256 512; do
+            dir="payload/usr/share/icons/hicolor/${size}x${size}/apps"
+            mkdir -p "$dir"
+            if ! convert -background none -resize "${size}x${size}" \
+                 assets/logo/kathamo.png "$dir/kathamo.png"; then
+              echo "::error::could not resize the logo to ${size}px"
+              exit 1
+            fi
+          done
+          # StartupWMClass has to equal the app_id the app sets from `app_id` in
+          # main.rs, or desktop-file matching silently falls back to a generic
+          # icon. Exec is rewritten to the installed path and TryExec dropped,
+          # since the dev path in the template is not valid once installed.
+          mkdir -p payload/usr/share/applications
+          sed -e 's|^Exec=.*|Exec=/usr/bin/kathamo %F|' \
+              -e '/^TryExec=/d' \
+              kathamo.desktop > payload/usr/share/applications/kathamo.desktop
+          desktop-file-validate payload/usr/share/applications/kathamo.desktop
+
+      # Anything left at the root of payload/ gets installed at / by dpkg-deb
+      # and rpmbuild, so assert the tree is usr/-only rather than trusting the
+      # layout to have stayed that way.
+      - name: Check the payload layout
+        run: |
+          set -euo pipefail
+          strays=$(find payload -mindepth 1 -maxdepth 1 ! -name usr ! -name DEBIAN)
+          if [ -n "$strays" ]; then
+            echo "::error::unexpected entries at the payload root:"
+            echo "$strays"
+            exit 1
+          fi
+          find payload -type f -o -type l | sort
+
+      # --- .deb (Debian, Ubuntu) --------------------------------------------
+      - name: Build .deb
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.payload.outputs.deb_version }}"
+          mkdir -p payload/DEBIAN
+
+          # Depends mirrors `readelf -d payload/usr/bin/kathamo` plus libvulkan1,
+          # which is not linked but is dlopen'd by blade-graphics at runtime:
+          # without it the window opens and renders nothing.
+          cat > payload/DEBIAN/control <<EOF
+          Package: kathamo
+          Version: $VERSION
+          Section: devel
+          Priority: optional
+          Architecture: amd64
+          Maintainer: olovalabs
+          Installed-Size: $(du -ks payload/usr | cut -f1)
+          Depends: libc6, libgcc-s1, libvulkan1, libxcb1, libxkbcommon0, libxkbcommon-x11-0
+          Homepage: https://github.com/olovalabs/kathamo
+          Description: GPU-accelerated terminal emulator built for developers orchestrating AI coding agents
+           A GPU-accelerated terminal emulator built for developers orchestrating
+           AI coding agents.
+          EOF
+
+          dpkg-deb --root-owner-group --build payload "kathamo_${VERSION}_amd64.deb"
+          dpkg-deb --info "kathamo_${VERSION}_amd64.deb"
+          dpkg-deb --contents "kathamo_${VERSION}_amd64.deb"
+
+      # --- .rpm (Fedora, RHEL, openSUSE) ------------------------------------
+      - name: Build .rpm
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.payload.outputs.rpm_version }}"
+
+          rm -rf rpmbuild
+          mkdir -p rpmbuild/{SPECS,RPMS,SRPMS,BUILD,SOURCES} rpmbuild/BUILD/icons
+
+          # %install runs with its working directory set to %{_topdir}/BUILD,
+          # so these are the files the spec installs from.
+          cp payload/usr/bin/kathamo rpmbuild/BUILD/kathamo
+          cp payload/usr/share/applications/kathamo.desktop rpmbuild/BUILD/kathamo.desktop
+          for size in 16 24 32 48 64 128 256 512; do
+            mkdir -p "rpmbuild/BUILD/icons/${size}x${size}"
+            cp "payload/usr/share/icons/hicolor/${size}x${size}/apps/kathamo.png" \
+               "rpmbuild/BUILD/icons/${size}x${size}/kathamo.png"
+          done
+
+          cp LICENSE-MIT rpmbuild/BUILD/LICENSE
+
+          {
+            echo "Name:           kathamo"
+            echo "Version:        $VERSION"
+            echo "Release:        1%{?dist}"
+            echo "Summary:        GPU-accelerated terminal emulator built for developers orchestrating AI coding agents"
+            echo "License:        MIT OR Apache-2.0"
+            echo "URL:            https://github.com/olovalabs/kathamo"
+            echo "BuildArch:      x86_64"
+            echo "Requires:       glibc"
+            echo "Requires:       vulkan-loader"
+            echo "Requires:       libxcb"
+            echo "Requires:       libxkbcommon"
+            echo "Requires:       libxkbcommon-x11"
+            echo
+            echo "%description"
+            echo "A GPU-accelerated terminal emulator built for developers orchestrating"
+            echo "AI coding agents."
+            echo
+            echo "%prep"
+            echo "%build"
+            echo "%install"
+            echo "mkdir -p %{buildroot}/usr/bin"
+            echo "install -m 755 kathamo %{buildroot}/usr/bin/kathamo"
+            echo "install -Dm644 kathamo.desktop %{buildroot}/usr/share/applications/kathamo.desktop"
+            echo "install -Dm644 LICENSE %{buildroot}/usr/share/licenses/%{name}/LICENSE"
+            for size in 16 24 32 48 64 128 256 512; do
+              echo "  install -Dm644 icons/${size}x${size}/kathamo.png \\"
+              echo "    %{buildroot}/usr/share/icons/hicolor/${size}x${size}/apps/kathamo.png"
+            done
+            echo
+            echo "%files"
+            echo "/usr/bin/kathamo"
+            echo "/usr/share/applications/kathamo.desktop"
+            echo "/usr/share/licenses/%{name}/LICENSE"
+            for size in 16 24 32 48 64 128 256 512; do
+              echo "/usr/share/icons/hicolor/${size}x${size}/apps/kathamo.png"
+            done
+          } > rpmbuild/SPECS/kathamo.spec
+          # No --buildroot: let rpmbuild manage its own, so %install and %files
+          # agree on where the staged files are.
+          rpmbuild --define "_topdir $PWD/rpmbuild" \
+                   --define "_build_idlinks none" \
+                   -bb rpmbuild/SPECS/kathamo.spec
+
+          find rpmbuild/RPMS -name '*.rpm' -exec mv {} . \;
+          rpm -qip kathamo-*.rpm
+          rpm -qlp kathamo-*.rpm
+
+      # --- .pkg.tar.zst (Arch) ----------------------------------------------
+      - name: Build Arch package
+        run: |
+          set -euo pipefail
+          PKGVER="${{ steps.payload.outputs.arch_pkgver }}"
+
+          rm -rf build-arch build-arch-out && mkdir -p build-arch/icons build-arch-out
+          cp payload/usr/bin/kathamo build-arch/kathamo
+          cp payload/usr/share/applications/kathamo.desktop build-arch/kathamo.desktop
+          for size in 16 24 32 48 64 128 256 512; do
+            mkdir -p "build-arch/icons/${size}x${size}"
+            cp "payload/usr/share/icons/hicolor/${size}x${size}/apps/kathamo.png" \
+               "build-arch/icons/${size}x${size}/kathamo.png"
+          done
+
+          # depends mirrors the Depends: in the .deb control file above.
+          # pkgver spells the prerelease with dots, not the Cargo hyphen, because
+          # makepkg's check_pkgver rejects a hyphen outright.
+          cat > build-arch/PKGBUILD <<EOF
+          # Generated by .github/workflows/release.yml -- do not edit.
+          pkgname=kathamo
+          pkgver=$PKGVER
+          pkgrel=1
+          pkgdesc="GPU-accelerated terminal emulator built for developers orchestrating AI coding agents"
+          arch=('x86_64')
+          license=('MIT' 'Apache-2.0')
+          url="https://github.com/olovalabs/kathamo"
+          depends=('glibc' 'vulkan-icd-loader' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11')
+          provides=('kathamo')
+          options=('!strip')
+          source=()
+          sha256sums=()
+
+          package() {
+            install -Dm755 "\$startdir/kathamo" "\$pkgdir/usr/bin/kathamo"
+            install -Dm644 "\$startdir/kathamo.desktop" \\
+              "\$pkgdir/usr/share/applications/kathamo.desktop"
+            for size in 16 24 32 48 64 128 256 512; do
+              install -Dm644 "\$startdir/icons/\${size}x\${size}/kathamo.png" \\
+                "\$pkgdir/usr/share/icons/hicolor/\${size}x\${size}/apps/kathamo.png"
+            done
+          }
+          EOF
+
+          # The finished package is written into the container as `builder`, so
+          # inside the bind mount it is owned by a uid the host runner user
+          # cannot rename out of -- "mv: Permission denied". Copy it to a
+          # second bind mount as root, which the host user does own.
+          docker run --rm \
+            -v "$PWD/build-arch:/build" \
+            -v "$PWD/build-arch-out:/out" \
+            archlinux:latest bash -c '
+            set -euo pipefail
+            pacman -Syu --noconfirm --needed base-devel
+            # makepkg refuses to run as root.
+            useradd -m builder
+            chown -R builder:builder /build
+            # --nodeps skips makepkg resolving depends=[] against the build
+            # machine. It still records them in the package metadata, which is
+            # all that matters to whoever installs it.
+            su builder -c "cd /build && makepkg --noconfirm --nodeps --clean --noprogressbar"
+            cp /build/*.pkg.tar.zst /out/
+            chmod 644 /out/*.pkg.tar.zst
+          '
+
+          mv build-arch-out/*.pkg.tar.zst ./
+          tar --zstd -tf kathamo-*.pkg.tar.zst | sort
+
+      # --- AppImage ---------------------------------------------------------
+      - name: Build AppImage
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.payload.outputs.version }}"
+
+          APPDIR=kathamo.AppDir
+          rm -rf "$APPDIR"
+          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" \
+                   "$APPDIR/usr/share/icons/hicolor/256x256/apps"
+
+          install -m755 payload/usr/bin/kathamo "$APPDIR/usr/bin/kathamo"
+          install -m644 payload/usr/share/applications/kathamo.desktop \
+            "$APPDIR/usr/share/applications/kathamo.desktop"
+          # appimagetool aborts with "Desktop file not found" unless one is at
+          # the AppDir root, so ship it in both places.
+          install -m644 payload/usr/share/applications/kathamo.desktop \
+            "$APPDIR/kathamo.desktop"
+          install -m644 payload/usr/share/icons/hicolor/256x256/apps/kathamo.png \
+            "$APPDIR/usr/share/icons/hicolor/256x256/apps/kathamo.png"
+          # .DirIcon is a symlink, not a copy and not base64.
+          ln -sf usr/share/icons/hicolor/256x256/apps/kathamo.png "$APPDIR/.DirIcon"
+          # appimagetool resolves the desktop file's `Icon=` relative to the
+          # AppDir root and aborts if it finds nothing there, so the 256px icon
+          # goes in the root as well.
+          install -m644 payload/usr/share/icons/hicolor/256x256/apps/kathamo.png \
+            "$APPDIR/kathamo.png"
+
+          cat > "$APPDIR/AppRun" <<'EOF'
+          #!/bin/sh
+          HERE=$(dirname "$(readlink -f "$0")")
+          export PATH="$HERE/usr/bin:$PATH"
+          exec "$HERE/usr/bin/kathamo" "$@"
+          EOF
+          chmod +x "$APPDIR/AppRun"
+
+          cat > "$APPDIR/kathamo.appdata.xml" <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <component type="desktop-application">
+            <id>kathamo.desktop</id>
+            <metadata_license>CC0-1.0</metadata_license>
+            <project_license>MIT</project_license>
+            <name>kathamo</name>
+            <summary>GPU-accelerated terminal emulator built for developers orchestrating AI coding agents</summary>
+            <description>
+              <p>A GPU-accelerated terminal emulator built for developers orchestrating AI coding agents.</p>
+            </description>
+            <launchable type="desktop-id">kathamo.desktop</launchable>
+            <provides><binary>kathamo</binary></provides>
+            <content_rating type="oars-1.1"/>
+          </component>
+          EOF
+
+          curl -fsSL -o /tmp/appimagetool \
+            "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod +x /tmp/appimagetool
+          # --appimage-extract-and-run works around the absence of FUSE, which
+          # is the normal state inside a container.
+          /tmp/appimagetool --appimage-extract-and-run --no-appstream \
+            "$APPDIR" "kathamo-${VERSION}-x86_64.AppImage"
+          chmod +x "kathamo-${VERSION}-x86_64.AppImage"
+          ls -lh "kathamo-${VERSION}-x86_64.AppImage"
+          # A real AppImage is an ELF header followed by a squashfs filesystem.
+          file "kathamo-${VERSION}-x86_64.AppImage"
+
+      # Straight onto the release -- no artifact relay, no host job.
+      - name: Upload packages to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ls kathamo_*.deb kathamo-*.rpm kathamo-*.pkg.tar.zst kathamo-*.AppImage
+          for f in kathamo_*.deb kathamo-*.rpm kathamo-*.pkg.tar.zst kathamo-*.AppImage; do
+            sha256sum "$f" > "$f.sha256"
+          done
+          gh release upload "$TAG" \
+            kathamo_*.deb kathamo_*.deb.sha256 \
+            kathamo-*.rpm kathamo-*.rpm.sha256 \
+            kathamo-*.pkg.tar.zst kathamo-*.pkg.tar.zst.sha256 \
+            kathamo-*.AppImage kathamo-*.AppImage.sha256 \
+            --clobber

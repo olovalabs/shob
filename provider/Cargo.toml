@@ -1,0 +1,16 @@
+[package]
+name = "provider"
+version = "0.1.0"
+edition = "2024"
+description = "Comprehensive AI provider and authentication catalog for Kathamo agent based on oh-my-pi"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+sha2 = "0.10"
+rand = "0.8"
+directories = "6"
+rusqlite = { version = "0.31", features = ["bundled"] }
+tempfile = "3"

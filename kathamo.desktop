@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Kathamo
+GenericName=Terminal Emulator
+Comment=GPU-accelerated terminal emulator built for developers orchestrating AI coding agents
+Exec=kathamo %F
+Icon=kathamo
+Terminal=false
+Type=Application
+Categories=System;TerminalEmulator;
+StartupNotify=false
+StartupWMClass=kathamo

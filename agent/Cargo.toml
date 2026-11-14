@@ -1,0 +1,94 @@
+# rpi — embedded upstream runtime + CLI source vendored for Kathamo.
+# Upstream docs, website, scripts, packaging and examples were removed; the
+# library crates remain complete.
+[workspace]
+members = [
+    "crates/rpi-telemetry",
+    "crates/rpi-ai",
+    "crates/rpi-agent",
+    "crates/rpi-tools",
+    "crates/rpi-durable",
+    "crates/rpi-harness",
+    "crates/rpi-cli",
+    "crates/rpi-runtime",
+    "crates/rpi-tui",
+    "crates/rpi-plugin-sdk",
+    "crates/rpi-extensions",
+    "crates/rpi-embedded",
+    # Required by the upstream resource-selection integration tests.
+    "examples/plugin-stub",
+]
+default-members = [
+    "crates/rpi-agent",
+    "crates/rpi-tools",
+    "crates/rpi-harness",
+    "crates/rpi-cli",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/bigfish1913/pi-rust"
+homepage = "https://rpi.laofu.online/"
+version = "0.21.0"
+authors = ["BigFish <fuwei201473@gmail.com>"]
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "process", "sync", "io-util"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+async-trait = "0.1"
+futures = "0.3"
+fs2 = "0.4"
+
+# Serialization / schemas
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["preserve_order", "raw_value", "float_roundtrip"] }
+yaml_serde = "=0.10.2"
+indexmap = { version = "2", features = ["serde"] }
+schemars = { version = "0.8", features = ["preserve_order"] }
+jsonschema = "0.18"
+
+# HTTP / SSE (used by anthropic provider, M3)
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "http2", "gzip"] }
+bytes = "1"
+eventsource-stream = "0.2"
+
+# Errors / logging
+thiserror = "1"
+tracing = "0.1"
+
+# Misc
+uuid = { version = "1", features = ["v4", "v7"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+base64 = "0.22"
+png = "0.18"
+ciborium = "0.2"
+tempfile = "3"
+regex = "1"
+semver = "1"
+globset = "=0.4.15"
+dirs = "5"
+rpassword = "7"
+
+# rpi internal crates (package names and directories both use the `rpi-` prefix).
+rpi-telemetry = { path = "crates/rpi-telemetry", version = "0.21.0" }
+rpi-ai = { path = "crates/rpi-ai", version = "0.21.0" }
+rpi-agent = { path = "crates/rpi-agent", version = "0.21.0" }
+rpi-tools = { path = "crates/rpi-tools", version = "0.21.0" }
+rpi-durable = { path = "crates/rpi-durable", version = "0.21.0" }
+rpi-harness = { path = "crates/rpi-harness", version = "0.21.0" }
+
+rpi-runtime = { path = "crates/rpi-runtime", version = "0.21.0" }
+
+rpi-tui = { path = "crates/rpi-tui", version = "0.21.0" }
+
+rpi-plugin-sdk = { path = "crates/rpi-plugin-sdk", version = "0.21.0" }
+rpi-extensions = { path = "crates/rpi-extensions", version = "0.21.0" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 16
+strip = "symbols"
