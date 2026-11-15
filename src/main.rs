@@ -66,6 +66,7 @@ mod status_bus;
 mod stream_timing;
 mod subagent_chat;
 mod theme;
+mod window_controls;
 mod workspace_state;
 
 use theme::{PaletteScheme, ThemePreference, ThemeTokens};
@@ -16077,95 +16078,32 @@ impl AppState {
                 px(0.0)
             };
         let narrow = content_width < px(520.0);
-        let is_maximized = window.is_maximized();
         let is_fullscreen = window.is_fullscreen();
-        let controls = window.window_controls();
-
-        // Window chrome stays available, but the rightmost close button
-        // leaves Settings instead of quitting the app.
-        let window_controls = (!is_fullscreen).then(|| {
-            div()
-                .id("settings-window-controls")
-                .flex()
-                .items_center()
-                .h_full()
-                .when(controls.minimize, |this| {
-                    this.child(
-                        div()
-                            .id("settings-window-minimize-btn")
-                            .w(px(36.0))
-                            .h_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .cursor(CursorStyle::PointingHand)
-                            .hover(move |style| style.bg(tokens.titlebar_btn_hover))
-                            .on_mouse_down(MouseButton::Left, |_, window, cx| {
-                                cx.stop_propagation();
-                                window.minimize_window();
-                            })
-                            .child(
-                                svg()
-                                    .path("window-minimize.svg")
-                                    .size(px(14.0))
-                                    .text_color(tokens.titlebar_fg),
-                            ),
-                    )
-                })
-                .when(controls.maximize, |this| {
-                    this.child(
-                        div()
-                            .id("settings-window-maximize-btn")
-                            .w(px(36.0))
-                            .h_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .cursor(CursorStyle::PointingHand)
-                            .hover(move |style| style.bg(tokens.titlebar_btn_hover))
-                            .on_mouse_down(MouseButton::Left, |_, window, cx| {
-                                cx.stop_propagation();
-                                window.zoom_window();
-                            })
-                            .child(
-                                svg()
-                                    .path(if is_maximized {
-                                        "window-restore.svg"
-                                    } else {
-                                        "window-maximize.svg"
-                                    })
-                                    .size(px(14.0))
-                                    .text_color(tokens.titlebar_fg),
-                            ),
-                    )
-                })
-                .child(
-                    div()
-                        .id("settings-close-btn")
-                        .debug_selector(|| "settings-close-btn".to_string())
-                        .w(px(36.0))
-                        .h_full()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .cursor(CursorStyle::PointingHand)
-                        .hover(move |style| style.bg(tokens.titlebar_btn_hover))
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.active_view = ActiveView::Workspace;
-                                cx.notify();
-                            }),
-                        )
-                        .child(
-                            svg()
-                                .path("window-close.svg")
-                                .size(px(14.0))
-                                .text_color(tokens.titlebar_fg),
-                        ),
-                )
-        });
+        let settings_close = div()
+            .id("settings-close-btn")
+            .debug_selector(|| "settings-close-btn".to_string())
+            .w(px(36.0))
+            .h_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .occlude()
+            .cursor(CursorStyle::PointingHand)
+            .hover(move |style| style.bg(tokens.titlebar_btn_hover))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.active_view = ActiveView::Workspace;
+                    cx.notify();
+                }),
+            )
+            .child(
+                svg()
+                    .path("icons/arrow-left.svg")
+                    .size(px(14.0))
+                    .text_color(tokens.titlebar_fg),
+            );
 
         let titlebar = self
             .make_drag_area(cx)
@@ -16174,14 +16112,19 @@ impl AppState {
             .flex()
             .items_center()
             .justify_between()
-            .pl(px(14.0))
-            .pr(px(10.0))
+            .pl(if cfg!(target_os = "macos") && !is_fullscreen {
+                px(78.0)
+            } else {
+                px(14.0)
+            })
             .bg(tokens.titlebar_bg)
             .border_b_1()
             .border_color(tokens.titlebar_border)
+            .children(window_controls::render(cx, tokens.is_dark, true))
             .child(
                 div()
                     .flex()
+                    .flex_1()
                     .items_center()
                     .gap(px(8.0))
                     .when(
@@ -16218,7 +16161,14 @@ impl AppState {
                             .child("Settings"),
                     ),
             )
-            .children(window_controls);
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .h_full()
+                    .child(settings_close)
+                    .children(window_controls::render(cx, tokens.is_dark, false)),
+            );
 
         // Small, self-contained previews make each appearance recognizable before
         // it is selected, including the split light/dark system preview.
@@ -18182,91 +18132,7 @@ impl Render for AppState {
         let titlebar_status = self.active_session().map(|s| s.status);
         let titlebar_logo = self.active_session().map(|s| s.logo.clone());
 
-        let is_maximized = _window.is_maximized();
         let is_fullscreen = _window.is_fullscreen();
-        let controls = _window.window_controls();
-
-        let default_window_controls = (!is_fullscreen).then(|| {
-            div()
-                .id("default-window-controls")
-                .flex()
-                .items_center()
-                .h_full()
-                .when(controls.minimize, |this| {
-                    this.child(
-                        div()
-                            .id("window-minimize-btn")
-                            .w(px(36.0))
-                            .h_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .cursor(CursorStyle::PointingHand)
-                            .hover(move |s| s.bg(tokens.titlebar_btn_hover))
-                            .on_mouse_down(MouseButton::Left, |_, window, cx| {
-                                cx.stop_propagation();
-                                window.minimize_window();
-                            })
-                            .child(
-                                svg()
-                                    .path("window-minimize.svg")
-                                    .size(px(14.0))
-                                    .text_color(tokens.titlebar_fg)
-                                    .hover(move |s| s.text_color(tokens.text_primary)),
-                            ),
-                    )
-                })
-                .when(controls.maximize, |this| {
-                    this.child(
-                        div()
-                            .id("window-maximize-btn")
-                            .w(px(36.0))
-                            .h_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .cursor(CursorStyle::PointingHand)
-                            .hover(move |s| s.bg(tokens.titlebar_btn_hover))
-                            .on_mouse_down(MouseButton::Left, |_, window, cx| {
-                                cx.stop_propagation();
-                                window.zoom_window();
-                            })
-                            .child(
-                                svg()
-                                    .path(if is_maximized {
-                                        "window-restore.svg"
-                                    } else {
-                                        "window-maximize.svg"
-                                    })
-                                    .size(px(14.0))
-                                    .text_color(tokens.titlebar_fg)
-                                    .hover(move |s| s.text_color(tokens.text_primary)),
-                            ),
-                    )
-                })
-                .child(
-                    div()
-                        .id("window-close-btn")
-                        .w(px(36.0))
-                        .h_full()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .cursor(CursorStyle::PointingHand)
-                        .hover(|s| s.bg(rgba(0xe81123ff)))
-                        .on_mouse_down(MouseButton::Left, |_, window, cx| {
-                            cx.stop_propagation();
-                            window.remove_window();
-                        })
-                        .child(
-                            svg()
-                                .path("window-close.svg")
-                                .size(px(14.0))
-                                .text_color(tokens.titlebar_fg)
-                                .hover(|s| s.text_color(rgba(0xffffffff))),
-                        ),
-                )
-        });
 
         let terminal_content = div()
             .flex()
@@ -18280,15 +18146,21 @@ impl Render for AppState {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .pl_4()
+                    .pl(if cfg!(target_os = "macos") && !is_fullscreen {
+                        px(78.0)
+                    } else {
+                        px(16.0)
+                    })
                     .bg(tokens.titlebar_bg)
                     .border_b_1()
                     .border_color(tokens.titlebar_border)
+                    .children(window_controls::render(cx, tokens.is_dark, true))
                     .child(
                         div()
                             .flex()
                             .min_w_0()
                             .overflow_hidden()
+                            .flex_1()
                             .items_center()
                             .gap_2()
                             .when(!sidebar_docked, |this| {
@@ -18357,7 +18229,7 @@ impl Render for AppState {
                                     .child(status.label())
                             })),
                     )
-                    .children(default_window_controls),
+                    .children(window_controls::render(cx, tokens.is_dark, false)),
             )
             .child(
                 div()
@@ -19017,6 +18889,8 @@ fn main() -> Result<()> {
                         startup_mark("restore applied");
                     })
                     .detach();
+
+                    window_controls::load(window, &app_state, cx);
 
                     app_state.update(cx, |state, cx| {
                         state.persistence_path = persistence_path.clone();
