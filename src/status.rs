@@ -173,6 +173,7 @@ impl DetectionResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
     Running,
+    Changing,
     Idle,
     AwaitingApproval,
     Exited,
@@ -182,6 +183,7 @@ impl State {
     pub fn to_session_status(self) -> SessionStatus {
         match self {
             State::Running => SessionStatus::Working,
+            State::Changing => SessionStatus::Unknown,
             State::Idle => SessionStatus::Idle,
             State::AwaitingApproval => SessionStatus::Blocked,
             State::Exited => SessionStatus::Done,
@@ -255,6 +257,7 @@ pub struct Detector {
     last_change: Instant,
     last_busy_hash: Option<u64>,
     last_busy_change: Instant,
+    settling: bool,
     /// screen must be unchanged this long before we trust an approval prompt
     settle: Duration,
     /// screen must be unchanged this long (with no "running" marker) to be idle
@@ -277,6 +280,7 @@ impl Detector {
             last_change: now,
             last_busy_hash: None,
             last_busy_change: now,
+            settling: true,
             settle: Duration::from_millis(400),
             idle_after: Duration::from_millis(1500),
         }
@@ -294,6 +298,7 @@ impl Detector {
             self.last_change = now;
         }
         let stable = now.duration_since(self.last_change);
+        self.settling = stable < self.idle_after;
         let tail = tail_lines(screen, 12);
 
         // 1. a prompt waiting on the human (only once the screen stopped moving)
@@ -321,9 +326,9 @@ impl Detector {
             };
         }
         self.last_busy_hash = None;
-        // 3. screen still changing => busy; stable => idle at its prompt
+        // Screen changes alone are weaker evidence than a busy marker.
         if stable < self.idle_after {
-            State::Running
+            State::Changing
         } else {
             State::Idle
         }
@@ -331,6 +336,10 @@ impl Detector {
 
     pub fn settle(&self) -> Duration {
         self.settle
+    }
+
+    pub fn is_settling(&self) -> bool {
+        self.settling
     }
 
     pub fn idle_after(&self) -> Duration {
@@ -742,7 +751,7 @@ fn detect_full_screen(
                 if let Some(state) = input.detector_state {
                     match state {
                         State::AwaitingApproval => SessionStatus::Blocked,
-                        State::Running => SessionStatus::Working,
+                        State::Running | State::Changing => SessionStatus::Working,
                         State::Idle | State::Exited => SessionStatus::Unknown,
                     }
                 } else if FallbackRules::is_blocked(&tail) {
@@ -776,7 +785,7 @@ fn detect_full_screen(
         match state {
             State::AwaitingApproval => return (SessionStatus::Blocked, None),
             State::Running => return (SessionStatus::Working, None),
-            State::Idle | State::Exited => {}
+            State::Changing | State::Idle | State::Exited => {}
         }
     }
 
@@ -1189,8 +1198,29 @@ mod tests {
             State::Idle
         );
         // done: plain prompt, then it stays unchanged
-        assert_eq!(feed(&mut d, "All done.\n> ", t0, 5100), State::Running);
+        assert_eq!(feed(&mut d, "All done.\n> ", t0, 5100), State::Changing);
         assert_eq!(feed(&mut d, "All done.\n> ", t0, 7000), State::Idle);
+    }
+
+    #[test]
+    fn fresh_shell_output_is_not_agent_work() {
+        let t0 = Instant::now();
+        let mut detector = Detector::new(Profile::generic(), t0);
+        for (screen, ms) in [("restored output", 0), ("restored output\n$ ", 500)] {
+            let state = feed(&mut detector, screen, t0, ms);
+            let lines = screen.lines().map(str::to_owned).collect::<Vec<_>>();
+            let input = StatusInput {
+                lines: &lines,
+                title: None,
+                foreground: &[],
+                detector_state: Some(state),
+                osc_progress: "",
+            };
+            assert_eq!(
+                evaluate(&input, SessionStatus::Idle, false),
+                SessionStatus::Idle
+            );
+        }
     }
 
     #[test]
@@ -1255,9 +1285,9 @@ mod tests {
         let t0 = Instant::now();
         let mut d = Detector::new(Profile::generic(), t0);
         let s = "Run `rm -rf build`?\n❯ 1. Yes\n  2. No";
-        assert_eq!(feed(&mut d, s, t0, 0), State::Running); // just appeared
+        assert_eq!(feed(&mut d, s, t0, 0), State::Changing); // just appeared
         assert_eq!(feed(&mut d, s, t0, 600), State::AwaitingApproval);
-        assert_eq!(feed(&mut d, "Continue? (y/n)", t0, 700), State::Running);
+        assert_eq!(feed(&mut d, "Continue? (y/n)", t0, 700), State::Changing);
         assert_eq!(
             feed(&mut d, "Continue? (y/n)", t0, 1200),
             State::AwaitingApproval

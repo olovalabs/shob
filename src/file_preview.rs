@@ -5,6 +5,28 @@ use std::process::Command;
 
 const MAX_BYTES: u64 = 4 * 1024 * 1024;
 
+pub fn read_markdown(path: &Path) -> Result<String, &'static str> {
+    let file = std::fs::File::open(path).map_err(|_| "Could not open Markdown file.")?;
+    let mut bytes = Vec::new();
+    file.take(MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Could not read Markdown file.")?;
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err("File is larger than the 4 MiB preview limit.");
+    }
+    let content = String::from_utf8(bytes).map_err(|_| "File is not valid UTF-8 text.")?;
+    let mut html = String::new();
+    let options = pulldown_cmark::Options::ENABLE_TABLES
+        | pulldown_cmark::Options::ENABLE_STRIKETHROUGH
+        | pulldown_cmark::Options::ENABLE_TASKLISTS
+        | pulldown_cmark::Options::ENABLE_FOOTNOTES;
+    pulldown_cmark::html::push_html(
+        &mut html,
+        pulldown_cmark::Parser::new_ext(&content, options),
+    );
+    Ok(html)
+}
+
 pub struct FileContent {
     pub text: String,
     pub deleted: bool,
@@ -240,6 +262,29 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
+    #[test]
+    fn markdown_preview_limits_input_and_reports_read_errors() {
+        let path = std::env::temp_dir().join(format!(
+            "kathamo-markdown-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&path, "# Hello").unwrap();
+        assert!(read_markdown(&path).unwrap().contains("<h1>Hello</h1>"));
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(MAX_BYTES + 1)
+            .unwrap();
+        assert_eq!(
+            read_markdown(&path),
+            Err("File is larger than the 4 MiB preview limit.")
+        );
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(read_markdown(&path), Err("Could not open Markdown file."));
+    }
+
     #[test]
     fn registered_highlight_queries_compile() {
         use gpui_component::highlighter::LanguageRegistry;

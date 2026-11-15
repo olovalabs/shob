@@ -128,6 +128,7 @@ pub struct AppSettings {
     pub palette_scheme: PaletteScheme,
     pub theme_colors: ThemeColors,
     pub default_agent_model: Option<AgentModel>,
+    pub permission_mode: crate::agent_bridge::PermissionMode,
     /// Models explicitly enabled for the model picker. New models start hidden.
     pub enabled_agent_models: Vec<AgentModel>,
     /// Explicit Kathamo execution opt-ins, scoped to canonical workspace paths.
@@ -148,6 +149,7 @@ impl Default for AppSettings {
             palette_scheme: PaletteScheme::default(),
             theme_colors: ThemeColors::default(),
             default_agent_model: None,
+            permission_mode: crate::agent_bridge::PermissionMode::Ask,
             enabled_agent_models: Vec::new(),
             trusted_kathamo_workspaces: Vec::new(),
             sidebar: SavedSidebar::default(),
@@ -341,6 +343,7 @@ mod tests {
     fn settings_roundtrip() {
         let settings = AppSettings {
             agent_layout: true,
+            permission_mode: crate::agent_bridge::PermissionMode::Full,
             theme: ThemePreference::Dark,
             palette_scheme: PaletteScheme::Github,
             trusted_kathamo_workspaces: vec![PathBuf::from("/tmp/explicit-workspace")],
@@ -372,6 +375,10 @@ mod tests {
         let settings: AppSettings =
             serde_json::from_str(r#"{"version":1,"theme":"dark"}"#).unwrap();
         assert!(settings.trusted_kathamo_workspaces.is_empty());
+        assert_eq!(
+            settings.permission_mode,
+            crate::agent_bridge::PermissionMode::Ask
+        );
         assert!(AppSettings::default().trusted_kathamo_workspaces.is_empty());
     }
 

@@ -65,13 +65,12 @@ pub struct Resolved {
 ///
 /// `detected` is what the existing poller produced (exit/native/OSC/rule plus
 /// the completion latch). `looking` is visible-and-window-active, `focused` is
-/// keyboard focus. An agent that was busy and then reports idle/active counts as
-/// finished, so a status drop without an explicit `done` still becomes `done`
-/// while the person was away.
+/// keyboard focus. An explicit agent idle report can end a busy turn; a lack
+/// of screen evidence cannot.
 pub fn resolve(
     attention: &mut Attention,
     detected: SessionStatus,
-    is_agent: bool,
+    reported_idle: bool,
     focused: bool,
     looking: bool,
     now_ms: u64,
@@ -83,7 +82,7 @@ pub fn resolve(
         SessionStatus::Idle
     };
     let finished = detected == SessionStatus::Done
-        || (is_agent
+        || (reported_idle
             && attention.last.is_some_and(busy)
             && matches!(detected, SessionStatus::Idle | SessionStatus::Active));
 
@@ -147,13 +146,22 @@ mod tests {
     fn run(
         attention: &mut Attention,
         detected: SessionStatus,
-        is_agent: bool,
+        reported_idle: bool,
         focused: bool,
         looking: bool,
         now: u64,
         seq: &mut u64,
     ) -> SessionStatus {
-        resolve(attention, detected, is_agent, focused, looking, now, seq).status
+        resolve(
+            attention,
+            detected,
+            reported_idle,
+            focused,
+            looking,
+            now,
+            seq,
+        )
+        .status
     }
 
     #[test]
@@ -173,7 +181,7 @@ mod tests {
             SessionStatus::Working
         );
         assert_eq!(
-            run(&mut a, SessionStatus::Idle, true, false, false, 2, &mut seq),
+            run(&mut a, SessionStatus::Done, true, false, false, 2, &mut seq),
             SessionStatus::Done
         );
         assert!(!a.seen, "an unseen finish is done");
@@ -182,6 +190,50 @@ mod tests {
             SessionStatus::Idle
         );
         assert!(a.seen, "looking clears done");
+    }
+
+    #[test]
+    fn idle_after_work_does_not_infer_completion() {
+        let mut a = Attention::default();
+        let mut seq = 0;
+        run(
+            &mut a,
+            SessionStatus::Working,
+            true,
+            false,
+            false,
+            1,
+            &mut seq,
+        );
+        assert_eq!(
+            run(
+                &mut a,
+                SessionStatus::Idle,
+                false,
+                false,
+                false,
+                2,
+                &mut seq
+            ),
+            SessionStatus::Idle
+        );
+        assert_eq!(
+            alert_for(Some(SessionStatus::Working), SessionStatus::Idle, false),
+            None
+        );
+        run(
+            &mut a,
+            SessionStatus::Working,
+            true,
+            false,
+            false,
+            3,
+            &mut seq,
+        );
+        assert_eq!(
+            run(&mut a, SessionStatus::Idle, true, false, false, 4, &mut seq),
+            SessionStatus::Done
+        );
     }
 
     #[test]

@@ -43,6 +43,8 @@ kathamo integration setup
 
 Use `kathamo integration status` to check them, or `kathamo integration doctor` to diagnose setup issues. In a terminal pane, switch to **Agent** to start a native chat; use `/auth` to connect a model provider.
 
+The approval mode selected in native agent chat applies to all chats and is remembered on restart. Agents running separately in terminal panes manage their own permissions. The legacy `KATHAMO_RPI_BACKEND=rpc` backend does not enforce Kathamo's approval modes.
+
 ## Data and settings
 
 Kathamo saves your workspace, terminal scrollback, and agent conversations in its application data directory. Settings live in the platform’s config directory. Use `KATHAMO_DATA_DIR=/absolute/path` to choose a data location, or `KATHAMO_DISABLE_RESTORE=1` to start without restoring a saved workspace.

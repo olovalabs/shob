@@ -4,8 +4,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum PermissionMode {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionMode {
     #[default]
     Ask,
     Auto,
@@ -392,7 +393,7 @@ impl AgentBridge {
     }
 }
 
-fn rpc_backend_requested() -> bool {
+pub(crate) fn rpc_backend_requested() -> bool {
     std::env::var("KATHAMO_RPI_BACKEND")
         .map(|backend| backend.eq_ignore_ascii_case("rpc"))
         .unwrap_or(false)
