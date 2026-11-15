@@ -120,6 +120,7 @@ mod tests {
         assert!(assets.load("icons/folder-plus.svg").unwrap().is_some());
         assert!(assets.load("icons/x.svg").unwrap().is_some());
         assert!(assets.load("icons/copy.svg").unwrap().is_some());
+        assert!(assets.load("icons/pencil.svg").unwrap().is_some());
         assert!(assets.load("icons/clipboard.svg").unwrap().is_some());
         assert!(assets.load("icons/settings.svg").unwrap().is_some());
         assert!(assets.load("icons/arrow-left.svg").unwrap().is_some());
