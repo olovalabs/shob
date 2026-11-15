@@ -3504,7 +3504,9 @@ impl AppState {
     }
 
     fn schedule_workspace_save(&mut self, cx: &Context<Self>) {
-        self.startup_loaded = true;
+        if !self.startup_loaded {
+            return;
+        }
         self.dirty = true;
         if !self.persistence_enabled {
             return;
@@ -3563,7 +3565,9 @@ impl AppState {
     /// quits. Writes settings, workspace, scrollback and conversation logs so a
     /// normal close never loses the last few seconds of work.
     fn save_all_sync(&mut self, window: Option<&Window>, cx: &mut App) {
-        self.startup_loaded = true;
+        if !self.startup_loaded {
+            return;
+        }
         if !self.persistence_enabled {
             self.dirty = false;
             return;
@@ -3650,7 +3654,7 @@ impl AppState {
 
         let RestoreData {
             workspace,
-            scrollbacks,
+            mut scrollbacks,
             transcripts,
             usage,
         } = restored;
@@ -3677,7 +3681,7 @@ impl AppState {
                         .filter(|cwd| cwd.is_dir())
                         .unwrap_or_else(|| project_path.clone());
                     let scrollback = if self.settings.restore.scrollback {
-                        scrollbacks.get(&saved_pane.uid).cloned()
+                        scrollbacks.remove(&saved_pane.uid)
                     } else {
                         None
                     };
@@ -3688,7 +3692,7 @@ impl AppState {
                             self.palette.clone(),
                             weak,
                             saved_pane.id.max(1),
-                            scrollback.as_deref(),
+                            scrollback,
                             cx,
                         )
                     else {
@@ -3735,6 +3739,7 @@ impl AppState {
                     pane.chat.agent_title = saved_pane.chat.agent_title.clone();
                     pane.chat.prompt_title = saved_pane.chat.prompt_title.clone();
                     pane.chat.selected_model = self.effective_default_agent_model().cloned();
+                    pane.chat.permission_mode = self.settings.permission_mode;
                     pane.chat.first_response_provider =
                         saved_pane.chat.first_response_provider.clone();
                     pane.chat.rpi_session_id = saved_pane.chat.rpi_session_id.clone();
@@ -3884,6 +3889,7 @@ impl AppState {
                     TerminalPane::new(id, generation, terminal, title.clone(), title.clone(), pid);
                 pane.cwd = Some(default_dir.clone());
                 pane.chat.selected_model = self.effective_default_agent_model().cloned();
+                pane.chat.permission_mode = self.settings.permission_mode;
                 pane.terminal_subscription = Some(terminal_subscription);
                 let session = Session {
                     id,
@@ -4096,7 +4102,7 @@ impl AppState {
         palette: ColorPalette,
         window_title_target: gpui::WeakEntity<Self>,
         pane_id: usize,
-        scrollback: Option<&str>,
+        scrollback: Option<String>,
         cx: &mut Context<Self>,
     ) -> Result<(
         Entity<TerminalView>,
@@ -4212,25 +4218,25 @@ impl AppState {
 
         let target = window_title_target.clone();
         let link_target = window_title_target.clone();
-        let seed = scrollback.map(str::to_string);
         let terminal = cx.new(|cx| {
-            let mut view = TerminalView::new_with_scrollback(writer, reader, config, seed, cx)
-                .with_resize_callback(resize_callback)
-                .with_link_callback(move |window, cx, link| {
-                    let (path, _, _) = link.path_with_position();
-                    let mut handled = false;
-                    let _ = link_target.update(cx, |state, cx| {
-                        handled = state.open_local_link(pane_id, &path, window, cx);
+            let mut view =
+                TerminalView::new_with_scrollback(writer, reader, config, scrollback, cx)
+                    .with_resize_callback(resize_callback)
+                    .with_link_callback(move |window, cx, link| {
+                        let (path, _, _) = link.path_with_position();
+                        let mut handled = false;
+                        let _ = link_target.update(cx, |state, cx| {
+                            handled = state.open_local_link(pane_id, &path, window, cx);
+                        });
+                        handled
+                    })
+                    .with_title_callback(move |window, cx, title| {
+                        window.set_window_title(title);
+                        let title_str = title.to_string();
+                        let _ = target.update(cx, |state, cx| {
+                            state.update_pane_title(pane_id, &title_str, cx);
+                        });
                     });
-                    handled
-                })
-                .with_title_callback(move |window, cx, title| {
-                    window.set_window_title(title);
-                    let title_str = title.to_string();
-                    let _ = target.update(cx, |state, cx| {
-                        state.update_pane_title(pane_id, &title_str, cx);
-                    });
-                });
             view.set_capture_output(false);
             view
         });
@@ -4465,10 +4471,7 @@ impl AppState {
             }
 
             let source = if let Some(agent_id) = event.agent_id.as_ref() {
-                format!(
-                    "{}:{}:{agent_id}",
-                    event.reporter, event.reporter_generation
-                )
+                format!("worker:{}:{agent_id}", event.reporter)
             } else if is_routed {
                 format!(
                     "route:{}:{}",
@@ -4476,20 +4479,29 @@ impl AppState {
                     event.session_id.as_deref().unwrap_or("")
                 )
             } else {
-                format!("{}:{}", event.reporter, event.reporter_generation)
+                format!("parent:{}:{}", event.reporter, event.reporter_generation)
             };
             if !is_routed {
-                let active_generation = pane.native_reporter_generation.get(&event.reporter);
+                let reporter_key = if event.agent_id.is_some() {
+                    source.clone()
+                } else {
+                    format!("parent:{}", event.reporter)
+                };
+                let active_generation = pane.native_reporter_generation.get(&reporter_key);
                 if active_generation.is_some_and(|active| active != &event.reporter_generation) {
                     if event.event != "register" {
                         continue;
                     }
-                    let prefix = format!("{}:", event.reporter);
-                    pane.native_sequence
-                        .retain(|key, _| !key.starts_with(&prefix));
+                    if event.agent_id.is_some() {
+                        pane.native_sequence.remove(&source);
+                    } else {
+                        let prefix = format!("parent:{}:", event.reporter);
+                        pane.native_sequence
+                            .retain(|key, _| !key.starts_with(&prefix));
+                    }
                 }
                 pane.native_reporter_generation
-                    .insert(event.reporter.clone(), event.reporter_generation.clone());
+                    .insert(reporter_key, event.reporter_generation.clone());
             }
             if pane
                 .native_sequence
@@ -4509,10 +4521,7 @@ impl AppState {
                     "error" => Some(SessionStatus::Error),
                     "idle" | "register" => Some(SessionStatus::Idle),
                     "clear" | "cancelled" => None,
-                    _ => {
-                        pane.is_agent = true;
-                        continue;
-                    }
+                    _ => continue,
                 };
                 match status {
                     Some(status) => {
@@ -4540,7 +4549,6 @@ impl AppState {
                         pane.sub_agents.remove(&agent_id);
                     }
                 }
-                pane.is_agent = true;
                 continue;
             }
             let reporter_name = event.reporter.clone();
@@ -4847,6 +4855,7 @@ impl AppState {
                             // last scrape: reuse the cached rows instead of
                             // re-extracting and re-allocating the screen.
                             SessionStatus::Working | SessionStatus::Unknown => {}
+                            _ if pane.detector.is_settling() => {}
                             _ => continue,
                         }
                     }
@@ -5239,9 +5248,7 @@ impl AppState {
         let mut alerts: Vec<attention::AppAlert> = Vec::new();
         let mut attention_changed = false;
         for project in &mut self.projects {
-            let project_name = project.name.clone();
             for session in &mut project.sessions {
-                let place = format!("{project_name} · {}", session.display_title);
                 for pane in &mut session.panes {
                     let focused = focused_id == Some(pane.id);
                     let looking = visible_ids.contains(&pane.id) && window_active;
@@ -5250,7 +5257,8 @@ impl AppState {
                     let resolved = attention::resolve(
                         &mut pane.attention,
                         pane.status,
-                        pane.is_agent,
+                        pane.is_agent
+                            && pane.detection.evidence == status::EvidenceSource::AgentReport,
                         focused,
                         looking,
                         now_ms,
@@ -5284,7 +5292,7 @@ impl AppState {
                             kind,
                             pane_id: pane.id,
                             name: pane_agent_name(pane),
-                            place: place.clone(),
+                            place: format!("{} · {}", project.name, session.display_title),
                             looking,
                         });
                     }
@@ -5470,6 +5478,7 @@ impl AppState {
                 pid,
             );
             pane.chat.selected_model = self.effective_default_agent_model().cloned();
+            pane.chat.permission_mode = self.settings.permission_mode;
             pane.terminal_subscription = Some(terminal_subscription);
             let (input_state, input_subscription) = build_pane_input(next_id, window, cx);
             input_state.update(cx, |state, cx| state.focus(window, cx));
@@ -5767,6 +5776,7 @@ impl AppState {
                 pid,
             );
             pane.chat.selected_model = self.effective_default_agent_model().cloned();
+            pane.chat.permission_mode = self.settings.permission_mode;
             pane.terminal_subscription = Some(terminal_subscription);
             let (input_state, input_subscription) = build_pane_input(next_id, window, cx);
             input_state.update(cx, |state, cx| state.focus(window, cx));
@@ -5869,6 +5879,7 @@ impl AppState {
                 pid,
             );
             pane.chat.selected_model = self.effective_default_agent_model().cloned();
+            pane.chat.permission_mode = self.settings.permission_mode;
             pane.terminal_subscription = Some(terminal_subscription);
             let (input_state, input_subscription) = build_pane_input(next_id, window, cx);
             input_state.update(cx, |state, cx| state.focus(window, cx));
@@ -6065,32 +6076,37 @@ impl AppState {
                 .unwrap_or_else(|| self.projects[project].path.clone())
                 .join(path)
         };
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            return false;
-        };
-        let mut html = String::new();
-        let options = pulldown_cmark::Options::ENABLE_TABLES
-            | pulldown_cmark::Options::ENABLE_STRIKETHROUGH
-            | pulldown_cmark::Options::ENABLE_TASKLISTS
-            | pulldown_cmark::Options::ENABLE_FOOTNOTES;
-        pulldown_cmark::html::push_html(
-            &mut html,
-            pulldown_cmark::Parser::new_ext(&content, options),
-        );
         let Some(new_id) = self.prepare_preview_pane(source, window, cx) else {
             return false;
         };
-        if let Some(pane) = self.pane_mut(new_id) {
-            pane.markdown_preview = Some((path.clone(), html.into()));
-            pane.display_title = path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string()
-                .into();
-        } else {
+        let Some(pane) = self.pane_mut(new_id) else {
             return false;
-        }
+        };
+        let generation = pane.preview_generation;
+        pane.markdown_preview = Some((path.clone(), "<p>Loading…</p>".into()));
+        pane.display_title = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string()
+            .into();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { file_preview::read_markdown(&path) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(preview) = this
+                    .pane_mut(new_id)
+                    .filter(|pane| pane.preview_generation == generation)
+                    .and_then(|pane| pane.markdown_preview.as_mut())
+                {
+                    preview.1 = result.unwrap_or_else(str::to_owned).into();
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
         cx.notify();
         true
     }
@@ -7838,6 +7854,23 @@ impl AppState {
             auth.provider_input
                 .update(cx, |state, cx| state.focus(window, cx));
         }
+        cx.notify();
+    }
+
+    fn set_permission_mode(&mut self, mode: agent_bridge::PermissionMode, cx: &mut Context<Self>) {
+        self.settings.permission_mode = mode;
+        for project in &mut self.projects {
+            for session in &mut project.sessions {
+                for pane in &mut session.panes {
+                    pane.chat.permission_mode = mode;
+                    pane.permission_menu_open = false;
+                    if let Some(bridge) = &pane.chat.bridge {
+                        bridge.set_permission_mode(mode);
+                    }
+                }
+            }
+        }
+        self.schedule_workspace_save(cx);
         cx.notify();
     }
 
@@ -11488,7 +11521,12 @@ impl AppState {
                                 }))
                                 .child(div().px(px(8.0)).pt(px(5.0)).pb(px(6.0))
                                     .text_size(px(12.0)).text_color(tokens.text_muted)
-                                    .child("How should agent actions be approved?"));
+                                    .child("Approval mode applies to all agent chats"))
+                                .when(agent_bridge::rpc_backend_requested(), |menu| menu.child(
+                                    div().px(px(8.0)).pb(px(6.0)).text_size(px(12.0))
+                                        .text_color(tokens.text_muted)
+                                        .child("The legacy RPC backend does not enforce this mode."),
+                                ));
                             for (mode, icon, description) in [
                                 (agent_bridge::PermissionMode::Ask, "icons/permission-hand.svg", "Ask before changes, commands, and other actions"),
                                 (agent_bridge::PermissionMode::Auto, "icons/permission-auto.svg", "Allow edits to existing workspace files; ask for other actions"),
@@ -11509,12 +11547,7 @@ impl AppState {
                                         .size(px(14.0)).mt(px(5.0)).flex_shrink_0().text_color(orange)))
                                     .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
                                         cx.stop_propagation();
-                                        if let Some(pane) = this.pane_mut(pane_id) {
-                                            pane.chat.permission_mode = mode;
-                                            if let Some(bridge) = &pane.chat.bridge { bridge.set_permission_mode(mode); }
-                                            pane.permission_menu_open = false;
-                                            cx.notify();
-                                        }
+                                        this.set_permission_mode(mode, cx);
                                     })));
                             }
                             menu
@@ -17763,6 +17796,17 @@ impl Render for AppState {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         static FIRST_RENDER: std::sync::Once = std::sync::Once::new();
         FIRST_RENDER.call_once(|| startup_mark("first root render started"));
+        if !self.startup_loaded {
+            return div()
+                .id("startup-splash")
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(self.tokens(cx).window_bg)
+                .child(gpui::img("kathamo.png").w(px(96.0)).h(px(96.0)))
+                .into_any_element();
+        }
         let diag_render = diagnostics::render_start();
         // "Looking" needs an active window: a visible but backgrounded window
         // has not been seen, so a finish there must still become Done.
@@ -18415,7 +18459,7 @@ impl Render for AppState {
                 this.child(self.render_agent_auth_layer(_window, cx))
             });
         diagnostics::render_end(diag_render);
-        root
+        root.into_any_element()
     }
 }
 
@@ -20402,6 +20446,45 @@ mod resize_tests {
     }
 
     #[test]
+    fn permission_mode_applies_to_all_panes_and_new_splits() {
+        let mut app = TestAppContext::new();
+        let (mut cx, state) = open_app(&mut app);
+        cx.update_window_entity(&state, |s, window, cx| {
+            s.split_pane(1, gpui::Axis::Horizontal, window, cx);
+            for mode in [
+                agent_bridge::PermissionMode::Full,
+                agent_bridge::PermissionMode::Auto,
+                agent_bridge::PermissionMode::Ask,
+            ] {
+                s.set_permission_mode(mode, cx);
+                assert_eq!(s.saved_settings().permission_mode, mode);
+                assert!(
+                    s.projects
+                        .iter()
+                        .flat_map(|p| &p.sessions)
+                        .flat_map(|s| &s.panes)
+                        .all(|p| p.chat.permission_mode == mode)
+                );
+            }
+            s.set_permission_mode(agent_bridge::PermissionMode::Full, cx);
+            s.split_pane(1, gpui::Axis::Vertical, window, cx);
+            assert!(
+                s.projects[0].sessions[0]
+                    .panes
+                    .iter()
+                    .all(|p| p.chat.permission_mode == agent_bridge::PermissionMode::Full)
+            );
+            s.create_new_session_in_project(0, window, cx);
+            assert_eq!(
+                s.projects[0].sessions.last().unwrap().panes[0]
+                    .chat
+                    .permission_mode,
+                agent_bridge::PermissionMode::Full
+            );
+        });
+    }
+
+    #[test]
     fn native_agent_sidebar_lifecycle_ignores_hidden_shell() {
         use agent_bridge::AgentEvent;
 
@@ -20471,6 +20554,48 @@ mod resize_tests {
                 .observe_status(&AgentEvent::Closed);
             s.poll_sessions_status_with(&HashMap::new(), cx);
             assert_eq!(s.projects[0].sessions[0].status, SessionStatus::Error);
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn worker_reports_do_not_change_parent_lifecycle() {
+        let mut app = TestAppContext::new();
+        let (mut cx, state) = open_app(&mut app);
+        state.update(&mut cx, |s, cx| {
+            let pane = &s.projects[0].sessions[0].panes[0];
+            let mut event = status_bus::StatusEvent {
+                version: 1,
+                app_id: STATUS_BUS.as_ref().unwrap().app_id.clone(),
+                pane_id: pane.id as u64,
+                pane_generation: pane.generation.clone(),
+                reporter: "test-agent".into(),
+                reporter_generation: "parent-generation".into(),
+                sequence: 1,
+                session_id: None,
+                turn_id: None,
+                event: "working".into(),
+                message: None,
+                approval_id: None,
+                agent_id: None,
+                parent: None,
+            };
+            let mut worker = event.clone();
+            worker.agent_id = Some("child".into());
+            worker.reporter_generation = "worker-generation".into();
+            worker.event = "register".into();
+            s.apply_status_events(vec![worker], cx);
+            let pane = &s.projects[0].sessions[0].panes[0];
+            assert!(!pane.is_agent);
+            assert_eq!(pane.status, SessionStatus::Idle);
+            s.apply_status_events(vec![event.clone()], cx);
+            event.sequence = 2;
+            event.event = "done".into();
+            s.apply_status_events(vec![event], cx);
+            assert_eq!(
+                s.projects[0].sessions[0].panes[0].native_status,
+                Some(SessionStatus::Done)
+            );
         });
     }
 
@@ -20891,7 +21016,13 @@ Done."#
         };
         cx.update_window_entity(&state, |s, _, cx| {
             s.settings.default_agent_model = Some(default.clone());
+            s.settings.permission_mode = agent_bridge::PermissionMode::Auto;
             s.startup_loaded = false;
+            s.dirty = false;
+            s.schedule_workspace_save(cx);
+            s.save_all_sync(None, cx);
+            assert!(!s.startup_loaded);
+            assert!(!s.dirty);
             s.settings.restore.agent_history = true;
             s.apply_saved_workspace(
                 RestoreData {
@@ -20905,6 +21036,10 @@ Done."#
         });
         state.read_with(&cx, |s, cx| {
             let pane = &s.projects[0].sessions[0].panes[0];
+            assert_eq!(
+                pane.chat.permission_mode,
+                agent_bridge::PermissionMode::Auto
+            );
             assert_eq!(pane.chat.conversation_key, legacy_key);
             assert_eq!(pane.chat.conversation_title(), Some("Existing chat"));
             assert_eq!(pane.chat.visible_messages()[0].text, "Legacy history");

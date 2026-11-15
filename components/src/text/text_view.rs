@@ -5,9 +5,10 @@ use std::time::Instant;
 use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, App, AppContext, Bounds, ClipboardItem, Context, Element, ElementId, Entity,
-    EntityId, FocusHandle, GlobalElementId, InspectorElementId, InteractiveElement, IntoElement,
-    KeyBinding, LayoutId, ListState, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
-    Pixels, Point, RenderOnce, SharedString, Size, StyleRefinement, Styled, Window, div, px,
+    EntityId, FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId,
+    InteractiveElement, IntoElement, KeyBinding, LayoutId, ListState, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, RenderOnce, SharedString, Size,
+    StyleRefinement, Styled, Window, div, px,
 };
 
 use crate::highlighter::HighlightTheme;
@@ -423,7 +424,11 @@ impl TextViewState {
         self.is_selecting = true;
     }
 
-    fn update_selection(&mut self, pos: Point<Pixels>) {
+    fn update_selection(&mut self, pos: Point<Pixels>, pressed_button: Option<MouseButton>) {
+        if pressed_button != Some(MouseButton::Left) {
+            self.end_selection();
+            return;
+        }
         let pos = pos - self.bounds.origin;
         if let (Some(start), Some(_)) = self.selection_positions {
             self.selection_positions = (Some(start), Some(pos))
@@ -681,7 +686,7 @@ impl IntoElement for TextView {
 
 impl Element for TextView {
     type RequestLayoutState = AnyElement;
-    type PrepaintState = ();
+    type PrepaintState = Option<Hitbox>;
 
     fn id(&self) -> Option<ElementId> {
         Some(self.id.clone())
@@ -816,12 +821,14 @@ impl Element for TextView {
         &mut self,
         _: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
-        _: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
         request_layout.prepaint(window, cx);
+        self.selectable
+            .then(|| window.insert_hitbox(bounds, HitboxBehavior::Normal))
     }
 
     fn paint(
@@ -830,7 +837,7 @@ impl Element for TextView {
         _: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
-        _: &mut Self::PrepaintState,
+        hitbox: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -850,13 +857,20 @@ impl Element for TextView {
         GlobalState::global_mut(cx).text_view_state_stack.pop();
 
         if self.selectable {
+            let hitbox = hitbox
+                .as_ref()
+                .expect("selectable text has a hitbox")
+                .clone();
             let is_selecting = self.state.read(cx).is_selecting;
             let has_selection = self.state.read(cx).has_selection();
 
             window.on_mouse_event({
                 let state = self.state.clone();
-                move |event: &MouseDownEvent, phase, _, cx| {
-                    if !bounds.contains(&event.position) || !phase.bubble() {
+                move |event: &MouseDownEvent, phase, window, cx| {
+                    if event.button != MouseButton::Left
+                        || !phase.bubble()
+                        || !hitbox.is_hovered(window)
+                    {
                         return;
                     }
 
@@ -877,7 +891,7 @@ impl Element for TextView {
                         }
 
                         state.update(cx, |state, _| {
-                            state.update_selection(event.position);
+                            state.update_selection(event.position, event.pressed_button);
                         });
                         cx.notify(entity_id);
                     }
@@ -991,6 +1005,31 @@ fn selection_bounds(
 mod tests {
     use super::*;
     use gpui::{Bounds, point, px, size};
+
+    #[test]
+    fn lost_mouse_release_does_not_extend_selection() {
+        let mut state = TextViewState {
+            parent_entity: None,
+            tx: None,
+            parsed_result: None,
+            focus_handle: None,
+            bounds: Bounds::default(),
+            selection_positions: (None, None),
+            is_selecting: false,
+            is_selectable: true,
+            list_state: ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
+        };
+        state.start_selection(point(px(10.), px(10.)));
+        state.update_selection(point(px(20.), px(10.)), Some(gpui::MouseButton::Left));
+        let selected = state.selection_positions;
+        state.update_selection(point(px(100.), px(100.)), None);
+        assert!(!state.is_selecting);
+        assert_eq!(state.selection_positions, selected);
+        state.start_selection(point(px(30.), px(30.)));
+        state.update_selection(point(px(40.), px(30.)), Some(gpui::MouseButton::Left));
+        assert!(state.is_selecting);
+        assert!(state.has_selection());
+    }
 
     fn pipeline(
         text: &str,
