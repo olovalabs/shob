@@ -6,7 +6,8 @@ Kathamo combines native terminal rendering powered by [GPUI Fast](https://github
 
 ---
 
-<img width="1609" height="1043" alt="image" src="https://github.com/user-attachments/assets/7202a427-8b1e-4e09-9433-28a99f398149" />
+<img width="1672" height="941" alt="image" src="https://github.com/user-attachments/assets/9e09e9f1-af06-4df6-bfc2-c86e305b09d6" />
+
 
 ## Key Features
 
