@@ -104,10 +104,10 @@ mod tests {
         assert!(assets.load("icons/eye.svg").unwrap().is_some());
         assert!(assets.load("icons/command.svg").unwrap().is_some());
         assert!(assets.load("icons/plus.svg").unwrap().is_some());
-        assert!(assets.load("window-close.svg").unwrap().is_some());
-        assert!(assets.load("window-minimize.svg").unwrap().is_some());
-        assert!(assets.load("window-maximize.svg").unwrap().is_some());
-        assert!(assets.load("window-restore.svg").unwrap().is_some());
+        assert!(assets.load("icons/window-close.svg").unwrap().is_some());
+        assert!(assets.load("icons/window-minimize.svg").unwrap().is_some());
+        assert!(assets.load("icons/window-maximize.svg").unwrap().is_some());
+        assert!(assets.load("icons/window-restore.svg").unwrap().is_some());
         assert!(assets.load("icons/split-vertical.svg").unwrap().is_some());
         assert!(assets.load("icons/split-horizontal.svg").unwrap().is_some());
         assert!(assets.load("icons/pane-maximize.svg").unwrap().is_some());

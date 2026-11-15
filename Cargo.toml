@@ -37,11 +37,6 @@ toml = "1"
 unicode-width = "0.2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
 
-[target.'cfg(target_os = "linux")'.dependencies]
-freedesktop-icons = "0.4"
-oito2_settings = { version = "0.1", default-features = false, features = ["watch"] }
-resvg = { version = "0.45", default-features = false }
-
 [dev-dependencies]
 tree-sitter = "0.25"
 gpui = { package = "gpui-fast", version = "0.1.13", features = ["test-support"] }

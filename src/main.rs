@@ -18,8 +18,9 @@ use gpui_component::notification::{Notification, NotificationType};
 use gpui_component::resizable::{h_resizable, resizable_panel, v_resizable};
 use gpui_component::scroll::ScrollableElement as _;
 use gpui_component::text::{TextView, TextViewStyle};
-use gpui_component::{ActiveTheme as _, Root, Sizable as _, TitleBar};
+use gpui_component::{ActiveTheme as _, Root, Sizable as _};
 use gpui_kit::base::{Scrollbar as KitScrollbar, VirtualListScrollHandle, v_virtual_list};
+use gpui_kit::component::TitleBar;
 use parking_lot::Mutex;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use std::collections::{HashMap, HashSet};
@@ -66,7 +67,6 @@ mod status_bus;
 mod stream_timing;
 mod subagent_chat;
 mod theme;
-mod window_controls;
 mod workspace_state;
 
 use theme::{PaletteScheme, ThemePreference, ThemeTokens};
@@ -15656,7 +15656,7 @@ impl AppState {
 
     /// The whole left rail: a toolbar, the Projects header with its "Open
     /// project" action, and one collapsible block per open project.
-    fn render_sidebar(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn render_sidebar(&self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let project_rows: Vec<gpui::AnyElement> = self
             .projects
             .iter()
@@ -15693,7 +15693,7 @@ impl AppState {
                     .priority(100),
                 )
             })
-            .child(self.render_sidebar_toolbar(cx))
+            .child(self.render_sidebar_toolbar(window, cx))
             .child(
                 div()
                     .flex_1()
@@ -16071,14 +16071,15 @@ impl AppState {
     fn render_settings_page(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
         let tokens = self.tokens(cx);
         let current_pref = self.theme_preference;
+        let sidebar_docked =
+            Self::sidebar_docked(self.sidebar_visible, window.viewport_size().width);
         let content_width = window.viewport_size().width
-            - if Self::sidebar_docked(self.sidebar_visible, window.viewport_size().width) {
+            - if sidebar_docked {
                 self.sidebar_width
             } else {
                 px(0.0)
             };
         let narrow = content_width < px(520.0);
-        let is_fullscreen = window.is_fullscreen();
         let settings_close = div()
             .id("settings-close-btn")
             .debug_selector(|| "settings-close-btn".to_string())
@@ -16105,48 +16106,36 @@ impl AppState {
                     .text_color(tokens.titlebar_fg),
             );
 
-        let titlebar = self
-            .make_drag_area(cx)
+        let titlebar = TitleBar::new()
             .h(px(38.0))
-            .w_full()
-            .flex()
-            .items_center()
-            .justify_between()
-            .pl(if cfg!(target_os = "macos") && !is_fullscreen {
-                px(78.0)
-            } else {
-                px(14.0)
-            })
             .bg(tokens.titlebar_bg)
-            .border_b_1()
             .border_color(tokens.titlebar_border)
-            .children(window_controls::render(cx, tokens.is_dark, true))
+            .when(cfg!(target_os = "macos") && sidebar_docked, |bar| {
+                bar.pl_3()
+            })
             .child(
                 div()
                     .flex()
                     .flex_1()
                     .items_center()
                     .gap(px(8.0))
-                    .when(
-                        !Self::sidebar_docked(self.sidebar_visible, window.viewport_size().width),
-                        |row| {
-                            row.child(sidebar_icon_button(
-                                "settings-sidebar-toggle-btn",
-                                "icons/panel-left.svg",
-                                16.0,
-                                &tokens,
-                                cx.listener::<MouseDownEvent>(|this, _, window, cx| {
-                                    if window.viewport_size().width < COMPACT_WINDOW_WIDTH {
-                                        this.compact_sidebar_open = true;
-                                    } else {
-                                        this.sidebar_visible = true;
-                                        this.schedule_workspace_save(cx);
-                                    }
-                                    cx.notify();
-                                }),
-                            ))
-                        },
-                    )
+                    .when(!sidebar_docked, |row| {
+                        row.child(sidebar_icon_button(
+                            "settings-sidebar-toggle-btn",
+                            "icons/panel-left.svg",
+                            16.0,
+                            &tokens,
+                            cx.listener::<MouseDownEvent>(|this, _, window, cx| {
+                                if window.viewport_size().width < COMPACT_WINDOW_WIDTH {
+                                    this.compact_sidebar_open = true;
+                                } else {
+                                    this.sidebar_visible = true;
+                                    this.schedule_workspace_save(cx);
+                                }
+                                cx.notify();
+                            }),
+                        ))
+                    })
                     .child(
                         svg()
                             .path("icons/settings.svg")
@@ -16161,14 +16150,7 @@ impl AppState {
                             .child("Settings"),
                     ),
             )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .h_full()
-                    .child(settings_close)
-                    .children(window_controls::render(cx, tokens.is_dark, false)),
-            );
+            .child(settings_close);
 
         // Small, self-contained previews make each appearance recognizable before
         // it is selected, including the split light/dark system preview.
@@ -16845,7 +16827,7 @@ impl AppState {
             )
     }
 
-    fn render_sidebar_toolbar(&self, cx: &mut Context<Self>) -> gpui::Div {
+    fn render_sidebar_toolbar(&self, window: &Window, cx: &mut Context<Self>) -> gpui::Div {
         let tokens = self.tokens(cx);
         div()
             .h(px(38.0))
@@ -16854,7 +16836,11 @@ impl AppState {
             .flex()
             .items_center()
             .justify_between()
-            .pl(px(14.0))
+            .pl(if cfg!(target_os = "macos") && !window.is_fullscreen() {
+                px(80.0)
+            } else {
+                px(14.0)
+            })
             .pr(px(10.0))
             .child(sidebar_icon_button(
                 "sidebar-toggle-btn",
@@ -18132,29 +18118,19 @@ impl Render for AppState {
         let titlebar_status = self.active_session().map(|s| s.status);
         let titlebar_logo = self.active_session().map(|s| s.logo.clone());
 
-        let is_fullscreen = _window.is_fullscreen();
-
         let terminal_content = div()
             .flex()
             .flex_col()
             .size_full()
             .bg(tokens.window_bg)
             .child(
-                self.make_drag_area(cx)
+                TitleBar::new()
                     .h(px(38.0))
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .pl(if cfg!(target_os = "macos") && !is_fullscreen {
-                        px(78.0)
-                    } else {
-                        px(16.0)
-                    })
                     .bg(tokens.titlebar_bg)
-                    .border_b_1()
                     .border_color(tokens.titlebar_border)
-                    .children(window_controls::render(cx, tokens.is_dark, true))
+                    .when(cfg!(target_os = "macos") && sidebar_docked, |bar| {
+                        bar.pl_3()
+                    })
                     .child(
                         div()
                             .flex()
@@ -18167,6 +18143,7 @@ impl Render for AppState {
                                 this.child(
                                     div()
                                         .id("terminal-sidebar-toggle-btn")
+                                        .occlude()
                                         .cursor(CursorStyle::PointingHand)
                                         .mr_2()
                                         .flex()
@@ -18228,8 +18205,7 @@ impl Render for AppState {
                                     .child(div().size(px(6.0)).rounded_full().bg(rgba(dot_color)))
                                     .child(status.label())
                             })),
-                    )
-                    .children(window_controls::render(cx, tokens.is_dark, false)),
+                    ),
             )
             .child(
                 div()
@@ -18342,7 +18318,7 @@ impl Render for AppState {
                         .h_full()
                         .flex_shrink_0()
                         .relative()
-                        .child(self.render_sidebar(cx))
+                        .child(self.render_sidebar(_window, cx))
                         .child(self.render_sidebar_resize_handle(cx)),
                 )
             })
@@ -18377,7 +18353,7 @@ impl Render for AppState {
                                     .sidebar_width
                                     .min((_window.viewport_size().width - px(40.0)).max(px(0.0))))
                                 .occlude()
-                                .child(self.render_sidebar(cx)),
+                                .child(self.render_sidebar(_window, cx)),
                         ),
                 )
             })
@@ -18741,11 +18717,10 @@ fn main() -> Result<()> {
                 WindowOptions {
                     window_bounds: Some(bounds),
                     window_min_size: Some(settings::minimum_window_size()),
-                    titlebar: Some(TitleBar::title_bar_options()),
                     window_decorations: Some(WindowDecorations::Client),
                     app_id: Some("kathamo".to_string()),
                     icon: window_icon,
-                    ..Default::default()
+                    ..TitleBar::window_options()
                 },
                 |window, cx| {
                     startup_mark("window created");
@@ -18889,8 +18864,6 @@ fn main() -> Result<()> {
                         startup_mark("restore applied");
                     })
                     .detach();
-
-                    window_controls::load(window, &app_state, cx);
 
                     app_state.update(cx, |state, cx| {
                         state.persistence_path = persistence_path.clone();
@@ -19320,13 +19293,12 @@ mod resize_tests {
                 cx.open_window(
                     WindowOptions {
                         window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),
-                        titlebar: Some(TitleBar::title_bar_options()),
                         window_decorations: Some(WindowDecorations::Client),
                         app_id: Some("kathamo".to_string()),
                         icon: image::load_from_memory(APP_ICON_PNG)
                             .ok()
                             .map(|image| Arc::new(image.into_rgba8())),
-                        ..Default::default()
+                        ..TitleBar::window_options()
                     },
                     |window, cx| {
                         state.update(cx, |state, cx| state.observe_appearance(window, cx));
