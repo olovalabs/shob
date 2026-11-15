@@ -46,6 +46,7 @@ jobs:
             libxkbcommon-x11-dev \
             libxkbcommon-dev \
             libfontconfig1-dev \
+            libglib2.0-dev \
             libfreetype6-dev \
             libxcb1-dev
 
@@ -73,6 +74,7 @@ jobs:
             libxkbcommon-x11-dev \
             libxkbcommon-dev \
             libfontconfig1-dev \
+            libglib2.0-dev \
             libfreetype6-dev \
             libxcb1-dev
 

@@ -1,13 +1,13 @@
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use crate::{
-    h_flex, white, ActiveTheme, Icon, IconName, InteractiveElementExt as _, Sizable as _, StyledExt,
+    ActiveTheme, Icon, IconName, InteractiveElementExt as _, Sizable as _, StyledExt, h_flex, white,
 };
 use gpui::{
-    div, prelude::FluentBuilder as _, px, AnyElement, App, ClickEvent, Context, Decorations, Hsla,
-    InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement,
-    Pixels, Point, Render, RenderOnce, StatefulInteractiveElement as _, StyleRefinement, Styled,
-    TitlebarOptions, Window, WindowControlArea,
+    AnyElement, App, ClickEvent, Context, Decorations, Hsla, InteractiveElement, IntoElement,
+    MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Point, Render, RenderImage,
+    RenderOnce, StatefulInteractiveElement as _, StyleRefinement, Styled, TitlebarOptions, Window,
+    WindowControlArea, div, img, prelude::FluentBuilder as _, px,
 };
 use smallvec::SmallVec;
 
@@ -243,7 +243,19 @@ impl ControlIcon {
             .child(glyph)
     }
 
-    fn render_linux_button(self, cx: &mut App) -> impl IntoElement {
+    fn render_linux_button(
+        self,
+        artwork: Option<Arc<RenderImage>>,
+        highlight: Option<CaptionButtonHighlight>,
+        cx: &mut App,
+    ) -> impl IntoElement + use<> {
+        let has_highlight = highlight.is_some();
+        let tooltip = match self {
+            Self::Minimize => "Minimize",
+            Self::Maximize => "Maximize",
+            Self::Restore => "Restore Down",
+            Self::Close { .. } => "Close",
+        };
         let hover_fg = self.hover_fg(cx);
         let hover_bg = self.hover_bg(cx);
         let active_bg = self.active_bg(cx);
@@ -264,8 +276,11 @@ impl ControlIcon {
             .content_center()
             .items_center()
             .text_color(cx.theme().foreground)
-            .hover(|style| style.bg(hover_bg).text_color(hover_fg))
-            .active(|style| style.bg(active_bg).text_color(hover_fg))
+            .when(has_highlight, |this| this.group("caption-button"))
+            .when(!has_highlight, |this| {
+                this.hover(|style| style.bg(hover_bg).text_color(hover_fg))
+                    .active(|style| style.bg(active_bg).text_color(hover_fg))
+            })
             .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                 window.prevent_default();
                 cx.stop_propagation();
@@ -284,7 +299,47 @@ impl ControlIcon {
                     }
                 }
             })
-            .child(Icon::new(svg_icon).small())
+            .when(has_highlight, |this| {
+                this.tooltip(move |window, cx| {
+                    crate::tooltip::Tooltip::new(tooltip).build(window, cx)
+                })
+            })
+            .child(match (artwork, highlight) {
+                (Some(image), Some(highlight)) => div()
+                    .relative()
+                    .size(highlight.diameter)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .id("caption-normal-glyph")
+                            .group_hover("caption-button", |style| style.opacity(0.))
+                            .group_active("caption-button", |style| style.opacity(0.))
+                            .child(img(image).size(px(16.))),
+                    )
+                    .child(
+                        div()
+                            .id("caption-hover-circle")
+                            .absolute()
+                            .inset_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_full()
+                            .opacity(0.)
+                            .group_hover("caption-button", |style| {
+                                style.opacity(1.).bg(highlight.hovered)
+                            })
+                            .group_active("caption-button", |style| {
+                                style.opacity(1.).bg(highlight.pressed)
+                            })
+                            .child(img(highlight.glyph).size(px(16.))),
+                    )
+                    .into_any_element(),
+                (Some(image), None) => img(image).size(px(16.)).into_any_element(),
+                _ => Icon::new(svg_icon).small().into_any_element(),
+            })
     }
 }
 
@@ -292,20 +347,73 @@ impl RenderOnce for ControlIcon {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         match PlatformStyle::platform() {
             PlatformStyle::Windows => self.render_windows_button(window, cx).into_any_element(),
-            PlatformStyle::Linux => self.render_linux_button(cx).into_any_element(),
+            PlatformStyle::Linux => self.render_linux_button(None, None, cx).into_any_element(),
 
             PlatformStyle::Mac => div().id(self.id()).into_any_element(),
         }
     }
 }
 
+#[derive(Clone, Copy)]
+pub enum CaptionButton {
+    Minimize,
+    Maximize,
+    Close,
+}
+
+/// Hover and pressed appearance for a caption button supplied by a desktop theme.
+#[derive(Clone)]
+pub struct CaptionButtonHighlight {
+    pub glyph: Arc<RenderImage>,
+    pub diameter: Pixels,
+    pub hovered: Hsla,
+    pub pressed: Hsla,
+}
+
 #[derive(IntoElement)]
-struct WindowControls {
+pub struct WindowControls {
     on_close_window: Option<Rc<Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>>>,
+    buttons: [Option<CaptionButton>; 3],
+    artwork: [Option<Arc<RenderImage>>; 4],
+    highlights: [Option<CaptionButtonHighlight>; 4],
+}
+
+impl WindowControls {
+    pub fn new() -> Self {
+        Self {
+            on_close_window: None,
+            buttons: [
+                Some(CaptionButton::Minimize),
+                Some(CaptionButton::Maximize),
+                Some(CaptionButton::Close),
+            ],
+            artwork: [None, None, None, None],
+            highlights: [None, None, None, None],
+        }
+    }
+
+    /// Set the Linux caption layout and artwork for minimize, maximize, restore, and close.
+    pub fn linux_theme(
+        mut self,
+        buttons: [Option<CaptionButton>; 3],
+        artwork: [Option<Arc<RenderImage>>; 4],
+        highlights: [Option<CaptionButtonHighlight>; 4],
+    ) -> Self {
+        self.buttons = buttons;
+        self.artwork = artwork;
+        self.highlights = highlights;
+        self
+    }
+}
+
+impl Default for WindowControls {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RenderOnce for WindowControls {
-    fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         match PlatformStyle::platform() {
             PlatformStyle::Mac => return div().id("window-controls"),
             _ => {}
@@ -320,15 +428,7 @@ impl RenderOnce for WindowControls {
         }
 
         let supported = window.window_controls();
-        let show_minimize = match PlatformStyle::platform() {
-            PlatformStyle::Linux => supported.minimize,
-            _ => true,
-        };
-        let show_zoom = match PlatformStyle::platform() {
-            PlatformStyle::Linux => supported.maximize,
-            _ => true,
-        };
-
+        let maximized = window.is_maximized();
         match PlatformStyle::platform() {
             PlatformStyle::Windows => div()
                 .id("window-controls")
@@ -352,15 +452,28 @@ impl RenderOnce for WindowControls {
                 .items_center()
                 .flex_shrink_0()
                 .h_full()
-                .when(show_minimize, |this| this.child(ControlIcon::minimize()))
-                .when(show_zoom, |this| {
-                    this.child(if window.is_maximized() {
-                        ControlIcon::restore()
-                    } else {
-                        ControlIcon::maximize()
-                    })
-                })
-                .child(ControlIcon::close(self.on_close_window)),
+                .children(self.buttons.into_iter().flatten().filter_map(|button| {
+                    let (icon, index) = match button {
+                        CaptionButton::Minimize if supported.minimize => {
+                            (ControlIcon::minimize(), 0)
+                        }
+                        CaptionButton::Maximize if supported.maximize && maximized => {
+                            (ControlIcon::restore(), 2)
+                        }
+                        CaptionButton::Maximize if supported.maximize => {
+                            (ControlIcon::maximize(), 1)
+                        }
+                        CaptionButton::Close => {
+                            (ControlIcon::close(self.on_close_window.clone()), 3)
+                        }
+                        _ => return None,
+                    };
+                    Some(icon.render_linux_button(
+                        self.artwork[index].clone(),
+                        self.highlights[index].clone(),
+                        cx,
+                    ))
+                })),
         }
     }
 }
@@ -477,6 +590,7 @@ impl RenderOnce for TitleBar {
                 )
                 .child(WindowControls {
                     on_close_window: self.on_close_window,
+                    ..WindowControls::new()
                 }),
         )
     }

@@ -28,7 +28,7 @@ cargo run
 On Linux, install the system dependencies first:
 
 ```bash
-sudo apt install -y libwayland-dev libxkbcommon-dev libfontconfig1-dev libssl-dev cmake pkg-config
+sudo apt install -y libwayland-dev libxkbcommon-dev libfontconfig1-dev libssl-dev libglib2.0-dev cmake pkg-config
 ```
 
 For a release build, run `cargo build --release`.

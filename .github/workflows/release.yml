@@ -41,6 +41,7 @@ jobs:
             libxkbcommon-x11-dev \
             libxkbcommon-dev \
             libfontconfig1-dev \
+            libglib2.0-dev \
             libfreetype6-dev \
             libxcb1-dev
 
@@ -450,7 +451,7 @@ jobs:
           Architecture: amd64
           Maintainer: olovalabs
           Installed-Size: $(du -ks payload/usr | cut -f1)
-          Depends: libc6, libgcc-s1, libvulkan1, libxcb1, libxkbcommon0, libxkbcommon-x11-0
+          Depends: libc6, libgcc-s1, libglib2.0-0t64 | libglib2.0-0, libvulkan1, libxcb1, libxkbcommon0, libxkbcommon-x11-0
           Homepage: https://github.com/olovalabs/kathamo
           Description: GPU-accelerated terminal emulator built for developers orchestrating AI coding agents
            A GPU-accelerated terminal emulator built for developers orchestrating
