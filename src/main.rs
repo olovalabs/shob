@@ -99,6 +99,7 @@ use assets::{CombinedAssets, MONO_FONT, load_embedded_fonts, sync_component_font
 use status::{SessionStatus, StatusInput};
 pub const APP_ICON_PNG: &[u8] = include_bytes!("../assets/logo/kathamo.png");
 /// Default width of the navigation sidebar (Kathamo style).
+const COMPACT_WINDOW_WIDTH: Pixels = px(768.0);
 pub const SIDEBAR_WIDTH: Pixels = px(260.0);
 /// Narrowest the sidebar can be dragged to; below this the session rows stop
 /// being readable, so the edge refuses to go further.
@@ -3243,6 +3244,7 @@ struct AppState {
     pub palette_scheme: PaletteScheme,
     default_agent_model: Option<agent_auth::AgentModel>,
     pub sidebar_visible: bool,
+    compact_sidebar_open: bool,
     integration_panel_visible: bool,
     integration_feedback: SharedString,
     pub sidebar_width: Pixels,
@@ -10194,6 +10196,7 @@ impl AppState {
                         .child(
                             div()
                                 .w(px(560.0))
+                                .max_w(relative(0.95))
                                 .p(px(10.0))
                                 .rounded(px(10.0))
                                 .border_1()
@@ -11324,7 +11327,7 @@ impl AppState {
                             .anchor(gpui::Anchor::BottomLeft)
                             .offset(gpui::point(
                                 if self.settings.agent_layout && pane.chat.active
-                                    && window.viewport_size().width - if self.sidebar_visible { self.sidebar_width } else { px(0.0) } < px(784.0)
+                                    && window.viewport_size().width - if Self::sidebar_docked(self.sidebar_visible, window.viewport_size().width) { self.sidebar_width } else { px(0.0) } < px(784.0)
                                 { px(-4.0) } else { px(0.0) },
                                 px(-6.0),
                             ))
@@ -12020,11 +12023,13 @@ impl AppState {
                     this.close_completion_menu(pane_id, cx);
                 }))
                 .w(if pane.chat.active && self.settings.agent_layout {
-                    let sidebar = if self.sidebar_visible {
-                        self.sidebar_width
-                    } else {
-                        px(0.0)
-                    };
+                    let sidebar =
+                        if Self::sidebar_docked(self.sidebar_visible, window.viewport_size().width)
+                        {
+                            self.sidebar_width
+                        } else {
+                            px(0.0)
+                        };
                     (window.viewport_size().width - sidebar - px(58.0))
                         .max(px(0.0))
                         .min(px(726.0))
@@ -14089,7 +14094,7 @@ impl AppState {
             let wordmark: gpui::ImageSource = "kathamo-wordmark.png".into();
             let wordmark_width = if self.settings.agent_layout {
                 let available = window.viewport_size().width
-                    - if self.sidebar_visible {
+                    - if Self::sidebar_docked(self.sidebar_visible, window.viewport_size().width) {
                         self.sidebar_width
                     } else {
                         px(0.0)
@@ -15456,6 +15461,10 @@ impl AppState {
     /// Capped at half the window so the terminal keeps usable columns, and
     /// never below the minimum (a very narrow window would otherwise make the
     /// max smaller than the min).
+    fn sidebar_docked(visible: bool, window_width: Pixels) -> bool {
+        visible && window_width >= COMPACT_WINDOW_WIDTH
+    }
+
     fn sidebar_max_width(window_width: Pixels) -> Pixels {
         (window_width * SIDEBAR_MAX_FRACTION).max(SIDEBAR_MIN_WIDTH)
     }
@@ -15847,6 +15856,7 @@ impl AppState {
                             } else {
                                 ActiveView::Settings
                             };
+                            this.compact_sidebar_open = false;
                             cx.notify();
                         }),
                     )
@@ -15964,6 +15974,13 @@ impl AppState {
     fn render_settings_page(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
         let tokens = self.tokens(cx);
         let current_pref = self.theme_preference;
+        let content_width = window.viewport_size().width
+            - if Self::sidebar_docked(self.sidebar_visible, window.viewport_size().width) {
+                self.sidebar_width
+            } else {
+                px(0.0)
+            };
+        let narrow = content_width < px(520.0);
         let is_maximized = window.is_maximized();
         let is_fullscreen = window.is_fullscreen();
         let controls = window.window_controls();
@@ -16071,6 +16088,26 @@ impl AppState {
                     .flex()
                     .items_center()
                     .gap(px(8.0))
+                    .when(
+                        !Self::sidebar_docked(self.sidebar_visible, window.viewport_size().width),
+                        |row| {
+                            row.child(sidebar_icon_button(
+                                "settings-sidebar-toggle-btn",
+                                "icons/panel-left.svg",
+                                16.0,
+                                &tokens,
+                                cx.listener::<MouseDownEvent>(|this, _, window, cx| {
+                                    if window.viewport_size().width < COMPACT_WINDOW_WIDTH {
+                                        this.compact_sidebar_open = true;
+                                    } else {
+                                        this.sidebar_visible = true;
+                                        this.schedule_workspace_save(cx);
+                                    }
+                                    cx.notify();
+                                }),
+                            ))
+                        },
+                    )
                     .child(
                         svg()
                             .path("icons/settings.svg")
@@ -16227,8 +16264,14 @@ impl AppState {
                                     .text_color(tokens.text_primary)
                                     .child("Color scheme"),
                             )
-                            .child(div().flex().gap(px(12.0)).children(cards))
-                            .child(self.render_palette_scheme_picker(cx))
+                            .child(
+                                div()
+                                    .flex()
+                                    .when(narrow, |row| row.flex_col())
+                                    .gap(px(12.0))
+                                    .children(cards),
+                            )
+                            .child(self.render_palette_scheme_picker(narrow, cx))
                             .child(self.render_theme_file_section(cx))
                             .child(self.render_data_section(cx)),
                     ),
@@ -16262,6 +16305,7 @@ impl AppState {
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .gap(px(8.0))
                     .child(
                         div()
@@ -16642,7 +16686,7 @@ impl AppState {
     }
 
     /// Palette cards show both appearances of each built-in theme.
-    fn render_palette_scheme_picker(&self, cx: &mut Context<Self>) -> gpui::Div {
+    fn render_palette_scheme_picker(&self, narrow: bool, cx: &mut Context<Self>) -> gpui::Div {
         let tokens = self.tokens(cx);
         let options = [
             (
@@ -16746,7 +16790,13 @@ impl AppState {
                     .text_color(tokens.text_primary)
                     .child("Themes"),
             )
-            .child(div().flex().gap(px(10.0)).children(cards))
+            .child(
+                div()
+                    .flex()
+                    .when(narrow, |row| row.flex_col())
+                    .gap(px(10.0))
+                    .children(cards),
+            )
     }
 
     fn render_sidebar_toolbar(&self, cx: &mut Context<Self>) -> gpui::Div {
@@ -16765,7 +16815,12 @@ impl AppState {
                 "icons/panel-left.svg",
                 16.0,
                 &tokens,
-                cx.listener::<MouseDownEvent>(|this, _, _, cx| {
+                cx.listener::<MouseDownEvent>(|this, _, window, cx| {
+                    if window.viewport_size().width < COMPACT_WINDOW_WIDTH {
+                        this.compact_sidebar_open = false;
+                        cx.notify();
+                        return;
+                    }
                     this.sidebar_visible = !this.sidebar_visible;
                     cx.notify();
                     this.schedule_workspace_save(cx);
@@ -17593,6 +17648,7 @@ impl AppState {
         cx: &mut Context<Self>,
     ) {
         self.active_view = ActiveView::Workspace;
+        self.compact_sidebar_open = false;
         let Some(project) = self.projects.get_mut(project_idx) else {
             return;
         };
@@ -17711,6 +17767,12 @@ impl Render for AppState {
         // "Looking" needs an active window: a visible but backgrounded window
         // has not been seen, so a finish there must still become Done.
         self.window_active = _window.is_window_active();
+        let compact = _window.viewport_size().width < COMPACT_WINDOW_WIDTH;
+        if !compact {
+            self.compact_sidebar_open = false;
+        }
+        let sidebar_docked =
+            Self::sidebar_docked(self.sidebar_visible, _window.viewport_size().width);
         self.ensure_panes_input_state(_window, cx);
 
         let tokens = self.tokens(cx);
@@ -17816,7 +17878,7 @@ impl Render for AppState {
                         });
                         let usage_detail = pane.chat.usage_detail.clone();
                         let workspace_width = _window.viewport_size().width
-                            - if self.sidebar_visible {
+                            - if sidebar_docked {
                                 self.sidebar_width
                             } else {
                                 px(0.0)
@@ -18118,9 +18180,11 @@ impl Render for AppState {
                     .child(
                         div()
                             .flex()
+                            .min_w_0()
+                            .overflow_hidden()
                             .items_center()
                             .gap_2()
-                            .when(!self.sidebar_visible, |this| {
+                            .when(!sidebar_docked, |this| {
                                 this.child(
                                     div()
                                         .id("terminal-sidebar-toggle-btn")
@@ -18138,11 +18202,17 @@ impl Render for AppState {
                                         )
                                         .on_mouse_down(
                                             MouseButton::Left,
-                                            cx.listener(|this, _, _, cx| {
+                                            cx.listener(|this, _, window, cx| {
                                                 cx.stop_propagation();
-                                                this.sidebar_visible = true;
+                                                if window.viewport_size().width
+                                                    < COMPACT_WINDOW_WIDTH
+                                                {
+                                                    this.compact_sidebar_open = true;
+                                                } else {
+                                                    this.sidebar_visible = true;
+                                                    this.schedule_workspace_save(cx);
+                                                }
                                                 cx.notify();
-                                                this.schedule_workspace_save(cx);
                                             }),
                                         ),
                                 )
@@ -18158,7 +18228,13 @@ impl Render for AppState {
                                     .flex_shrink_0()
                                     .child(session_logo_icon(logo, tokens.titlebar_fg))
                             }))
-                            .child(format!("{active_project_name} — {active_title}"))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .child(format!("{active_project_name} — {active_title}")),
+                            )
                             .children(titlebar_status.map(|status| {
                                 let (dot_color, text_color, badge_bg) = status.colors();
                                 div()
@@ -18188,8 +18264,6 @@ impl Render for AppState {
                     .child(div().flex().flex_col().size_full().child(terminal_area)),
             );
 
-        let sidebar_content = self.render_sidebar(cx);
-
         let main_content = match self.active_view {
             ActiveView::Workspace => terminal_content.into_any_element(),
             ActiveView::Settings => self.render_settings_page(_window, cx).into_any_element(),
@@ -18197,6 +18271,7 @@ impl Render for AppState {
 
         let root = div()
             .id("app-root")
+            .relative()
             .flex()
             .size_full()
             .bg(tokens.window_bg)
@@ -18210,6 +18285,12 @@ impl Render for AppState {
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 let keystroke = &event.keystroke;
 
+                if this.compact_sidebar_open && keystroke.key == "escape" {
+                    this.compact_sidebar_open = false;
+                    cx.stop_propagation();
+                    cx.notify();
+                    return;
+                }
                 if this.image_viewer.is_some() {
                     if keystroke.key == "escape" {
                         cx.stop_propagation();
@@ -18270,7 +18351,7 @@ impl Render for AppState {
             .on_drop::<ExternalPaths>(cx.listener(|this, paths: &ExternalPaths, window, cx| {
                 this.drop_external_files(paths, window, cx);
             }))
-            .when(self.sidebar_visible, |this| {
+            .when(sidebar_docked, |this| {
                 // Clamp on the way out too: a window that shrank since the
                 // width was chosen must not leave the rail eating the terminal.
                 let width = self
@@ -18282,7 +18363,7 @@ impl Render for AppState {
                         .h_full()
                         .flex_shrink_0()
                         .relative()
-                        .child(sidebar_content)
+                        .child(self.render_sidebar(cx))
                         .child(self.render_sidebar_resize_handle(cx)),
                 )
             })
@@ -18294,6 +18375,33 @@ impl Render for AppState {
                     .overflow_hidden()
                     .child(main_content),
             )
+            .when(compact && self.compact_sidebar_open, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .bg(rgba(0x00000080))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _, cx| {
+                                this.compact_sidebar_open = false;
+                                cx.notify();
+                            }),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .h_full()
+                                .w(self
+                                    .sidebar_width
+                                    .min((_window.viewport_size().width - px(40.0)).max(px(0.0))))
+                                .occlude()
+                                .child(self.render_sidebar(cx)),
+                        ),
+                )
+            })
             .when(self.terminal_context_menu.is_some(), |this| {
                 this.child(self.render_terminal_context_menu_layer(cx))
             })
@@ -18653,6 +18761,7 @@ fn main() -> Result<()> {
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(bounds),
+                    window_min_size: Some(settings::minimum_window_size()),
                     titlebar: Some(TitleBar::title_bar_options()),
                     window_decorations: Some(WindowDecorations::Client),
                     app_id: Some("kathamo".to_string()),
@@ -18671,6 +18780,7 @@ fn main() -> Result<()> {
                         palette: palette.clone(),
                         focused_pane_id: None,
                         sidebar_visible: app_settings.sidebar.visible,
+                        compact_sidebar_open: false,
                         active_view: ActiveView::Workspace,
                         theme_preference: app_settings.theme,
                         palette_scheme: app_settings.palette_scheme,
@@ -19174,6 +19284,7 @@ mod resize_tests {
             palette,
             focused_pane_id: Some(1),
             sidebar_visible: true,
+            compact_sidebar_open: false,
             active_view: ActiveView::Workspace,
             theme_preference: ThemePreference::System,
             palette_scheme: PaletteScheme::default(),
@@ -21003,6 +21114,37 @@ Done."#
             cx.run_until_parked();
             cx.draw_frame().expect("a frame after toggling");
         }
+    }
+
+    #[test]
+    fn compact_sidebar_opens_and_dismisses_without_changing_preference() {
+        let mut cx = TestAppContext::new();
+        let (mut cx, state) = open_app(&mut cx);
+        cx.simulate_resize(size(px(640.0), px(480.0)));
+        cx.run_until_parked();
+        cx.draw_frame().expect("compact frame");
+        cx.simulate_mouse_down(
+            point(px(22.0), px(19.0)),
+            MouseButton::Left,
+            Modifiers::none(),
+        );
+        cx.draw_frame().expect("open drawer");
+        assert!(state.read_with(&cx, |state, _| state.compact_sidebar_open));
+        cx.simulate_mouse_down(
+            point(px(600.0), px(200.0)),
+            MouseButton::Left,
+            Modifiers::none(),
+        );
+        cx.draw_frame().expect("dismissed drawer");
+        assert!(state.read_with(&cx, |state, _| !state.compact_sidebar_open
+            && state.sidebar_visible));
+    }
+
+    #[test]
+    fn compact_sidebar_keeps_saved_preference_separate() {
+        assert!(!AppState::sidebar_docked(true, px(767.0)));
+        assert!(AppState::sidebar_docked(true, px(768.0)));
+        assert!(!AppState::sidebar_docked(false, px(1200.0)));
     }
 
     #[test]
