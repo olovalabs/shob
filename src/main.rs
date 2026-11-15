@@ -13524,7 +13524,8 @@ impl AppState {
             ChatRole::User => div()
                 .w_full()
                 .flex()
-                .justify_end()
+                .flex_col()
+                .items_end()
                 .child(
                     div()
                         .max_w(px(540.0))
@@ -13547,6 +13548,60 @@ impl AppState {
                             window,
                             cx,
                         )),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_end()
+                        .gap(px(2.0))
+                        .child(chat_copy_button(
+                            format!("chat-copy-user-{pane_id}-{index}").into(),
+                            message.text.clone().into(),
+                            "Copy prompt".into(),
+                            tokens,
+                        ))
+                        .child({
+                            let text = message.text.clone();
+                            div()
+                                .id(SharedString::from(format!(
+                                    "chat-edit-user-{pane_id}-{index}"
+                                )))
+                                .size(px(22.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(px(5.0))
+                                .text_color(tokens.text_muted)
+                                .cursor(CursorStyle::PointingHand)
+                                .hover(move |style| {
+                                    style
+                                        .bg(tokens.sidebar_item_hover)
+                                        .text_color(tokens.text_primary)
+                                })
+                                .tooltip(|window, cx| {
+                                    gpui_component::tooltip::Tooltip::new("Edit in empty composer")
+                                        .build(window, cx)
+                                })
+                                .on_click(host.listener(move |this, _, window, cx| {
+                                    if let Some(input) = this
+                                        .pane_ref(pane_id)
+                                        .and_then(|pane| pane.input_state.clone())
+                                        && input.read(cx).value().trim().is_empty()
+                                    {
+                                        input.update(cx, |input, cx| {
+                                            input.set_value(text.clone(), window, cx);
+                                            input.focus(window, cx);
+                                        });
+                                    }
+                                }))
+                                .child(
+                                    svg()
+                                        .path("icons/pencil.svg")
+                                        .size(px(14.0))
+                                        .text_color(tokens.text_muted),
+                                )
+                        }),
                 )
                 .into_any_element(),
             ChatRole::Assistant => {
@@ -13617,6 +13672,14 @@ impl AppState {
                     ));
                 }
 
+                if !message.streaming && !message.text.is_empty() {
+                    body = body.child(chat_copy_button(
+                        format!("chat-copy-assistant-{pane_id}-{index}").into(),
+                        message.text.clone().into(),
+                        "Copy full response".into(),
+                        tokens,
+                    ));
+                }
                 body.into_any_element()
             }
             ChatRole::Thinking => {

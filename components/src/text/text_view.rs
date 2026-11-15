@@ -12,6 +12,7 @@ use gpui::{
 };
 
 use crate::highlighter::HighlightTheme;
+use crate::menu::{ContextMenuExt, PopupMenuItem};
 use crate::scroll::ScrollableElement;
 use crate::text::node::CodeBlock;
 use crate::{ActiveTheme, StyledExt, v_flex};
@@ -791,7 +792,7 @@ impl Element for TextView {
             .as_ref()
             .expect("focus_handle should init by TextViewState::new");
 
-        let mut el = div()
+        let el = div()
             .key_context(CONTEXT)
             .track_focus(focus_handle)
             .size_full()
@@ -811,8 +812,30 @@ impl Element for TextView {
                 state: self.state.clone(),
             })
             .refine_style(&self.style)
-            .vertical_scrollbar(list_state)
-            .into_any_element();
+            .vertical_scrollbar(list_state);
+        let mut el = if self.selectable {
+            let state = self.state.clone();
+            el.context_menu(move |menu, _, cx| {
+                let selected_text = state.read(cx).selection_text().unwrap_or_default();
+                let select_state = state.clone();
+                menu.item(PopupMenuItem::new("Copy").on_click(move |_, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(selected_text.trim().to_string()));
+                }))
+                .item(PopupMenuItem::new("Select All").on_click(move |_, _, cx| {
+                    select_state.update(cx, |state, cx| {
+                        state.selection_positions = (
+                            Some(gpui::point(px(-1.), px(-1.))),
+                            Some(gpui::point(state.bounds.size.width + px(1.), state.bounds.size.height + px(1.))),
+                        );
+                        if let Some(parent) = state.parent_entity {
+                            (&mut **cx).notify(parent);
+                        }
+                    });
+                }))
+            }).into_any_element()
+        } else {
+            el.into_any_element()
+        };
         let layout_id = el.request_layout(window, cx);
         (layout_id, el)
     }
@@ -874,7 +897,10 @@ impl Element for TextView {
                         return;
                     }
 
-                    state.update(cx, |state, _| {
+                    state.update(cx, |state, cx| {
+                        if let Some(focus) = &state.focus_handle {
+                            focus.focus(window, cx);
+                        }
                         state.start_selection(event.position);
                     });
                     cx.notify(entity_id);
