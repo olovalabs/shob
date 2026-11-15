@@ -3127,6 +3127,31 @@ impl PaneNode {
     }
 }
 
+fn editor_icon(name: &str) -> &'static str {
+    match name {
+        "Zed" => "icons/editors/zed.svg",
+        "VS Code" => "icons/editors/vscode.svg",
+        "VS Code Insiders" => "icons/editors/vscode-insiders.svg",
+        "VSCodium" => "icons/editors/vscodium.svg",
+        "Cursor" => "icons/editors/cursor.svg",
+        "Trae" => "icons/editors/trae.svg",
+        "Kiro" => "icons/editors/kiro.svg",
+        "IntelliJ IDEA" => "icons/editors/intellijidea.svg",
+        "Aqua" => "icons/editors/aqua.svg",
+        "CLion" => "icons/editors/clion.svg",
+        "DataGrip" => "icons/editors/datagrip.svg",
+        "DataSpell" => "icons/editors/dataspell.svg",
+        "GoLand" => "icons/editors/goland.svg",
+        "PhpStorm" => "icons/editors/phpstorm.svg",
+        "PyCharm" => "icons/editors/pycharm.svg",
+        "Rider" => "icons/editors/rider.svg",
+        "RubyMine" => "icons/editors/rubymine.svg",
+        "RustRover" => "icons/editors/rustrover.svg",
+        "WebStorm" => "icons/editors/webstorm.svg",
+        _ => "icons/folder.svg",
+    }
+}
+
 pub struct Project {
     pub id: usize,
     /// Shared (cheap to clone) because the render pass copies it every frame.
@@ -3246,6 +3271,8 @@ struct AppState {
     attention_seq: u64,
     /// Currently open project dropdown menu: Some(project_id).
     project_menu: Option<usize>,
+    editor_picker_open: bool,
+    available_editors: Vec<(String, PathBuf)>,
     renaming_project: Option<RenamingProject>,
     pub terminal_context_menu: Option<TerminalContextMenu>,
     /// Ctrl+R reverse history search palette, if open.
@@ -14519,12 +14546,6 @@ impl AppState {
     ) -> gpui::Stateful<gpui::Div> {
         let tokens = self.tokens(cx);
         let pane_id = pane.id;
-        let cwd = pane
-            .chat
-            .cwd
-            .as_deref()
-            .map(Self::format_path_display)
-            .unwrap_or_else(|| self.pane_cwd_display(pane));
         let branch = pane
             .chat
             .cwd
@@ -14591,13 +14612,218 @@ impl AppState {
                         .flex()
                         .flex_col()
                         .p(px(12.0))
-                        .gap(px(8.0))
+                        .gap(px(2.0))
                         .child(
                             div()
-                                .text_size(px(11.0))
-                                .text_color(tokens.text_secondary)
-                                .truncate()
-                                .child(project),
+                                .h(px(30.0))
+                                .px(px(6.0))
+                                .flex()
+                                .items_center()
+                                .gap(px(10.0))
+                                .child(
+                                    svg()
+                                        .path("icons/monitor.svg")
+                                        .size(px(15.0))
+                                        .text_color(tokens.text_secondary),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .text_size(px(13.0))
+                                        .text_color(tokens.text_secondary)
+                                        .truncate()
+                                        .child(project),
+                                )
+                                .child(
+                                    svg()
+                                        .path("icons/folder.svg")
+                                        .size(px(15.0))
+                                        .text_color(tokens.text_secondary),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .id(("open-editor-picker", pane_id))
+                                .h(px(30.0))
+                                .px(px(6.0))
+                                .rounded(px(6.0))
+                                .flex()
+                                .items_center()
+                                .gap(px(8.0))
+                                .cursor_pointer()
+                                .hover(|style| style.bg(tokens.pane_header_btn_hover))
+                                .child(
+                                    svg()
+                                        .path(
+                                            self.available_editors
+                                                .first()
+                                                .map(|(name, _)| editor_icon(name))
+                                                .unwrap_or("icons/folder.svg"),
+                                        )
+                                        .size(px(14.0))
+                                        .text_color(tokens.text_secondary),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .text_size(px(12.0))
+                                        .text_color(tokens.text_primary)
+                                        .child(
+                                            self.available_editors
+                                                .first()
+                                                .map(|(name, _)| format!("Open in {name}"))
+                                                .unwrap_or_else(|| "Open in editor".to_owned()),
+                                        ),
+                                )
+                                .child(
+                                    svg()
+                                        .path("icons/chevron-down.svg")
+                                        .size(px(12.0))
+                                        .text_color(tokens.text_secondary),
+                                )
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.editor_picker_open = !this.editor_picker_open;
+                                        if this.editor_picker_open {
+                                            cx.spawn(async move |this, cx| {
+                                                let editors = cx
+                                                    .background_executor()
+                                                    .spawn(async move {
+                                                        let paths = std::env::var_os("PATH")
+                                                            .unwrap_or_default();
+                                                        [
+                                                            ("Zed", "zed"),
+                                                            ("VS Code", "code"),
+                                                            ("VS Code Insiders", "code-insiders"),
+                                                            ("VSCodium", "codium"),
+                                                            ("Cursor", "cursor"),
+                                                            ("Trae", "trae"),
+                                                            ("Kiro", "kiro"),
+                                                            ("Antigravity", "antigravity-ide"),
+                                                            ("IntelliJ IDEA", "idea"),
+                                                            ("Aqua", "aqua"),
+                                                            ("CLion", "clion"),
+                                                            ("DataGrip", "datagrip"),
+                                                            ("DataSpell", "dataspell"),
+                                                            ("GoLand", "goland"),
+                                                            ("PhpStorm", "phpstorm"),
+                                                            ("PyCharm", "pycharm"),
+                                                            ("Rider", "rider"),
+                                                            ("RubyMine", "rubymine"),
+                                                            ("RustRover", "rustrover"),
+                                                            ("WebStorm", "webstorm"),
+                                                        ]
+                                                        .into_iter()
+                                                        .filter_map(|(name, command)| {
+                                                            std::env::split_paths(&paths)
+                                                                .map(|dir| {
+                                                                    dir.join(if cfg!(windows) {
+                                                                        format!("{command}.exe")
+                                                                    } else {
+                                                                        command.to_owned()
+                                                                    })
+                                                                })
+                                                                .find(|path| path.is_file())
+                                                                .map(|path| (name.to_owned(), path))
+                                                        })
+                                                        .collect()
+                                                    })
+                                                    .await;
+                                                let _ = this.update(cx, |this, cx| {
+                                                    this.available_editors = editors;
+                                                    cx.notify();
+                                                });
+                                            })
+                                            .detach();
+                                        }
+                                        cx.notify();
+                                    }),
+                                ),
+                        )
+                        .when(self.editor_picker_open, |container| {
+                            let directory =
+                                pane.chat.cwd.clone().or_else(|| self.pane_cwd_path(pane));
+                            container.children(self.available_editors.iter().enumerate().map(
+                                |(index, (name, executable))| {
+                                    let executable = executable.clone();
+                                    let directory = directory.clone();
+                                    div()
+                                        .id(("open-editor", index))
+                                        .h(px(28.0))
+                                        .pl(px(28.0))
+                                        .rounded(px(6.0))
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(8.0))
+                                        .child(if name == "Antigravity" {
+                                            img("icons/editors/antigravity.png")
+                                                .size(px(14.0))
+                                                .into_any_element()
+                                        } else {
+                                            svg()
+                                                .path(editor_icon(name))
+                                                .size(px(14.0))
+                                                .text_color(tokens.text_secondary)
+                                                .into_any_element()
+                                        })
+                                        .text_size(px(12.0))
+                                        .text_color(tokens.text_primary)
+                                        .cursor_pointer()
+                                        .hover(|style| style.bg(tokens.pane_header_btn_hover))
+                                        .child(name.clone())
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(move |this, _, _, cx| {
+                                                cx.stop_propagation();
+                                                if let Some(directory) = directory.clone() {
+                                                    let executable = executable.clone();
+                                                    cx.background_executor()
+                                                        .spawn(async move {
+                                                            let _ = std::process::Command::new(
+                                                                executable,
+                                                            )
+                                                            .arg(directory)
+                                                            .spawn();
+                                                        })
+                                                        .detach();
+                                                }
+                                                this.editor_picker_open = false;
+                                                cx.notify();
+                                            }),
+                                        )
+                                },
+                            ))
+                        })
+                        .child(
+                            div()
+                                .mt(px(8.0))
+                                .pt(px(8.0))
+                                .border_t_1()
+                                .border_color(tokens.border_subtle)
+                                .child(
+                                    div()
+                                        .h(px(30.0))
+                                        .px(px(6.0))
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(10.0))
+                                        .child(
+                                            svg()
+                                                .path("icons/git-branch.svg")
+                                                .size(px(14.0))
+                                                .text_color(tokens.text_secondary),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .text_size(px(12.0))
+                                                .text_color(tokens.text_primary)
+                                                .truncate()
+                                                .child(branch.clone()),
+                                        ),
+                                ),
                         )
                         .child(
                             div()
@@ -14655,57 +14881,6 @@ impl AppState {
                                         this.open_project_diff(pane_id, window, cx);
                                     }),
                                 ),
-                        )
-                        .child(
-                            div()
-                                .pt(px(4.0))
-                                .border_t_1()
-                                .border_color(tokens.border_subtle)
-                                .text_size(px(11.0))
-                                .text_color(tokens.text_secondary)
-                                .child("Environment"),
-                        )
-                        .children(
-                            [
-                                ("icons/folder.svg", "Working directory", cwd),
-                                ("icons/git-branch.svg", "Git branch", branch),
-                            ]
-                            .into_iter()
-                            .map(|(icon, label, value)| {
-                                div()
-                                    .flex()
-                                    .items_start()
-                                    .gap(px(8.0))
-                                    .px(px(6.0))
-                                    .py(px(3.0))
-                                    .child(
-                                        svg()
-                                            .path(icon)
-                                            .size(px(14.0))
-                                            .text_color(tokens.text_secondary),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .flex()
-                                            .flex_col()
-                                            .gap(px(3.0))
-                                            .child(
-                                                div()
-                                                    .text_size(px(11.0))
-                                                    .text_color(tokens.text_secondary)
-                                                    .child(label),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_size(px(12.0))
-                                                    .text_color(tokens.text_primary)
-                                                    .truncate()
-                                                    .child(value),
-                                            ),
-                                    )
-                            }),
                         ),
                 )
             })
@@ -14752,7 +14927,7 @@ impl AppState {
                                 .rounded(px(12.0))
                                 .border_1()
                                 .border_color(tokens.card_border)
-                                .bg(tokens.pane_header_bg)
+                                .bg(tokens.card_hover)
                                 .shadow_lg()
                                 .flex()
                                 .flex_col()
@@ -14763,7 +14938,7 @@ impl AppState {
                                     div()
                                         .px(px(14.0))
                                         .pt(px(12.0))
-                                        .pb(px(8.0))
+                                        .pb(px(4.0))
                                         .text_size(px(11.0))
                                         .text_color(tokens.text_muted)
                                         .child("Environment"),
@@ -14786,11 +14961,7 @@ impl AppState {
                                             div()
                                                 .id(("agent-info-section", index))
                                                 .px(px(14.0))
-                                                .py(px(12.0))
-                                                .when(index > 0, |row| {
-                                                    row.border_t_1()
-                                                        .border_color(tokens.border_subtle)
-                                                })
+                                                .py(px(6.0))
                                                 .flex()
                                                 .items_start()
                                                 .gap(px(10.0))
@@ -14818,7 +14989,6 @@ impl AppState {
                                                             div()
                                                                 .text_size(px(12.0))
                                                                 .text_color(tokens.text_primary)
-                                                                .font_family(MONO_FONT)
                                                                 .whitespace_normal()
                                                                 .overflow_hidden()
                                                                 .child(value),
@@ -18520,6 +18690,8 @@ fn main() -> Result<()> {
                         pending_alerts: Vec::new(),
                         attention_seq: 0,
                         project_menu: None,
+                        editor_picker_open: false,
+                        available_editors: Vec::new(),
                         renaming_project: None,
                         terminal_context_menu: None,
                         history_search: None,
@@ -19023,6 +19195,8 @@ mod resize_tests {
             pending_alerts: Vec::new(),
             attention_seq: 0,
             project_menu: None,
+            editor_picker_open: false,
+            available_editors: Vec::new(),
             renaming_project: None,
             terminal_context_menu: None,
             history_search: None,

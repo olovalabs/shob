@@ -40,14 +40,6 @@ impl PaletteScheme {
             Self::MidnightGarden => "Gradient ASCII",
         }
     }
-
-    pub fn description(&self) -> &'static str {
-        match self {
-            Self::Warp => "Warp's default dark terminal",
-            Self::Github => "GitHub Dark / Light palette",
-            Self::MidnightGarden => "Cyan and blue gradient ASCII glow",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]

@@ -313,7 +313,6 @@ fn decode_message(encoded: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::Engine as _;
 
     fn report(state: &str, id: &str, msg: &str) -> Vec<u8> {
         let msg = base64::engine::general_purpose::STANDARD.encode(msg);
