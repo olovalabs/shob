@@ -19,6 +19,10 @@ const DEFAULT_WINDOW_HEIGHT: f32 = 780.0;
 const MIN_WINDOW_WIDTH: f32 = 400.0;
 const MIN_WINDOW_HEIGHT: f32 = 300.0;
 
+pub fn minimum_window_size() -> Size<Pixels> {
+    size(px(MIN_WINDOW_WIDTH), px(MIN_WINDOW_HEIGHT))
+}
+
 static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
