@@ -1,7 +1,28 @@
 use crate::agent_interaction::{self, Request, Response};
 use rpi_embedded::QueuedEvent;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum PermissionMode {
+    #[default]
+    Ask,
+    Auto,
+    Full,
+}
+impl PermissionMode {
+    fn value(self) -> u8 {
+        self as u8
+    }
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Ask => "Ask for approval",
+            Self::Auto => "Approve for me",
+            Self::Full => "Full access",
+        }
+    }
+}
 
 use rpi_embedded::{EmbeddedSession, SessionEvent, SessionOptions};
 
@@ -205,6 +226,7 @@ struct EmbeddedBridge {
     closed: bool,
     trace_id: u64,
     requests: smol::channel::Receiver<Request>,
+    permission: Arc<AtomicU8>,
 }
 
 impl AgentBridge {
@@ -244,6 +266,31 @@ impl AgentBridge {
                 backend: Backend::Embedded(backend),
                 trace_id,
             })
+        }
+    }
+
+    pub(crate) fn spawn_with_permissions(
+        cwd: &Path,
+        session: Option<&str>,
+        model: Option<&str>,
+        mode: PermissionMode,
+    ) -> Result<Self, String> {
+        let trace_id = crate::stream_timing::new_trace();
+        if let Some(id) = session {
+            crate::rpi_storage::copy_legacy_session(cwd, id)
+                .map_err(|error| format!("Could not copy the existing RPI session: {error}"))?;
+        }
+        let backend = EmbeddedBridge::spawn_session(cwd, session, model, trace_id)?;
+        backend.permission.store(mode.value(), Ordering::Relaxed);
+        Ok(Self {
+            backend: Backend::Embedded(backend),
+            trace_id,
+        })
+    }
+
+    pub(crate) fn set_permission_mode(&self, mode: PermissionMode) {
+        if let Backend::Embedded(bridge) = &self.backend {
+            bridge.permission.store(mode.value(), Ordering::Relaxed);
         }
     }
 
@@ -404,7 +451,12 @@ impl EmbeddedBridge {
             ));
         let (request_tx, requests) = smol::channel::bounded(16);
         options.user_input = true;
-        options.before_tool_call = Some(composer_tool_hook(request_tx, uses_gemini(model)));
+        let permission = Arc::new(AtomicU8::new(PermissionMode::Ask.value()));
+        options.before_tool_call = Some(composer_tool_hook(
+            request_tx,
+            permission.clone(),
+            cwd.to_path_buf(),
+        ));
         let spawn_start = std::time::Instant::now();
         let mut session = EmbeddedSession::spawn(options).map_err(|error| {
             format!(
@@ -422,6 +474,7 @@ impl EmbeddedBridge {
             closed: false,
             trace_id,
             requests,
+            permission,
         })
     }
 
@@ -440,6 +493,9 @@ impl EmbeddedBridge {
             self.model.as_deref(),
             self.trace_id,
         )?;
+        replacement
+            .permission
+            .store(self.permission.load(Ordering::Relaxed), Ordering::Relaxed);
         *self = replacement;
         Ok(())
     }
@@ -492,9 +548,28 @@ fn uses_gemini(model: Option<&str>) -> bool {
     })
 }
 
+// Auto approval is intentionally limited to existing regular files whose resolved
+// paths are within the workspace. New files and uncertain paths require approval.
+fn workspace_edit(name: &str, args: &serde_json::Value, cwd: &Path) -> bool {
+    if !matches!(name, "edit" | "write") {
+        return false;
+    }
+    let Some(path) = args.get("path").and_then(|path| path.as_str()) else {
+        return false;
+    };
+    let Ok(root) = cwd.canonicalize() else {
+        return false;
+    };
+    let Ok(target) = cwd.join(path).canonicalize() else {
+        return false;
+    };
+    target.starts_with(root) && target.is_file()
+}
+
 fn composer_tool_hook(
     sender: smol::channel::Sender<Request>,
-    require_approval: bool,
+    permission: Arc<AtomicU8>,
+    cwd: PathBuf,
 ) -> rpi_embedded::BeforeToolCall {
     use rpi_embedded::user_input::{FORM, QUESTION};
     let approvals = Arc::new(Mutex::new(std::collections::HashSet::new()));
@@ -502,7 +577,9 @@ fn composer_tool_hook(
         let name = call.tool_call.name.as_str();
         let asks_user = matches!(name, QUESTION | FORM);
         if !asks_user
-            && (!require_approval
+            && (permission.load(Ordering::Relaxed) == PermissionMode::Full.value()
+                || (permission.load(Ordering::Relaxed) == PermissionMode::Auto.value()
+                    && workspace_edit(name, &call.args, &cwd))
                 || matches!(
                     name,
                     "read" | "find" | "grep" | "ls" | rpi_embedded::task_list::NAME
@@ -762,6 +839,30 @@ fn decode_event(record: &Value) -> Vec<AgentEvent> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn automatic_approval_only_covers_existing_workspace_files() {
+        let base = std::env::temp_dir().join(format!("kathamo-permissions-{}", std::process::id()));
+        let workspace = base.join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(workspace.join("file"), "test").unwrap();
+        std::fs::write(base.join("outside"), "test").unwrap();
+        let args = |path: &str| serde_json::json!({"path": path});
+        assert!(super::workspace_edit("edit", &args("file"), &workspace));
+        assert!(super::workspace_edit("write", &args("file"), &workspace));
+        assert!(!super::workspace_edit("bash", &args("file"), &workspace));
+        assert!(!super::workspace_edit("write", &args("new"), &workspace));
+        assert!(!super::workspace_edit(
+            "edit",
+            &args("../outside"),
+            &workspace
+        ));
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(base.join("outside"), workspace.join("link")).unwrap();
+            assert!(!super::workspace_edit("edit", &args("link"), &workspace));
+        }
+        std::fs::remove_dir_all(base).unwrap();
+    }
     #[test]
     fn bundled_browser_can_execute_when_present() {
         let Some(path) = super::bundled_browser().unwrap() else {

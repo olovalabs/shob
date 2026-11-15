@@ -2264,6 +2264,7 @@ struct PaneChat {
     auth_refresh_pending: bool,
     auth: Option<AuthModal>,
     selected_model: Option<agent_auth::AgentModel>,
+    permission_mode: agent_bridge::PermissionMode,
     first_response_provider: Option<String>,
     /// Retained for compatibility with older saved workspaces.
     model_explicit: bool,
@@ -2325,6 +2326,7 @@ impl Default for PaneChat {
             auth_refresh_pending: false,
             auth: None,
             selected_model: None,
+            permission_mode: agent_bridge::PermissionMode::Ask,
             first_response_provider: None,
             model_explicit: false,
             agent_title: None,
@@ -2466,8 +2468,12 @@ impl PaneChat {
         self.bridge = None;
         let selector = self.selected_model.as_ref().map(agent_model_selector);
         self.bridge_resume = self.rpi_session_id.clone();
-        let bridge =
-            ModelBridge::spawn_resumed(&cwd, self.bridge_resume.as_deref(), selector.as_deref())?;
+        let bridge = ModelBridge::spawn_with_permissions(
+            &cwd,
+            self.bridge_resume.as_deref(),
+            selector.as_deref(),
+            self.permission_mode,
+        )?;
         if self.selected_model.as_ref().is_some_and(|model| {
             model.supports_reasoning_effort()
                 || self
@@ -2766,6 +2772,9 @@ pub struct TerminalPane {
     pub bottom_input_visible: bool,
     pub plus_menu_open: bool,
     effort_menu_open: bool,
+    effort_toggle_bounds: Rc<std::cell::Cell<Bounds<Pixels>>>,
+    permission_menu_open: bool,
+    permission_toggle_bounds: Rc<std::cell::Cell<Bounds<Pixels>>>,
     /// Files staged in the input bar; dropped, pasted, or picked. They are
     /// sent to the agent as file paths when the prompt is submitted.
     pub attachments: Vec<attachments::AttachedFile>,
@@ -2898,6 +2907,9 @@ impl TerminalPane {
             bottom_input_visible: true,
             plus_menu_open: false,
             effort_menu_open: false,
+            effort_toggle_bounds: Rc::new(std::cell::Cell::new(Bounds::default())),
+            permission_menu_open: false,
+            permission_toggle_bounds: Rc::new(std::cell::Cell::new(Bounds::default())),
             attachments: Vec::new(),
             command_running: false,
             terminal_subscription: None,
@@ -9544,6 +9556,33 @@ impl AppState {
         self.focus_pane(pane_id, window, cx);
     }
 
+    fn choose_attachments(&mut self, pane_id: usize, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let Some(files) = rfd::AsyncFileDialog::new().pick_files().await else {
+                return;
+            };
+            let attachments: Vec<_> = files
+                .iter()
+                .filter_map(|file| attachments::from_path(file.path()))
+                .collect();
+            let _ = this.update(cx, |this, cx| {
+                if let Some(pane) = this.pane_mut(pane_id) {
+                    if !pane.chat.active {
+                        return;
+                    }
+                    let mut changed = false;
+                    for attachment in attachments {
+                        changed |= attachments::push_unique(&mut pane.attachments, attachment);
+                    }
+                    if changed {
+                        cx.notify();
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
     /// Stage one file on a pane's input bar and focus it so the user
     /// can see what will be sent.
     fn attach_image(
@@ -11276,6 +11315,19 @@ impl AppState {
                     .flex()
                     .items_center()
                     .gap(px(8.0))
+                    .when(pane.chat.active, |row| row.child(
+                        div().id(("agent-attach-file", pane_id))
+                            .debug_selector(|| "agent-attach-file".into())
+                            .size(px(26.0)).flex().items_center().justify_center()
+                            .rounded(px(5.0)).cursor_pointer()
+                            .hover(|style| style.bg(tokens.pane_header_btn_hover))
+                            .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new("Add attachments").build(window, cx))
+                            .child(svg().path("icons/paperclip.svg").size(px(16.0)).text_color(tokens.text_muted))
+                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.choose_attachments(pane_id, cx);
+                            }))
+                    ))
                     .when(!self.settings.agent_layout || !pane.chat.active, |row| row.child(
                         div()
                             .flex()
@@ -11387,7 +11439,83 @@ impl AppState {
                                     ),
                             ),
                     ))
-                    .when(pane.chat.active, |row| row.child(
+                    .when(pane.chat.active, |row| {
+                        let current = pane.chat.permission_mode;
+                        let toggle_bounds = pane.permission_toggle_bounds.clone();
+                        let outside_toggle_bounds = toggle_bounds.clone();
+                        let popup_position = toggle_bounds.get().origin;
+                        let popup = pane.permission_menu_open.then(|| {
+                            let orange: gpui::Hsla = if tokens.is_dark { rgba(0xf47b37ff).into() } else { rgba(0xc45113ff).into() };
+                            let mut menu = div().id(("permission-popover", pane_id))
+                                .w(px(420.0)).max_w(window.viewport_size().width - px(24.0))
+                                .p(px(5.0)).rounded(px(12.0)).border_1()
+                                .border_color(if tokens.is_dark { rgba(0x3d3d3dff).into() } else { tokens.card_border })
+                                .bg(if tokens.is_dark { rgba(0x202020ff).into() } else { tokens.card_bg })
+                                .shadow_lg().flex().flex_col()
+                                .on_mouse_down_out(cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                    if outside_toggle_bounds.get().contains(&event.position) { return; }
+                                    if let Some(pane) = this.pane_mut(pane_id) { pane.permission_menu_open = false; cx.notify(); }
+                                }))
+                                .child(div().px(px(8.0)).pt(px(5.0)).pb(px(6.0))
+                                    .text_size(px(12.0)).text_color(tokens.text_muted)
+                                    .child("How should agent actions be approved?"));
+                            for (mode, icon, description) in [
+                                (agent_bridge::PermissionMode::Ask, "icons/permission-hand.svg", "Ask before changes, commands, and other actions"),
+                                (agent_bridge::PermissionMode::Auto, "icons/permission-auto.svg", "Allow edits to existing workspace files; ask for other actions"),
+                                (agent_bridge::PermissionMode::Full, "icons/permission-full.svg", "Run tools without approval prompts"),
+                            ] {
+                                let selected = current == mode;
+                                let color = if selected { orange } else { tokens.text_primary };
+                                let detail_color = if selected { orange } else { tokens.text_muted };
+                                menu = menu.child(div().id(("permission-option", mode as usize))
+                                    .flex().items_start().gap(px(9.0)).px(px(8.0)).py(px(5.0))
+                                    .rounded(px(6.0)).cursor_pointer()
+                                    .hover(|style| style.bg(tokens.pane_header_btn_hover))
+                                    .child(svg().path(icon).size(px(15.0)).mt(px(3.0)).flex_shrink_0().text_color(color))
+                                    .child(div().flex_1().min_w_0().flex().flex_col()
+                                        .child(div().text_size(px(13.0)).text_color(color).child(mode.label()))
+                                        .child(div().text_size(px(12.0)).text_color(detail_color).child(description)))
+                                    .when(selected, |item| item.child(svg().path("icons/status-check.svg")
+                                        .size(px(14.0)).mt(px(5.0)).flex_shrink_0().text_color(orange)))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        if let Some(pane) = this.pane_mut(pane_id) {
+                                            pane.chat.permission_mode = mode;
+                                            if let Some(bridge) = &pane.chat.bridge { bridge.set_permission_mode(mode); }
+                                            pane.permission_menu_open = false;
+                                            cx.notify();
+                                        }
+                                    })));
+                            }
+                            menu
+                        });
+                        let permission_icon = match current {
+                            agent_bridge::PermissionMode::Ask => "icons/permission-hand.svg",
+                            agent_bridge::PermissionMode::Auto => "icons/permission-auto.svg",
+                            agent_bridge::PermissionMode::Full => "icons/permission-full.svg",
+                        };
+                        let pill_color: gpui::Hsla = if current == agent_bridge::PermissionMode::Full {
+                            if tokens.is_dark { rgba(0xf47b37ff).into() } else { rgba(0xc45113ff).into() }
+                        } else { tokens.text_primary };
+                        row.child(div().id(("agent-permissions", pane_id)).relative()
+                            .flex().items_center().gap(px(5.0)).h(px(26.0)).px(px(9.0))
+                            .rounded_full().bg(if tokens.is_dark { rgba(0x343434ff).into() } else { tokens.card_bg })
+                            .cursor_pointer().text_size(px(12.0))
+                            .text_color(pill_color).hover(|style| style.bg(tokens.pane_header_btn_hover))
+                            .child(svg().path(permission_icon).size(px(14.0)).flex_shrink_0().text_color(pill_color))
+                            .child(current.label())
+                            .child(canvas(move |bounds, _, _| toggle_bounds.set(bounds), |_, _, _, _| {})
+                                .absolute().size_full())
+                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                if let Some(pane) = this.pane_mut(pane_id) { pane.permission_menu_open = !pane.permission_menu_open; cx.notify(); }
+                            }))
+                            .children(popup.map(|popup| deferred(gpui::anchored()
+                                .anchor(gpui::Anchor::BottomLeft).position(popup_position)
+                                .offset(gpui::point(px(0.0), px(-4.0))).child(popup)))))
+                    })
+                    .when(pane.chat.active && self.settings.agent_layout, |row| row.child(div().flex_1().min_w_0()))
+                    .when(pane.chat.active && (!self.settings.agent_layout || !pane.chat.selected_model.as_ref().is_some_and(agent_auth::AgentModel::supports_reasoning_effort)), |row| row.child(
                         div()
                             .id(("select-agent-model", pane_id))
                             .debug_selector(|| "select-agent-model-pill".to_string())
@@ -11428,8 +11556,9 @@ impl AppState {
                             let selected = levels.iter().position(|level| level == &current).unwrap_or(0);
                             let count = levels.len();
                             let model_name = pane.chat.selected_model.as_ref().map(agent_model_label).unwrap_or_default();
-                            let toggle_bounds = Rc::new(std::cell::Cell::new(Bounds::default()));
+                            let toggle_bounds = pane.effort_toggle_bounds.clone();
                             let outside_toggle_bounds = toggle_bounds.clone();
+                            let popup_position = toggle_bounds.get().origin;
                             let popup = pane.effort_menu_open.then(|| {
                                 let weak_app = cx.weak_entity();
                                 let slider_levels = levels.clone();
@@ -11473,7 +11602,17 @@ impl AppState {
                                         .child(svg().path("icons/effort-bolt.svg").size(px(15.0)).text_color(tokens.text_secondary))
                                         .child(div().flex().flex_col().items_center()
                                             .child(div().text_size(px(14.0)).text_color(rgba(0x3485f7ff)).child(reasoning_effort_label(&current).to_owned()))
-                                            .child(div().text_size(px(12.0)).text_color(tokens.text_primary).child(model_name)))
+                                            .child(div().id(("effort-model-select", pane_id))
+                                                .flex().items_center().gap(px(2.0)).cursor_pointer()
+                                                .text_size(px(12.0)).text_color(tokens.text_secondary)
+                                                .hover(|style| style.text_color(tokens.text_primary))
+                                                .child(model_name.clone())
+                                                .child(svg().path("icons/chevron-right.svg").size(px(11.0)))
+                                                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
+                                                    cx.stop_propagation();
+                                                    if let Some(pane) = this.pane_mut(pane_id) { pane.effort_menu_open = false; }
+                                                    this.open_agent_auth(pane_id, AgentDialogPage::Models, window, cx);
+                                                }))))
                                         .child(div().id(("effort-reset", pane_id)).cursor_pointer().size(px(20.0)).flex().items_center().justify_center()
                                             .child(svg().path("icons/effort-reset.svg").size(px(15.0)).text_color(tokens.text_secondary))
                                             .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new("Reset effort").build(window, cx))
@@ -11488,6 +11627,8 @@ impl AppState {
                                 .px(px(9.0)).h(px(26.0)).rounded_full().flex().items_center().gap(px(7.0))
                                 .cursor_pointer().text_size(px(11.0)).text_color(tokens.text_secondary)
                                 .hover(|style| style.text_color(tokens.text_primary))
+                                .child(div().max_w(px(200.0)).truncate().text_color(tokens.text_primary)
+                                    .child(pane.chat.selected_model.as_ref().map(agent_model_label).unwrap_or_default()))
                                 .child(reasoning_effort_label(&current).to_owned())
                                 .child(svg().path("icons/chevron-down.svg").size(px(10.0)))
                                 .child(canvas(move |bounds, _, _| toggle_bounds.set(bounds), |_, _, _, _| {})
@@ -11497,7 +11638,8 @@ impl AppState {
                                     if let Some(pane) = this.pane_mut(pane_id) { pane.effort_menu_open = !pane.effort_menu_open; cx.notify(); }
                                 }))
                                 .children(popup.map(|popup| deferred(gpui::anchored()
-                                    .anchor(gpui::Anchor::BottomLeft).offset(gpui::point(px(0.0), px(-8.0))).child(popup)))))
+                                    .anchor(gpui::Anchor::BottomLeft).position(popup_position)
+                                    .offset(gpui::point(px(0.0), px(-4.0))).child(popup)))))
                         } else {
                         row.child(Button::new(("agent-reasoning", pane_id))
                             .label(label).xsmall().dropdown_menu(move |mut menu, _, _| {
@@ -11519,16 +11661,29 @@ impl AppState {
                         div().id(("agent-stop", pane_id))
                             .size(px(28.0)).flex_shrink_0().rounded_full()
                             .flex().items_center().justify_center()
-                            .bg(tokens.text_primary)
-                            .hover(|button| button.bg(tokens.text_secondary))
+                            .bg(rgba(0x3568d4ff))
+                            .hover(|button| button.bg(rgba(0x477be7ff)))
                             .cursor(CursorStyle::PointingHand)
                             .tooltip(|window, cx| {
                                 gpui_component::tooltip::Tooltip::new("Stop").build(window, cx)
                             })
-                            .child(div().size(px(9.0)).flex_shrink_0().rounded(px(1.0)).bg(bar_bg))
+                            .child(div().size(px(9.0)).flex_shrink_0().rounded(px(1.0)).bg(gpui::white()))
                             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
                                 cx.stop_propagation();
                                 this.handle_pane_ctrl_c(pane_id, window, cx);
+                            })),
+                    ))
+                    .when(pane.chat.active && !pane.chat.visible_running(), |row| row.child(
+                        div().id(("agent-send", pane_id)).debug_selector(|| "agent-send".into())
+                            .size(px(28.0)).flex_shrink_0().rounded_full()
+                            .flex().items_center().justify_center()
+                            .bg(rgba(0x3568d4ff)).hover(|button| button.bg(rgba(0x477be7ff)))
+                            .cursor_pointer()
+                            .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new("Send message").build(window, cx))
+                            .child(svg().path("icons/arrow-up.svg").size(px(16.0)).text_color(gpui::white()))
+                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.submit_agent_prompt(pane_id, window, cx);
                             })),
                     ))
                     // Agent metadata lives in the right-side info drawer.
