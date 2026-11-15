@@ -275,17 +275,9 @@ impl AgentBridge {
         model: Option<&str>,
         mode: PermissionMode,
     ) -> Result<Self, String> {
-        let trace_id = crate::stream_timing::new_trace();
-        if let Some(id) = session {
-            crate::rpi_storage::copy_legacy_session(cwd, id)
-                .map_err(|error| format!("Could not copy the existing RPI session: {error}"))?;
-        }
-        let backend = EmbeddedBridge::spawn_session(cwd, session, model, trace_id)?;
-        backend.permission.store(mode.value(), Ordering::Relaxed);
-        Ok(Self {
-            backend: Backend::Embedded(backend),
-            trace_id,
-        })
+        let bridge = Self::spawn_resumed(cwd, session, model)?;
+        bridge.set_permission_mode(mode);
+        Ok(bridge)
     }
 
     pub(crate) fn set_permission_mode(&self, mode: PermissionMode) {
