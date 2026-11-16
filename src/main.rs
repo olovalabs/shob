@@ -2243,6 +2243,7 @@ struct PaneChat {
     requests: std::collections::VecDeque<agent_interaction::Request>,
     follow_ups: std::collections::VecDeque<String>,
     follow_ups_paused: bool,
+    follow_ups_collapsed: bool,
     recovery: Option<String>,
     retry_prompt: Option<String>,
     workspace_override: Option<PathBuf>,
@@ -2304,6 +2305,7 @@ impl Default for PaneChat {
             requests: Default::default(),
             follow_ups: Default::default(),
             follow_ups_paused: false,
+            follow_ups_collapsed: false,
             recovery: None,
             retry_prompt: None,
             workspace_override: None,
@@ -3417,6 +3419,7 @@ impl AppState {
                                     cwd: pane.cwd.clone().or_else(|| self.pane_cwd_path(pane)),
                                     draft,
                                     agent_draft,
+                                    queued_messages: pane.chat.follow_ups.iter().cloned().collect(),
                                     command_history: pane
                                         .command_history
                                         .iter()
@@ -3746,6 +3749,13 @@ impl AppState {
                     pane.chat.rpi_session_id = saved_pane.chat.rpi_session_id.clone();
                     pane.chat.terminal_draft = saved_pane.draft.clone();
                     pane.chat.agent_draft = saved_pane.agent_draft.clone();
+                    pane.chat.follow_ups = saved_pane
+                        .queued_messages
+                        .iter()
+                        .take(16)
+                        .cloned()
+                        .collect();
+                    pane.chat.follow_ups_paused = !pane.chat.follow_ups.is_empty();
 
                     let saved = &saved_pane.chat;
                     pane.chat.legacy_models = saved.models.clone();
@@ -8707,8 +8717,10 @@ impl AppState {
                 return;
             }
             pane.chat.follow_ups.push_back(prompt);
+            pane.chat.follow_ups_collapsed = false;
             pane.attachments.clear();
             input.update(cx, |state, cx| state.set_value("", window, cx));
+            self.schedule_workspace_save(cx);
             cx.notify();
             return;
         }
@@ -8849,6 +8861,7 @@ impl AppState {
         if let Some(prompt) = pane.chat.follow_ups.front().cloned() {
             if Self::start_agent_turn(pane, prompt, cwd, save_history, cx) {
                 pane.chat.follow_ups.pop_front();
+                self.schedule_workspace_save(cx);
             } else {
                 pane.chat.follow_ups_paused = true;
             }
@@ -11298,6 +11311,13 @@ impl AppState {
             rgba(0x2d7a2d12).into()
         };
         div()
+            .id(("kathamo-composer-stack", pane_id))
+            .w_full()
+            .flex()
+            .flex_col()
+            .children(pane.chat.active.then(|| self.render_agent_follow_ups(pane, &tokens, cx)).flatten())
+            .child(
+        div()
             .id(("kathamo-input-bar", pane_id))
             .debug_selector(|| "kathamo-input-bar".to_string())
             .relative()
@@ -11348,7 +11368,6 @@ impl AppState {
             )
             .children(plus_menu)
             .children(pane.chat.active.then(|| self.render_agent_activity(pane, &tokens, cx)).flatten())
-            .children(pane.chat.active.then(|| self.render_agent_follow_ups(pane, &tokens, cx)).flatten())
             .children(pane.chat.active.then(|| self.render_agent_recovery(pane, &tokens, cx)).flatten())
             .children(
                 self.render_agent_task_list(pane, &tokens, cx)
@@ -11910,7 +11929,7 @@ impl AppState {
             ))
             .when(pane.chat.active && pane.chat.info_open && !self.settings.agent_layout, |this| {
                 this.child(self.render_agent_info(pane, cx))
-            })
+            }))
     }
 
     /// Kathamo-style completion popup, anchored above the input bar.
@@ -20019,6 +20038,11 @@ mod resize_tests {
             );
             assert!(pane.chat.messages.is_empty());
             assert!(input.read(cx).value().is_empty());
+            let saved = s.saved_workspace(cx);
+            assert_eq!(
+                saved.projects[0].sessions[0].panes[0].queued_messages,
+                ["Check the tests next"]
+            );
         });
         cx.draw_frame().unwrap();
         assert!(cx.debug_bounds("agent-follow-up-panel").is_some());
