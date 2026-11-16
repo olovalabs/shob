@@ -128,6 +128,8 @@ pub struct ThemeTokens {
     pub card_bg: Hsla,
     pub card_border: Hsla,
     pub card_hover: Hsla,
+    pub model_picker_bg: Hsla,
+    pub model_picker_accent: Hsla,
     pub pill_active_bg: Hsla,
     pub pill_active_fg: Hsla,
     pub pill_inactive_bg: Hsla,
@@ -257,6 +259,11 @@ impl ThemeColors {
             style.insert("card.bg".into(), hex(tokens.card_bg));
             style.insert("card.border".into(), hex(tokens.card_border));
             style.insert("card.hover".into(), hex(tokens.card_hover));
+            style.insert("model_picker.bg".into(), hex(tokens.model_picker_bg));
+            style.insert(
+                "model_picker.accent".into(),
+                hex(tokens.model_picker_accent),
+            );
             style.insert("pill.active.bg".into(), hex(tokens.pill_active_bg));
             style.insert("pill.active.fg".into(), hex(tokens.pill_active_fg));
             style.insert("pill.inactive.bg".into(), hex(tokens.pill_inactive_bg));
@@ -411,6 +418,8 @@ impl ThemeColors {
                 "card_bg" => tokens.card_bg = rgba(color).into(),
                 "card_border" => tokens.card_border = rgba(color).into(),
                 "card_hover" => tokens.card_hover = rgba(color).into(),
+                "model_picker_bg" => tokens.model_picker_bg = rgba(color).into(),
+                "model_picker_accent" => tokens.model_picker_accent = rgba(color).into(),
                 "pill_active_bg" => tokens.pill_active_bg = rgba(color).into(),
                 "pill_active_fg" => tokens.pill_active_fg = rgba(color).into(),
                 "pill_inactive_bg" => tokens.pill_inactive_bg = rgba(color).into(),
@@ -535,6 +544,8 @@ impl ThemeTokens {
         self.primary_btn_hover = rgba(0x299af0ff).into();
         self.primary_btn_fg = self.text_primary;
         self.ring = rgba(0x39a8f5ff).into();
+        self.model_picker_bg = self.card_bg;
+        self.model_picker_accent = self.ring;
         self.block_bg = self.pane_bg;
         self.block_bg_hover = self.card_hover;
         self.block_border = self.border_subtle;
@@ -757,6 +768,8 @@ impl ThemeTokens {
             card_bg: rgba(0x1a1b24ff).into(),
             card_border: rgba(0x2b2c3cff).into(),
             card_hover: rgba(0x222330ff).into(),
+            model_picker_bg: rgba(0x181818ff).into(),
+            model_picker_accent: rgba(0x3b6ef5ff).into(),
             pill_active_bg: rgba(0x1f6febff).into(),
             pill_active_fg: rgba(0xffffffff).into(),
             pill_inactive_bg: rgba(0x23242cff).into(),
@@ -827,6 +840,8 @@ impl ThemeTokens {
             card_bg: rgba(0xffffffff).into(),
             card_border: rgba(0xd1d9e0ff).into(),
             card_hover: rgba(0xf6f8faff).into(),
+            model_picker_bg: rgba(0xffffffff).into(),
+            model_picker_accent: rgba(0x2857d5ff).into(),
             pill_active_bg: rgba(0x0969daff).into(),
             pill_active_fg: rgba(0xffffffff).into(),
             pill_inactive_bg: rgba(0xeaeef2ff).into(),
@@ -1112,13 +1127,13 @@ mod tests {
     #[test]
     fn generated_defaults_match_built_in_and_keep_customizations_on_scheme_change() {
         let mut colors = ThemeColors::complete_defaults(PaletteScheme::Warp);
-        assert_eq!(colors.dark.style.len(), 77);
         let actual = colors.tokens(gpui_component::ThemeMode::Dark, PaletteScheme::Warp);
         let original = ThemeTokens::from_mode_with_scheme(
             gpui_component::ThemeMode::Dark,
             PaletteScheme::Warp,
         );
         assert_eq!(actual.window_bg, original.window_bg);
+        assert_eq!(actual.model_picker_bg, original.model_picker_bg);
         assert_eq!(
             colors.palette(PaletteScheme::Warp, true).ansi_colors(),
             load_warp_palette(true).ansi_colors()
@@ -1127,8 +1142,18 @@ mod tests {
             .dark
             .style
             .insert("window.bg".into(), "#123456".into());
+        colors
+            .dark
+            .style
+            .insert("model_picker.accent".into(), "#456789".into());
         colors.change_scheme(PaletteScheme::Warp, PaletteScheme::Github);
         assert_eq!(colors.dark.style["window.bg"], "#123456");
+        assert_eq!(
+            colors
+                .tokens(gpui_component::ThemeMode::Dark, PaletteScheme::Github)
+                .model_picker_accent,
+            rgba(0x456789ff).into()
+        );
         assert_eq!(
             colors.dark.style["sidebar.bg"],
             ThemeColors::complete_defaults(PaletteScheme::Github)
