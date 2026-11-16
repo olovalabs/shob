@@ -15,7 +15,8 @@ pub(crate) use theme::sync as sync_theme;
 
 use gpui::{
     AnyElement, Hsla, InteractiveElement as _, IntoElement, OperatingSystem, ParentElement, Pixels,
-    Rems, SharedString, Styled, Window, div, prelude::FluentBuilder, px, relative,
+    Rems, SharedString, StatefulInteractiveElement as _, Styled, Window, div,
+    prelude::FluentBuilder, px, relative,
 };
 use gpui_component::input::{Input, InputState};
 use gpui_kit::component::{
@@ -52,6 +53,22 @@ use crate::theme::ThemeTokens;
 const MAX_NODES: usize = 300;
 const MAX_DEPTH: usize = 24;
 const MAX_SPEC_BYTES: usize = 256 * 1024;
+
+pub(crate) const FOLLOW_UP_PROMPT: &str = r#"## Follow-up suggestions
+
+At the end of each final response, suggest exactly two useful, distinct next
+requests based on the user's request and your answer. Make each a short,
+self-contained prompt the user can send. Do not imply that either action has
+already been taken. Render them as a separate fenced `ui` JSON block using
+this structure, replacing the example labels and actions with your suggestions.
+Use exactly two Suggestion children; do not add a heading or a Card:
+
+```ui
+{"root":"suggestions","elements":{"suggestions":{"type":"Suggestions","children":["first","second"]},"first":{"type":"Suggestion","props":{"label":"First next step","action":"First next step"}},"second":{"type":"Suggestion","props":{"label":"Second next step","action":"Second next step"}}}}
+```
+Do not add suggestions to intermediate messages before tool calls. If the user
+asks for no suggestions, respect that request.
+"#;
 
 pub(crate) const CATALOG_PROMPT: &str = r#"## Kathamo UI cards
 
@@ -118,6 +135,9 @@ Components and props:
 - Kbd: keys (e.g. "cmd-k", "ctrl-shift-p")
 - DescriptionList: items (array of {label, value}), columns? (1-10), bordered?
 - Table: columns (array of strings), rows (array of string arrays), caption?
+- Suggestions: children (two Suggestion elements, displayed side by side)
+- Suggestion: label, action (a short clickable follow-up prompt)
+- Label: text
 - Button: label, tone? ("primary"|"secondary"|"success"|"warning"|"danger"|"info"|"ghost"), outline?, action? (prompt text sent when clicked), disabled?
 - Checkbox: label, checked?
 - Switch: label, checked?
@@ -248,7 +268,7 @@ fn parse_spec(raw: &str) -> Result<UiSpec, String> {
     if raw.len() > MAX_SPEC_BYTES {
         return Err(format!("UI spec is too large ({} bytes)", raw.len()));
     }
-    let spec: UiSpec = serde_json::from_str(raw.trim()).map_err(|error| {
+    let mut spec: UiSpec = serde_json::from_str(raw.trim()).map_err(|error| {
         format!("Expected a JSON object with `root` and `elements` in the UI fence. {error}")
     })?;
     if spec.elements.len() > MAX_NODES {
@@ -263,7 +283,52 @@ fn parse_spec(raw: &str) -> Result<UiSpec, String> {
     let mut seen = HashSet::new();
     let mut visited = 0;
     check_cycle(&spec, &spec.root, 0, &mut seen, &mut visited)?;
+    normalize_legacy_suggestions(&mut spec);
     Ok(spec)
+}
+
+fn normalize_legacy_suggestions(spec: &mut UiSpec) {
+    let Some(root) = spec.elements.get(&spec.root) else {
+        return;
+    };
+    if !matches!(root.kind.to_ascii_lowercase().as_str(), "column" | "card")
+        || root.children.len() != 3
+    {
+        return;
+    }
+    let children = root.children.clone();
+    let Some(heading) = spec.elements.get(&children[0]) else {
+        return;
+    };
+    if !matches!(
+        heading.kind.to_ascii_lowercase().as_str(),
+        "label" | "heading" | "text"
+    ) || heading.props.get("text").and_then(|text| text.as_str())
+        != Some("What would you like to explore next?")
+        || !children[1..].iter().all(|id| {
+            spec.elements.get(id).is_some_and(|node| {
+                matches!(
+                    node.kind.to_ascii_lowercase().as_str(),
+                    "suggestion" | "button"
+                ) && node
+                    .props
+                    .get("action")
+                    .and_then(|action| action.as_str())
+                    .is_some()
+            })
+        })
+    {
+        return;
+    }
+    for id in &children[1..] {
+        if let Some(node) = spec.elements.get_mut(id) {
+            node.kind = "Suggestion".into();
+        }
+    }
+    if let Some(root) = spec.elements.get_mut(&spec.root) {
+        root.kind = "Suggestions".into();
+        root.children = children[1..].to_vec();
+    }
 }
 
 fn check_cycle(
@@ -492,7 +557,15 @@ fn render_ui_block(
                 state,
             };
             let content = render_node(&ctx, &spec.root, 0, host, window, cx);
-            chrome(content)
+            if spec
+                .elements
+                .get(&spec.root)
+                .is_some_and(|node| node.kind.eq_ignore_ascii_case("suggestions"))
+            {
+                content
+            } else {
+                chrome(content)
+            }
         }
         Err((error, raw)) => chrome(
             div()
@@ -900,6 +973,12 @@ fn render_node(
             }
             card.into_any_element()
         }
+        "suggestions" => div()
+            .flex()
+            .flex_wrap()
+            .gap(px(8.0))
+            .children(kids)
+            .into_any_element(),
         "row" | "hstack" => {
             let mut row = div()
                 .flex()
@@ -1165,6 +1244,35 @@ fn render_node(
                     )
                 })
                 .child(table.child(body))
+                .into_any_element()
+        }
+        "suggestion" => {
+            let label = prop_str(props, "label").unwrap_or_default();
+            let action = prop_str(props, "action").unwrap_or_else(|| label.clone());
+            let pane_id = ctx.pane_id;
+            div()
+                .id(element_id)
+                .max_w_full()
+                .px(px(12.0))
+                .py(px(6.0))
+                .rounded_full()
+                .border_1()
+                .border_color(tokens.border_subtle)
+                .bg(tokens.card_hover)
+                .text_size(px(12.0))
+                .text_color(tokens.text_secondary)
+                .cursor(gpui::CursorStyle::PointingHand)
+                .hover(move |style| {
+                    style
+                        .bg(tokens.sidebar_item_hover)
+                        .text_color(tokens.text_primary)
+                })
+                .on_click(host.listener(
+                    move |this: &mut AppState, _: &gpui::ClickEvent, window, cx| {
+                        this.submit_ui_action(pane_id, action.clone(), window, cx);
+                    },
+                ))
+                .child(label)
                 .into_any_element()
         }
         "button" => {
@@ -1961,6 +2069,21 @@ mod tests {
         let spec = parse_spec(raw).expect("catalog example must be a valid UI spec");
         assert_eq!(spec.elements[&spec.root].kind, "Card");
         assert_eq!(spec.elements[&spec.root].children.len(), 4);
+        let suggestions = split_ui_segments(FOLLOW_UP_PROMPT);
+        let raw = suggestions
+            .iter()
+            .find_map(|segment| match segment {
+                Segment::Ui { raw, closed: true } => Some(raw),
+                _ => None,
+            })
+            .expect("follow-up example must contain a closed UI fence");
+        let spec = parse_spec(raw).expect("follow-up example must be a valid UI spec");
+        assert_eq!(spec.elements[&spec.root].children.len(), 2);
+        let old = r#"{"root":"c","elements":{"c":{"type":"Column","children":["h","a","b"]},"h":{"type":"Label","props":{"text":"What would you like to explore next?"}},"a":{"type":"Button","props":{"label":"First","action":"First"}},"b":{"type":"Suggestion","props":{"label":"Second","action":"Second"}}}}"#;
+        let spec = parse_spec(old).expect("legacy suggestions are valid");
+        assert_eq!(spec.elements[&spec.root].kind, "Suggestions");
+        assert_eq!(spec.elements[&spec.root].children, ["a", "b"]);
+        assert_eq!(spec.elements["a"].kind, "Suggestion");
     }
 
     #[test]

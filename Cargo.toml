@@ -24,6 +24,7 @@ smol = "2"
 jsonc-parser = { version = "0.33.1", default-features = false, features = ["cst", "serde_json", "serde"] }
 directories = "6"
 url = "2"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 portable-pty = "0.9"
 alacritty_terminal = "0.25.1"
 anyhow = "1"
