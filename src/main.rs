@@ -211,6 +211,7 @@ struct StreamView {
 #[derive(Clone)]
 struct ChatTool {
     workers: Vec<subagent_chat::Worker>,
+    web_sources: Vec<String>,
     id: Option<String>,
     name: String,
     /// Shared so a frame can hand it to a card or a copy closure without
@@ -1149,6 +1150,87 @@ fn chat_tool_content(
     body
 }
 
+enum FaviconAsset {}
+
+impl gpui::Asset for FaviconAsset {
+    type Source = String;
+    type Output = Result<Arc<gpui::RenderImage>, gpui::ImageCacheError>;
+
+    fn load(source: String, cx: &mut App) -> impl Future<Output = Self::Output> + Send + 'static {
+        static SLOTS: std::sync::LazyLock<(
+            smol::channel::Sender<()>,
+            smol::channel::Receiver<()>,
+        )> = std::sync::LazyLock::new(|| {
+            let (sender, receiver) = smol::channel::bounded(4);
+            for _ in 0..4 {
+                let _ = sender.try_send(());
+            }
+            (sender, receiver)
+        });
+        let renderer = cx.svg_renderer();
+        async move {
+            let _ = SLOTS.1.recv().await;
+            let result = smol::unblock(move || -> anyhow::Result<Arc<gpui::RenderImage>> {
+                use std::io::Read as _;
+                static CLIENT: std::sync::LazyLock<
+                    Result<reqwest::blocking::Client, reqwest::Error>,
+                > = std::sync::LazyLock::new(|| {
+                    reqwest::blocking::Client::builder()
+                        .timeout(std::time::Duration::from_secs(5))
+                        .build()
+                });
+                let client = CLIENT
+                    .as_ref()
+                    .map_err(|error| anyhow::anyhow!("{error}"))?;
+                let response = client
+                    .get("https://www.google.com/s2/favicons")
+                    .query(&[("domain", source.as_str()), ("sz", "32")])
+                    .send()?
+                    .error_for_status()?;
+                let mut bytes = Vec::new();
+                response.take(64 * 1024 + 1).read_to_end(&mut bytes)?;
+                anyhow::ensure!(bytes.len() <= 64 * 1024, "favicon too large");
+                gpui::Image::from_bytes(gpui::ImageFormat::Png, bytes).to_image_data(renderer)
+            })
+            .await;
+            let _ = SLOTS.0.try_send(());
+            result.map_err(Into::into)
+        }
+    }
+}
+
+fn web_sources(name: &str, output: &str) -> Vec<String> {
+    if !matches!(
+        name.to_ascii_lowercase().as_str(),
+        "websearch" | "web_search" | "search_web" | "webfetch" | "web_fetch" | "fetch"
+    ) {
+        return Vec::new();
+    }
+    let mut sources = Vec::new();
+    // Keep work and retained data bounded even when a tool returns a large page.
+    let end = output.floor_char_boundary(output.len().min(128 * 1024));
+    for part in output[..end].split(|c: char| {
+        c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | '(' | ')' | '[' | ']' | ',')
+    }) {
+        let Some(start) = part.find("https://").or_else(|| part.find("http://")) else {
+            continue;
+        };
+        let candidate = part[start..].trim_end_matches(['.', ';']);
+        if let Ok(url) = url::Url::parse(candidate)
+            && let Some(host) = url.host_str()
+        {
+            let host = host.trim_start_matches("www.");
+            if !sources.iter().any(|source| source == host) {
+                sources.push(host.to_owned());
+                if sources.len() == 100 {
+                    break;
+                }
+            }
+        }
+    }
+    sources
+}
+
 fn chat_tool_header(
     pane_id: usize,
     index: usize,
@@ -1175,7 +1257,15 @@ fn chat_tool_header(
                 "Listed files in"
             },
         ),
-        "Grep" | "Glob" | "Web Search" => (
+        "Web Search" => (
+            IconName::Globe,
+            if running {
+                "Searching the web for"
+            } else {
+                "Searched the web for"
+            },
+        ),
+        "Grep" | "Glob" => (
             IconName::Search,
             if running {
                 "Searching for"
@@ -1183,7 +1273,11 @@ fn chat_tool_header(
                 "Searched for"
             },
         ),
-        "Webfetch" | "Browser" => (IconName::Globe, view.title.as_str()),
+        "Webfetch" => (
+            IconName::Globe,
+            if running { "Fetching" } else { "Fetched" },
+        ),
+        "Browser" => (IconName::Globe, view.title.as_str()),
         _ if is_agent_tool(&tool.name) => (IconName::Bot, view.title.as_str()),
         _ => (IconName::File, view.title.as_str()),
     };
@@ -1235,6 +1329,69 @@ fn chat_tool_header(
                     })
                     .child(first_line(&view.subtitle).to_owned()),
             )
+        })
+        .when(!tool.web_sources.is_empty(), |row| {
+            let mut avatars = div().flex().items_center().flex_shrink_0();
+            for (index, source) in tool.web_sources.iter().take(3).enumerate() {
+                let initial = source
+                    .chars()
+                    .next()
+                    .unwrap_or('?')
+                    .to_ascii_uppercase()
+                    .to_string();
+                let host = source.clone();
+                let fallback_initial = initial.clone();
+                let fallback = move || {
+                    div()
+                        .size_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_size(px(10.0))
+                        .text_color(tokens.text_primary)
+                        .child(fallback_initial.clone())
+                        .into_any_element()
+                };
+                let loading = fallback.clone();
+                avatars = avatars.child(
+                    div()
+                        .when(index > 0, |avatar| avatar.ml(px(-4.0)))
+                        .size(px(16.0))
+                        .rounded_full()
+                        .border_1()
+                        .border_color(tokens.border_subtle)
+                        .bg(tokens.sidebar_item_hover)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_size(px(10.0))
+                        .text_color(tokens.text_primary)
+                        .overflow_hidden()
+                        .child(
+                            img(move |window: &mut Window, cx: &mut App| {
+                                window.use_asset::<FaviconAsset>(&host, cx)
+                            })
+                            .size_full()
+                            .with_loading(loading)
+                            .with_fallback(fallback),
+                        ),
+                );
+            }
+            row.child(avatars)
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_color(tokens.text_muted)
+                        .child(format!(
+                            "{} {}",
+                            tool.web_sources.len(),
+                            if tool.web_sources.len() == 1 {
+                                "site"
+                            } else {
+                                "sites"
+                            }
+                        )),
+                )
         })
         .child(div().flex_1())
         .child(
@@ -1469,6 +1626,13 @@ fn update_chat_tool(
         let tool = message.tool.as_mut().expect("matched a tool message");
         subagent_chat::update_workers(&mut tool.workers, workers);
         let (full, preview, truncated) = tool_output_fields(output);
+        if state == ToolState::Completed {
+            match tool.display.view.title.as_str() {
+                "Webfetch" => tool.web_sources = web_sources(&name, &tool.display.view.subtitle),
+                "Web Search" => tool.web_sources = web_sources(&name, &full),
+                _ => {}
+            }
+        }
         tool.output = full;
         tool.preview = preview;
         tool.preview_truncated = truncated;
@@ -1481,6 +1645,11 @@ fn update_chat_tool(
             text: String::new(),
             tool: Some(ChatTool {
                 workers,
+                web_sources: if state == ToolState::Completed {
+                    web_sources(&name, &full)
+                } else {
+                    Vec::new()
+                },
                 id,
                 name,
                 output: full,
@@ -1789,6 +1958,7 @@ fn push_chat_event(messages: &mut Vec<Arc<ChatMessage>>, event: agent_bridge::Ag
                 text: String::new(),
                 tool: Some(ChatTool {
                     workers: Vec::new(),
+                    web_sources: Vec::new(),
                     id,
                     name,
                     output: SharedString::from(""),
@@ -23050,6 +23220,20 @@ mod kathamo_bottom_input_tests {
                 .any(|message| message.role == ChatRole::Assistant && message.text == "done"),
             "text after a tool call starts a new message"
         );
+    }
+
+    #[test]
+    fn web_sources_extracts_unique_sites_from_results() {
+        let output = "[first](https://www.example.com/a) https://example.com/b \"https://news.example.org/story\"";
+        assert_eq!(
+            web_sources("web_search", output),
+            ["example.com", "news.example.org"]
+        );
+        assert_eq!(
+            web_sources("web_fetch", "https://example.com/page"),
+            ["example.com"]
+        );
+        assert!(web_sources("shell", output).is_empty());
     }
 
     #[test]

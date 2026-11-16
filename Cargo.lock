@@ -5991,6 +5991,7 @@ dependencies = [
  "portable-pty",
  "pulldown-cmark",
  "regex",
+ "reqwest 0.12.28",
  "rfd",
  "rpi-embedded",
  "rust-embed",
