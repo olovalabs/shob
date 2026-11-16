@@ -165,17 +165,22 @@ fn catalog_filtered(chat_only: bool) -> Result<Vec<ModelInfo>, String> {
                 })
                 .collect();
             rows.retain(|model| model.provider != ANTIGRAVITY);
-            rows.extend(antigravity::models().into_iter().map(|model| {
-                ModelInfo {
-                    // This adapter maps every request to these three wire tiers.
-                    thinking_levels: ["low", "medium", "high"]
-                        .into_iter()
-                        .map(str::to_owned)
-                        .collect(),
-                    provider: ANTIGRAVITY.into(),
-                    id: model.id,
-                }
-            }));
+            rows.extend(
+                antigravity::models()
+                    .into_iter()
+                    .filter(|model| !chat_only || rpi_runtime::catalog::is_chat_model(model))
+                    .map(|model| {
+                        ModelInfo {
+                            // This adapter maps every request to these three wire tiers.
+                            thinking_levels: ["low", "medium", "high"]
+                                .into_iter()
+                                .map(str::to_owned)
+                                .collect(),
+                            provider: ANTIGRAVITY.into(),
+                            id: model.id,
+                        }
+                    }),
+            );
             rows
         })
         .map_err(|error| error.to_string())

@@ -54,9 +54,7 @@ impl gpui::AssetSource for CombinedAssets {
         if let Ok(Some(data)) = gpui::AssetSource::load(&gpui_kit::assets::Assets, path) {
             return Ok(Some(data));
         }
-        gpui_component_assets::Assets::get(path)
-            .map(|file| Some(file.data))
-            .ok_or_else(|| anyhow::anyhow!("could not find asset at path \"{path}\""))
+        Err(anyhow::anyhow!("could not find asset at path \"{path}\""))
     }
 
     fn list(&self, path: &str) -> gpui::Result<Vec<gpui::SharedString>> {
@@ -64,11 +62,6 @@ impl gpui::AssetSource for CombinedAssets {
         for file in AppAssets::iter() {
             list.push(gpui::SharedString::from(file.to_string()));
         }
-        list.extend(
-            gpui_component_assets::Assets::iter()
-                .filter(|asset| asset.starts_with(path))
-                .map(|asset| asset.into()),
-        );
         if let Ok(kit_assets) = gpui::AssetSource::list(&gpui_kit::assets::Assets, path) {
             list.extend(kit_assets);
         }

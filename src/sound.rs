@@ -37,6 +37,7 @@ fn spawn(kind: AlertKind) -> std::io::Result<()> {
         AlertKind::Done => "dialog-information",
     };
     if Command::new("canberra-gtk-play")
+        .env("NO_AT_BRIDGE", "1")
         .args(["-i", event])
         .spawn()
         .is_ok()

@@ -172,6 +172,12 @@ mod tests {
                 .all(AgentModel::supports_reasoning_effort)
         );
         assert!(
+            !models
+                .iter()
+                .any(|model| model.provider == "google-antigravity"
+                    && model.id == "gemini-3.1-flash-image")
+        );
+        assert!(
             providers(cwd)
                 .unwrap()
                 .iter()

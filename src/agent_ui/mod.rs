@@ -7,6 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+mod images;
 mod numeric;
 mod selection;
 mod streaming;
@@ -151,6 +152,9 @@ Components and props:
 - Accordion: items (array of {title, content, open?}), multiple?
 - Collapsible: title, content, open?
 - Pagination: page?, total?
+- ImageGallery: images (up to 3 objects with src and alt); collage with a large image and smaller images beside it
+- ImageList: items (up to 12 objects with src, alt, title, description); images beside text
+- Image sources must be direct image http(s) URLs verified by a tool, or absolute local image paths already available in context. Never invent URLs or use search result page URLs as images.
 - Chart: kind ("line"|"bar"|"pie"), data (array of {label, value}), height? (px)
 - Metrics: items (array of {label, value})
 - Heatmap: columns (array of labels), rows (array of {label, values: [numbers]}), min?, max?; useful for activity by day and hour
@@ -517,6 +521,7 @@ fn render_ui_block(
     window: &mut Window,
     cx: &mut gpui::App,
 ) -> AnyElement {
+    let tokens = theme::monochrome(tokens);
     let debug_id = id.clone();
     let chrome = |inner: AnyElement| {
         div()
@@ -1568,6 +1573,8 @@ fn render_node(
                 )
                 .into_any_element()
         }
+        "imagegallery" => images::gallery(ctx, props),
+        "imagelist" => images::image_list(ctx, props),
         "chart" => render_chart(ctx, props, element_id),
         "metrics" => render_metrics(ctx, props),
         "heatmap" => render_heatmap(ctx, props),
@@ -1716,9 +1723,7 @@ fn render_heatmap(ctx: &UiCtx, props: &serde_json::Value) -> AnyElement {
         .unwrap_or_else(|| values.iter().copied().fold(f64::INFINITY, f64::min));
     let max = prop_f64(props, "max")
         .unwrap_or_else(|| values.iter().copied().fold(f64::NEG_INFINITY, f64::max));
-    let palette = [
-        0x112c52ff, 0x174782ff, 0x1e5da8ff, 0x347bdcff, 0x72a7eaff, 0xb8d5f8ff,
-    ];
+    let palette = theme::visual_colors(ctx.tokens.is_dark);
     let mut content = div().w_full().flex().flex_col().gap(px(2.0));
     for row in rows.iter().take(32) {
         let mut line = div().w_full().flex().items_center().gap(px(2.0)).child(
@@ -1738,7 +1743,7 @@ fn render_heatmap(ctx: &UiCtx, props: &serde_json::Value) -> AnyElement {
                     } else {
                         0.5
                     };
-                    gpui::rgba(palette[(intensity * 5.0).round() as usize])
+                    gpui::rgba(palette[6 - (intensity * 6.0).round() as usize])
                 });
                 line = line.child(
                     div()
@@ -1829,7 +1834,15 @@ fn render_stacked_bar(ctx: &UiCtx, props: &serde_json::Value) -> AnyElement {
                         segment = segment.child(
                             div()
                                 .text_size(px(10.0))
-                                .text_color(gpui::rgba(0xffffffff))
+                                .text_color(gpui::rgba(
+                                    if (ctx.tokens.is_dark && i < 3)
+                                        || (!ctx.tokens.is_dark && i >= 4)
+                                    {
+                                        0x111111ff
+                                    } else {
+                                        0xffffffff
+                                    },
+                                ))
                                 .child(format!("{:.0}%", fraction * 100.0)),
                         );
                     }
