@@ -970,10 +970,8 @@ async fn zai_login(interaction: &Interaction<'_>) -> Result<Token, String> {
             .iter()
             .find_map(|field| list.get(field).and_then(Value::as_array))
     });
-    let existing = keys.and_then(|keys| {
-        keys.iter()
-            .find(|key| string(key, "name") == Some("shob"))
-    });
+    let existing =
+        keys.and_then(|keys| keys.iter().find(|key| string(key, "name") == Some("shob")));
     let key = if let Some(existing) = existing {
         existing.clone()
     } else {
