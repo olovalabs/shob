@@ -5,7 +5,7 @@
 Kathamo brings your terminals and agent chats together, keeps projects and sessions organized, and lets you know when an agent needs you or finishes while you’re away.
 
 <p align="center">
-  <img width="1000" alt="Kathamo desktop app" src="https://github.com/user-attachments/assets/9e09e9f1-af06-4df6-bfc2-c86e305b09d6" />
+    <img width="1489" height="1056" alt="image" src="https://github.com/user-attachments/assets/0493d9f2-9a6a-4cde-9572-477047bff1c1" />
 </p>
 
 ## What you can do
