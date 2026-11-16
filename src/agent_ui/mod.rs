@@ -42,7 +42,6 @@ use gpui_kit::component::{
     stepper::{Stepper, StepperItem},
     switch::Switch,
     tab::{Tab, TabBar},
-    table::{Table, TableBody, TableCell, TableHead, TableHeader, TableRow},
     tag::{Tag, TagVariant},
     text::TextView,
 };
@@ -54,22 +53,6 @@ use crate::theme::ThemeTokens;
 const MAX_NODES: usize = 300;
 const MAX_DEPTH: usize = 24;
 const MAX_SPEC_BYTES: usize = 256 * 1024;
-
-pub(crate) const FOLLOW_UP_PROMPT: &str = r#"## Follow-up suggestions
-
-At the end of each final response, suggest exactly two useful, distinct next
-requests based on the user's request and your answer. Make each a short,
-self-contained prompt the user can send. Do not imply that either action has
-already been taken. Render them as a separate fenced `ui` JSON block using
-this structure, replacing the example labels and actions with your suggestions.
-Use exactly two Suggestion children; do not add a heading or a Card:
-
-```ui
-{"root":"suggestions","elements":{"suggestions":{"type":"Suggestions","children":["first","second"]},"first":{"type":"Suggestion","props":{"label":"First next step","action":"First next step"}},"second":{"type":"Suggestion","props":{"label":"Second next step","action":"Second next step"}}}}
-```
-Do not add suggestions to intermediate messages before tool calls. If the user
-asks for no suggestions, respect that request.
-"#;
 
 pub(crate) const CATALOG_PROMPT: &str = r#"## Kathamo UI cards
 
@@ -1224,24 +1207,54 @@ fn render_node(
         "table" => {
             let columns = prop_strings(props, "columns");
             let rows = prop_rows(props);
-            let mut table = Table::new().w_full();
+            let count = columns
+                .len()
+                .max(rows.iter().map(Vec::len).max().unwrap_or(0))
+                .min(MAX_NODES);
+            let render_row = |cells: &[String], header: bool| {
+                let mut row = div()
+                    .w_full()
+                    .flex()
+                    .items_start()
+                    .border_b_1()
+                    .border_color(tokens.border_subtle);
+                if header {
+                    row = row.bg(tokens.card_hover);
+                }
+                for index in 0..count {
+                    row = row.child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .px(px(8.0))
+                            .py(px(7.0))
+                            .whitespace_normal()
+                            .text_color(if header {
+                                tokens.text_secondary
+                            } else {
+                                tokens.text_primary
+                            })
+                            .child(cells.get(index).cloned().unwrap_or_default()),
+                    );
+                }
+                row
+            };
+            let mut table = div().w_full().min_w_0().flex().flex_col();
             if !columns.is_empty() {
+                table = table.child(render_row(&columns, true));
+            }
+            let row_limit = MAX_NODES / count.max(1);
+            for row in rows.iter().take(row_limit) {
+                table = table.child(render_row(row, false));
+            }
+            if rows.len() > row_limit || columns.len() > count {
                 table = table.child(
-                    TableHeader::new().child(
-                        TableRow::new().children(
-                            columns
-                                .iter()
-                                .map(|column| TableHead::new().child(column.clone())),
-                        ),
-                    ),
+                    div()
+                        .py(px(7.0))
+                        .text_color(tokens.text_muted)
+                        .child("Table truncated to fit the preview"),
                 );
             }
-            let body = rows.iter().fold(TableBody::new(), |body, row| {
-                body.child(
-                    TableRow::new()
-                        .children(row.iter().map(|cell| TableCell::new().child(cell.clone()))),
-                )
-            });
             div()
                 .w_full()
                 .min_w_0()
@@ -1256,7 +1269,7 @@ fn render_node(
                             .child(caption),
                     )
                 })
-                .child(table.child(body))
+                .child(table)
                 .into_any_element()
         }
         "suggestion" => {
@@ -2090,16 +2103,6 @@ mod tests {
         let spec = parse_spec(raw).expect("catalog example must be a valid UI spec");
         assert_eq!(spec.elements[&spec.root].kind, "Card");
         assert_eq!(spec.elements[&spec.root].children.len(), 4);
-        let suggestions = split_ui_segments(FOLLOW_UP_PROMPT);
-        let raw = suggestions
-            .iter()
-            .find_map(|segment| match segment {
-                Segment::Ui { raw, closed: true } => Some(raw),
-                _ => None,
-            })
-            .expect("follow-up example must contain a closed UI fence");
-        let spec = parse_spec(raw).expect("follow-up example must be a valid UI spec");
-        assert_eq!(spec.elements[&spec.root].children.len(), 2);
         let old = r#"{"root":"c","elements":{"c":{"type":"Column","children":["h","a","b"]},"h":{"type":"Label","props":{"text":"What would you like to explore next?"}},"a":{"type":"Button","props":{"label":"First","action":"First"}},"b":{"type":"Suggestion","props":{"label":"Second","action":"Second"}}}}"#;
         let spec = parse_spec(old).expect("legacy suggestions are valid");
         assert_eq!(spec.elements[&spec.root].kind, "Suggestions");

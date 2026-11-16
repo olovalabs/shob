@@ -11747,11 +11747,11 @@ impl AppState {
                             .h(px(28.0))
                             .px(px(8.0))
                             .rounded(px(7.0))
-                            .bg(tokens.card_bg)
-                            .text_size(px(14.0))
+                            .when(!self.settings.agent_layout, |pill| pill.bg(tokens.card_bg))
+                            .text_size(px(13.0))
                             .text_color(tokens.text_primary)
                             .cursor_pointer()
-                            .hover(|view| view.bg(tokens.card_hover))
+                            .hover(|view| view.bg(tokens.sidebar_item_hover))
                             .when_some(model_provider_icon, |pill, icon| {
                                 pill.child(svg().path(icon).size(px(15.0)).flex_shrink_0().text_color(tokens.text_primary))
                             })
@@ -13888,16 +13888,16 @@ impl AppState {
                         .min_w_0()
                         .px(px(14.0))
                         .py(px(8.0))
-                        .rounded(px(12.0))
-                        .bg(tokens.card_hover)
-                        .text_size(px(13.5))
-                        .line_height(relative(1.85))
+                        .rounded(px(16.0))
+                        .bg(tokens.primary_btn_bg.opacity(0.55))
+                        .text_size(px(14.0))
+                        .line_height(relative(1.6))
                         .child(chat_markdown(
                             SharedString::from(format!(
                                 "agent-user-{pane_id}-{conversation}-{index}"
                             )),
                             message.text.clone(),
-                            px(13.5),
+                            px(14.0),
                             rems(0.5),
                             tokens.text_primary,
                             tokens,
@@ -13969,8 +13969,8 @@ impl AppState {
                     .flex()
                     .flex_col()
                     .gap(px(8.0))
-                    .text_size(px(13.0))
-                    .line_height(relative(1.9))
+                    .text_size(px(14.0))
+                    .line_height(relative(1.6))
                     .text_color(tokens.text_primary);
 
                 if message.streaming {
@@ -13984,7 +13984,7 @@ impl AppState {
                         body = body.child(agent_ui::render_assistant_body(
                             id.clone(),
                             settled,
-                            px(13.0),
+                            px(14.0),
                             rems(0.6),
                             tokens.text_primary,
                             tokens,
@@ -14001,7 +14001,7 @@ impl AppState {
                                 "agent-markdown-{pane_id}-{conversation}-{index}-live"
                             )),
                             tail,
-                            px(13.0),
+                            px(14.0),
                             rems(0.6),
                             tokens.text_primary,
                             tokens,
@@ -14016,7 +14016,7 @@ impl AppState {
                     body = body.child(agent_ui::render_assistant_body(
                         id,
                         &message.text,
-                        px(13.0),
+                        px(14.0),
                         rems(0.6),
                         tokens.text_primary,
                         tokens,
@@ -14981,7 +14981,14 @@ impl AppState {
             .min_w_0()
             .when(snapshot.focused_layout, |row| row.max_w(px(784.0)))
             .px(px(16.0))
-            .pb(px(if live_tools { 0.0 } else { 8.0 }))
+            .when(
+                snapshot.focused_layout && matches!(row, ChatRow::Message { message, .. } if message.role == ChatRole::User),
+                |row| row.pt(px(24.0)).pb(px(24.0)),
+            )
+            .when(
+                !snapshot.focused_layout || !matches!(row, ChatRow::Message { message, .. } if message.role == ChatRole::User),
+                |row| row.pb(px(if live_tools { 0.0 } else { 8.0 })),
+            )
             .child(inner);
         if snapshot.focused_layout {
             div()

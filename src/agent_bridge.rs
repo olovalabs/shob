@@ -345,8 +345,7 @@ impl AgentBridge {
                 } else {
                     context.as_deref().unwrap_or(prompt)
                 };
-                let prompt = format!("{prompt}\n\n{}", crate::agent_ui::FOLLOW_UP_PROMPT);
-                bridge.send_prompt(&prompt)
+                bridge.send_prompt(prompt)
             }
         }
     }
@@ -415,11 +414,7 @@ impl EmbeddedBridge {
             .with_session_dir(crate::paths::rpi_sessions_dir())
             .with_selector(model)
             .with_session(session)
-            .with_append_system_prompt(&format!(
-                "{}\n\n{}",
-                crate::agent_ui::CATALOG_PROMPT,
-                crate::agent_ui::FOLLOW_UP_PROMPT
-            ))
+            .with_append_system_prompt(crate::agent_ui::CATALOG_PROMPT)
             .with_provider_request_hook(Arc::new(move || {
                 crate::stream_timing::turn_provider_request(request_trace);
             }))

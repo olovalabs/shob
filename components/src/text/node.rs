@@ -26,6 +26,33 @@ use crate::{
 
 use super::{TextViewStyle, utils::list_item_prefix};
 
+fn table_column_fractions(lengths: &[usize]) -> Vec<f32> {
+    let largest = lengths.iter().copied().max().unwrap_or(5).clamp(5, 150);
+    let minimum = (largest / 3).max(5);
+    let total: usize = lengths
+        .iter()
+        .map(|length| (*length).clamp(minimum, 150))
+        .sum();
+    lengths
+        .iter()
+        .map(|length| (*length).clamp(minimum, 150) as f32 / total as f32)
+        .collect()
+}
+
+#[cfg(test)]
+mod table_width_tests {
+    use super::table_column_fractions;
+
+    #[test]
+    fn columns_fit_available_width_even_with_long_cells() {
+        let widths = table_column_fractions(&[5, 25, 300]);
+        assert!((widths.iter().sum::<f32>() - 1.0).abs() < 0.0001);
+        assert!(widths.iter().all(|width| *width > 0.0 && *width < 1.0));
+        assert!(widths[0] >= widths[2] / 3.0);
+        assert!(table_column_fractions(&[]).is_empty());
+    }
+}
+
 #[allow(unused)]
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct LinkMark {
@@ -1034,7 +1061,6 @@ impl Node {
         cx: &mut App,
     ) -> impl IntoElement {
         const DEFAULT_LENGTH: usize = 5;
-        const MAX_LENGTH: usize = 150;
         let col_lens = match item {
             Node::Table(table) => {
                 let mut col_lens = vec![];
@@ -1054,6 +1080,8 @@ impl Node {
             }
             _ => vec![],
         };
+
+        let column_fractions = table_column_fractions(&col_lens);
 
         match item {
             Node::Table(table) => div()
@@ -1087,19 +1115,17 @@ impl Node {
                                             for (ix, cell) in row.children.iter().enumerate() {
                                                 let align = table.column_align(ix);
                                                 let is_last_col = ix == row.children.len() - 1;
-                                                let len = col_lens
+                                                let width = column_fractions
                                                     .get(ix)
                                                     .copied()
-                                                    .unwrap_or(MAX_LENGTH)
-                                                    .min(MAX_LENGTH);
+                                                    .unwrap_or(0.0);
 
                                                 cells.push(
                                                     div()
                                                         .id(("cell", row_ix * 64 + ix))
                                                         .flex()
                                                         .min_w_0()
-                                                        .min_w_16()
-                                                        .overflow_hidden()
+                                                        .whitespace_normal()
                                                         .when(
                                                             align == ColumnumnAlign::Center,
                                                             |this| this.justify_center(),
@@ -1108,7 +1134,7 @@ impl Node {
                                                             align == ColumnumnAlign::Right,
                                                             |this| this.justify_end(),
                                                         )
-                                                        .w(Length::Definite(relative(len as f32)))
+                                                        .w(Length::Definite(relative(width)))
                                                         .px_2()
                                                         .py_1()
                                                         .when(!is_last_col, |this| {
