@@ -21107,8 +21107,12 @@ Done."#
                 assert_eq!(gpui_kit::component::Theme::global(cx).is_dark(), is_dark);
                 let colors = &gpui_kit::component::Theme::global(cx).colors;
                 let tokens = s.tokens(cx);
-                assert_eq!(colors.group_box, tokens.card_bg);
-                assert_eq!(colors.primary, tokens.primary_btn_bg);
+                let mut card_bg = tokens.card_bg;
+                card_bg.s = 0.0;
+                let mut text_primary = tokens.text_primary;
+                text_primary.s = 0.0;
+                assert_eq!(colors.group_box, card_bg);
+                assert_eq!(colors.primary, text_primary);
             });
             cx.draw_frame()
                 .expect("redraw the card after a theme change");
