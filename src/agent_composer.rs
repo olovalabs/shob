@@ -23,6 +23,27 @@ fn panel(tokens: &ThemeTokens) -> gpui::Div {
         .text_size(px(13.0))
 }
 
+fn queue_icon_button(
+    id: (&'static str, usize),
+    icon: &'static str,
+    label: &'static str,
+    tokens: ThemeTokens,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .size(px(28.0))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(6.0))
+        .cursor_pointer()
+        .text_color(tokens.text_secondary)
+        .hover(move |style| style.bg(tokens.card_hover).text_color(tokens.text_primary))
+        .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(label).build(window, cx))
+        .child(svg().path(icon).size(px(16.0)))
+}
+
 impl AppState {
     pub(super) fn render_agent_request(
         &self,
@@ -460,24 +481,93 @@ impl AppState {
             return None;
         }
         let id = pane.id;
-        let working = pane.chat.running;
+        let can_edit = pane
+            .input_state
+            .as_ref()
+            .is_some_and(|input| input.read(cx).value().trim().is_empty());
         let rows = pane
             .chat
             .follow_ups
             .iter()
             .enumerate()
             .map(|(index, prompt)| {
-                div()
+                let group: SharedString = format!("queue-row-{id}-{index}").into();
+                let mut actions = div()
+                    .absolute()
+                    .right(px(8.0))
+                    .top_0()
+                    .h_full()
                     .flex()
                     .items_center()
-                    .gap(px(4.0))
-                    .child(div().flex_1().min_w_0().truncate().child(prompt.clone()))
-                    .child(
-                        Button::new(("agent-queue-edit", index))
-                            .small()
-                            .ghost()
-                            .label("Edit")
-                            .on_click(cx.listener(move |this, _, window, cx| {
+                    .rounded(px(6.0))
+                    .bg(tokens.card_bg)
+                    .invisible()
+                    .group_hover(group.clone(), |style| style.visible());
+                if pane.chat.follow_ups.len() > 1 {
+                    if index > 0 {
+                        actions = actions.child(
+                            queue_icon_button(
+                                ("agent-queue-up", index),
+                                "icons/arrow-up.svg",
+                                "Move up",
+                                *tokens,
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    if let Some(pane) = this.pane_mut(id)
+                                        && index < pane.chat.follow_ups.len()
+                                    {
+                                        pane.chat.follow_ups.swap(index, index - 1);
+                                        this.schedule_workspace_save(cx);
+                                        cx.notify();
+                                    }
+                                },
+                            )),
+                        );
+                    }
+                    if index + 1 < pane.chat.follow_ups.len() {
+                        actions = actions.child(
+                            queue_icon_button(
+                                ("agent-queue-down", index),
+                                "icons/arrow-down.svg",
+                                "Move down",
+                                *tokens,
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    if let Some(pane) = this.pane_mut(id)
+                                        && index + 1 < pane.chat.follow_ups.len()
+                                    {
+                                        pane.chat.follow_ups.swap(index, index + 1);
+                                        this.schedule_workspace_save(cx);
+                                        cx.notify();
+                                    }
+                                },
+                            )),
+                        );
+                    }
+                }
+                actions = actions.child(
+                    queue_icon_button(
+                        ("agent-queue-send", index),
+                        "icons/queue-send.svg",
+                        "Send now",
+                        *tokens,
+                    )
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.send_follow_up_now(id, index, cx)),
+                    ),
+                );
+                if can_edit {
+                    actions = actions.child(
+                        queue_icon_button(
+                            ("agent-queue-edit", index),
+                            "icons/pencil.svg",
+                            "Edit",
+                            *tokens,
+                        )
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
                                 let Some(pane) = this.pane_mut(id) else {
                                     return;
                                 };
@@ -492,56 +582,114 @@ impl AppState {
                                         input.set_value(text, window, cx);
                                         input.focus(window, cx);
                                     });
+                                    this.schedule_workspace_save(cx);
                                     cx.notify();
                                 }
-                            }))
-                            .disabled(
-                                pane.input_state
-                                    .as_ref()
-                                    .is_none_or(|input| !input.read(cx).value().trim().is_empty()),
-                            ),
+                            },
+                        )),
+                    );
+                }
+                actions = actions.child(
+                    queue_icon_button(
+                        ("agent-queue-remove", index),
+                        "icons/queue-trash.svg",
+                        "Delete",
+                        *tokens,
                     )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(pane) = this.pane_mut(id) {
+                            pane.chat.follow_ups.remove(index);
+                            this.schedule_workspace_save(cx);
+                            cx.notify();
+                        }
+                    })),
+                );
+                div()
+                    .group(group)
+                    .relative()
+                    .h(px(29.0))
+                    .px(px(12.0))
+                    .flex()
+                    .items_center()
                     .child(
-                        Button::new(("agent-queue-send", index))
-                            .small()
-                            .ghost()
-                            .label(if working { "Send now" } else { "Send" })
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.send_follow_up_now(id, index, cx)
-                            })),
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .truncate()
+                            .text_size(px(12.0))
+                            .text_color(tokens.text_primary)
+                            .child(prompt.replace(['\n', '\r'], " ")),
                     )
-                    .child(
-                        Button::new(("agent-queue-remove", index))
-                            .small()
-                            .ghost()
-                            .label("Remove")
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if let Some(pane) = this.pane_mut(id) {
-                                    pane.chat.follow_ups.remove(index);
-                                    cx.notify();
-                                }
-                            })),
-                    )
+                    .child(actions)
             })
             .collect::<Vec<_>>();
         Some(
-            div().pb(px(8.0)).child(
-                panel(tokens)
-                    .id(("agent-follow-up-panel", id))
-                    .debug_selector(|| "agent-follow-up-panel".into())
-                    .child(if pane.chat.follow_ups_paused {
-                        "Follow-ups paused"
-                    } else {
-                        "Queued follow-ups"
-                    })
+            div()
+                .mx(px(12.0))
+                .relative()
+                .id(("agent-follow-up-panel", id))
+                .debug_selector(|| "agent-follow-up-panel".into())
+                .rounded(px(12.0))
+                .border_1()
+                .border_color(tokens.border_subtle)
+                .bg(tokens.card_bg)
+                .child(
+                    div()
+                        .h(px(12.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(div().w(px(28.0)).h(px(1.0)).bg(tokens.text_muted)),
+                )
+                .child(
+                    div().absolute().right(px(5.0)).top_0().child(
+                        queue_icon_button(
+                            ("agent-queue-collapse", id),
+                            if pane.chat.follow_ups_collapsed {
+                                "icons/chevron-up.svg"
+                            } else {
+                                "icons/chevron-down.svg"
+                            },
+                            if pane.chat.follow_ups_collapsed {
+                                "Show queued messages"
+                            } else {
+                                "Collapse queued messages"
+                            },
+                            *tokens,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(pane) = this.pane_mut(id) {
+                                pane.chat.follow_ups_collapsed = !pane.chat.follow_ups_collapsed;
+                                cx.notify();
+                            }
+                        })),
+                    ),
+                )
+                .when(pane.chat.follow_ups_collapsed, |card| {
+                    card.h(px(36.0)).child(
+                        div()
+                            .px(px(12.0))
+                            .text_size(px(11.0))
+                            .text_color(tokens.text_muted)
+                            .child(format!("{} queued", pane.chat.follow_ups.len())),
+                    )
+                })
+                .when(!pane.chat.follow_ups_collapsed, |card| {
+                    card.children(pane.chat.follow_ups_paused.then(|| {
+                        div()
+                            .px(px(12.0))
+                            .text_size(px(11.0))
+                            .text_color(tokens.text_muted)
+                            .child("Queue paused")
+                    }))
                     .child(
                         div()
                             .id(("agent-follow-ups", id))
-                            .max_h(px(110.0))
+                            .max_h(px(87.0))
                             .overflow_y_scroll()
                             .children(rows),
-                    ),
-            ),
+                    )
+                }),
         )
     }
 
@@ -741,6 +889,7 @@ impl AppState {
             }
             Err(error) => pane.chat.recovery = Some(error),
         }
+        self.schedule_workspace_save(cx);
         cx.notify();
     }
 

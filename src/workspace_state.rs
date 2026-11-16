@@ -153,6 +153,7 @@ pub struct SavedPane {
     pub cwd: Option<PathBuf>,
     pub draft: String,
     pub agent_draft: String,
+    pub queued_messages: Vec<String>,
     pub command_history: Vec<String>,
     pub chat_active: bool,
     pub chat: SavedChat,
@@ -820,6 +821,7 @@ mod tests {
                             display_title: "zsh".into(),
                             cwd: Some(PathBuf::from("/tmp/one/src")),
                             draft: "cargo t".into(),
+                            queued_messages: vec!["First".into(), "Second".into()],
                             command_history: vec!["cargo test".into()],
                             chat_active: true,
                             chat: SavedChat {
