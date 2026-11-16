@@ -12381,6 +12381,10 @@ impl AppState {
             }
             filter => filter,
         };
+        let reasoning_model = selected.filter(|model| match filter {
+            ModelPickerFilter::Provider(provider) => provider == &model.provider,
+            _ => true,
+        });
         let favorites = &self.settings.favorite_agent_models;
         let has_connected_providers = !providers.is_empty();
         let mut models: Vec<_> = auth
@@ -12560,15 +12564,16 @@ impl AppState {
         .track_scroll(&auth.model_scroll)
         .px(px(12.0));
         let filter_focused = auth.filter.read(cx).focus_handle().is_focused(window);
-        let levels = selected
+        let levels = reasoning_model
             .map(|model| model.thinking_levels())
             .unwrap_or_default();
         let current = PaneChat::resolve_thinking_level(chat.mode_thinking_level(), &levels);
         let default = (!levels.is_empty()).then(|| {
             PaneChat::resolve_thinking_level(if chat.fast_mode { "low" } else { "high" }, &levels)
         });
-        let reasoning_provider = selected.map(|model| provider_display_name(&model.provider));
-        let reasoning_tooltip = selected
+        let reasoning_provider =
+            reasoning_model.map(|model| provider_display_name(&model.provider));
+        let reasoning_tooltip = reasoning_model
             .zip(reasoning_provider.as_ref())
             .map(|(model, provider)| format!("{provider} · {}", model.id));
         let mut rail = div()
@@ -12713,6 +12718,15 @@ impl AppState {
                         })
                     }),
             )
+            .when(reasoning_model.is_none(), |panel| {
+                panel.child(
+                    div()
+                        .px(px(4.0))
+                        .text_size(px(12.0))
+                        .text_color(tokens.text_muted)
+                        .child("Select a model to configure reasoning."),
+                )
+            })
             .children(levels.iter().map(|level| {
                 let active = current == level.as_str();
                 let is_default = default == Some(level.as_str());
@@ -24130,8 +24144,14 @@ First report
                     ready: true,
                     source: Some("Stored API key".into()),
                 },
+                agent_auth::Provider {
+                    id: "web".into(),
+                    ready: true,
+                    source: Some("anonymous".into()),
+                },
             ];
-            auth.models = vec![disconnected, connected, local];
+            auth.models = vec![disconnected, connected.clone(), local];
+            s.pane_mut(id).unwrap().chat.selected_model = Some(connected);
         });
         cx.draw_frame().expect("draw model tab");
         assert!(
@@ -24150,12 +24170,22 @@ First report
         }
         assert!(cx.debug_bounds("model-provider-filter-anthropic").is_none());
         assert!(cx.debug_bounds("model-provider-filter-ollama").is_none());
+        assert!(cx.debug_bounds("model-provider-filter-web").is_none());
         let cloud = cx
             .debug_bounds("model-provider-filter-ollama-cloud")
             .unwrap();
+        assert!(
+            cx.debug_bounds("picker-reasoning-provider-Google Antigravity")
+                .is_some()
+        );
         cx.simulate_click(cloud.center(), Modifiers::default());
         cx.draw_frame().unwrap();
         assert!(cx.debug_bounds("agent-model-0").is_none());
+        assert!(
+            cx.debug_bounds("picker-reasoning-provider-Google Antigravity")
+                .is_none()
+        );
+        assert!(cx.debug_bounds("model-reasoning-medium").is_none());
         cx.simulate_click(cloud.center(), Modifiers::default());
         cx.draw_frame().unwrap();
         assert!(cx.debug_bounds("agent-model-0").is_some());

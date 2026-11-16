@@ -926,17 +926,24 @@ fn render_node(
             let mut timeline = div().w_full().flex().flex_col().gap(px(12.0));
             if let Some(items) = props.get("items").and_then(serde_json::Value::as_array) {
                 for item in items.iter().take(MAX_NODES) {
-                    let mut content = div().flex().flex_col().gap(px(3.0)).child(
-                        div()
-                            .text_size(px(12.0))
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child(prop_str(item, "title").unwrap_or_default()),
-                    );
+                    let mut content = div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(px(3.0))
+                        .child(
+                            div()
+                                .text_size(px(12.0))
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .child(prop_str(item, "title").unwrap_or_default()),
+                        );
                     if let Some(description) = prop_str(item, "description") {
                         content = content.child(
                             div()
-                                .text_size(px(11.0))
-                                .text_color(tokens.text_muted)
+                                .whitespace_normal()
+                                .text_size(px(12.0))
+                                .text_color(tokens.text_secondary)
                                 .child(description),
                         );
                     }
@@ -959,6 +966,7 @@ fn render_node(
                     div()
                         .text_size(px(12.5))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(tokens.text_primary)
                         .child(title),
                 );
             }
@@ -972,7 +980,7 @@ fn render_node(
                 card = card.footer(
                     div()
                         .text_size(px(11.0))
-                        .text_color(tokens.text_muted)
+                        .text_color(tokens.text_secondary)
                         .child(footer),
                 );
             }

@@ -88,6 +88,7 @@ pub fn provider_visible_in_chat_ui(id: &str) -> bool {
     !matches!(
         id.to_ascii_lowercase().as_str(),
         "apple"
+            | "web"
             | "local"
             | "ollama"
             | "lm-studio"
