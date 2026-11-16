@@ -13,7 +13,6 @@ license = "(MIT OR Apache-2.0) AND GPL-3.0-or-later"
 gpui = { package = "gpui-fast", version = "=0.1.16" }
 gpui_platform = { package = "gpui-fast-platform", version = "=0.1.16", features = ["wayland", "x11"] }
 gpui-component = { version = "0.5.1", features = ["tree-sitter-languages"] }
-gpui-component-assets = "0.5.1"
 gpui-kit = { version = "=0.10.0", features = ["gpui-fast"] }
 terminal = { path = "terminal" }
 rpi-embedded = { path = "agent/crates/rpi-embedded" }
