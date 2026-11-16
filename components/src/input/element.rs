@@ -2,7 +2,7 @@ use std::{ops::Range, rc::Rc};
 
 use gpui::{
     App, Bounds, Corners, Element, ElementId, ElementInputHandler, Entity, GlobalElementId, Half,
-    HighlightStyle, Hitbox, Hsla, IntoElement, LayoutId, MouseButton, MouseMoveEvent, Path, Pixels,
+    HighlightStyle, Hitbox, Hsla, LayoutId, MouseButton, MouseMoveEvent, Path, Pixels,
     Point, ShapedLine, SharedString, Size, Style, TextRun, TextStyle, UnderlineStyle, Window, fill,
     point, px, relative, size,
 };
@@ -747,14 +747,6 @@ impl PrepaintState {
             bounds.origin.y += self.cursor_scroll_offset.y;
             bounds
         })
-    }
-}
-
-impl IntoElement for TextElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 

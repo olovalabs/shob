@@ -1,6 +1,6 @@
 use gpui::{
     px, relative, App, Axis, BorderStyle, Bounds, ContentMask, Corners, Edges, Element, ElementId,
-    GlobalElementId, Hitbox, Hsla, IntoElement, IsZero as _, LayoutId, PaintQuad, Pixels, Point,
+    GlobalElementId, Hitbox, Hsla, IsZero as _, LayoutId, PaintQuad, Pixels, Point,
     Position, ScrollEvent, ScrollHandle, Style, Window,
 };
 
@@ -25,14 +25,6 @@ impl ScrollableMask {
     #[allow(dead_code)]
     pub fn debug(mut self) -> Self {
         self.debug = Some(gpui::yellow());
-        self
-    }
-}
-
-impl IntoElement for ScrollableMask {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
         self
     }
 }

@@ -89,14 +89,6 @@ impl<E: ParentElement + Styled> Styled for ContextMenu<E> {
     }
 }
 
-impl<E: ParentElement + Styled + IntoElement + 'static> IntoElement for ContextMenu<E> {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 struct ContextMenuSharedState {
     menu_view: Option<Entity<PopupMenu>>,
     open: bool,

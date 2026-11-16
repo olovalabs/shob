@@ -79,13 +79,6 @@ impl ResizeHandleState {
     }
 }
 
-impl<T: 'static, E: 'static + Render> IntoElement for ResizeHandle<T, E> {
-    type Element = ResizeHandle<T, E>;
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl<T: 'static, E: 'static + Render> Element for ResizeHandle<T, E> {
     type RequestLayoutState = AnyElement;
     type PrepaintState = ();

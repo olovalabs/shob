@@ -8,13 +8,13 @@ readme = "README.md"
 license = "(MIT OR Apache-2.0) AND GPL-3.0-or-later"
 
 [dependencies]
-# Exact engine pins: the local gpui-component 0.5.1 fork and gpui-kit 0.9.0
-# (the last gpui-kit release on the gpui-fast 0.1.13 generation) share them.
-gpui = { package = "gpui-fast", version = "=0.1.13" }
-gpui_platform = { package = "gpui-fast-platform", version = "=0.1.13", features = ["wayland", "x11"] }
+# Exact engine pins: the local gpui-component 0.5.1 fork and gpui-kit 0.10.0
+# (the gpui-kit release on the gpui-fast 0.1.16 generation) share them.
+gpui = { package = "gpui-fast", version = "=0.1.16" }
+gpui_platform = { package = "gpui-fast-platform", version = "=0.1.16", features = ["wayland", "x11"] }
 gpui-component = { version = "0.5.1", features = ["tree-sitter-languages"] }
 gpui-component-assets = "0.5.1"
-gpui-kit = { version = "=0.9.0", features = ["gpui-fast"] }
+gpui-kit = { version = "=0.10.0", features = ["gpui-fast"] }
 terminal = { path = "terminal" }
 rpi-embedded = { path = "agent/crates/rpi-embedded" }
 rust-embed = "8.12.0"
@@ -39,11 +39,12 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 
 [dev-dependencies]
 tree-sitter = "0.25"
-gpui = { package = "gpui-fast", version = "0.1.13", features = ["test-support"] }
-gpui_platform = { package = "gpui-fast-platform", version = "0.1.13", features = ["test-support", "wayland", "x11"] }
+gpui = { package = "gpui-fast", version = "0.1.16", features = ["test-support"] }
+gpui_platform = { package = "gpui-fast-platform", version = "0.1.16", features = ["test-support", "wayland", "x11"] }
 
 [patch.crates-io]
 gpui-component = { path = "components" }
+gpui-component-macros = { path = "components/macros" }
 
 [profile.dev]
 opt-level = 1
