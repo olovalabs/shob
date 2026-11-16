@@ -6,7 +6,7 @@ use std::{
 
 use gpui::{
     point, px, quad, App, BorderStyle, Bounds, CursorStyle, Edges, Element, ElementId,
-    GlobalElementId, Half, HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement,
+    GlobalElementId, Half, HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId,
     LayoutId, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, StyledText, TextLayout,
     Window,
 };
@@ -204,14 +204,6 @@ impl Inline {
                 BorderStyle::default(),
             ));
         }
-    }
-}
-
-impl IntoElement for Inline {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 

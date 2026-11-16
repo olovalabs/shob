@@ -132,14 +132,6 @@ impl Popover {
     }
 }
 
-impl IntoElement for Popover {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 pub(crate) struct PopoverLayoutState {
     state: Entity<bool>,
     bounds: Bounds<Pixels>,

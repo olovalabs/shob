@@ -385,14 +385,6 @@ struct DockElement {
     view: Entity<Dock>,
 }
 
-impl IntoElement for DockElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for DockElement {
     type RequestLayoutState = ();
     type PrepaintState = ();

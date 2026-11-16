@@ -677,14 +677,6 @@ impl TextView {
     }
 }
 
-impl IntoElement for TextView {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for TextView {
     type RequestLayoutState = AnyElement;
     type PrepaintState = Option<Hitbox>;

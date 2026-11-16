@@ -9,7 +9,7 @@ use std::{
 use crate::{ActiveTheme, AxisExt};
 use gpui::{
     App, Axis, BorderStyle, Bounds, ContentMask, Anchor, CursorStyle, Edges, Element, ElementId,
-    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, IsZero,
+    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IsZero,
     LayoutId, ListState, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
     Position, ScrollEvent, ScrollHandle, Size, Style, UniformListScrollHandle, Window,
     fill, point, px, relative, size,
@@ -452,14 +452,6 @@ impl Scrollbar {
             inset,
             radius,
         )
-    }
-}
-
-impl IntoElement for Scrollbar {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 
