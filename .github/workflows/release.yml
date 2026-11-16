@@ -451,7 +451,7 @@ jobs:
           Maintainer: olovalabs
           Installed-Size: $(du -ks payload/usr | cut -f1)
           Depends: libc6, libgcc-s1, libvulkan1, libxcb1, libxkbcommon0, libxkbcommon-x11-0
-          Homepage: https://github.com/olovalabs/kathamo
+          Homepage: https://github.com/olovalabs/shob
           Description: GPU-accelerated terminal emulator built for developers orchestrating AI coding agents
            A GPU-accelerated terminal emulator built for developers orchestrating
            AI coding agents.
@@ -488,7 +488,7 @@ jobs:
             echo "Release:        1%{?dist}"
             echo "Summary:        GPU-accelerated terminal emulator built for developers orchestrating AI coding agents"
             echo "License:        MIT OR Apache-2.0"
-            echo "URL:            https://github.com/olovalabs/kathamo"
+            echo "URL:            https://github.com/olovalabs/shob"
             echo "BuildArch:      x86_64"
             echo "Requires:       glibc"
             echo "Requires:       vulkan-loader"
@@ -556,7 +556,7 @@ jobs:
           pkgdesc="GPU-accelerated terminal emulator built for developers orchestrating AI coding agents"
           arch=('x86_64')
           license=('MIT' 'Apache-2.0')
-          url="https://github.com/olovalabs/kathamo"
+          url="https://github.com/olovalabs/shob"
           depends=('glibc' 'vulkan-icd-loader' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11')
           provides=('shob')
           options=('!strip')

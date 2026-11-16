@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Kathamo will be documented in this file.
+All notable changes to Shob will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Explicit, confirmed workspace-scoped OMP trust: protected `write` by default, opt-in `yolo`, canonical-path checks and safe deferred authority changes during active turns.
 - Per-pane explicit OMP reasoning effort without changing models, alongside Fast/Deep presets.
 - Metadata-only OMP provider/argument/tool-cycle timings and `scripts/bench-omp-tools.py`, an isolated loopback fixture exercising real batched reads, local shell steps and approvals.
-- Center and enlarge the Kathamo wordmark on the empty Agent page; show only the selected model beneath it.
+- Center and enlarge the Shob wordmark on the empty Agent page; show only the selected model beneath it.
 - Zed-style per-platform app data directories (`src/paths.rs`): workspace, scrollback, agent conversations and backups under the OS data dir; user settings under the OS config dir. Missing folders are created on launch.
 - Full session restoration: projects, sidebar tabs, nested split layouts, focused pane, per-pane working directories, tab titles/logos, input drafts, command history, sidebar width and window geometry are saved and restored after a restart.
 - Terminal scrollback is snapshotted per pane and seeded above the fresh shell prompt on restore.
@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Settings → Data & Sessions** section: shows the data folder, opens it in the file manager, toggles session/scrollback/agent-history restore, and clears saved sessions.
 - Synchronous save on window close and app quit, plus a 30-second autosave for crash recovery.
 - One-time migration from the legacy `workspace.json` (including the old Markup location) with a timestamped backup in `<data>/backups/`.
-- `KATHAMO_DATA_DIR` and `KATHAMO_DISABLE_RESTORE` environment overrides.
+- `SHOB_DATA_DIR` and `SHOB_DISABLE_RESTORE` environment overrides.
 - Render streamed agent replies as Markdown, including headings, lists, links, and syntax-highlighted code blocks.
 - Display all tool call details in rich Zed-style cards showing tool badges, call ID tags, inline argument summaries, status indicators, line counts, pretty-printed arguments with a copy button, and bounded scrollable outputs with one-click copying.
 - Collapsible thinking accordions that display live streaming thoughts while reasoning and automatically fold into compact headers when the response begins.
@@ -44,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Google Antigravity OAuth and model selection in `/auth`, with separate native chat sessions using the installed oh-my-pi agent.
 - `/auth` in agent mode opens provider discovery and authentication with masked input and rpi-managed credentials.
 - Native per-pane pi-rust agent chat with streamed replies, tool activity, cancellation, and a terminal/agent switch. Requires a separately installed and configured `rpi` executable.
-- **Kathamo input editor**:
+- **Shob input editor**:
   - Shell history from zsh, bash, and fish history files, merged with the session's own commands for Up/Down recall and ghost suggestions.
   - Context-aware completion menu (Tab) for `PATH` commands, shell builtins, files and directories, git branches, and history — with arrow navigation and click-to-accept.
   - Inline ghost suggestion from history, accepted with Right or Tab.
@@ -94,18 +94,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Full support for ANSI colors (standard 16, 256-color, 24-bit RGB), text styles, and embedded Mononoki monospace fonts.
   - OSC 52 clipboard copy and paste integration.
 - **Agent Attention & Status System**:
-  - Parity with the Kathamo agent attention model (`blocked > done > working > idle`).
+  - Parity with the Shob agent attention model (`blocked > done > working > idle`).
   - Latching completion tracking: agent runs that finish in an unviewed tab switch to `done` and alert the user; focusing the tab clears status to `idle`.
-  - Audio chimes and desktop toast notifications for blocked queries and missed finishes (`KATHAMO_NO_SOUND=1` support).
+  - Audio chimes and desktop toast notifications for blocked queries and missed finishes (`SHOB_NO_SOUND=1` support).
   - Sub-agent hierarchy support: child sessions with `agent_id` nest neatly under parent sessions without duplicate notifications.
 - **Multi-Project Workspace Management**:
   - Collapsible project folders in the sidebar grouping related terminal sessions.
-  - Workspace state persistence to `~/.config/kathamo/workspace.json`, automatically restoring open projects and session trees across application restarts.
+  - Workspace state persistence to `~/.config/shob/workspace.json`, automatically restoring open projects and session trees across application restarts.
   - Project-level actions for adding sessions and opening directories.
 - **Native Agent Integrations & CLI**:
-  - One-command setup CLI (`kathamo integration setup`, `status`, `doctor`, `remove`).
-  - Native hook support for Claude Code, Codex, Pi, OMP, OpenCode v2, and Command Code (Kathamo compatibility protocol).
-  - Terminal CLI commands: `kathamo report`, `kathamo skill`, `kathamo status`, `kathamo pane`, and OSC 7501 ANSI sequence reporting.
+  - One-command setup CLI (`shob integration setup`, `status`, `doctor`, `remove`).
+  - Native hook support for Claude Code, Codex, Pi, OMP, OpenCode v2, and Command Code (Shob compatibility protocol).
+  - Terminal CLI commands: `shob report`, `shob skill`, `shob status`, `shob pane`, and OSC 7501 ANSI sequence reporting.
 - **Desktop Integration**:
   - Custom title bar and window decoration controls.
   - Automatic Linux desktop entry (`.desktop`) creation in `~/.local/share/applications/`.

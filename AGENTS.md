@@ -1,12 +1,12 @@
-# Kathamo
+# Shob
 
-Kathamo is a GPU-accelerated terminal emulator for developers orchestrating AI coding agents. A GPUI Fast frontend renders an [alacritty_terminal](https://github.com/alacritty/alacritty)-based terminal widget, a Unix-socket status bus tracks agent state in real time, and an embedded Rust agent runtime (pi-rust) powers native agent chat with a frozen multi-provider catalog.
+Shob is a GPU-accelerated terminal emulator for developers orchestrating AI coding agents. A GPUI Fast frontend renders an [alacritty_terminal](https://github.com/alacritty/alacritty)-based terminal widget, a Unix-socket status bus tracks agent state in real time, and an embedded Rust agent runtime (pi-rust) powers native agent chat with a frozen multi-provider catalog.
 
-You can think of Kathamo as a native desktop counterpart to tools like Warp and Zed's terminal, built specifically around the problem that matters when agents do the typing: knowing when an agent is blocked, when it finished while you were away, and when it needs you — without notification fatigue.
+You can think of Shob as a native desktop counterpart to tools like Warp and Zed's terminal, built specifically around the problem that matters when agents do the typing: knowing when an agent is blocked, when it finished while you were away, and when it needs you — without notification fatigue.
 
-## What makes Kathamo special?
+## What makes Shob special?
 
-Kathamo's value is a small set of properties that are easy to regress and hard to win back. Never compromise on these.
+Shob's value is a small set of properties that are easy to regress and hard to win back. Never compromise on these.
 
 ### 1. Performance without compromise
 
@@ -22,7 +22,7 @@ Workspace restore is a core promise: projects, tabs, split panes, focus, per-pan
 
 ### 4. Agent status from every source
 
-Agent state can arrive five ways: the authenticated Unix status bus, OSC 7501 escape sequences, embedded TOML screen-detection regexes evaluated against the visible buffer, `kathamo report` from the CLI, and Command Code's native socket compatibility. A status feature that only works through one source is incomplete.
+Agent state can arrive five ways: the authenticated Unix status bus, OSC 7501 escape sequences, embedded TOML screen-detection regexes evaluated against the visible buffer, `shob report` from the CLI, and Command Code's native socket compatibility. A status feature that only works through one source is incomplete.
 
 ## A note from the maintainers
 
@@ -32,16 +32,16 @@ Channel both "measure twice, cut once" and "yagni". The bar for a new dependency
 
 The rest of this document is meant to help you navigate the codebase and make changes effectively. Think of these instructions less as "hard rules", more as "good defaults". The developer's preferences should be able to override anything here.
 
-Of note: most Kathamo development is done by agents, often inside a Kathamo terminal pane. This means you should be careful about accessing data, killing processes, and launching instances — the machine you are changing code on may be running the very app you are editing.
+Of note: most Shob development is done by agents, often inside a Shob terminal pane. This means you should be careful about accessing data, killing processes, and launching instances — the machine you are changing code on may be running the very app you are editing.
 
 ## A small glossary
 
 We need to be on the same page with terminology. When communicating, use this language:
 
-- **you** means the agent reading this file and changing Kathamo.
-- **we, us, and maintainers** mean the people building Kathamo. These are who you are talking to now.
-- **user** means the person using Kathamo to run terminals and direct coding agents.
-- **agent** means the coding agent a user runs inside a Kathamo pane. Depending on context, that may also include you.
+- **you** means the agent reading this file and changing Shob.
+- **we, us, and maintainers** mean the people building Shob. These are who you are talking to now.
+- **user** means the person using Shob to run terminals and direct coding agents.
+- **agent** means the coding agent a user runs inside a Shob pane. Depending on context, that may also include you.
 - **project** means a folder on disk grouping related sessions in the sidebar.
 - **tab** means one saved session under a project.
 - **pane** means one terminal region in the split tree. A pane owns its cwd, input draft, command history, terminal view, and its own agent conversation.
@@ -53,12 +53,12 @@ We need to be on the same page with terminology. When communicating, use this la
 - **embedded backend** means the in-process rpi agent runtime (`agent/` subtree) that powers native agent chat.
 - **provider** means a model provider (Anthropic, OpenAI, Gemini, Antigravity, Bedrock, Vertex, Ollama, ...) in the native catalog.
 - **scrollback** means the saved terminal output for a pane (`sessions/<pane-uid>.txt`).
-- **Kathamo home** means the platform data directory (`~/.local/share/kathamo` on Linux by default). Runtime state lives below it.
+- **Shob home** means the platform data directory (`~/.local/share/shob` on Linux by default). Runtime state lives below it.
 
 ## The three ways to hurt yourself
 
-1. **Killing by pattern.** Never `pkill -f`, `pgrep | kill`, or kill a PID you found by matching a name, path, or command string. Kathamo runs real shells, and the user's real agents run inside them — including possibly you. Kill only a PID you captured at spawn.
-2. **Writing to the live install.** The Kathamo home directory is the developer's real workspace: real projects, real conversations, real scrollback. Reading it for fixtures is fine and encouraged; never launch a test instance against it. Point test instances at scratch state with `KATHAMO_DATA_DIR=/absolute/path` and `KATHAMO_DISABLE_RESTORE=1`. Never start a second Kathamo that would fight the running one for the status socket or window focus.
+1. **Killing by pattern.** Never `pkill -f`, `pgrep | kill`, or kill a PID you found by matching a name, path, or command string. Shob runs real shells, and the user's real agents run inside them — including possibly you. Kill only a PID you captured at spawn.
+2. **Writing to the live install.** The Shob home directory is the developer's real workspace: real projects, real conversations, real scrollback. Reading it for fixtures is fine and encouraged; never launch a test instance against it. Point test instances at scratch state with `SHOB_DATA_DIR=/absolute/path` and `SHOB_DISABLE_RESTORE=1`. Never start a second Shob that would fight the running one for the status socket or window focus.
 3. **Blocking the main thread.** Never do unbounded I/O, parsing, `/proc` scanning, locking across await points, or long computation on the GPUI main thread. Heavy work belongs on background executors or the embedded backend's Tokio runtime and comes back through bounded queues. If you add a channel, it has a cap.
 
 ## Hit every surface
@@ -68,24 +68,24 @@ The most common defect in this repo is a change that works on the path you teste
 - **Platforms.** Linux (Wayland and X11), macOS, and Windows all build and run. Linux needs the system packages listed in the README; platform paths go through `src/paths.rs`.
 - **Pane modes.** Every pane has two modes: terminal view and agent chat. A capability usually belongs in both or must explicitly not apply to one. Each pane keeps its own conversation, model, and thinking level.
 - **Status sources.** A status or attention change must behave correctly from all five sources. Screen detection can only see what a regex can see; the socket is authenticated by `pane_generation`.
-- **Integrations.** Claude Code, Codex, Pi, OMP, OpenCode, and Command Code each have an integration surface (`kathamo integration setup|status|doctor|remove`). Agent-shaped features need a decision per integration, even if the decision is "not supported here".
-- **Attention surfaces.** A state change reaches the sidebar badge, sounds, toasts, and sub-agent grouping. A new state needs a decision for each — and for `KATHAMO_NO_SOUND=1`.
+- **Integrations.** Claude Code, Codex, Pi, OMP, OpenCode, and Command Code each have an integration surface (`shob integration setup|status|doctor|remove`). Agent-shaped features need a decision per integration, even if the decision is "not supported here".
+- **Attention surfaces.** A state change reaches the sidebar badge, sounds, toasts, and sub-agent grouping. A new state needs a decision for each — and for `SHOB_NO_SOUND=1`.
 - **Themes.** Light, dark, and system appearance all exist, plus user overrides in `theme_colors`. A hardcoded color in a view is a bug unless the token does not exist yet.
-- **Backends.** The embedded backend is the default; the legacy subprocess bridge survives behind `KATHAMO_RPI_BACKEND=rpc`. Agent-bridge changes must not silently break the fallback.
+- **Backends.** The embedded backend is the default; the legacy subprocess bridge survives behind `SHOB_RPI_BACKEND=rpc`. Agent-bridge changes must not silently break the fallback.
 - **Persistence.** Anything touching pane, tab, project, or conversation state must round-trip through restore, respect the v2 `workspace.json` shape and generation guard, and keep the v1 migration path working. Reverse states count too: setup needs remove, latch needs clear-on-view, approval needs deny.
 - **Docs.** Check whether the change makes `README.md` or `ARCHITECTURE.md` inaccurate. Apply the [documentation rules](#documentation) before adding anything.
 
-## Running Kathamo during development
+## Running Shob during development
 
 - `cargo run` starts a dev build. The dev profile is tuned so dependencies optimize while the app builds fast; do not "simplify" the profile sections in `Cargo.toml`.
 - For UI work, launch against scratch state:
   ```bash
-  KATHAMO_DATA_DIR=/tmp/kathamo-dev KATHAMO_DISABLE_RESTORE=1 cargo run
+  SHOB_DATA_DIR=/tmp/shob-dev SHOB_DISABLE_RESTORE=1 cargo run
   ```
 - `cargo run` with no overrides restores the developer's real workspace and grabs real window focus. Prefer the scratch-state form unless you specifically need real state, and never leave a test instance running when you finish.
-- Diagnostics: `KATHAMO_STREAM_TIMINGS=1` prints streaming and paint timings; `KATHAMO_DIAGNOSTICS=1` adds PTY queue-depth and CPU/RSS counters. Perf claims should come from one of these, not from vibes.
+- Diagnostics: `SHOB_STREAM_TIMINGS=1` prints streaming and paint timings; `SHOB_DIAGNOSTICS=1` adds PTY queue-depth and CPU/RSS counters. Perf claims should come from one of these, not from vibes.
 - Stop what you started, by the PID you tracked. A windowing app left running holds the display and may steal focus from the developer.
-- The status socket is per-user (`$XDG_RUNTIME_DIR/kathamo-status.sock`, falling back to `/tmp/kathamo-$UID/status.sock`). Two instances contend for it; that is expected to be messy, so don't.
+- The status socket is per-user (`$XDG_RUNTIME_DIR/shob-status.sock`, falling back to `/tmp/shob-$UID/status.sock`). Two instances contend for it; that is expected to be messy, so don't.
 
 ## Verifying
 
@@ -104,7 +104,7 @@ The most common defect in this repo is a change that works on the path you teste
 - Test at one layer: the lowest one that fails. Do not repeat the case in a wrapper test or at each call site.
 - No wall-clock sleeps or polling loops in tests. Assert on state and events, not elapsed time. A test that needs a timeout to pass is wrong.
 - Purely visual fixes (spacing, color, alignment) get a described before/after, not a test. Logic bugs get a failing test first, then the fix.
-- For streaming/tool benchmarks, build the test binary (`cargo test --locked --bin kathamo --no-run`) and drive it with `scripts/bench-agent-stream.py`.
+- For streaming/tool benchmarks, build the test binary (`cargo test --locked --bin shob --no-run`) and drive it with `scripts/bench-agent-stream.py`.
 - Manual smoke paths that are worth one pass after integrating: `scripts/status-demo.sh blocked` (and the other states) for the attention system, and one real `cargo run` with scratch state exercising your change end to end.
 
 ## Pull requests
@@ -113,7 +113,7 @@ The most common defect in this repo is a change that works on the path you teste
 - Conventional commit titles, plain language: `fix(terminal): new panes no longer spike CPU on resize`.
 - Body: the problem in a sentence or two, then how you fixed it.
 - Never append `Co-Authored-By:` trailers or "Generated with ..." footers to commits or PR descriptions — not Claude's, not Command Code's, not any other AI tool's. Add one only when the developer explicitly names the tool and asks for it; attribution is the developer's call, not the harness's default.
-- UI changes need before/after screenshots; motion or streaming changes need `KATHAMO_STREAM_TIMINGS` numbers.
+- UI changes need before/after screenshots; motion or streaming changes need `SHOB_STREAM_TIMINGS` numbers.
 - One request is one PR. Do not bundle unrelated cleanups.
 - Keep implementation plans, research notes, and scratch files out of the repository.
 
@@ -136,7 +136,7 @@ Architecture and its constraints: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 - `src/` — the main application crate.
   - `attention.rs`, `status.rs`, `status_bus.rs` — attention state machine, status schemas, socket IPC.
-  - `integrations.rs`, `agent_rules.rs`, `kathamo_compat.rs` — agent hook setup and compatibility.
+  - `integrations.rs`, `agent_rules.rs`, `shob_compat.rs` — agent hook setup and compatibility.
   - `agent_bridge.rs`, `agent_bridge_rpc.rs`, `agent_auth.rs`, `rpi_storage.rs` — embedded backend host, legacy RPC bridge, auth, session storage.
   - `agent_ui/` — agent chat view, composer, interaction.
   - `workspace_state.rs`, `conversations.rs`, `settings.rs`, `paths.rs` — persistence and platform paths.
@@ -144,7 +144,7 @@ Architecture and its constraints: [ARCHITECTURE.md](ARCHITECTURE.md).
   - `theme.rs`, `logos.rs`, `sound.rs`, `diagnostics.rs`, `stream_timing.rs` — presentation and diagnostics.
 - `terminal/` — the standalone terminal widget crate: PTY management, coalescer, VTE integration, cell grid, selection, rendering.
 - `components/` — the local gpui-component fork, wired in through `[patch.crates-io]`. GPUI UI primitives live here; treat upstream API carefully when bumping.
-- `agent/` — the vendored pi-rust Git subtree with its own Cargo workspace. Kathamo path-depends on `agent/crates/rpi-embedded`. Do not restructure casually; syncs are subtree operations. Non-build upstream assets were removed at import.
+- `agent/` — the vendored pi-rust Git subtree with its own Cargo workspace. Shob path-depends on `agent/crates/rpi-embedded`. Do not restructure casually; syncs are subtree operations. Non-build upstream assets were removed at import.
 - `provider/` — the native provider and authentication catalog crate (based on Oh My Pi), built and tested standalone.
 - `assets/` — icons, sounds, themes, agent-detection TOML manifests, integration scripts.
 - `scripts/` — demo and benchmark utilities.
@@ -165,5 +165,5 @@ Architecture and its constraints: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Additional tips
 
-- Environment variables are the configuration surface for development and debugging (`KATHAMO_DATA_DIR`, `KATHAMO_DISABLE_RESTORE`, `KATHAMO_STREAM_TIMINGS`, `KATHAMO_DIAGNOSTICS`, `KATHAMO_NO_SOUND`, `KATHAMO_RPI_BACKEND`, `KATHAMO_AGENT_BROWSER_BIN`). When you add one, follow the naming pattern and document it in the README section it belongs to.
+- Environment variables are the configuration surface for development and debugging (`SHOB_DATA_DIR`, `SHOB_DISABLE_RESTORE`, `SHOB_STREAM_TIMINGS`, `SHOB_DIAGNOSTICS`, `SHOB_NO_SOUND`, `SHOB_RPI_BACKEND`, `SHOB_AGENT_BROWSER_BIN`). When you add one, follow the naming pattern and document it in the README section it belongs to.
 - Security matters, but should not be over-indexed on for dev-only diagnostics paths. The status socket's authentication is not one of those paths — it is a real boundary.

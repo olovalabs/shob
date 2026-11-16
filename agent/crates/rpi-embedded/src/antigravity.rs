@@ -128,8 +128,8 @@ impl OAuthClient {
     fn load() -> Result<Self, String> {
         let path = auth_path()?.with_file_name("antigravity-oauth-client.json");
         let client: Self = match (
-            std::env::var("KATHAMO_ANTIGRAVITY_CLIENT_ID").ok(),
-            std::env::var("KATHAMO_ANTIGRAVITY_CLIENT_SECRET").ok(),
+            std::env::var("SHOB_ANTIGRAVITY_CLIENT_ID").ok(),
+            std::env::var("SHOB_ANTIGRAVITY_CLIENT_SECRET").ok(),
         ) {
             (Some(client_id), Some(client_secret)) => Self {
                 client_id,
@@ -138,7 +138,7 @@ impl OAuthClient {
             (None, None) => {
                 let bytes = fs::read(path).map_err(|error| {
                     if error.kind() == std::io::ErrorKind::NotFound {
-                        "Configure the Antigravity OAuth client in antigravity-oauth-client.json or set KATHAMO_ANTIGRAVITY_CLIENT_ID and KATHAMO_ANTIGRAVITY_CLIENT_SECRET.".into()
+                        "Configure the Antigravity OAuth client in antigravity-oauth-client.json or set SHOB_ANTIGRAVITY_CLIENT_ID and SHOB_ANTIGRAVITY_CLIENT_SECRET.".into()
                     } else {
                         format!("Could not read the Antigravity OAuth client configuration: {error}")
                     }
@@ -323,7 +323,7 @@ fn callback(stream: &mut TcpStream, expected_state: &str) -> Option<Result<Strin
         );
         return None;
     }
-    let reply = "You can close this tab and return to Kathamo.";
+    let reply = "You can close this tab and return to Shob.";
     let _ = write!(stream, "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{reply}", reply.len());
     Some(
         query

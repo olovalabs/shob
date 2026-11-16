@@ -80,7 +80,7 @@ pub fn model() -> Model {
 }
 
 pub fn user_agent() -> String {
-    let version = std::env::var("KATHAMO_ANTIGRAVITY_VERSION").unwrap_or_else(|_| "2.31.0".into());
+    let version = std::env::var("SHOB_ANTIGRAVITY_VERSION").unwrap_or_else(|_| "2.31.0".into());
     let os = if cfg!(target_os = "macos") {
         "darwin"
     } else {

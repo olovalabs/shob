@@ -11,7 +11,7 @@ pub const MONO_FONT: &str = "Lilex";
 // binary and out of every asset enumeration.
 #[exclude = "file_icons/*"]
 #[exclude = "logo/*"]
-#[exclude = "logos/kathamo.png"]
+#[exclude = "logos/shob.png"]
 #[exclude = "icons/shob.png"]
 pub struct AppAssets;
 
@@ -23,8 +23,8 @@ impl gpui::AssetSource for CombinedAssets {
             .trim_start_matches("icons/")
             .trim_start_matches("assets/")
             .trim_start_matches('/');
-        if clean == "logo/kathamo.png"
-            || clean == "logos/kathamo.png"
+        if clean == "logo/shob.png"
+            || clean == "logos/shob.png"
             || clean == "logos/shob.png"
             || clean == "shob.png"
             || clean == "logo/markup.png"
@@ -125,8 +125,8 @@ mod tests {
         assert!(assets.load("icons/moon.svg").unwrap().is_some());
         assert!(assets.load("icons/monitor.svg").unwrap().is_some());
         assert!(assets.load("icons/ellipsis.svg").unwrap().is_some());
-        assert!(assets.load("kathamo-wordmark.png").unwrap().is_some());
-        assert!(assets.load("logo/kathamo.png").unwrap().is_some());
+        assert!(assets.load("shob-wordmark.png").unwrap().is_some());
+        assert!(assets.load("logo/shob.png").unwrap().is_some());
         let icon = image::load_from_memory(crate::APP_ICON_PNG)
             .unwrap()
             .into_rgba8();

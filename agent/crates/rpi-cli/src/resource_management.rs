@@ -327,7 +327,7 @@ fn lease_path(root: &Path) -> PathBuf {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    crate::session::kathamo_session_dir()
+    crate::session::shob_session_dir()
         .parent()
         .expect("session directory has a parent")
         .join("resource-leases")

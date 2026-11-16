@@ -1,7 +1,7 @@
 //! Native, frozen provider/model metadata and credential-scoped HTTP discovery.
 //!
 //! Data is derived from oh-my-pi's MIT-licensed catalog at [`UPSTREAM_REVISION`],
-//! unioned with Kathamo's pre-existing provider catalog. No upstream code executes.
+//! unioned with Shob's pre-existing provider catalog. No upstream code executes.
 use std::{collections::BTreeMap, sync::LazyLock, time::Duration};
 
 use rpi_ai::{Api, InputModality, Model, ModelCost, StreamingProtocolCompat};

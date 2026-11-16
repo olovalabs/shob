@@ -15,7 +15,7 @@ semantics) so that the packs keep working exactly as upstream intends.
 
 ## Updating
 
-Use `kathamo integration update-rules` to download upstream packs into the per-user update cache. Kathamo validates each manifest and its `min_engine_version`, chooses only newer compatible remote packs, and keeps local overrides in `~/.config/kathamo/agent-detection/` as the highest-precedence source. New custom agent packs in that local directory can add aliases and screen rules without Rust changes.
+Use `shob integration update-rules` to download upstream packs into the per-user update cache. Shob validates each manifest and its `min_engine_version`, chooses only newer compatible remote packs, and keeps local overrides in `~/.config/shob/agent-detection/` as the highest-precedence source. New custom agent packs in that local directory can add aliases and screen rules without Rust changes.
 `index.toml` is upstream's registry; this crate instead auto-discovers every
 `agent-detection/*.toml` embedded under `assets/`.
 

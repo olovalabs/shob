@@ -303,7 +303,7 @@ mod tests {
         let values = BTreeMap::from([
             ("AWS_ACCESS_KEY_ID".into(), "partial".into()),
             ("GOOGLE_CLOUD_PROJECT".into(), "project-only".into()),
-            ("HOME".into(), "/nonexistent-kathamo-cloud-home".into()),
+            ("HOME".into(), "/nonexistent-shob-cloud-home".into()),
             ("AWS_EC2_METADATA_DISABLED".into(), "true".into()),
         ]);
         assert_eq!(configured("amazon-bedrock", &values), None);

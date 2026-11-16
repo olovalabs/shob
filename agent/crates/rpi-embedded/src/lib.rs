@@ -67,7 +67,7 @@ fn auth_runtime() -> Result<&'static tokio::runtime::Runtime, String> {
         std::sync::LazyLock::new(|| {
             tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(1)
-                .thread_name("kathamo-auth-extensions")
+                .thread_name("shob-auth-extensions")
                 .enable_all()
                 .build()
                 .map_err(|_| "Could not initialize extension authentication runtime".into())
@@ -109,7 +109,7 @@ pub fn auth_methods_for_cwd(provider: &str, cwd: &Path) -> AuthMethods {
     cached_auth_methods(provider, cwd)
 }
 
-/// One catalog row, matching the identity Kathamo shows in its model picker.
+/// One catalog row, matching the identity Shob shows in its model picker.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModelInfo {
     pub provider: String,
@@ -253,7 +253,7 @@ pub struct AgentUsage {
     pub cost: Option<f64>,
 }
 
-/// Events delivered to the host. This mirrors Kathamo's existing chat event
+/// Events delivered to the host. This mirrors Shob's existing chat event
 /// consumer so the subprocess bridge can be replaced without changing the UI.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SessionEvent {
@@ -345,7 +345,7 @@ impl<E: QueuedEvent> EventQueue<E> {
     fn timed(hook: Option<&PhaseHook>, raw: bool) -> Self {
         let mut queue = Self::default();
         // Clock reads and timestamp storage are absent during normal operation.
-        if std::env::var_os("KATHAMO_STREAM_TIMINGS").is_some_and(|value| value != "0") {
+        if std::env::var_os("SHOB_STREAM_TIMINGS").is_some_and(|value| value != "0") {
             if let Some(hook) = hook {
                 queue.timing = Some(QueueTiming {
                     hook: Arc::clone(hook),
@@ -780,7 +780,7 @@ pub struct SessionOptions {
     /// host-queue admission rather than when the UI eventually polls.
     pub delta_arrival_hook: Option<Arc<dyn Fn(bool) + Send + Sync>>,
     /// Host metadata hook for startup phases (resolve, session build, ready).
-    /// With `KATHAMO_STREAM_TIMINGS=1`, also records raw/projected queue
+    /// With `SHOB_STREAM_TIMINGS=1`, also records raw/projected queue
     /// admission (including contention), mutex acquisition, residence, and
     /// embedded projection durations. Backpressure labels count only admissions
     /// that waited for capacity; snapshot-dropped labels are zero-duration counters.
@@ -807,7 +807,7 @@ impl SessionOptions {
         }
     }
 
-    /// Parse the `provider/model` selector Kathamo uses on launch.
+    /// Parse the `provider/model` selector Shob uses on launch.
     pub fn with_selector(mut self, selector: Option<&str>) -> Self {
         if let Some(selector) = selector {
             match selector.split_once('/') {
@@ -1336,7 +1336,7 @@ async fn run_session(
     let (finished, mut completions) = tokio::sync::mpsc::channel::<Option<String>>(1);
     let forward_timing = phase_hook
         .clone()
-        .filter(|_| std::env::var_os("KATHAMO_STREAM_TIMINGS").is_some_and(|value| value != "0"));
+        .filter(|_| std::env::var_os("SHOB_STREAM_TIMINGS").is_some_and(|value| value != "0"));
     let forwarder = tokio::spawn(async move {
         let _reload = reload;
         loop {

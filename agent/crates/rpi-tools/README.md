@@ -122,7 +122,7 @@ never advertised as a complete log.
 
 Native benchmark:
 `cargo run --manifest-path agent/Cargo.toml -p rpi-tools --example bench_shell -- 15`
-from the Kathamo root. See the root `SHELL_TOOL_AUDIT.md` for scope and results.
+from the Shob root. See the root `SHELL_TOOL_AUDIT.md` for scope and results.
 
 ### Content search
 

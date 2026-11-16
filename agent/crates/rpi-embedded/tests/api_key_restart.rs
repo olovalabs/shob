@@ -2,7 +2,7 @@ use std::process::Command;
 
 #[test]
 fn commandcode_key_survives_process_restart() {
-    const PHASE: &str = "KATHAMO_TEST_AUTH_PHASE";
+    const PHASE: &str = "SHOB_TEST_AUTH_PHASE";
     if let Ok(phase) = std::env::var(PHASE) {
         match phase.as_str() {
             "save" => rpi_embedded::save_api_key("commandcode", "test-api-key").unwrap(),

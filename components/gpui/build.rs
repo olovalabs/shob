@@ -270,7 +270,7 @@ mod windows {
         let rc_file = std::path::Path::new("resources/windows/gpui.rc");
         println!("cargo:rerun-if-changed={}", manifest.display());
         println!("cargo:rerun-if-changed={}", rc_file.display());
-        println!("cargo:rerun-if-changed=resources/windows/kathamo.ico");
+        println!("cargo:rerun-if-changed=resources/windows/shob.ico");
         embed_resource::compile(rc_file, embed_resource::NONE)
             .manifest_required()
             .unwrap();

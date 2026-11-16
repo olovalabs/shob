@@ -28,10 +28,10 @@ use crate::{
 const CONTEXT: &'static str = "TextView";
 
 // Opt-in parse timings for the streaming chat pipeline. The app enables these
-// with `KATHAMO_STREAM_TIMINGS=1`; with the variable unset no samples are
+// with `SHOB_STREAM_TIMINGS=1`; with the variable unset no samples are
 // retained. Only durations are recorded.
 static TIMING_ENABLED: LazyLock<bool> = LazyLock::new(|| {
-    std::env::var_os("KATHAMO_STREAM_TIMINGS").is_some_and(|value| value != "0")
+    std::env::var_os("SHOB_STREAM_TIMINGS").is_some_and(|value| value != "0")
 });
 static PARSE_SAMPLES: LazyLock<Mutex<Vec<(&'static str, u64)>>> =
     LazyLock::new(|| Mutex::new(Vec::new()));
@@ -75,7 +75,7 @@ fn maybe_report_parses() {
     if samples.is_empty() {
         return;
     }
-    eprintln!("kathamo markdown parse timings (us, per report window):");
+    eprintln!("shob markdown parse timings (us, per report window):");
     for label in [
         "markdown.initial_parse",
         "markdown.update_parse",

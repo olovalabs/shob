@@ -97,7 +97,7 @@ pub(super) fn now() -> i64 {
 pub(super) fn http() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
-        .user_agent("kathamo-native-auth/1")
+        .user_agent("shob-native-auth/1")
         .build()
         .map_err(|_| "Could not initialize authentication HTTP client".into())
 }
@@ -275,9 +275,9 @@ pub(super) async fn browser_code(
                     if let Some(callback) = callback.filter(|u| u.path() == redirect_url.path()) {
                         let result = parse_callback(callback.as_str(), &state, openrouter);
                         let message = if result.is_ok() {
-                            "Sign-in received. You may return to Kathamo."
+                            "Sign-in received. You may return to Shob."
                         } else {
-                            "Sign-in callback was rejected. Return to Kathamo."
+                            "Sign-in callback was rejected. Return to Shob."
                         };
                         let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", message.len(), message);
                         return result.map(|code| (code, verifier, state));
@@ -315,12 +315,12 @@ fn browser_provider(provider: &str) -> Result<BrowserProvider, String> {
         "anthropic" => (decode_public("OWQxYzI1MGEtZTYxYi00NGQ5LTg4ZWQtNTk0NGQxOTYyZjVl"), None, "https://claude.ai/oauth/authorize".into(), "https://api.anthropic.com/v1/oauth/token".into(), "http://localhost:54545/callback".into(), "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload", true),
         "openai-codex" => ("app_EMoamEEZ73f0CkXaXp7hrann".into(), None, "https://auth.openai.com/oauth/authorize".into(), "https://auth.openai.com/oauth/token".into(), "http://localhost:1455/auth/callback".into(), "openid profile email offline_access api.connectors.read api.connectors.invoke", false),
         "google-gemini-cli" => {
-            let client = std::env::var("KATHAMO_GEMINI_CLI_CLIENT_ID")
+            let client = std::env::var("SHOB_GEMINI_CLI_CLIENT_ID")
                 .ok().filter(|value| !value.trim().is_empty())
-                .ok_or("Configure KATHAMO_GEMINI_CLI_CLIENT_ID for Gemini CLI OAuth")?;
-            let secret = std::env::var("KATHAMO_GEMINI_CLI_CLIENT_SECRET")
+                .ok_or("Configure SHOB_GEMINI_CLI_CLIENT_ID for Gemini CLI OAuth")?;
+            let secret = std::env::var("SHOB_GEMINI_CLI_CLIENT_SECRET")
                 .ok().filter(|value| !value.trim().is_empty())
-                .ok_or("Configure KATHAMO_GEMINI_CLI_CLIENT_SECRET for Gemini CLI OAuth")?;
+                .ok_or("Configure SHOB_GEMINI_CLI_CLIENT_SECRET for Gemini CLI OAuth")?;
             (client, Some(secret), "https://accounts.google.com/o/oauth2/v2/auth".into(), "https://oauth2.googleapis.com/token".into(), "http://127.0.0.1:8085/oauth2callback".into(), "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile", false)
         },
         "stencil" => { let auth = std::env::var("STENCIL_AUTH_URL").unwrap_or_else(|_| "https://auth.stencil.so".into()); (std::env::var("STENCIL_CLIENT_ID").unwrap_or_else(|_| "omp".into()), None, format!("{}/oauth/authorize", auth.trim_end_matches('/')), format!("{}/oauth/token", auth.trim_end_matches('/')), std::env::var("STENCIL_REDIRECT_URI").unwrap_or_else(|_| "http://127.0.0.1:54547/callback".into()), "openid profile email offline_access", false) },

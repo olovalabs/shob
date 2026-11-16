@@ -972,7 +972,7 @@ async fn zai_login(interaction: &Interaction<'_>) -> Result<Token, String> {
     });
     let existing = keys.and_then(|keys| {
         keys.iter()
-            .find(|key| string(key, "name") == Some("kathamo"))
+            .find(|key| string(key, "name") == Some("shob"))
     });
     let key = if let Some(existing) = existing {
         existing.clone()
@@ -982,7 +982,7 @@ async fn zai_login(interaction: &Interaction<'_>) -> Result<Token, String> {
                 client
                     .post(keys_url.clone())
                     .bearer_auth(business_token)
-                    .json(&json!({"name": "kathamo"})),
+                    .json(&json!({"name": "shob"})),
             )
             .await?,
         )?

@@ -16,7 +16,7 @@ The import commit carries the standard `git-subtree-dir: agent` and
 with the usual `git subtree` commands.
 
 After import, the following non-build items were removed to keep the tree
-limited to what Kathamo compiles:
+limited to what Shob compiles:
 
 - `website/`, `docs/`, `scripts/`, `packaging/`, `demo/`, `deploy/`
 - `.github/`, `.codegraph/`, `.rpi/`, `.runtime-tests.tmp`
@@ -28,6 +28,6 @@ limited to what Kathamo compiles:
   RPI_SELF_REVIEW markdown
 
 All library crates under `crates/`, their in-crate tests, `LICENSE`, `NOTICE`,
-`Cargo.toml` and `Cargo.lock` remain. Kathamo's host-facing wrapper is
+`Cargo.toml` and `Cargo.lock` remain. Shob's host-facing wrapper is
 `agent/crates/rpi-embedded`; see `../EMBEDDED_AGENT.md` for integration and
 verification details.

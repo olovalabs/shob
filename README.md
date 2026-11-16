@@ -105,8 +105,8 @@ sudo apt install -y libwayland-dev libxkbcommon-dev libfontconfig1-dev libssl-de
 Clone the repository:
 
 ```bash
-git clone https://github.com/olovalabs/kathamo.git
-cd kathamo
+git clone https://github.com/olovalabs/shob.git
+cd shob
 cargo run
 ```
 

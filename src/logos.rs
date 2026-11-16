@@ -62,7 +62,7 @@ impl LogoRegistry {
         }
 
         stems.insert("shob".into(), "logos/shob.png".into());
-        stems.insert("kathamo".into(), "logos/kathamo.png".into());
+        stems.insert("shob".into(), "logos/shob.png".into());
         LogoRegistry { stems }
     }
 

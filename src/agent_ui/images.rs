@@ -45,7 +45,7 @@ fn load_image(source: String) -> anyhow::Result<Arc<gpui::RenderImage>> {
                 .user_agent(concat!(
                     "Shob/",
                     env!("CARGO_PKG_VERSION"),
-                    " (https://github.com/olovalabs/kathamo)"
+                    " (https://github.com/olovalabs/shob)"
                 ))
                 .timeout(std::time::Duration::from_secs(10))
                 .build()
