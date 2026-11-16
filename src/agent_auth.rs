@@ -84,6 +84,23 @@ pub fn available_models(_cwd: &Path) -> Result<Vec<AgentModel>, String> {
     Ok(models)
 }
 
+pub fn provider_visible_in_chat_ui(id: &str) -> bool {
+    !matches!(
+        id.to_ascii_lowercase().as_str(),
+        "apple"
+            | "local"
+            | "ollama"
+            | "lm-studio"
+            | "lmstudio"
+            | "llama.cpp"
+            | "llama-cpp"
+            | "vllm"
+            | "litellm"
+            | "localai"
+            | "local-ai"
+    )
+}
+
 pub fn providers(cwd: &Path) -> Result<Vec<Provider>, String> {
     rpi_embedded::refresh_auth_methods(cwd)?;
     Ok(rpi_embedded::providers()?

@@ -129,8 +129,8 @@ pub struct AppSettings {
     pub theme_colors: ThemeColors,
     pub default_agent_model: Option<AgentModel>,
     pub permission_mode: crate::agent_bridge::PermissionMode,
-    /// Models explicitly enabled for the model picker. New models start hidden.
-    pub enabled_agent_models: Vec<AgentModel>,
+    #[serde(alias = "enabled_agent_models")]
+    pub favorite_agent_models: Vec<AgentModel>,
     /// Explicit Kathamo execution opt-ins, scoped to canonical workspace paths.
     #[serde(alias = "trusted_omp_workspaces")]
     pub trusted_kathamo_workspaces: Vec<PathBuf>,
@@ -150,7 +150,7 @@ impl Default for AppSettings {
             theme_colors: ThemeColors::default(),
             default_agent_model: None,
             permission_mode: crate::agent_bridge::PermissionMode::Ask,
-            enabled_agent_models: Vec::new(),
+            favorite_agent_models: Vec::new(),
             trusted_kathamo_workspaces: Vec::new(),
             sidebar: SavedSidebar::default(),
             agent_layout: false,

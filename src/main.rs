@@ -13,7 +13,6 @@ use gpui_component::WindowExt as _;
 use gpui_component::button::Button;
 use gpui_component::highlighter::HighlightTheme;
 use gpui_component::input::{Input, InputEvent, InputState, RopeExt as _};
-use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_component::notification::{Notification, NotificationType};
 use gpui_component::resizable::{h_resizable, resizable_panel, v_resizable};
 use gpui_component::scroll::ScrollableElement as _;
@@ -1000,6 +999,17 @@ fn tool_content_body(name: &str, parsed: Option<&serde_json::Value>) -> Option<S
         .map(str::to_owned)
 }
 
+fn model_picker_filter_marker(color: Hsla, row_height: f32) -> impl IntoElement {
+    div()
+        .absolute()
+        .right(px(4.0))
+        .top(px((row_height - 20.0) / 2.0))
+        .w(px(3.0))
+        .h(px(20.0))
+        .rounded_full()
+        .bg(color)
+}
+
 fn style_auth_input(input: Input, tokens: ThemeTokens, focused: bool) -> Input {
     input
         .appearance(false)
@@ -1490,10 +1500,6 @@ fn update_chat_tool(
     }
 }
 
-fn agent_model_label(model: &agent_auth::AgentModel) -> String {
-    format!("{} · {}", model.provider, model.id)
-}
-
 fn provider_icon_stems() -> &'static std::collections::HashSet<String> {
     static STEMS: std::sync::LazyLock<std::collections::HashSet<String>> =
         std::sync::LazyLock::new(|| {
@@ -1894,9 +1900,16 @@ enum AgentDialogPage {
     Models,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+enum ModelPickerFilter {
+    All,
+    Favorites,
+    Provider(String),
+}
+
 struct AuthModal {
     page: AgentDialogPage,
-    managing_models: bool,
+    model_filter: ModelPickerFilter,
     model_scroll: VirtualListScrollHandle,
     provider_scroll: VirtualListScrollHandle,
     focus: gpui::FocusHandle,
@@ -1916,6 +1929,15 @@ struct AuthModal {
 }
 
 impl AuthModal {
+    fn filter_models(&mut self, filter: ModelPickerFilter) {
+        self.model_filter = if self.model_filter == filter {
+            ModelPickerFilter::All
+        } else {
+            filter
+        };
+        self.model_scroll.set_offset(gpui::point(px(0.0), px(0.0)));
+    }
+
     fn discover(&mut self) {
         self.error = None;
         self.model_error = None;
@@ -2432,19 +2454,24 @@ impl PaneChat {
     }
 
     fn effective_thinking_level(&self) -> String {
-        let requested = match self.mode_thinking_level() {
+        let levels = self
+            .selected_model
+            .as_ref()
+            .map(|model| model.thinking_levels())
+            .unwrap_or_default();
+        Self::resolve_thinking_level(self.mode_thinking_level(), &levels).to_owned()
+    }
+
+    fn resolve_thinking_level<'a>(requested: &'a str, levels: &'a [String]) -> &'a str {
+        let requested = match requested {
             "off" | "minimal" => "low",
             level => level,
         };
-        let Some(model) = &self.selected_model else {
-            return requested.to_owned();
-        };
-        let levels = model.thinking_levels();
         if levels.is_empty()
             || levels.iter().any(|level| level == requested)
             || matches!(requested, "auto" | "inherit")
         {
-            return requested.to_owned();
+            return requested;
         }
         // Match the backend's nearest-lower clamping when switching models.
         let order = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
@@ -2458,7 +2485,6 @@ impl PaneChat {
             .find(|level| levels.iter().any(|supported| supported == **level))
             .copied()
             .unwrap_or(levels[0].as_str())
-            .to_owned()
     }
 
     fn ensure_agent(&mut self, cwd: PathBuf) -> Result<(), String> {
@@ -2775,8 +2801,7 @@ pub struct TerminalPane {
     pub completion_menu: Option<CompletionMenuState>,
     pub bottom_input_visible: bool,
     pub plus_menu_open: bool,
-    effort_menu_open: bool,
-    effort_toggle_bounds: Rc<std::cell::Cell<Bounds<Pixels>>>,
+    model_picker_bounds: Rc<std::cell::Cell<Bounds<Pixels>>>,
     permission_menu_open: bool,
     permission_toggle_bounds: Rc<std::cell::Cell<Bounds<Pixels>>>,
     /// Files staged in the input bar; dropped, pasted, or picked. They are
@@ -2910,8 +2935,7 @@ impl TerminalPane {
             completion_menu: None,
             bottom_input_visible: true,
             plus_menu_open: false,
-            effort_menu_open: false,
-            effort_toggle_bounds: Rc::new(std::cell::Cell::new(Bounds::default())),
+            model_picker_bounds: Rc::new(std::cell::Cell::new(Bounds::default())),
             permission_menu_open: false,
             permission_toggle_bounds: Rc::new(std::cell::Cell::new(Bounds::default())),
             attachments: Vec::new(),
@@ -3220,11 +3244,6 @@ impl gpui_component::scroll::ScrollbarHandle for FocusedChatScrollbar {
     fn end_drag(&self) {
         self.list.scrollbar_drag_ended();
     }
-}
-
-struct EffortSliderState {
-    slider: Entity<gpui_component::slider::SliderState>,
-    _subscription: gpui::Subscription,
 }
 
 struct AppState {
@@ -7756,7 +7775,7 @@ impl AppState {
             cx.new(|cx| InputState::new(window, cx).placeholder("Other provider ID"));
         let filter = cx.new(|cx| {
             InputState::new(window, cx).placeholder(if page == AgentDialogPage::Models {
-                "Search models or providers"
+                "Search models..."
             } else {
                 "Search providers"
             })
@@ -7769,7 +7788,7 @@ impl AppState {
         }
         let mut auth = AuthModal {
             page,
-            managing_models: false,
+            model_filter: ModelPickerFilter::All,
             model_scroll: VirtualListScrollHandle::new(),
             provider_scroll: VirtualListScrollHandle::new(),
             focus,
@@ -7805,6 +7824,7 @@ impl AppState {
             }
         }
         if let Some(pane) = self.pane_mut(pane_id) {
+            pane.permission_menu_open = false;
             pane.chat.auth = Some(auth);
             cx.notify();
         }
@@ -7812,6 +7832,7 @@ impl AppState {
 
     fn close_agent_auth(&mut self, pane_id: usize, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(pane) = self.pane_mut(pane_id) {
+            pane.permission_menu_open = false;
             if let Some(mut auth) = pane.chat.auth.take() {
                 if let Some(mut login) = auth.login.take() {
                     login.cancel();
@@ -7849,7 +7870,7 @@ impl AppState {
         }
         if auth.page != page {
             let placeholder = if page == AgentDialogPage::Models {
-                "Search models or providers"
+                "Search models..."
             } else {
                 "Search providers"
             };
@@ -7892,9 +7913,16 @@ impl AppState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.pane_ref(pane_id).is_none() {
+        let Some(pane) = self.pane_ref(pane_id) else {
             return;
-        }
+        };
+        let keep_picker_open = pane.chat.active
+            && pane.model_picker_bounds.get().size.width > px(0.0)
+            && pane
+                .chat
+                .auth
+                .as_ref()
+                .is_some_and(|auth| auth.page == AgentDialogPage::Models);
         self.default_agent_model = model.clone();
         for project in &mut self.projects {
             for session in &mut project.sessions {
@@ -7907,19 +7935,23 @@ impl AppState {
         }
         self.schedule_workspace_save(cx);
         self.warm_agent_bridge(pane_id);
-        self.close_agent_auth(pane_id, window, cx);
+        if keep_picker_open {
+            cx.notify();
+        } else {
+            self.close_agent_auth(pane_id, window, cx);
+        }
     }
 
-    fn toggle_model_visibility(&mut self, model: &agent_auth::AgentModel, cx: &mut Context<Self>) {
+    fn toggle_favorite_model(&mut self, model: &agent_auth::AgentModel, cx: &mut Context<Self>) {
         if let Some(index) = self
             .settings
-            .enabled_agent_models
+            .favorite_agent_models
             .iter()
-            .position(|enabled| enabled == model)
+            .position(|favorite| favorite == model)
         {
-            self.settings.enabled_agent_models.remove(index);
+            self.settings.favorite_agent_models.remove(index);
         } else {
-            self.settings.enabled_agent_models.push(model.clone());
+            self.settings.favorite_agent_models.push(model.clone());
         }
         self.schedule_workspace_save(cx);
         cx.notify();
@@ -8086,9 +8118,15 @@ impl AppState {
 
         // 3. Fallback: manual provider input
         let provider = auth.provider_input.read(cx).value().trim().to_string();
-        if !provider.is_empty() {
-            self.start_agent_auth(pane_id, provider, window, cx);
+        if provider.is_empty() {
+            return;
         }
+        if !agent_auth::provider_visible_in_chat_ui(&provider) {
+            auth.error = Some("Local providers are unavailable in Kathamo agent chat.".into());
+            cx.notify();
+            return;
+        }
+        self.start_agent_auth(pane_id, provider, window, cx);
     }
 
     fn disconnect_agent_provider(
@@ -11523,222 +11561,37 @@ impl AppState {
                             ),
                     ))
                     .when(pane.chat.active, |row| {
-                        let current = pane.chat.permission_mode;
-                        let toggle_bounds = pane.permission_toggle_bounds.clone();
-                        let outside_toggle_bounds = toggle_bounds.clone();
-                        let popup_position = toggle_bounds.get().origin;
-                        let popup = pane.permission_menu_open.then(|| {
-                            let orange: gpui::Hsla = if tokens.is_dark { rgba(0xf47b37ff).into() } else { rgba(0xc45113ff).into() };
-                            let mut menu = div().id(("permission-popover", pane_id))
-                                .w(px(420.0)).max_w(window.viewport_size().width - px(24.0))
-                                .p(px(5.0)).rounded(px(12.0)).border_1()
-                                .border_color(if tokens.is_dark { rgba(0x3d3d3dff).into() } else { tokens.card_border })
-                                .bg(if tokens.is_dark { rgba(0x202020ff).into() } else { tokens.card_bg })
-                                .shadow_lg().flex().flex_col()
-                                .on_mouse_down_out(cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                                    if outside_toggle_bounds.get().contains(&event.position) { return; }
-                                    if let Some(pane) = this.pane_mut(pane_id) { pane.permission_menu_open = false; cx.notify(); }
-                                }))
-                                .child(div().px(px(8.0)).pt(px(5.0)).pb(px(6.0))
-                                    .text_size(px(12.0)).text_color(tokens.text_muted)
-                                    .child("Approval mode applies to all agent chats"))
-                                .when(agent_bridge::rpc_backend_requested(), |menu| menu.child(
-                                    div().px(px(8.0)).pb(px(6.0)).text_size(px(12.0))
-                                        .text_color(tokens.text_muted)
-                                        .child("The legacy RPC backend does not enforce this mode."),
-                                ));
-                            for (mode, icon, description) in [
-                                (agent_bridge::PermissionMode::Ask, "icons/permission-hand.svg", "Ask before changes, commands, and other actions"),
-                                (agent_bridge::PermissionMode::Auto, "icons/permission-auto.svg", "Allow edits to existing workspace files; ask for other actions"),
-                                (agent_bridge::PermissionMode::Full, "icons/permission-full.svg", "Run tools without approval prompts"),
-                            ] {
-                                let selected = current == mode;
-                                let color = if selected { orange } else { tokens.text_primary };
-                                let detail_color = if selected { orange } else { tokens.text_muted };
-                                menu = menu.child(div().id(("permission-option", mode as usize))
-                                    .flex().items_start().gap(px(9.0)).px(px(8.0)).py(px(5.0))
-                                    .rounded(px(6.0)).cursor_pointer()
-                                    .hover(|style| style.bg(tokens.pane_header_btn_hover))
-                                    .child(svg().path(icon).size(px(15.0)).mt(px(3.0)).flex_shrink_0().text_color(color))
-                                    .child(div().flex_1().min_w_0().flex().flex_col()
-                                        .child(div().text_size(px(13.0)).text_color(color).child(mode.label()))
-                                        .child(div().text_size(px(12.0)).text_color(detail_color).child(description)))
-                                    .when(selected, |item| item.child(svg().path("icons/status-check.svg")
-                                        .size(px(14.0)).mt(px(5.0)).flex_shrink_0().text_color(orange)))
-                                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        this.set_permission_mode(mode, cx);
-                                    })));
-                            }
-                            menu
-                        });
-                        let permission_icon = match current {
-                            agent_bridge::PermissionMode::Ask => "icons/permission-hand.svg",
-                            agent_bridge::PermissionMode::Auto => "icons/permission-auto.svg",
-                            agent_bridge::PermissionMode::Full => "icons/permission-full.svg",
-                        };
-                        let pill_color: gpui::Hsla = if current == agent_bridge::PermissionMode::Full {
-                            if tokens.is_dark { rgba(0xf47b37ff).into() } else { rgba(0xc45113ff).into() }
-                        } else { tokens.text_primary };
-                        row.child(div().id(("agent-permissions", pane_id)).relative()
-                            .flex().items_center().gap(px(5.0)).h(px(26.0)).px(px(9.0))
-                            .rounded_full().bg(if tokens.is_dark { rgba(0x343434ff).into() } else { tokens.card_bg })
-                            .cursor_pointer().text_size(px(12.0))
-                            .text_color(pill_color).hover(|style| style.bg(tokens.pane_header_btn_hover))
-                            .child(svg().path(permission_icon).size(px(14.0)).flex_shrink_0().text_color(pill_color))
-                            .child(current.label())
-                            .child(canvas(move |bounds, _, _| toggle_bounds.set(bounds), |_, _, _, _| {})
-                                .absolute().size_full())
-                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                if let Some(pane) = this.pane_mut(pane_id) { pane.permission_menu_open = !pane.permission_menu_open; cx.notify(); }
-                            }))
-                            .children(popup.map(|popup| deferred(gpui::anchored()
-                                .anchor(gpui::Anchor::BottomLeft).position(popup_position)
-                                .offset(gpui::point(px(0.0), px(-4.0))).child(popup)))))
+                        row.child(self.render_agent_permission(pane, false, window, cx))
                     })
                     .when(pane.chat.active && self.settings.agent_layout, |row| row.child(div().flex_1().min_w_0()))
-                    .when(pane.chat.active && (!self.settings.agent_layout || !pane.chat.selected_model.as_ref().is_some_and(agent_auth::AgentModel::supports_reasoning_effort)), |row| row.child(
+                    .when(pane.chat.active, |row| {
+                        let bounds = pane.model_picker_bounds.clone();
+                        row.child(
                         div()
                             .id(("select-agent-model", pane_id))
                             .debug_selector(|| "select-agent-model-pill".to_string())
+                            .relative()
                             .flex()
                             .items_center()
-                            .gap(px(5.0))
-                            .h(px(24.0))
+                            .gap(px(6.0))
+                            .h(px(28.0))
                             .px(px(8.0))
-                            .rounded(px(5.0))
-                            .text_size(px(11.0))
+                            .rounded(px(7.0))
+                            .bg(tokens.card_bg)
+                            .text_size(px(14.0))
                             .text_color(tokens.text_primary)
-                            .when(!self.settings.agent_layout, |pill| pill.bg(badge_bg).border_1().border_color(badge_border))
-                            .cursor(CursorStyle::PointingHand)
-                            .hover(|view| view.bg(tokens.pane_header_btn_hover))
+                            .cursor_pointer()
+                            .hover(|view| view.bg(tokens.card_hover))
                             .when_some(model_provider_icon, |pill, icon| {
-                                pill.child(svg().path(icon).size(px(13.0)).flex_shrink_0().text_color(tokens.text_primary))
+                                pill.child(svg().path(icon).size(px(15.0)).flex_shrink_0().text_color(tokens.text_primary))
                             })
-                            .child(div().max_w(px(280.0)).truncate().child(model_pill))
-                            .child(
-                                svg()
-                                    .path("icons/chevron-down.svg")
-                                    .size(px(10.0))
-                                    .flex_shrink_0()
-                                    .text_color(tokens.text_muted),
-                            )
+                            .child(div().max_w(px(224.0)).truncate().child(model_pill))
+                            .child(canvas(move |area, _, _| bounds.set(area), |_, _, _, _| {})
+                                .absolute().top_0().left_0().size_full())
                             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
                                 cx.stop_propagation();
                                 this.open_agent_auth(pane_id, AgentDialogPage::Models, window, cx);
-                            }))
-                    ))
-                    .when(pane.chat.active && pane.chat.selected_model.as_ref()
-                        .is_some_and(agent_auth::AgentModel::supports_reasoning_effort), |row| {
-                        let levels = pane.chat.selected_model.as_ref().unwrap().thinking_levels();
-                        let current = pane.chat.effective_thinking_level();
-                        let label = format!("Reasoning: {}", reasoning_effort_label(&current));
-                        let app = cx.weak_entity();
-                        if self.settings.agent_layout {
-                            let selected = levels.iter().position(|level| level == &current).unwrap_or(0);
-                            let count = levels.len();
-                            let model_name = pane.chat.selected_model.as_ref().map(agent_model_label).unwrap_or_default();
-                            let toggle_bounds = pane.effort_toggle_bounds.clone();
-                            let outside_toggle_bounds = toggle_bounds.clone();
-                            let popup_position = toggle_bounds.get().origin;
-                            let popup = pane.effort_menu_open.then(|| {
-                                let weak_app = cx.weak_entity();
-                                let slider_levels = levels.clone();
-                                let slider_key = format!("effort-slider-{pane_id}-{}", agent_model_selector(pane.chat.selected_model.as_ref().unwrap()));
-                                let slider_holder = window.use_keyed_state(slider_key, cx, move |_, cx| {
-                                    use gpui_component::slider::{SliderEvent, SliderState, SliderValue};
-                                    let slider = cx.new(|_| SliderState::new().min(0.0)
-                                        .max((slider_levels.len().saturating_sub(1)).max(1) as f32)
-                                        .step(1.0).default_value(selected as f32));
-                                    let subscription = cx.subscribe(&slider, move |_: &mut EffortSliderState, _, event: &SliderEvent, cx| {
-                                        let SliderEvent::Change(SliderValue::Single(value)) = event else { return; };
-                                        let Some(level) = slider_levels.get(*value as usize) else { return; };
-                                        let _ = weak_app.update(cx, |app, cx| {
-                                            if app.pane_ref(pane_id).is_some_and(|pane| pane.chat.effective_thinking_level() != *level) {
-                                                app.set_reasoning_effort(pane_id, level, cx);
-                                            }
-                                        });
-                                    });
-                                    EffortSliderState { slider, _subscription: subscription }
-                                });
-                                let slider = slider_holder.read(cx).slider.clone();
-                                let reset_slider = slider.clone();
-                                let reset_index = levels.iter().position(|level| level == "high").unwrap_or(count / 2);
-                                let track = div().debug_selector(|| "effort-track".into())
-                                    .w_full().h(px(24.0)).px(px(16.0)).rounded_full()
-                                    .bg(if tokens.is_dark { rgba(0x343434ff) } else { rgba(0xd9d9d9ff) })
-                                    .child(gpui_component::slider::Slider::new(&slider)
-                                        .dimensions(px(24.0), px(24.0)).inset_ticks(px(16.0), count)
-                                        .disabled(count < 2).w_full().bg(rgba(0x3485f7ff))
-                                        .text_color(gpui::white()));
-                                let reset_level = levels.iter().find(|level| level.as_str() == "high")
-                                    .or_else(|| levels.get(count / 2)).cloned().unwrap_or_default();
-                                div().id(("effort-popover", pane_id)).w(px(254.0)).p(px(12.0))
-                                    .rounded(px(18.0)).border_1().border_color(focused_bar_border)
-                                    .bg(if tokens.is_dark { focused_bar_bg } else { tokens.card_bg }).shadow_lg().flex().flex_col().gap(px(12.0))
-                                    .on_mouse_down_out(cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                                        if outside_toggle_bounds.get().contains(&event.position) { return; }
-                                        if let Some(pane) = this.pane_mut(pane_id) { pane.effort_menu_open = false; cx.notify(); }
-                                    }))
-                                    .child(div().flex().items_start().justify_between()
-                                        .child(svg().path("icons/effort-bolt.svg").size(px(15.0)).text_color(tokens.text_secondary))
-                                        .child(div().flex().flex_col().items_center()
-                                            .child(div().text_size(px(14.0)).text_color(rgba(0x3485f7ff)).child(reasoning_effort_label(&current).to_owned()))
-                                            .child(div().id(("effort-model-select", pane_id))
-                                                .flex().items_center().gap(px(2.0)).cursor_pointer()
-                                                .text_size(px(12.0)).text_color(tokens.text_secondary)
-                                                .hover(|style| style.text_color(tokens.text_primary))
-                                                .child(model_name.clone())
-                                                .child(svg().path("icons/chevron-right.svg").size(px(11.0)))
-                                                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
-                                                    cx.stop_propagation();
-                                                    if let Some(pane) = this.pane_mut(pane_id) { pane.effort_menu_open = false; }
-                                                    this.open_agent_auth(pane_id, AgentDialogPage::Models, window, cx);
-                                                }))))
-                                        .child(div().id(("effort-reset", pane_id)).cursor_pointer().size(px(20.0)).flex().items_center().justify_center()
-                                            .child(svg().path("icons/effort-reset.svg").size(px(15.0)).text_color(tokens.text_secondary))
-                                            .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new("Reset effort").build(window, cx))
-                                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
-                                                cx.stop_propagation();
-                                                reset_slider.update(cx, |slider, cx| slider.set_value(reset_index as f32, window, cx));
-                                                this.set_reasoning_effort(pane_id, &reset_level, cx);
-                                            }))))
-                                    .child(track)
-                            });
-                            row.child(div().id(("agent-effort-toggle", pane_id)).debug_selector(|| "agent-effort-toggle".into()).relative()
-                                .px(px(9.0)).h(px(26.0)).rounded_full().flex().items_center().gap(px(7.0))
-                                .cursor_pointer().text_size(px(11.0)).text_color(tokens.text_secondary)
-                                .hover(|style| style.text_color(tokens.text_primary))
-                                .child(div().max_w(px(200.0)).truncate().text_color(tokens.text_primary)
-                                    .child(pane.chat.selected_model.as_ref().map(agent_model_label).unwrap_or_default()))
-                                .child(reasoning_effort_label(&current).to_owned())
-                                .child(svg().path("icons/chevron-down.svg").size(px(10.0)))
-                                .child(canvas(move |bounds, _, _| toggle_bounds.set(bounds), |_, _, _, _| {})
-                                    .absolute().size_full())
-                                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    if let Some(pane) = this.pane_mut(pane_id) { pane.effort_menu_open = !pane.effort_menu_open; cx.notify(); }
-                                }))
-                                .children(popup.map(|popup| deferred(gpui::anchored()
-                                    .anchor(gpui::Anchor::BottomLeft).position(popup_position)
-                                    .offset(gpui::point(px(0.0), px(-4.0))).child(popup)))))
-                        } else {
-                        row.child(Button::new(("agent-reasoning", pane_id))
-                            .label(label).xsmall().dropdown_menu(move |mut menu, _, _| {
-                                for level in &levels {
-                                    let level = level.clone();
-                                    let app = app.clone();
-                                    let selected = current == level;
-                                    let label = reasoning_effort_label(&level).to_owned();
-                                    menu = menu.item(PopupMenuItem::new(label).checked(selected)
-                                        .on_click(move |_, _, cx| {
-                                            let _ = app.update(cx, |this, cx| this.set_reasoning_effort(pane_id, &level, cx));
-                                        }));
-                                }
-                                menu
-                            }))
-                        }
+                            })))
                     })
                     .when(pane.chat.active && pane.chat.visible_running(), |row| row.child(
                         div().id(("agent-stop", pane_id))
@@ -12137,8 +11990,32 @@ impl AppState {
         };
         let tokens = self.tokens(cx);
         let page = auth.page;
+        let pane = self.pane_ref(pane_id).unwrap();
+        let trigger = pane.model_picker_bounds.get();
+        let viewport = window.viewport_size();
+        let anchored =
+            page == AgentDialogPage::Models && pane.chat.active && trigger.size.width > px(0.0);
+        let picker_width = px(554.0).min((viewport.width - px(16.0)).max(px(0.0)));
+        let above = trigger.top() - px(12.0);
+        let below = viewport.height - trigger.bottom() - px(12.0);
+        let open_above = above >= px(393.0) || above >= below;
+        let available_height = if anchored {
+            if open_above { above } else { below }
+        } else {
+            viewport.height - px(16.0)
+        };
+        let picker_height = px(393.0).min(available_height.max(px(0.0)));
+        let picker_top = if open_above {
+            trigger.top() - picker_height - px(4.0)
+        } else {
+            trigger.bottom() + px(4.0)
+        };
+        let max_left = (viewport.width - picker_width - px(8.0)).max(px(8.0));
+        let picker_left = (trigger.right() - picker_width).clamp(px(8.0), max_left);
         let content = match page {
-            AgentDialogPage::Models => self.render_agent_models(pane_id, auth, window, cx),
+            AgentDialogPage::Models => {
+                self.render_agent_models(pane_id, auth, picker_width, picker_height, window, cx)
+            }
             AgentDialogPage::Auth => self.render_agent_auth(pane_id, auth, window, cx),
         };
         deferred(
@@ -12153,7 +12030,7 @@ impl AppState {
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(rgba(0x000000a6))
+                .when(!anchored, |layer| layer.bg(rgba(0x000000a6)))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, _, window, cx| {
@@ -12172,13 +12049,27 @@ impl AppState {
                             }
                         })
                         .track_focus(&auth.focus)
-                        .w(px(520.0))
+                        .when(anchored, |panel| {
+                            panel
+                                .absolute()
+                                .left(picker_left)
+                                .top(picker_top)
+                                .shadow_lg()
+                        })
+                        .when(page == AgentDialogPage::Models, |panel| {
+                            panel.w(picker_width).h(picker_height)
+                        })
+                        .when(page == AgentDialogPage::Auth, |panel| panel.w(px(520.0)))
                         .max_w(relative(0.97))
                         .max_h(relative(0.98))
                         .rounded(px(8.0))
                         .border_1()
                         .border_color(tokens.card_border)
-                        .bg(tokens.card_bg)
+                        .bg(if page == AgentDialogPage::Models {
+                            tokens.model_picker_bg
+                        } else {
+                            tokens.card_bg
+                        })
                         .text_color(tokens.text_primary)
                         .text_size(px(14.0))
                         .flex()
@@ -12194,82 +12085,90 @@ impl AppState {
                                 this.close_agent_auth(pane_id, window, cx);
                             }
                         }))
-                        .child(
-                            div()
-                                .h(px(48.0))
-                                .flex_shrink_0()
-                                .px(px(20.0))
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(8.0))
-                                        .when(page == AgentDialogPage::Auth, |header| {
-                                            header.child(
-                                                div()
-                                                    .id(("models-tab", pane_id))
-                                                    .debug_selector(|| "agent-model-back".into())
-                                                    .size(px(24.0))
-                                                    .rounded(px(4.0))
-                                                    .flex()
-                                                    .items_center()
-                                                    .justify_center()
-                                                    .cursor(CursorStyle::PointingHand)
-                                                    .hover(move |view| view.bg(tokens.card_hover))
-                                                    .child(
-                                                        svg()
-                                                            .path("icons/arrow-left.svg")
-                                                            .size(px(14.0))
-                                                            .text_color(tokens.text_muted),
-                                                    )
-                                                    .on_mouse_down(
-                                                        MouseButton::Left,
-                                                        cx.listener(move |this, _, window, cx| {
-                                                            cx.stop_propagation();
-                                                            this.set_agent_dialog_page(
-                                                                pane_id,
-                                                                AgentDialogPage::Models,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        }),
-                                                    ),
+                        .when(page == AgentDialogPage::Auth, |panel| {
+                            panel.child(
+                                div()
+                                    .h(px(48.0))
+                                    .flex_shrink_0()
+                                    .px(px(20.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(8.0))
+                                            .when(page == AgentDialogPage::Auth, |header| {
+                                                header.child(
+                                                    div()
+                                                        .id(("models-tab", pane_id))
+                                                        .debug_selector(|| {
+                                                            "agent-model-back".into()
+                                                        })
+                                                        .size(px(24.0))
+                                                        .rounded(px(4.0))
+                                                        .flex()
+                                                        .items_center()
+                                                        .justify_center()
+                                                        .cursor(CursorStyle::PointingHand)
+                                                        .hover(move |view| {
+                                                            view.bg(tokens.card_hover)
+                                                        })
+                                                        .child(
+                                                            svg()
+                                                                .path("icons/arrow-left.svg")
+                                                                .size(px(14.0))
+                                                                .text_color(tokens.text_muted),
+                                                        )
+                                                        .on_mouse_down(
+                                                            MouseButton::Left,
+                                                            cx.listener(
+                                                                move |this, _, window, cx| {
+                                                                    cx.stop_propagation();
+                                                                    this.set_agent_dialog_page(
+                                                                        pane_id,
+                                                                        AgentDialogPage::Models,
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                },
+                                                            ),
+                                                        ),
+                                                )
+                                            })
+                                            .child(div().text_size(px(15.0)).child(match page {
+                                                AgentDialogPage::Models => "Select model",
+                                                AgentDialogPage::Auth => "Manage providers",
+                                            })),
+                                    )
+                                    .child(
+                                        div()
+                                            .id(("auth-close", pane_id))
+                                            .debug_selector(|| "agent-dialog-close".into())
+                                            .size(px(24.0))
+                                            .rounded(px(4.0))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .cursor(CursorStyle::PointingHand)
+                                            .hover(move |view| view.bg(tokens.card_hover))
+                                            .child(
+                                                svg()
+                                                    .path("icons/x.svg")
+                                                    .size(px(14.0))
+                                                    .text_color(tokens.text_muted),
                                             )
-                                        })
-                                        .child(div().text_size(px(15.0)).child(match page {
-                                            AgentDialogPage::Models => "Select model",
-                                            AgentDialogPage::Auth => "Authenticate provider",
-                                        })),
-                                )
-                                .child(
-                                    div()
-                                        .id(("auth-close", pane_id))
-                                        .debug_selector(|| "agent-dialog-close".into())
-                                        .size(px(24.0))
-                                        .rounded(px(4.0))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .cursor(CursorStyle::PointingHand)
-                                        .hover(move |view| view.bg(tokens.card_hover))
-                                        .child(
-                                            svg()
-                                                .path("icons/x.svg")
-                                                .size(px(14.0))
-                                                .text_color(tokens.text_muted),
-                                        )
-                                        .on_mouse_down(
-                                            MouseButton::Left,
-                                            cx.listener(move |this, _, window, cx| {
-                                                cx.stop_propagation();
-                                                this.close_agent_auth(pane_id, window, cx);
-                                            }),
-                                        ),
-                                ),
-                        )
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(move |this, _, window, cx| {
+                                                    cx.stop_propagation();
+                                                    this.close_agent_auth(pane_id, window, cx);
+                                                }),
+                                            ),
+                                    ),
+                            )
+                        })
                         .child(content),
                 ),
         )
@@ -12281,30 +12180,49 @@ impl AppState {
         &self,
         pane_id: usize,
         auth: &AuthModal,
+        width: Pixels,
+        height: Pixels,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let tokens = self.tokens(cx);
-        let themed_input = self.palette_scheme == PaletteScheme::MidnightGarden && tokens.is_dark;
-        let filter_focused = auth.filter.read(cx).focus_handle().is_focused(window);
-        let background = tokens.card_bg;
-        let inset = tokens.card_hover;
-        let card = tokens.pane_bg;
-        let border = tokens.card_border;
-        let muted = tokens.text_muted;
-        let foreground = tokens.text_primary;
         let query = auth.filter.read(cx).value().trim().to_lowercase();
-        let selected = self
-            .pane_ref(pane_id)
-            .and_then(|pane| pane.chat.selected_model.as_ref());
+        let mut row_hover = tokens.text_primary;
+        row_hover.a = 0.08;
+        let mut footer_tint = tokens.text_primary;
+        footer_tint.a = 0.012;
+        let pane = self.pane_ref(pane_id).unwrap();
+        let chat = &pane.chat;
+        let selected = chat
+            .selected_model
+            .as_ref()
+            .filter(|model| agent_auth::provider_visible_in_chat_ui(&model.provider));
+        let mut providers: Vec<_> = auth
+            .providers
+            .iter()
+            .filter(|p| p.ready && agent_auth::provider_visible_in_chat_ui(&p.id))
+            .map(|p| p.id.clone())
+            .collect();
+        providers.sort();
+        providers.dedup();
+        let filter = match &auth.model_filter {
+            ModelPickerFilter::Provider(provider) if !providers.contains(provider) => {
+                &ModelPickerFilter::All
+            }
+            filter => filter,
+        };
+        let favorites = &self.settings.favorite_agent_models;
+        let has_connected_providers = !providers.is_empty();
         let mut models: Vec<_> = auth
             .models
             .iter()
             .filter(|model| {
-                auth.providers
-                    .iter()
-                    .any(|provider| provider.id == model.provider && provider.ready)
-                    && (auth.managing_models || self.settings.enabled_agent_models.contains(model))
+                providers.contains(&model.provider)
+                    && match filter {
+                        ModelPickerFilter::All => true,
+                        ModelPickerFilter::Favorites => favorites.contains(model),
+                        ModelPickerFilter::Provider(provider) => provider == &model.provider,
+                    }
                     && (query.is_empty()
                         || model.id.to_lowercase().contains(&query)
                         || model.provider.to_lowercase().contains(&query)
@@ -12312,201 +12230,156 @@ impl AppState {
                             .to_lowercase()
                             .contains(&query))
             })
+            .cloned()
             .collect();
-        // Keep the active model easy to find, then group the rest by provider.
+        let starred_first = *filter == ModelPickerFilter::All && !favorites.is_empty();
+        let starred: std::collections::HashSet<_> =
+            favorites.iter().filter(|_| starred_first).collect();
         models.sort_by(|a, b| {
-            (
-                !auth.managing_models && selected != Some(*a),
-                &a.provider,
-                &a.id,
-            )
-                .cmp(&(
-                    !auth.managing_models && selected != Some(*b),
-                    &b.provider,
-                    &b.id,
-                ))
+            (!starred.contains(a), &a.provider, &a.id).cmp(&(
+                !starred.contains(b),
+                &b.provider,
+                &b.id,
+            ))
         });
-        // Store lightweight row data; construct GPUI elements only for the visible range.
-        let mut rows = Vec::new();
-        let mut last_group: Option<String> = None;
-        for (index, model) in models.into_iter().enumerate() {
-            let is_selected = selected == Some(model);
-            let group = if is_selected && !auth.managing_models {
-                "Selected".to_string()
-            } else {
-                provider_display_name(&model.provider)
-            };
-            if last_group.as_ref() != Some(&group) {
-                last_group = Some(group.clone());
-                rows.push((Some(group), None));
-            }
-            rows.push((
-                None,
-                Some((
-                    index,
-                    model.clone(),
-                    is_selected,
-                    self.settings.enabled_agent_models.contains(model),
-                )),
-            ));
-        }
+        let empty = models.is_empty();
+        let list_height = height - px(2.0 + 44.0 + 51.0);
+        let scrollable = px(34.0 * models.len() as f32) > list_height;
         let loading = auth.discovery.is_some() || auth.model_discovery.is_some();
-        let empty = rows.is_empty();
-        let model_height: f32 = rows
-            .iter()
-            .map(|(group, _)| if group.is_some() { 36.0 } else { 38.0 })
-            .sum();
-        let item_sizes = Rc::new(
-            rows.iter()
-                .map(|(group, _)| size(px(0.0), px(if group.is_some() { 36.0 } else { 38.0 })))
-                .collect(),
-        );
-        let managing = auth.managing_models;
-        let model_list = v_virtual_list(
+        let selected_model = selected.cloned();
+        let shortcuts: Vec<_> = models.iter().take(9).cloned().collect();
+        let shortcut_modifier = if cfg!(target_os = "macos") {
+            "⌘"
+        } else {
+            "Ctrl+"
+        };
+        let item_sizes = Rc::new(models.iter().map(|_| size(px(0.0), px(34.0))).collect());
+        let favorites = favorites.clone();
+        let list = v_virtual_list(
             cx.entity(),
             ("agent-model-list", pane_id),
             item_sizes,
             move |_, range, _, cx| {
                 range
-                    .map(|row_index| {
-                        let (group, model) = &rows[row_index];
-                        if let Some(group) = group {
-                            return div()
-                                .w_full()
-                                .h(px(36.0))
-                                .px(px(20.0))
-                                .pt(px(12.0))
-                                .pb(px(6.0))
-                                .text_size(px(12.0))
-                                .text_color(muted)
-                                .child(group.clone())
-                                .into_any_element();
-                        }
-                        let (index, model, is_selected, visible) = model.as_ref().unwrap();
-                        let index = *index;
-                        let is_selected = *is_selected;
-                        let visible = *visible;
+                    .map(|index| {
+                        let model = &models[index];
                         let choice = model.clone();
-                        let is_free = model.id.ends_with(":free") || model.id.ends_with("-free");
+                        let is_selected = selected_model.as_ref() == Some(model);
+                        let favorite = favorites.contains(model);
+                        let favorite_model = choice.clone();
+                        let keyboard_favorite_model = choice.clone();
                         div()
                             .id(("agent-model", index))
-                            .w_full()
                             .debug_selector(move || format!("agent-model-{index}"))
-                            .mx(px(8.0))
-                            .h(px(38.0))
-                            .flex_shrink_0()
-                            .px(px(12.0))
-                            .rounded(px(6.0))
+                            .w_full()
+                            .h(px(34.0))
+                            .px(px(8.0))
+                            .group("picker-model-row")
+                            .rounded(px(4.0))
                             .flex()
                             .items_center()
-                            .justify_between()
                             .gap(px(8.0))
-                            .text_size(px(14.0))
-                            .text_color(foreground)
-                            .when(is_selected && !managing, |row| row.bg(inset))
                             .cursor(CursorStyle::PointingHand)
-                            .hover(move |row| row.bg(inset))
+                            .hover(move |row| row.bg(row_hover))
+                            .child(
+                                svg()
+                                    .path(provider_icon_path(&model.provider))
+                                    .size(px(15.0))
+                                    .flex_shrink_0()
+                                    .text_color(tokens.text_primary),
+                            )
                             .child(
                                 div()
-                                    .flex()
                                     .flex_1()
-                                    .items_center()
-                                    .gap(px(10.0))
                                     .min_w_0()
-                                    .child(
-                                        svg()
-                                            .path(provider_icon_path(&model.provider))
-                                            .size(px(16.0))
-                                            .flex_shrink_0()
-                                            .text_color(foreground),
-                                    )
-                                    .child(
-                                        div().truncate().child(
-                                            model
-                                                .id
-                                                .trim_end_matches(":free")
-                                                .trim_end_matches("-free")
-                                                .to_string(),
-                                        ),
-                                    )
-                                    .when(is_selected && !managing, |row| {
-                                        row.child(
-                                            div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(6.0))
+                                    .child(div().min_w_0().truncate().child(model.id.clone()))
+                                    .when(is_selected, |name| {
+                                        name.child(
+                                            svg()
+                                                .path("icons/status-check.svg")
+                                                .size(px(12.0))
                                                 .flex_shrink_0()
-                                                .text_size(px(12.0))
-                                                .text_color(muted)
-                                                .child(provider_display_name(&model.provider)),
+                                                .text_color(tokens.text_muted),
                                         )
                                     }),
                             )
-                            .when(is_free, |row| {
-                                row.child(
-                                    div()
-                                        .px(px(6.0))
-                                        .rounded(px(4.0))
-                                        .bg(card)
-                                        .text_size(px(11.0))
-                                        .text_color(muted)
-                                        .child("Free"),
-                                )
-                            })
-                            .when(managing, |row| {
-                                row.child(
-                                    div()
-                                        .debug_selector(move || {
-                                            format!("agent-model-toggle-{index}")
+                            .child(
+                                div()
+                                    .id(("favorite-model", index))
+                                    .debug_selector(move || format!("favorite-model-{index}"))
+                                    .size(px(17.0))
+                                    .tab_index(0)
+                                    .cursor_pointer()
+                                    .when(!favorite, |button| button.opacity(0.0))
+                                    .group_hover("picker-model-row", |button| button.opacity(1.0))
+                                    .focus_visible(move |button| button.opacity(1.0).bg(row_hover))
+                                    .flex_shrink_0()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(px(4.0))
+                                    .text_color(if favorite {
+                                        tokens.text_primary
+                                    } else {
+                                        tokens.text_muted
+                                    })
+                                    .hover(move |button| button.bg(tokens.pane_header_btn_hover))
+                                    .tooltip(move |window, cx| {
+                                        gpui_component::tooltip::Tooltip::new(if favorite {
+                                            "Remove from favorites"
+                                        } else {
+                                            "Add to favorites"
                                         })
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(6.0))
-                                        .text_size(px(11.0))
-                                        .text_color(muted)
-                                        .child(if visible { "On" } else { "Off" })
-                                        .child(
-                                            div()
-                                                .w(px(30.0))
-                                                .h(px(18.0))
-                                                .p(px(2.0))
-                                                .rounded_full()
-                                                .flex()
-                                                .items_center()
-                                                .when(visible, |track| track.justify_end())
-                                                .bg(if visible {
-                                                    tokens.pill_active_bg
-                                                } else {
-                                                    tokens.pill_inactive_bg
-                                                })
-                                                .child(
-                                                    div()
-                                                        .size(px(14.0))
-                                                        .rounded_full()
-                                                        .bg(foreground),
-                                                ),
-                                        ),
-                                )
-                            })
-                            .when(is_selected && !managing, |row| {
+                                        .build(window, cx)
+                                    })
+                                    .child(if favorite { "★" } else { "☆" })
+                                    .on_key_down(cx.listener(
+                                        move |this, event: &KeyDownEvent, _, cx| {
+                                            if matches!(
+                                                event.keystroke.key.as_str(),
+                                                "enter" | "space"
+                                            ) {
+                                                cx.stop_propagation();
+                                                this.toggle_favorite_model(
+                                                    &keyboard_favorite_model,
+                                                    cx,
+                                                );
+                                            }
+                                        },
+                                    ))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.toggle_favorite_model(&favorite_model, cx);
+                                        }),
+                                    ),
+                            )
+                            .when(index < 9, |row| {
                                 row.child(
-                                    svg()
-                                        .path("icons/status-check.svg")
-                                        .size(px(12.0))
-                                        .text_color(foreground),
+                                    div()
+                                        .flex_shrink_0()
+                                        .px(px(4.0))
+                                        .rounded(px(4.0))
+                                        .bg(row_hover)
+                                        .text_size(px(12.0))
+                                        .text_color(tokens.text_muted)
+                                        .child(format!("{shortcut_modifier}{}", index + 1)),
                                 )
                             })
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |this, _, window, cx| {
                                     cx.stop_propagation();
-                                    if managing {
-                                        this.toggle_model_visibility(&choice, cx);
-                                    } else {
-                                        this.select_agent_model(
-                                            pane_id,
-                                            Some(choice.clone()),
-                                            window,
-                                            cx,
-                                        );
-                                    }
+                                    this.select_agent_model(
+                                        pane_id,
+                                        Some(choice.clone()),
+                                        window,
+                                        cx,
+                                    );
                                 }),
                             )
                             .into_any_element()
@@ -12514,282 +12387,546 @@ impl AppState {
                     .collect::<Vec<_>>()
             },
         )
-        .track_scroll(&auth.model_scroll);
-        let featured = [
-            ("openai", "OpenAI", ""),
-            ("anthropic", "Anthropic", ""),
-            ("google", "Google", ""),
-            ("github-copilot", "GitHub Copilot", ""),
-        ];
-        let mut cards = Vec::new();
-        for pair in featured.chunks(2) {
-            cards.push(div().flex().gap(px(8.0)).children(pair.iter().map(
-                |&(id, name, description)| {
-                    let icon = provider_icon_path(id);
-                    let described = !description.is_empty();
-                    div()
-                        .id(SharedString::from(format!("model-provider-{id}")))
-                        .debug_selector(move || format!("model-provider-{id}"))
-                        .flex_1()
-                        .min_w_0()
-                        .h(px(if described { 58.0 } else { 40.0 }))
-                        .px(px(12.0))
-                        .rounded(px(6.0))
-                        .border_1()
-                        .border_color(border)
-                        .bg(card)
-                        .flex()
-                        .items_center()
-                        .gap(px(10.0))
-                        .cursor(CursorStyle::PointingHand)
-                        .hover(move |view| view.bg(background))
-                        .child(
-                            svg()
-                                .path(icon)
-                                .size(px(16.0))
-                                .flex_shrink_0()
-                                .text_color(foreground),
-                        )
-                        .child(
-                            div()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .justify_center()
-                                .gap(px(1.0))
-                                .child(
-                                    div()
-                                        .truncate()
-                                        .text_size(px(13.0))
-                                        .text_color(foreground)
-                                        .child(name),
-                                )
-                                .when(described, |view| {
-                                    view.child(
-                                        div()
-                                            .truncate()
-                                            .text_size(px(12.0))
-                                            .text_color(muted)
-                                            .child(description),
-                                    )
-                                }),
-                        )
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, _, window, cx| {
-                                cx.stop_propagation();
-                                this.set_agent_dialog_page(
-                                    pane_id,
-                                    AgentDialogPage::Auth,
-                                    window,
-                                    cx,
-                                );
-                                this.select_provider_for_auth(pane_id, id.to_string(), window, cx);
+        .track_scroll(&auth.model_scroll)
+        .px(px(12.0));
+        let filter_focused = auth.filter.read(cx).focus_handle().is_focused(window);
+        let levels = selected
+            .map(|model| model.thinking_levels())
+            .unwrap_or_default();
+        let current = PaneChat::resolve_thinking_level(chat.mode_thinking_level(), &levels);
+        let default = (!levels.is_empty()).then(|| {
+            PaneChat::resolve_thinking_level(if chat.fast_mode { "low" } else { "high" }, &levels)
+        });
+        let reasoning_provider = selected.map(|model| provider_display_name(&model.provider));
+        let reasoning_tooltip = selected
+            .zip(reasoning_provider.as_ref())
+            .map(|(model, provider)| format!("{provider} · {}", model.id));
+        let mut rail = div()
+            .id(("model-provider-rail", pane_id))
+            .overflow_y_scrollbar()
+            .w(px(45.0))
+            .flex_shrink_0()
+            .border_r_1()
+            .border_color(tokens.card_border)
+            .flex()
+            .flex_col();
+        rail = rail
+            .child(
+                div()
+                    .id(("model-picker-favorites", pane_id))
+                    .debug_selector(|| "model-picker-favorites".into())
+                    .relative()
+                    .h(px(44.0))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .text_size(px(21.0))
+                    .when(*filter == ModelPickerFilter::Favorites, |tab| {
+                        tab.child(model_picker_filter_marker(tokens.model_picker_accent, 44.0))
+                    })
+                    .hover(move |tab| tab.bg(row_hover))
+                    .tooltip(|window, cx| {
+                        gpui_component::tooltip::Tooltip::new("Favorites").build(window, cx)
+                    })
+                    .child("★")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            if let Some(auth) = this
+                                .pane_mut(pane_id)
+                                .and_then(|pane| pane.chat.auth.as_mut())
+                            {
+                                auth.filter_models(ModelPickerFilter::Favorites);
+                                cx.notify();
+                            }
+                        }),
+                    ),
+            )
+            .child(
+                div()
+                    .mx(px(4.0))
+                    .h(px(1.0))
+                    .flex_shrink_0()
+                    .bg(tokens.border_subtle),
+            );
+        for provider in &providers {
+            let active = matches!(filter, ModelPickerFilter::Provider(id) if id == provider);
+            let choice = provider.clone();
+            let name = provider_display_name(provider);
+            let selector = format!("model-provider-filter-{provider}");
+            rail = rail.child(
+                div()
+                    .id(SharedString::from(selector.clone()))
+                    .debug_selector(move || selector.clone())
+                    .relative()
+                    .h(px(40.0))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor(CursorStyle::PointingHand)
+                    .when(active, |tab| {
+                        tab.child(model_picker_filter_marker(tokens.model_picker_accent, 40.0))
+                    })
+                    .hover(move |tab| tab.bg(row_hover))
+                    .tooltip(move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(name.clone()).build(window, cx)
+                    })
+                    .child(
+                        svg()
+                            .path(provider_icon_path(provider))
+                            .size(px(18.0))
+                            .text_color(if active {
+                                tokens.text_primary
+                            } else {
+                                tokens.text_muted
                             }),
-                        )
-                },
-            )));
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            if let Some(auth) = this
+                                .pane_mut(pane_id)
+                                .and_then(|pane| pane.chat.auth.as_mut())
+                            {
+                                auth.filter_models(ModelPickerFilter::Provider(choice.clone()));
+                                cx.notify();
+                            }
+                        }),
+                    ),
+            );
         }
-        let remaining = auth
-            .providers
-            .iter()
-            .filter(|provider| !featured.iter().any(|(id, _, _)| *id == provider.id))
-            .count();
-        div()
+        let reasoning = div()
+            .w(px(192.0).min(width * 0.39))
+            .id(("picker-reasoning", pane_id))
+            .overflow_y_scrollbar()
+            .flex_shrink_0()
+            .border_l_1()
+            .border_color(tokens.border_subtle)
             .flex()
             .flex_col()
-            .flex_1()
-            .min_h_0()
+            .px(px(12.0))
             .child(
                 div()
-                    .mx(px(20.0))
-                    .mb(px(12.0))
-                    .p(px(3.0))
+                    .id(("picker-reasoning-header", pane_id))
+                    .h(px(42.0))
+                    .mb(px(10.0))
                     .flex_shrink_0()
+                    .border_b_1()
+                    .border_color(tokens.border_subtle)
                     .flex()
-                    .gap(px(3.0))
-                    .rounded(px(8.0))
-                    .bg(card)
-                    .children(
-                        [(false, "Visible models"), (true, "Manage models")]
-                            .into_iter()
-                            .map(|(manage, label)| {
-                                div()
-                                    .id(("model-view", usize::from(manage)))
-                                    .debug_selector(move || {
-                                        if manage {
-                                            "agent-model-manage".into()
-                                        } else {
-                                            "agent-model-visible".into()
-                                        }
-                                    })
-                                    .flex_1()
-                                    .py(px(7.0))
-                                    .rounded(px(6.0))
-                                    .text_center()
-                                    .text_size(px(12.0))
-                                    .text_color(if auth.managing_models == manage {
-                                        foreground
-                                    } else {
-                                        muted
-                                    })
-                                    .when(auth.managing_models == manage, |tab| tab.bg(inset))
-                                    .cursor(CursorStyle::PointingHand)
-                                    .child(label)
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(move |this, _, _, cx| {
-                                            cx.stop_propagation();
-                                            if let Some(auth) = this
-                                                .pane_mut(pane_id)
-                                                .and_then(|pane| pane.chat.auth.as_mut())
-                                            {
-                                                auth.managing_models = manage;
-                                                cx.notify();
-                                            }
-                                        }),
-                                    )
-                            }),
-                    ),
-            )
-            .when(auth.managing_models, |view| {
-                view.child(
-                    div()
-                        .px(px(20.0))
-                        .pb(px(10.0))
-                        .text_size(px(12.0))
-                        .text_color(muted)
-                        .child("Choose which connected models appear in the picker."),
-                )
-            })
-            .child(
-                div()
-                    .id(("model-filter", pane_id))
-                    .debug_selector(|| "agent-model-filter".into())
-                    .mx(px(20.0))
-                    .mb(px(12.0))
-                    .flex_shrink_0()
-                    .child(
-                        Input::new(&auth.filter)
-                            .h(px(36.0))
-                            .rounded(px(8.0))
-                            .bg(card)
-                            .border_color(border)
-                            .text_color(foreground)
-                            .text_size(px(13.0))
-                            .prefix(
-                                svg()
-                                    .path("ui_icons/search.svg")
-                                    .size(px(14.0))
-                                    .text_color(muted),
-                            )
-                            .cleanable(true)
-                            .when(themed_input, |input| {
-                                style_auth_input(input, tokens, filter_focused)
-                            }),
-                    ),
-            )
-            .child(
-                div()
-                    .id(("agent-models", pane_id))
-                    .min_h_0()
-                    .max_h(px(488.0))
-                    .flex_1()
-                    .flex()
-                    .flex_col()
-                    .pb(px(12.0))
-                    .when(!empty, |view| {
-                        view.child(
+                    .items_center()
+                    .gap(px(7.0))
+                    .text_color(tokens.text_secondary)
+                    .child(div().truncate().child("Reasoning"))
+                    .when_some(reasoning_provider, |header, provider| {
+                        header.child(
                             div()
-                                .relative()
-                                .w_full()
-                                .h(px(model_height.min(488.0)))
-                                .min_h_0()
-                                .child(model_list)
-                                .child(KitScrollbar::vertical(&auth.model_scroll)),
+                                .min_w_0()
+                                .flex_1()
+                                .truncate()
+                                .text_size(px(12.0))
+                                .debug_selector({
+                                    let provider = provider.clone();
+                                    move || format!("picker-reasoning-provider-{provider}")
+                                })
+                                .child(provider),
                         )
                     })
-                    .when(empty, |view| {
-                        view.child(div().px(px(20.0)).py(px(24.0)).text_color(muted).child(
-                            if loading {
-                                "Loading models…"
-                            } else if !query.is_empty() {
-                                "No models match your search."
-                            } else if !auth.managing_models
-                                && !auth.models.is_empty()
-                                && auth.providers.iter().any(|provider| provider.ready)
-                            {
-                                "No visible models. Use Manage models to turn some on."
-                            } else {
-                                "Connect a provider below to select a model."
-                            },
-                        ))
-                    })
-                    .when_some(
-                        auth.model_error.as_ref().or(auth.error.as_ref()),
-                        |view, error| {
-                            view.child(
-                                div()
-                                    .px(px(20.0))
-                                    .py(px(8.0))
-                                    .text_color(tokens.block_failure)
-                                    .child(error.clone()),
-                            )
-                        },
-                    ),
+                    .when_some(reasoning_tooltip, |header, tooltip| {
+                        header.tooltip(move |window, cx| {
+                            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+                        })
+                    }),
             )
+            .children(levels.iter().map(|level| {
+                let active = current == level.as_str();
+                let is_default = default == Some(level.as_str());
+                let label = match level.as_str() {
+                    "off" | "none" => "None",
+                    "low" => "Low",
+                    "max" => "Max",
+                    level => reasoning_effort_label(level),
+                }
+                .to_owned();
+                let level = level.clone();
+                div()
+                    .id(SharedString::from(format!("model-reasoning-{level}")))
+                    .debug_selector({
+                        let level = level.clone();
+                        move || format!("model-reasoning-{level}")
+                    })
+                    .h(px(34.0))
+                    .flex_shrink_0()
+                    .px(px(4.0))
+                    .rounded(px(4.0))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .cursor(CursorStyle::PointingHand)
+                    .hover(move |v| v.bg(row_hover))
+                    .child(label)
+                    .when(is_default, |row| {
+                        row.child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(tokens.text_muted)
+                                .child("Default"),
+                        )
+                    })
+                    .when(active && !is_default, |v| {
+                        v.child(
+                            svg()
+                                .path("icons/status-check.svg")
+                                .size(px(12.0))
+                                .text_color(tokens.text_muted),
+                        )
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.set_reasoning_effort(pane_id, &level, cx);
+                        }),
+                    )
+            }));
+        let mut fade_start = tokens.model_picker_bg;
+        fade_start.a = 0.0;
+        div().relative().flex().flex_col().tab_group().h((height - px(2.0)).max(px(0.0))).min_h_0()
+            .capture_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                let key = &event.keystroke;
+                let shortcut = if cfg!(target_os = "macos") { key.modifiers.platform } else { key.modifiers.control };
+                if shortcut && !key.modifiers.alt && !key.modifiers.shift
+                    && let Ok(number) = key.key.parse::<usize>()
+                    && let Some(model) = number.checked_sub(1).and_then(|index| shortcuts.get(index))
+                {
+                    cx.stop_propagation();
+                    this.select_agent_model(pane_id, Some(model.clone()), window, cx);
+                }
+            }))
+            .child(div().flex_1().min_h_0().flex().child(rail)
+                .child(div().flex_1().min_w_0().flex().flex_col()
+                    .child(div().id(("model-filter", pane_id)).debug_selector(|| "agent-model-filter".into()).mx(px(12.0)).mb(px(9.0)).h(px(42.0)).flex_shrink_0().flex().items_center().border_b_1()
+                        .border_color(if filter_focused { tokens.model_picker_accent } else { tokens.border_subtle })
+                        .child(Input::new(&auth.filter).w_full().text_size(px(14.0)).appearance(false).bordered(false).focus_bordered(false)
+                            .prefix(svg().path("ui_icons/search.svg").size(px(14.0)).text_color(tokens.text_muted))))
+                    .child(div().id(("agent-models", pane_id)).relative().flex_1().min_h_0()
+                        .when(!empty, |v| v.child(list)
+                            .when(scrollable, |list| {
+                                list.child(
+                                    div().absolute().left_0().right_0().bottom_0().h(px(17.0))
+                                        .bg(gpui::linear_gradient(
+                                            180.0,
+                                            gpui::linear_color_stop(fade_start, 0.0),
+                                            gpui::linear_color_stop(tokens.model_picker_bg, 1.0),
+                                        )),
+                                )
+                            })
+                            .child(KitScrollbar::vertical(&auth.model_scroll)))
+                        .when(empty, |v| v.child(div().px(px(12.0)).py(px(16.0)).text_size(px(12.0)).text_color(tokens.text_muted).child(if loading { "Loading models…" } else if !query.is_empty() { "No models match your search." } else if !has_connected_providers { "No providers connected. Choose Manage to connect one." } else if *filter == ModelPickerFilter::Favorites { "No favorites yet. Star a model to add it here." } else { "No models available." }))))
+                    .when_some(auth.model_error.as_ref().or(auth.error.as_ref()), |v, error| v.child(div().px(px(12.0)).text_color(tokens.block_failure).child(error.clone()))))
+                .child(reasoning))
+            .child(div().h(px(44.0)).flex_shrink_0().bg(footer_tint).border_t_1().border_color(tokens.border_subtle).px(px(12.0)).flex().items_center().gap(px(10.0)).text_size(px(12.0)).text_color(tokens.text_secondary)
+                .child(
+                    div()
+                        .id(("models-open-providers", pane_id))
+                        .debug_selector(|| "agent-more-providers".into())
+                        .cursor_pointer()
+                        .hover(move |v| v.text_color(tokens.text_primary))
+                        .child("Manage")
+                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.set_agent_dialog_page(pane_id, AgentDialogPage::Auth, window, cx);
+                        })),
+                )
+                .child(div().flex_1())
+                .child(self.render_agent_permission(pane, true, window, cx)))
+            .into_any_element()
+    }
+
+    fn render_agent_permission(
+        &self,
+        pane: &TerminalPane,
+        in_picker: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        use agent_bridge::PermissionMode;
+
+        let pane_id = pane.id;
+        let tokens = self.tokens(cx);
+        let current = pane.chat.permission_mode;
+        let options = [
+            (
+                PermissionMode::Ask,
+                "icons/permission-hand.svg",
+                "Ask before changes, commands, and other actions",
+            ),
+            (
+                PermissionMode::Auto,
+                "icons/permission-auto.svg",
+                "Allow edits to existing workspace files; ask for other actions",
+            ),
+            (
+                PermissionMode::Full,
+                "icons/permission-full.svg",
+                "Run tools without approval prompts",
+            ),
+        ];
+        let icon = options[current as usize].1;
+        let toggle_bounds = pane.permission_toggle_bounds.clone();
+        let outside_bounds = toggle_bounds.clone();
+        let menu_position = toggle_bounds.get().origin;
+        let id = if in_picker {
+            "picker-permissions"
+        } else {
+            "agent-permissions"
+        };
+        let accent: Hsla = if tokens.is_dark {
+            rgba(0xf47b37ff)
+        } else {
+            rgba(0xc45113ff)
+        }
+        .into();
+        let composer_bg = if tokens.is_dark {
+            rgba(0x343434ff).into()
+        } else {
+            tokens.card_bg
+        };
+        let menu_bg = if in_picker {
+            tokens.model_picker_bg
+        } else if tokens.is_dark {
+            rgba(0x202020ff).into()
+        } else {
+            tokens.card_bg
+        };
+        let menu_border = if !in_picker && tokens.is_dark {
+            rgba(0x3d3d3dff).into()
+        } else {
+            tokens.card_border
+        };
+        let pill_color = if current == PermissionMode::Full {
+            accent
+        } else {
+            tokens.text_primary
+        };
+
+        div()
+            .relative()
             .child(
                 div()
-                    .mx(px(8.0))
-                    .mb(px(8.0))
-                    .mt(px(6.0))
-                    .p(px(10.0))
+                    .id((id, pane_id))
+                    .debug_selector(move || id.into())
+                    .relative()
                     .flex_shrink_0()
-                    .rounded(px(8.0))
-                    .border_1()
-                    .border_color(border)
-                    .bg(inset)
+                    .h(px(28.0))
+                    .px(px(7.0))
+                    .rounded(px(4.0))
                     .flex()
-                    .flex_col()
-                    .gap(px(8.0))
+                    .items_center()
+                    .gap(px(6.0))
+                    .cursor_pointer()
+                    .hover(move |button| {
+                        button.bg(if in_picker {
+                            tokens.card_hover
+                        } else {
+                            tokens.pane_header_btn_hover
+                        })
+                    })
+                    .when(!in_picker, |button| {
+                        button
+                            .rounded_full()
+                            .px(px(9.0))
+                            .h(px(26.0))
+                            .text_size(px(12.0))
+                            .text_color(pill_color)
+                            .gap(px(5.0))
+                            .bg(composer_bg)
+                            .child(
+                                canvas(
+                                    move |bounds, _, _| toggle_bounds.set(bounds),
+                                    |_, _, _, _| {},
+                                )
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .size_full(),
+                            )
+                    })
                     .child(
-                        div()
-                            .px(px(4.0))
-                            .text_size(px(13.0))
-                            .text_color(muted)
-                            .child("Add more models from popular providers"),
+                        svg()
+                            .path(icon)
+                            .size(if in_picker { px(13.0) } else { px(14.0) })
+                            .flex_shrink_0()
+                            .when(!in_picker, |icon| icon.text_color(pill_color)),
                     )
-                    .children(cards)
-                    .child(
-                        div()
-                            .id(("models-open-providers", pane_id))
-                            .debug_selector(|| "agent-more-providers".into())
-                            .px(px(4.0))
-                            .py(px(2.0))
-                            .text_size(px(13.0))
-                            .text_color(muted)
-                            .cursor(CursorStyle::PointingHand)
-                            .hover(move |view| view.text_color(foreground))
-                            .child(if remaining > 0 {
-                                format!("See {remaining} more providers")
-                            } else {
-                                "See all providers".into()
-                            })
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _, window, cx| {
-                                    cx.stop_propagation();
-                                    this.set_agent_dialog_page(
-                                        pane_id,
-                                        AgentDialogPage::Auth,
-                                        window,
-                                        cx,
-                                    );
-                                }),
-                            ),
+                    .child(current.label())
+                    .when(in_picker, |button| {
+                        button.child(
+                            svg()
+                                .path("icons/chevron-down.svg")
+                                .size(px(10.0))
+                                .with_transformation(gpui::Transformation::rotate(gpui::radians(
+                                    std::f32::consts::PI,
+                                ))),
+                        )
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            if let Some(pane) = this.pane_mut(pane_id) {
+                                pane.permission_menu_open = !pane.permission_menu_open;
+                                cx.notify();
+                            }
+                        }),
                     ),
             )
-            .into_any_element()
+            .when(
+                pane.permission_menu_open && (in_picker || pane.chat.auth.is_none()),
+                |button| {
+                    let menu = div()
+                        .id(("permission-popover", pane_id))
+                        .debug_selector(|| "agent-permission-menu".into())
+                        .w(if in_picker { px(200.0) } else { px(420.0) })
+                        .max_w((window.viewport_size().width - px(24.0)).max(px(0.0)))
+                        .p(px(5.0))
+                        .rounded(if in_picker { px(8.0) } else { px(12.0) })
+                        .border_1()
+                        .border_color(menu_border)
+                        .bg(menu_bg)
+                        .shadow_lg()
+                        .occlude()
+                        .text_size(px(12.0))
+                        .text_color(tokens.text_primary)
+                        .when(!in_picker, |menu| {
+                            menu.child(
+                                div()
+                                    .px(px(8.0))
+                                    .pt(px(5.0))
+                                    .pb(px(6.0))
+                                    .text_color(tokens.text_muted)
+                                    .child("Approval mode applies to all agent chats"),
+                            )
+                            .on_mouse_down_out(cx.listener(
+                                move |this, event: &MouseDownEvent, _, cx| {
+                                    if !outside_bounds.get().contains(&event.position)
+                                        && let Some(pane) = this.pane_mut(pane_id)
+                                    {
+                                        pane.permission_menu_open = false;
+                                        cx.notify();
+                                    }
+                                },
+                            ))
+                        })
+                        .when(agent_bridge::rpc_backend_requested(), |menu| {
+                            menu.child(
+                                div()
+                                    .p(px(6.0))
+                                    .text_color(tokens.text_muted)
+                                    .child("The legacy RPC backend does not enforce this mode."),
+                            )
+                        })
+                        .children(options.map(|(mode, icon, description)| {
+                            let active = current == mode;
+                            let foreground = if active && !in_picker {
+                                accent
+                            } else {
+                                tokens.text_primary
+                            };
+                            let detail = if active { accent } else { tokens.text_muted };
+                            div()
+                                .id(("permission-option", mode as usize))
+                                .debug_selector(move || {
+                                    format!("agent-permission-option-{}", mode as usize)
+                                })
+                                .px(px(8.0))
+                                .py(px(5.0))
+                                .min_h(px(30.0))
+                                .rounded(px(4.0))
+                                .flex()
+                                .items_center()
+                                .gap(px(8.0))
+                                .cursor_pointer()
+                                .hover(move |row| {
+                                    row.bg(if in_picker {
+                                        tokens.card_hover
+                                    } else {
+                                        tokens.pane_header_btn_hover
+                                    })
+                                })
+                                .when(!in_picker, |row| {
+                                    row.items_start().gap(px(9.0)).rounded(px(6.0)).child(
+                                        svg()
+                                            .path(icon)
+                                            .size(px(15.0))
+                                            .mt(px(3.0))
+                                            .flex_shrink_0()
+                                            .text_color(foreground),
+                                    )
+                                })
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .flex()
+                                        .flex_col()
+                                        .child(
+                                            div()
+                                                .text_size(if in_picker {
+                                                    px(12.0)
+                                                } else {
+                                                    px(13.0)
+                                                })
+                                                .text_color(foreground)
+                                                .child(mode.label()),
+                                        )
+                                        .when(!in_picker, |label| {
+                                            label.child(
+                                                div()
+                                                    .text_size(px(12.0))
+                                                    .text_color(detail)
+                                                    .child(description),
+                                            )
+                                        }),
+                                )
+                                .when(active, |row| {
+                                    row.child(
+                                        svg()
+                                            .path("icons/status-check.svg")
+                                            .size(px(12.0))
+                                            .flex_shrink_0()
+                                            .when(!in_picker, |check| {
+                                                check.size(px(14.0)).mt(px(5.0)).text_color(accent)
+                                            }),
+                                    )
+                                })
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.set_permission_mode(mode, cx);
+                                    }),
+                                )
+                        }));
+
+                    if in_picker {
+                        button.child(menu.absolute().right_0().bottom(px(34.0)))
+                    } else {
+                        button.child(deferred(
+                            gpui::anchored()
+                                .anchor(gpui::Anchor::BottomLeft)
+                                .position(menu_position)
+                                .offset(gpui::point(px(0.0), px(-4.0)))
+                                .child(menu),
+                        ))
+                    }
+                },
+            )
     }
 
     fn render_agent_auth(
@@ -12813,7 +12950,10 @@ impl AppState {
         let mut providers: Vec<&agent_auth::Provider> = auth
             .providers
             .iter()
-            .filter(|provider| provider.source.as_deref() != Some("anonymous"))
+            .filter(|provider| {
+                agent_auth::provider_visible_in_chat_ui(&provider.id)
+                    && provider.source.as_deref() != Some("anonymous")
+            })
             .filter(|provider| {
                 if filter_query.is_empty() {
                     return true;
@@ -13050,6 +13190,18 @@ impl AppState {
                                             ),
                                     ),
                             )
+                                        })
+                                        .when(!ready, |card| {
+                                            card.child(
+                                                div()
+                                                    .debug_selector(move || {
+                                                        format!("auth-connect-{index}")
+                                                    })
+                                                    .flex_shrink_0()
+                                                    .text_size(px(12.0))
+                                                    .text_color(muted)
+                                                    .child("Connect"),
+                                            )
                                         })
                                         .on_mouse_down(
                                             MouseButton::Left,
@@ -19468,79 +19620,102 @@ mod resize_tests {
     }
 
     #[test]
-    fn focused_effort_popover_selects_supported_level() {
+    fn model_picker_opens_above_trigger_and_sets_reasoning() {
         let mut app = TestAppContext::new();
         let (mut cx, state) = open_app(&mut app);
-        cx.update_window_entity(&state, |s, _, cx| {
-            s.settings.agent_layout = true;
-            let chat = &mut s.projects[0].sessions[0].panes[0].chat;
-            chat.active = true;
-            chat.selected_model = Some(agent_auth::AgentModel {
-                provider: "google-antigravity".into(),
-                id: "gemini-3.8-flash".into(),
-                backend: agent_auth::ModelBackend::Kathamo,
+        for agent_layout in [true, false] {
+            cx.update_window_entity(&state, |s, _, cx| {
+                s.theme_preference = ThemePreference::Dark;
+                s.settings.agent_layout = agent_layout;
+                let chat = &mut s.projects[0].sessions[0].panes[0].chat;
+                chat.active = true;
+                chat.selected_model = Some(agent_auth::AgentModel {
+                    provider: "google-antigravity".into(),
+                    id: "gemini-3.8-flash".into(),
+                    backend: agent_auth::ModelBackend::Kathamo,
+                });
+                s.apply_theme_preference(None, cx);
+                cx.notify();
             });
+            cx.draw_frame().unwrap();
+            let trigger = cx.debug_bounds("select-agent-model-pill").unwrap();
+            cx.simulate_click(trigger.center(), Modifiers::default());
+            cx.update_window_entity(&state, |s, _, cx| {
+                let pane = &mut s.projects[0].sessions[0].panes[0];
+                let auth = pane.chat.auth.as_mut().unwrap();
+                auth.discovery = None;
+                auth.model_discovery = None;
+                auth.providers = vec![agent_auth::Provider {
+                    id: "google-antigravity".into(),
+                    ready: true,
+                    source: None,
+                }];
+                auth.models = vec![pane.chat.selected_model.clone().unwrap()];
+                cx.notify();
+            });
+            cx.draw_frame().unwrap();
+            assert!(cx.debug_bounds("picker-permissions").is_some());
+            let picker = cx.debug_bounds("agent-model-panel").unwrap();
+            assert!((trigger.top() - picker.bottom() - px(4.0)).abs() < px(1.0));
+            assert!((trigger.right() - picker.right()).abs() < px(1.0));
+            if agent_layout && let Some(path) = std::env::var_os("KATHAMO_MODEL_PICKER_SCREENSHOT")
+            {
+                cx.update(|window, _| window.render_to_image().unwrap().save(path).unwrap());
+            }
+            let medium = cx.debug_bounds("model-reasoning-medium").unwrap();
+            cx.simulate_click(medium.center(), Modifiers::default());
+            cx.draw_frame().unwrap();
+            state.read_with(&cx, |s, _| {
+                assert_eq!(
+                    s.projects[0].sessions[0].panes[0]
+                        .chat
+                        .effective_thinking_level(),
+                    "medium"
+                );
+            });
+            cx.simulate_click(trigger.center(), Modifiers::default());
+            cx.draw_frame().unwrap();
+            assert!(cx.debug_bounds("agent-model-panel").is_none());
+        }
+        cx.simulate_resize(size(px(520.0), px(405.0)));
+        cx.simulate_scale_factor_change(1.0);
+        cx.update_window_entity(&state, |s, window, cx| {
+            s.theme_preference = ThemePreference::Light;
+            s.apply_theme_preference(Some(window), cx);
+        });
+        cx.draw_frame().unwrap();
+        let trigger = cx.debug_bounds("select-agent-model-pill").unwrap();
+        cx.simulate_click(trigger.center(), Modifiers::default());
+        cx.update_window_entity(&state, |s, _, cx| {
+            let pane = &mut s.projects[0].sessions[0].panes[0];
+            let auth = pane.chat.auth.as_mut().unwrap();
+            auth.discovery = None;
+            auth.model_discovery = None;
+            let selected = pane.chat.selected_model.clone().unwrap();
+            auth.providers = vec![agent_auth::Provider {
+                id: selected.provider.clone(),
+                ready: true,
+                source: None,
+            }];
+            auth.models = (1..=12)
+                .map(|index| agent_auth::AgentModel {
+                    id: format!("Example model {index:02}"),
+                    ..selected.clone()
+                })
+                .collect();
             cx.notify();
         });
         cx.draw_frame().unwrap();
-        let toggle = cx.debug_bounds("agent-effort-toggle").unwrap();
-        cx.simulate_click(toggle.center(), Modifiers::default());
-        cx.draw_frame().unwrap();
-        let track = cx
-            .debug_bounds("effort-track")
-            .expect("effort popover is open");
-        cx.simulate_click(track.center(), Modifiers::default());
-        cx.draw_frame().unwrap();
-        cx.update_window_entity(&state, |s, _, _| {
-            assert_eq!(
-                s.projects[0].sessions[0].panes[0]
-                    .chat
-                    .effective_thinking_level(),
-                "medium"
-            );
-        });
-        let track = cx.debug_bounds("effort-track").unwrap();
-        let start = track.center();
-        let end = point(track.right() - px(1.0), start.y);
-        cx.simulate_mouse_move(start, None, Modifiers::none());
-        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
-        cx.simulate_mouse_move(
-            point(start.x + px(8.0), start.y),
-            Some(MouseButton::Left),
-            Modifiers::none(),
-        );
-        cx.draw_frame().unwrap();
-        cx.simulate_mouse_move(end, Some(MouseButton::Left), Modifiers::none());
-        cx.draw_frame().unwrap();
-        cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
-        cx.update_window_entity(&state, |s, _, _| {
-            assert_eq!(
-                s.projects[0].sessions[0].panes[0]
-                    .chat
-                    .effective_thinking_level(),
-                "high"
-            );
-        });
-        cx.draw_frame().unwrap();
-        let toggle = cx.debug_bounds("agent-effort-toggle").unwrap();
-        cx.simulate_click(toggle.center(), Modifiers::none());
-        cx.draw_frame().unwrap();
-        assert!(
-            cx.debug_bounds("effort-track").is_none(),
-            "toggle closes the popover"
-        );
-        cx.simulate_click(toggle.center(), Modifiers::none());
-        cx.draw_frame().unwrap();
-        assert!(
-            cx.debug_bounds("effort-track").is_some(),
-            "toggle reopens the popover"
-        );
-        cx.simulate_click(point(px(500.0), px(150.0)), Modifiers::none());
-        cx.draw_frame().unwrap();
-        assert!(
-            cx.debug_bounds("effort-track").is_none(),
-            "outside click closes the popover"
-        );
+        let picker = cx.debug_bounds("agent-model-panel").unwrap();
+        assert!(picker.left() >= px(8.0) && picker.right() <= px(512.0));
+        assert!(picker.top() >= px(8.0) && picker.bottom() <= px(397.0));
+        let row = cx.debug_bounds("agent-model-0").unwrap();
+        let manage = cx.debug_bounds("agent-more-providers").unwrap();
+        assert!(row.bottom() < manage.top());
+        if let Some(path) = std::env::var_os("KATHAMO_MODEL_PICKER_SCREENSHOT") {
+            let path = PathBuf::from(path).with_file_name("kathamo-picker-light-narrow.png");
+            cx.update(|window, _| window.render_to_image().unwrap().save(path).unwrap());
+        }
     }
 
     #[test]
@@ -20382,6 +20557,26 @@ mod resize_tests {
     fn permission_mode_applies_to_all_panes_and_new_splits() {
         let mut app = TestAppContext::new();
         let (mut cx, state) = open_app(&mut app);
+        state.update(&mut cx, |s, cx| {
+            s.pane_mut(1).unwrap().chat.active = true;
+            cx.notify();
+        });
+        cx.draw_frame().unwrap();
+        let button = cx.debug_bounds("agent-permissions").unwrap();
+        cx.simulate_click(button.center(), Modifiers::default());
+        cx.draw_frame().unwrap();
+        let menu = cx.debug_bounds("agent-permission-menu").unwrap();
+        assert!(menu.bottom() <= button.top());
+        let auto = cx.debug_bounds("agent-permission-option-1").unwrap();
+        cx.simulate_click(auto.center(), Modifiers::default());
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("agent-permission-menu").is_none());
+        state.read_with(&cx, |s, _| {
+            assert_eq!(
+                s.settings.permission_mode,
+                agent_bridge::PermissionMode::Auto
+            );
+        });
         cx.update_window_entity(&state, |s, window, cx| {
             s.split_pane(1, gpui::Axis::Horizontal, window, cx);
             for mode in [
@@ -23519,7 +23714,6 @@ First report
             backend: agent_auth::ModelBackend::Kathamo,
         };
         cx.update_window_entity(&state, |s, window, cx| {
-            s.settings.enabled_agent_models.push(model.clone());
             s.set_chat_mode(id, true, window, cx);
             let input = s.pane_ref(id).unwrap().input_state.clone().unwrap();
             input.update(cx, |input, cx| input.set_value("/model", window, cx));
@@ -23577,13 +23771,17 @@ First report
         cx.simulate_click(center, Modifiers::default());
         state.read_with(&cx, |s, _| {
             let pane = s.pane_ref(id).unwrap();
-            assert!(pane.chat.auth.is_none());
+            assert!(
+                pane.chat.auth.is_some(),
+                "the picker stays open to configure reasoning"
+            );
             assert_eq!(pane.chat.selected_model.as_ref(), Some(&model));
         });
-        cx.update_window_entity(&state, |s, window, cx| {
-            s.open_agent_auth(id, AgentDialogPage::Models, window, cx);
-        });
         cx.draw_frame().unwrap();
+        assert!(
+            cx.debug_bounds("picker-reasoning-provider-Google Antigravity")
+                .is_some()
+        );
         cx.simulate_keystrokes("escape");
         state.read_with(&cx, |s, _| {
             assert!(s.pane_ref(id).unwrap().chat.auth.is_none())
@@ -23634,7 +23832,7 @@ First report
     }
 
     #[test]
-    fn model_visibility_can_be_managed_without_changing_the_selected_model() {
+    fn model_favorites_filter_the_list_without_hiding_models() {
         let mut app = TestAppContext::new();
         let (mut cx, state) = open_app(&mut app);
         let id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
@@ -23659,37 +23857,40 @@ First report
             auth.models = vec![model.clone()];
         });
         cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("agent-model-0").is_some());
+        let favorites = cx.debug_bounds("model-picker-favorites").unwrap();
+        cx.simulate_click(favorites.center(), Modifiers::default());
+        cx.draw_frame().unwrap();
         assert!(cx.debug_bounds("agent-model-0").is_none());
-        let manage = cx.debug_bounds("agent-model-manage").unwrap();
-        cx.simulate_click(manage.center(), gpui::Modifiers::default());
+
+        cx.simulate_click(favorites.center(), Modifiers::default());
         cx.draw_frame().unwrap();
-        let toggle = cx.debug_bounds("agent-model-toggle-0").unwrap();
-        cx.simulate_click(toggle.center(), gpui::Modifiers::default());
+        let star = cx.debug_bounds("favorite-model-0").unwrap();
+        cx.simulate_click(star.center(), Modifiers::default());
+        cx.simulate_click(favorites.center(), Modifiers::default());
         cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("agent-model-0").is_some());
         state.read_with(&cx, |s, _| {
-            assert_eq!(s.settings.enabled_agent_models, vec![model.clone()]);
+            assert_eq!(s.settings.favorite_agent_models, vec![model.clone()]);
             assert_eq!(
                 s.pane_ref(id).unwrap().chat.selected_model.as_ref(),
                 Some(&model)
             );
             let saved = serde_json::to_string(&s.saved_settings()).unwrap();
             let restored: settings::AppSettings = serde_json::from_str(&saved).unwrap();
-            assert_eq!(restored.enabled_agent_models, vec![model.clone()]);
+            assert_eq!(restored.favorite_agent_models, vec![model.clone()]);
+            let legacy = saved.replace("favorite_agent_models", "enabled_agent_models");
+            let migrated: settings::AppSettings = serde_json::from_str(&legacy).unwrap();
+            assert_eq!(migrated.favorite_agent_models, vec![model.clone()]);
         });
-        let visible = cx.debug_bounds("agent-model-visible").unwrap();
-        cx.simulate_click(visible.center(), gpui::Modifiers::default());
-        cx.draw_frame().unwrap();
-        assert!(cx.debug_bounds("agent-model-0").is_some());
-        let manage = cx.debug_bounds("agent-model-manage").unwrap();
-        cx.simulate_click(manage.center(), gpui::Modifiers::default());
-        cx.draw_frame().unwrap();
-        let toggle = cx.debug_bounds("agent-model-toggle-0").unwrap();
-        cx.simulate_click(toggle.center(), gpui::Modifiers::default());
-        cx.draw_frame().unwrap();
-        let visible = cx.debug_bounds("agent-model-visible").unwrap();
-        cx.simulate_click(visible.center(), gpui::Modifiers::default());
+
+        let star = cx.debug_bounds("favorite-model-0").unwrap();
+        cx.simulate_click(star.center(), Modifiers::default());
         cx.draw_frame().unwrap();
         assert!(cx.debug_bounds("agent-model-0").is_none());
+        cx.simulate_click(favorites.center(), Modifiers::default());
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("agent-model-0").is_some());
     }
 
     #[test]
@@ -23707,8 +23908,12 @@ First report
             id: "claude-disconnected".into(),
             backend: agent_auth::ModelBackend::Rpi,
         };
+        let local = agent_auth::AgentModel {
+            provider: "ollama".into(),
+            id: "example-local-model".into(),
+            backend: agent_auth::ModelBackend::Rpi,
+        };
         cx.update_window_entity(&state, |s, window, cx| {
-            s.settings.enabled_agent_models = vec![connected.clone(), disconnected.clone()];
             s.set_chat_mode(id, true, window, cx);
             let input = s.pane_ref(id).unwrap().input_state.clone().unwrap();
             input.update(cx, |input, cx| input.set_value("/model", window, cx));
@@ -23723,12 +23928,22 @@ First report
                     source: None,
                 },
                 agent_auth::Provider {
+                    id: "ollama-cloud".into(),
+                    ready: true,
+                    source: Some("environment".into()),
+                },
+                agent_auth::Provider {
                     id: "google-antigravity".into(),
                     ready: true,
                     source: Some("Kathamo credential".into()),
                 },
+                agent_auth::Provider {
+                    id: "ollama".into(),
+                    ready: true,
+                    source: Some("Stored API key".into()),
+                },
             ];
-            auth.models = vec![disconnected.clone(), connected.clone()];
+            auth.models = vec![disconnected, connected, local];
         });
         cx.draw_frame().expect("draw model tab");
         assert!(
@@ -23737,12 +23952,35 @@ First report
         );
         assert!(
             cx.debug_bounds("agent-model-1").is_none(),
-            "models from unconnected providers are hidden"
+            "models from disconnected and local providers are hidden"
         );
+        for selector in [
+            "model-provider-filter-google-antigravity",
+            "model-provider-filter-ollama-cloud",
+        ] {
+            assert!(cx.debug_bounds(selector).is_some());
+        }
+        assert!(cx.debug_bounds("model-provider-filter-anthropic").is_none());
+        assert!(cx.debug_bounds("model-provider-filter-ollama").is_none());
+        let cloud = cx
+            .debug_bounds("model-provider-filter-ollama-cloud")
+            .unwrap();
+        cx.simulate_click(cloud.center(), Modifiers::default());
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("agent-model-0").is_none());
+        cx.simulate_click(cloud.center(), Modifiers::default());
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("agent-model-0").is_some());
+        let manage = cx.debug_bounds("agent-more-providers").unwrap();
+        cx.simulate_click(manage.center(), Modifiers::default());
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("agent-provider-panel").is_some());
+        assert!(cx.debug_bounds("auth-provider-3").is_none());
+        let connect = cx.debug_bounds("auth-connect-2").unwrap();
+        cx.simulate_click(connect.center(), Modifiers::default());
         state.read_with(&cx, |s, _| {
             let auth = s.pane_ref(id).unwrap().chat.auth.as_ref().unwrap();
-            assert_eq!(auth.models.len(), 2);
-            assert_eq!(auth.providers.len(), 2);
+            assert_eq!(auth.selected.as_deref(), Some("anthropic"));
         });
     }
 
@@ -23765,32 +24003,6 @@ First report
             "icons/provider/synthetic.svg"
         );
     }
-    #[test]
-    fn popular_provider_cards_use_the_two_column_icon_grid() {
-        let mut app = TestAppContext::new();
-        let (mut cx, state) = open_app(&mut app);
-        let id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
-        cx.update_window_entity(&state, |s, window, cx| {
-            s.open_agent_auth(id, AgentDialogPage::Models, window, cx);
-        });
-        cx.draw_frame().expect("draw model dialog");
-
-        assert!(cx.debug_bounds("model-provider-opencode-go").is_none());
-        assert!(cx.debug_bounds("model-provider-opencode-zen").is_none());
-        let openai = cx.debug_bounds("model-provider-openai").unwrap();
-        let anthropic = cx.debug_bounds("model-provider-anthropic").unwrap();
-        let google = cx.debug_bounds("model-provider-google").unwrap();
-        let copilot = cx.debug_bounds("model-provider-github-copilot").unwrap();
-        let more = cx.debug_bounds("agent-more-providers").unwrap();
-
-        assert!((openai.center().y - anthropic.center().y).abs() < px(1.0));
-        assert!(openai.right() < anthropic.left());
-        assert!(openai.top() < google.top());
-        assert!((google.center().y - copilot.center().y).abs() < px(1.0));
-        assert!(google.right() < copilot.left());
-        assert!(copilot.bottom() < more.top());
-    }
-
     #[test]
     fn provider_page_cards_use_the_two_column_icon_grid() {
         let mut app = TestAppContext::new();
