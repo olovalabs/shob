@@ -1,13 +1,13 @@
 //! Best-effort alert sounds.
 //!
 //! No audio dependency: ask the OS for one of its stock sounds and ignore the
-//! result. `KATHAMO_NO_SOUND=1` disables it (tests and headless runs).
+//! result. `SHOB_NO_SOUND=1` disables it (tests and headless runs).
 
 use crate::attention::AlertKind;
 
 pub fn play(kind: AlertKind) {
     if cfg!(test)
-        || std::env::var_os("KATHAMO_NO_SOUND").is_some()
+        || std::env::var_os("SHOB_NO_SOUND").is_some()
         || std::env::var_os("MARKUP_NO_SOUND").is_some()
     {
         return;

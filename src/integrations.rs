@@ -1,4 +1,4 @@
-//! Optional native agent integrations. Hooks do nothing outside a Kathamo pane.
+//! Optional native agent integrations. Hooks do nothing outside a Shob pane.
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use std::io::Read;
@@ -19,13 +19,13 @@ const EVENTS: &[&str] = &[
 
 fn hook_command(agent: &str) -> String {
     format!(
-        "if [ -n \"$KATHAMO_STATUS_SOCKET\" ] && [ -n \"$KATHAMO_EXECUTABLE\" ]; then \"$KATHAMO_EXECUTABLE\" status-hook {agent}; elif [ -n \"$MARKUP_STATUS_SOCKET\" ] && [ -n \"$MARKUP_EXECUTABLE\" ]; then \"$MARKUP_EXECUTABLE\" status-hook {agent}; fi"
+        "if [ -n \"$SHOB_STATUS_SOCKET\" ] && [ -n \"$SHOB_EXECUTABLE\" ]; then \"$SHOB_EXECUTABLE\" status-hook {agent}; elif [ -n \"$MARKUP_STATUS_SOCKET\" ] && [ -n \"$MARKUP_EXECUTABLE\" ]; then \"$MARKUP_EXECUTABLE\" status-hook {agent}; fi"
     )
 }
 
 fn legacy_hook_command(agent: &str) -> String {
     format!(
-        "if [ -n \"$KATHAMO_STATUS_TTY\" ] && [ -n \"$KATHAMO_EXECUTABLE\" ]; then \"$KATHAMO_EXECUTABLE\" status-hook {agent}; elif [ -n \"$MARKUP_STATUS_TTY\" ] && [ -n \"$MARKUP_EXECUTABLE\" ]; then \"$MARKUP_EXECUTABLE\" status-hook {agent}; fi"
+        "if [ -n \"$SHOB_STATUS_TTY\" ] && [ -n \"$SHOB_EXECUTABLE\" ]; then \"$SHOB_EXECUTABLE\" status-hook {agent}; elif [ -n \"$MARKUP_STATUS_TTY\" ] && [ -n \"$MARKUP_EXECUTABLE\" ]; then \"$MARKUP_EXECUTABLE\" status-hook {agent}; fi"
     )
 }
 
@@ -52,8 +52,8 @@ pub fn run_hook(args: &[String]) -> Result<()> {
     let Some(agent) = args.first().filter(|a| *a == "claude" || *a == "codex") else {
         return Ok(());
     };
-    let Some(socket) = std::env::var_os("KATHAMO_STATUS_SOCKET")
-        .or_else(|| std::env::var_os("MARKUP_STATUS_SOCKET"))
+    let Some(socket) =
+        std::env::var_os("SHOB_STATUS_SOCKET").or_else(|| std::env::var_os("MARKUP_STATUS_SOCKET"))
     else {
         return Ok(());
     };
@@ -83,7 +83,7 @@ fn event_from_hook(agent: &str, state: &str, payload: &Value) -> crate::status_b
         .and_then(Value::as_str)
         .map(str::to_owned);
     let reporter_generation = session_id.clone().unwrap_or_else(|| {
-        std::env::var("KATHAMO_PANE_GENERATION")
+        std::env::var("SHOB_PANE_GENERATION")
             .or_else(|_| std::env::var("MARKUP_PANE_GENERATION"))
             .unwrap_or_else(|_| "unknown-session".into())
     });
@@ -94,15 +94,15 @@ fn event_from_hook(agent: &str, state: &str, payload: &Value) -> crate::status_b
         .min(u64::MAX as u128) as u64;
     crate::status_bus::StatusEvent {
         version: 1,
-        app_id: std::env::var("KATHAMO_APP_ID")
+        app_id: std::env::var("SHOB_APP_ID")
             .or_else(|_| std::env::var("MARKUP_APP_ID"))
             .unwrap_or_default(),
-        pane_id: std::env::var("KATHAMO_PANE_ID")
+        pane_id: std::env::var("SHOB_PANE_ID")
             .or_else(|_| std::env::var("MARKUP_PANE_ID"))
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or_default(),
-        pane_generation: std::env::var("KATHAMO_PANE_GENERATION")
+        pane_generation: std::env::var("SHOB_PANE_GENERATION")
             .or_else(|_| std::env::var("MARKUP_PANE_GENERATION"))
             .unwrap_or_default(),
         reporter: agent.to_owned(),
@@ -202,7 +202,7 @@ fn hook_config(path: &Path, agent: &str, install: bool) -> Result<()> {
     }
     let parent = path.parent().context("settings path has no parent")?;
     std::fs::create_dir_all(parent)?;
-    let temp = path.with_extension(format!("kathamo-{}.tmp", std::process::id()));
+    let temp = path.with_extension(format!("shob-{}.tmp", std::process::id()));
     let mut bytes = serde_json::to_vec_pretty(&config)?;
     bytes.push(b'\n');
     backup_before_replace(path)?;
@@ -251,7 +251,7 @@ fn detected_cli_version(binary: &str) -> Option<String> {
 
 #[cfg(unix)]
 fn print_live_status() {
-    let snapshot = std::env::var_os("KATHAMO_STATUS_SNAPSHOT")
+    let snapshot = std::env::var_os("SHOB_STATUS_SNAPSHOT")
         .or_else(|| std::env::var_os("MARKUP_STATUS_SNAPSHOT"))
         .and_then(|path| std::fs::read(path).ok())
         .and_then(|bytes| serde_json::from_slice::<crate::status_bus::StatusSnapshot>(&bytes).ok());
@@ -259,13 +259,13 @@ fn print_live_status() {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    let app_id = std::env::var("KATHAMO_APP_ID")
+    let app_id = std::env::var("SHOB_APP_ID")
         .or_else(|_| std::env::var("MARKUP_APP_ID"))
         .unwrap_or_default();
-    let pane_gen = std::env::var("KATHAMO_PANE_GENERATION")
+    let pane_gen = std::env::var("SHOB_PANE_GENERATION")
         .or_else(|_| std::env::var("MARKUP_PANE_GENERATION"))
         .unwrap_or_default();
-    let pane_id = std::env::var("KATHAMO_PANE_ID")
+    let pane_id = std::env::var("SHOB_PANE_ID")
         .or_else(|_| std::env::var("MARKUP_PANE_ID"))
         .ok()
         .and_then(|id| id.parse::<u64>().ok())
@@ -293,7 +293,7 @@ fn print_live_status() {
         }
     } else {
         println!(
-            "Live reporting: Not verified; run this from a Kathamo terminal after an agent event."
+            "Live reporting: Not verified; run this from a Shob terminal after an agent event."
         );
     }
 }
@@ -310,7 +310,7 @@ fn backup_before_replace(path: &Path) -> Result<()> {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs();
-    let backup = path.with_extension(format!("kathamo-{stamp}.bak"));
+    let backup = path.with_extension(format!("shob-{stamp}.bak"));
     if !backup.exists() {
         std::fs::copy(path, backup)?;
     }
@@ -320,9 +320,9 @@ fn backup_before_replace(path: &Path) -> Result<()> {
 fn atomic_write_owned(path: &Path, contents: &str) -> Result<()> {
     if let Ok(existing) = std::fs::read_to_string(path) {
         if existing != contents
-            && !existing.contains("Kathamo lifecycle adapter")
+            && !existing.contains("Shob lifecycle adapter")
             && !existing.contains("Markup lifecycle adapter")
-            && !existing.contains("kathamo-status")
+            && !existing.contains("shob-status")
             && !existing.contains("markup-status")
             && !existing.contains("HERDR_INTEGRATION_ID=opencode-tui")
         {
@@ -332,7 +332,7 @@ fn atomic_write_owned(path: &Path, contents: &str) -> Result<()> {
     let parent = path.parent().context("integration path has no parent")?;
     std::fs::create_dir_all(parent)?;
     backup_before_replace(path)?;
-    let temp = path.with_extension(format!("kathamo-{}.tmp", std::process::id()));
+    let temp = path.with_extension(format!("shob-{}.tmp", std::process::id()));
     std::fs::write(&temp, contents)?;
     #[cfg(unix)]
     {
@@ -416,7 +416,7 @@ fn opencode_plugin_config(
     let parent = path.parent().context("OpenCode config has no parent")?;
     std::fs::create_dir_all(parent)?;
     backup_before_replace(path)?;
-    let temp = path.with_extension(format!("kathamo-{}.tmp", std::process::id()));
+    let temp = path.with_extension(format!("shob-{}.tmp", std::process::id()));
     std::fs::write(&temp, root.to_string())?;
     if let Ok(metadata) = std::fs::metadata(path) {
         std::fs::set_permissions(&temp, metadata.permissions())?;
@@ -431,7 +431,7 @@ fn opencode_plugin_config(
 fn opencode_registration(home: &Path, mode: &str) -> Result<()> {
     let config = config_root("XDG_CONFIG_HOME", home.join(".config")).join("opencode");
     let state = config_root("XDG_STATE_HOME", home.join(".local/state")).join("opencode");
-    let directory_spec = format!("file://{}", config.join("plugins/kathamo-status").display());
+    let directory_spec = format!("file://{}", config.join("plugins/shob-status").display());
     let file_spec = format!("{directory_spec}/tui.js");
     let action = match mode {
         "setup" => Some(true),
@@ -474,7 +474,7 @@ fn opencode_registration(home: &Path, mode: &str) -> Result<()> {
 
 fn update_rules(home: &Path) -> Result<()> {
     let config = config_root("XDG_CONFIG_HOME", home.join(".config"));
-    let dir = config.join("kathamo/agent-detection-updates");
+    let dir = config.join("shob/agent-detection-updates");
     let base = "https://raw.githubusercontent.com/herdrdev/herdr/master/src/detect/manifests";
     let ids: Vec<String> = crate::assets::AppAssets::iter()
         .filter(|p| {
@@ -548,7 +548,7 @@ fn update_rules(home: &Path) -> Result<()> {
         updated += 1;
     }
     println!(
-        "Updated {updated} validated agent detection manifests in {}. Restart Kathamo to load them.",
+        "Updated {updated} validated agent detection manifests in {}. Restart Shob to load them.",
         dir.display()
     );
     Ok(())
@@ -568,14 +568,14 @@ fn files(home: &Path) -> Vec<(PathBuf, &'static str)> {
         config_root("PI_CODING_AGENT_DIR", home.join(".omp/agent")),
     );
     let config = config_root("XDG_CONFIG_HOME", home.join(".config"));
-    let opencode = config.join("opencode/plugins/kathamo-status");
+    let opencode = config.join("opencode/plugins/shob-status");
     vec![
         (
-            pi.join("extensions/kathamo-status.js"),
+            pi.join("extensions/shob-status.js"),
             include_str!("../assets/integrations/pi.js"),
         ),
         (
-            omp.join("extensions/kathamo-status.js"),
+            omp.join("extensions/shob-status.js"),
             include_str!("../assets/integrations/omp.js"),
         ),
         (
@@ -605,7 +605,7 @@ pub fn run(args: &[String]) -> Result<()> {
     if args.len() != 1
         || !["setup", "status", "doctor", "remove", "update-rules"].contains(&args[0].as_str())
     {
-        bail!("usage: kathamo integration <setup|status|doctor|remove|update-rules>");
+        bail!("usage: shob integration <setup|status|doctor|remove|update-rules>");
     }
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -700,10 +700,10 @@ pub fn run(args: &[String]) -> Result<()> {
     }
     opencode_registration(&home, mode)?;
     // Retire only the exact adapter we previously installed; Command Code's
-    // vendor reporter now uses the scoped Kathamo endpoint without a user mod.
-    let legacy_kathamo = home.join(".commandcode/mods/kathamo-status.ts");
+    // vendor reporter now uses the scoped Shob endpoint without a user mod.
+    let legacy_shob = home.join(".commandcode/mods/shob-status.ts");
     let legacy_markup = home.join(".commandcode/mods/markup-status.ts");
-    for legacy in [&legacy_kathamo, &legacy_markup] {
+    for legacy in [&legacy_shob, &legacy_markup] {
         if matches!(mode, "setup" | "remove")
             && std::fs::read_to_string(legacy).ok().as_deref()
                 == Some(include_str!("../assets/integrations/commandcode.js"))
@@ -714,7 +714,7 @@ pub fn run(args: &[String]) -> Result<()> {
     }
     if mode != "remove" {
         println!(
-            "Command Code: built-in native reporting available in new Kathamo panes; live reporting not verified"
+            "Command Code: built-in native reporting available in new Shob panes; live reporting not verified"
         );
     }
     if mode == "doctor" {
@@ -741,14 +741,13 @@ mod tests {
     use super::*;
     #[test]
     fn opencode_registration_preserves_comments_and_unrelated_plugins() {
-        let dir =
-            std::env::temp_dir().join(format!("kathamo-opencode-config-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("shob-opencode-config-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cli.json");
         let initial =
             "{\n // user comment\n \"theme\": \"dark\",\n \"plugins\": [\"another-plugin\",],\n}\n";
         std::fs::write(&path, initial).unwrap();
-        let spec = "file:///tmp/kathamo-status";
+        let spec = "file:///tmp/shob-status";
         opencode_plugin_config(&path, "plugins", spec, Some(true)).unwrap();
         let first = std::fs::read_to_string(&path).unwrap();
         assert!(first.contains("// user comment"));
@@ -805,7 +804,7 @@ mod tests {
     }
     #[test]
     fn preserves_existing_hooks_on_setup_and_remove() {
-        let root = std::env::temp_dir().join(format!("kathamo-hook-test-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("shob-hook-test-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("settings.json");
         std::fs::write(&path, r#"{"other": 42, "hooks":{"Stop":[{"hooks":[{"type":"command","command":"existing"}]}]}}"#).unwrap();

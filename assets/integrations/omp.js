@@ -1,11 +1,11 @@
-// Kathamo lifecycle adapter for Oh My Pi. Reports only inside a Kathamo pane.
+// Shob lifecycle adapter for Oh My Pi. Reports only inside a Shob pane.
 import { spawnSync } from "node:child_process";
-const executable = process.env.KATHAMO_EXECUTABLE || process.env.MARKUP_EXECUTABLE;
+const executable = process.env.SHOB_EXECUTABLE || process.env.MARKUP_EXECUTABLE;
 const reporter_generation = `${process.pid}-${Date.now()}`;
 let sequence = 0;
 let sessionID;
 function report(event, extra = {}) {
-  if (!executable || !(process.env.KATHAMO_STATUS_SOCKET || process.env.MARKUP_STATUS_SOCKET)) return;
+  if (!executable || !(process.env.SHOB_STATUS_SOCKET || process.env.MARKUP_STATUS_SOCKET)) return;
   const record = { version: 1, reporter: "omp", reporter_generation, sequence: ++sequence,
     session_id: sessionID, turn_id: extra.turn_id, event, approval_id: extra.approval_id };
   try { spawnSync(executable, ["status-event"], { input: JSON.stringify(record), stdio: ["pipe", "ignore", "ignore"] }); } catch {}

@@ -180,6 +180,6 @@ fn test_save_and_resolve_api_key() {
     assert!(status.ready, "deepseek should now be marked ready");
     assert!(status.source.is_some());
 
-    provider::disconnect_provider("deepseek").expect("disconnect Kathamo provider");
+    provider::disconnect_provider("deepseek").expect("disconnect Shob provider");
     assert!(provider::auth::storage::get_local_credential("deepseek").is_none());
 }

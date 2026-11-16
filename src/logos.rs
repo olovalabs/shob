@@ -61,6 +61,8 @@ impl LogoRegistry {
             }
         }
 
+        stems.insert("shob".into(), "logos/shob.png".into());
+        stems.insert("kathamo".into(), "logos/kathamo.png".into());
         LogoRegistry { stems }
     }
 
@@ -239,7 +241,7 @@ mod tests {
         assert!(reg.find_logo("freebuff").is_some());
         assert!(reg.find_logo("grok").is_some());
         assert!(reg.find_logo("herdr").is_some());
-        assert!(reg.find_logo("kathamo").is_some());
+        assert!(reg.find_logo("shob").is_some());
         assert!(reg.find_logo("hermes").is_some());
         assert!(reg.find_logo("kilo").is_some());
         assert!(reg.find_logo("omp").is_some());

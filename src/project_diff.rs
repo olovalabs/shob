@@ -366,7 +366,7 @@ mod tests {
     impl Repo {
         fn new() -> Self {
             let path = std::env::temp_dir().join(format!(
-                "kathamo-diff-{}-{}",
+                "shob-diff-{}-{}",
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));

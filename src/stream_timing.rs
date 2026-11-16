@@ -1,6 +1,6 @@
 //! Opt-in, metadata-only timings for the agent streaming pipeline.
 //!
-//! Enabled with `KATHAMO_STREAM_TIMINGS=1`. When disabled every entry point is
+//! Enabled with `SHOB_STREAM_TIMINGS=1`. When disabled every entry point is
 //! one relaxed atomic load, so the hot path is unchanged. Enabled, it records
 //! only durations and event counts — never message text, tool arguments or
 //! tool output — and prints a percentile summary every few seconds.
@@ -43,7 +43,7 @@ const MAX_SAMPLES: usize = 4_096;
 const MAX_TRACKED_TOOLS: usize = 2_048;
 
 static ENABLED: LazyLock<bool> =
-    LazyLock::new(|| std::env::var_os("KATHAMO_STREAM_TIMINGS").is_some_and(|value| value != "0"));
+    LazyLock::new(|| std::env::var_os("SHOB_STREAM_TIMINGS").is_some_and(|value| value != "0"));
 
 /// `true` when stream timings are on. Cheap enough to call per event.
 #[inline]
@@ -125,7 +125,7 @@ fn report() {
         return;
     }
     entries.sort_by_key(|entry| std::cmp::Reverse(entry.1.count));
-    eprintln!("kathamo stream timings (us, per report window):");
+    eprintln!("shob stream timings (us, per report window):");
     for (label, mut stats) in entries {
         stats.samples.sort_unstable();
         let percentile = |fraction: f64| -> u64 {

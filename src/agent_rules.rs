@@ -418,7 +418,7 @@ impl RuleSet {
                 std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".config"))
             });
         if let Some(config) = config {
-            let updates_dir = config.join("kathamo/agent-detection-updates");
+            let updates_dir = config.join("shob/agent-detection-updates");
             let updates_path = if updates_dir.exists() {
                 updates_dir
             } else {
@@ -426,7 +426,7 @@ impl RuleSet {
             };
             load_manifest_directory(&updates_path, "remote update", &mut packs, false);
 
-            let override_dir = config.join("kathamo/agent-detection");
+            let override_dir = config.join("shob/agent-detection");
             let override_path = if override_dir.exists() {
                 override_dir
             } else {

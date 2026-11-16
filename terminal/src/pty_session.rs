@@ -686,7 +686,7 @@ mod tests {
             }
         }
         let fifo = Fifo(std::env::temp_dir().join(format!(
-            "kathamo-pty-gate-{}-{}",
+            "shob-pty-gate-{}-{}",
             std::process::id(),
             NEXT_GATE.fetch_add(1, Ordering::Relaxed),
         )));

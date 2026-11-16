@@ -4,21 +4,21 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 const SKILL: &str = r#"---
-name: kathamo-status
-description: Report agent turn status to the Kathamo terminal when available.
+name: shob-status
+description: Report agent turn status to the Shob terminal when available.
 ---
 
-# Reporting status in Kathamo
+# Reporting status in Shob
 
-When working inside a Kathamo terminal, report meaningful turn transitions so its sidebar can show accurate status. Run these commands from the same terminal:
+When working inside a Shob terminal, report meaningful turn transitions so its sidebar can show accurate status. Run these commands from the same terminal:
 
-- Start substantial work: `kathamo report working "what you are doing"`
-- Ask the user or request approval: `kathamo report blocked "what you need" --kind question` (use `permission`, `question`, or `auth` as appropriate)
-- Resume work: `kathamo report working "continuing"`
-- Finish a turn: `kathamo report done "brief result"`
-- A turn fails: `kathamo report error "brief reason"`
-- Clear a stale report when abandoning a turn: `kathamo report clear`
-- Report progress when useful: `kathamo report working "..." --progress 40`
+- Start substantial work: `shob report working "what you are doing"`
+- Ask the user or request approval: `shob report blocked "what you need" --kind question` (use `permission`, `question`, or `auth` as appropriate)
+- Resume work: `shob report working "continuing"`
+- Finish a turn: `shob report done "brief result"`
+- A turn fails: `shob report error "brief reason"`
+- Clear a stale report when abandoning a turn: `shob report clear`
+- Report progress when useful: `shob report working "..." --progress 40`
 
 Only report states that reflect your actual current state. Do not report `done` merely because the process is quiet or waiting. These reports are optional; if the command is unavailable, continue normally.
 "#;
@@ -70,7 +70,7 @@ pub fn parse_report_args(args: &[String]) -> Result<Option<ReportArgs>> {
         i += 1;
     }
     let Some(state) = positional.first().cloned() else {
-        bail!("usage: kathamo report <idle|working|done|blocked|error|clear> [message] [options]")
+        bail!("usage: shob report <idle|working|done|blocked|error|clear> [message] [options]")
     };
     if !["idle", "working", "done", "blocked", "error", "clear"].contains(&state.as_str()) {
         bail!("unknown report state: {state}");
@@ -131,13 +131,13 @@ pub fn run_report(args: &[String]) -> Result<()> {
             stdout.flush()?;
         }
         None => println!(
-            "Usage: kathamo report <state> [message] [--kind KIND] [--progress 0..100] [--app NAME] [--id ID]\nStates: idle, working, done, blocked, error, clear"
+            "Usage: shob report <state> [message] [--kind KIND] [--progress 0..100] [--app NAME] [--id ID]\nStates: idle, working, done, blocked, error, clear"
         ),
     }
     Ok(())
 }
 
-/// Send a versioned lifecycle record to the Kathamo instance that launched the
+/// Send a versioned lifecycle record to the Shob instance that launched the
 /// integration. Node adapters pass a JSON object on stdin and do not write to
 /// the terminal screen; the app validates the pane generation and sequence.
 #[cfg(unix)]
@@ -169,24 +169,24 @@ fn parse_status_event(
 #[cfg(unix)]
 pub fn run_status_event() -> Result<()> {
     use std::io::Read;
-    let socket = std::env::var_os("KATHAMO_STATUS_SOCKET")
+    let socket = std::env::var_os("SHOB_STATUS_SOCKET")
         .or_else(|| std::env::var_os("MARKUP_STATUS_SOCKET"))
-        .context("not running in a Kathamo terminal")?;
+        .context("not running in a Shob terminal")?;
     let mut input = String::new();
     std::io::stdin()
         .take(16 * 1024)
         .read_to_string(&mut input)?;
-    let app_id = std::env::var("KATHAMO_APP_ID")
+    let app_id = std::env::var("SHOB_APP_ID")
         .or_else(|_| std::env::var("MARKUP_APP_ID"))
-        .context("missing Kathamo app identity")?;
-    let pane_id = std::env::var("KATHAMO_PANE_ID")
+        .context("missing Shob app identity")?;
+    let pane_id = std::env::var("SHOB_PANE_ID")
         .or_else(|_| std::env::var("MARKUP_PANE_ID"))
-        .context("missing Kathamo pane identity")?
+        .context("missing Shob pane identity")?
         .parse()
         .context("invalid pane identity")?;
-    let pane_generation = std::env::var("KATHAMO_PANE_GENERATION")
+    let pane_generation = std::env::var("SHOB_PANE_GENERATION")
         .or_else(|_| std::env::var("MARKUP_PANE_GENERATION"))
-        .context("missing Kathamo pane generation")?;
+        .context("missing Shob pane generation")?;
     let event = parse_status_event(&input, app_id, pane_id, pane_generation)?;
     crate::status_bus::send(Path::new(&socket), &event).context("unable to send status event")
 }
@@ -195,13 +195,13 @@ pub fn run_status_event() -> Result<()> {
 pub fn run_status(args: &[String]) -> Result<()> {
     match args.first().map(String::as_str) {
         Some("clear") if args.len() == 1 => {
-            let app_id = std::env::var("KATHAMO_APP_ID")
+            let app_id = std::env::var("SHOB_APP_ID")
                 .or_else(|_| std::env::var("MARKUP_APP_ID"))
-                .context("not running in a Kathamo terminal")?;
-            let pane_id = std::env::var("KATHAMO_PANE_ID")
+                .context("not running in a Shob terminal")?;
+            let pane_id = std::env::var("SHOB_PANE_ID")
                 .or_else(|_| std::env::var("MARKUP_PANE_ID"))?
                 .parse()?;
-            let pane_generation = std::env::var("KATHAMO_PANE_GENERATION")
+            let pane_generation = std::env::var("SHOB_PANE_GENERATION")
                 .or_else(|_| std::env::var("MARKUP_PANE_GENERATION"))?;
             let event = crate::status_bus::StatusEvent {
                 version: 1,
@@ -222,22 +222,22 @@ pub fn run_status(args: &[String]) -> Result<()> {
                 agent_id: None,
                 parent: None,
             };
-            let socket = std::env::var_os("KATHAMO_STATUS_SOCKET")
+            let socket = std::env::var_os("SHOB_STATUS_SOCKET")
                 .or_else(|| std::env::var_os("MARKUP_STATUS_SOCKET"))
                 .context("status service is unavailable")?;
             crate::status_bus::send(Path::new(&socket), &event)
                 .context("could not clear the pane status")
         }
         Some("explain") if args.len() == 2 && args[1] == "--json" => {
-            let app_id = std::env::var("KATHAMO_APP_ID")
+            let app_id = std::env::var("SHOB_APP_ID")
                 .or_else(|_| std::env::var("MARKUP_APP_ID"))
-                .context("not running in a Kathamo terminal")?;
-            let pane_id: u64 = std::env::var("KATHAMO_PANE_ID")
+                .context("not running in a Shob terminal")?;
+            let pane_id: u64 = std::env::var("SHOB_PANE_ID")
                 .or_else(|_| std::env::var("MARKUP_PANE_ID"))?
                 .parse()?;
-            let generation = std::env::var("KATHAMO_PANE_GENERATION")
+            let generation = std::env::var("SHOB_PANE_GENERATION")
                 .or_else(|_| std::env::var("MARKUP_PANE_GENERATION"))?;
-            let snapshot = std::env::var_os("KATHAMO_STATUS_SNAPSHOT")
+            let snapshot = std::env::var_os("SHOB_STATUS_SNAPSHOT")
                 .or_else(|| std::env::var_os("MARKUP_STATUS_SNAPSHOT"))
                 .map(PathBuf::from)
                 .and_then(|path| std::fs::read(path).ok())
@@ -263,7 +263,7 @@ pub fn run_status(args: &[String]) -> Result<()> {
             }
             Ok(())
         }
-        _ => bail!("usage: kathamo status <clear|explain --json>"),
+        _ => bail!("usage: shob status <clear|explain --json>"),
     }
 }
 
@@ -288,9 +288,9 @@ pub fn skill_paths(home: &Path, claude_config: Option<&Path>, target: SkillTarge
         SkillTarget::Claude => vec![
             claude_config
                 .unwrap_or(&home.join(".claude"))
-                .join("skills/kathamo-status/SKILL.md"),
+                .join("skills/shob-status/SKILL.md"),
         ],
-        SkillTarget::Shared => vec![home.join(".agents/skills/kathamo-status/SKILL.md")],
+        SkillTarget::Shared => vec![home.join(".agents/skills/shob-status/SKILL.md")],
     }
 }
 
@@ -299,7 +299,7 @@ fn targets(args: &[String]) -> Result<Vec<SkillTarget>> {
         return Ok(vec![SkillTarget::Claude, SkillTarget::Shared]);
     }
     if args.len() != 2 || args[0] != "--agent" {
-        bail!("usage: kathamo skill <setup|status|show|remove> [--agent claude|shared|all]");
+        bail!("usage: shob skill <setup|status|show|remove> [--agent claude|shared|all]");
     }
     let agent = args
         .windows(2)
@@ -315,7 +315,7 @@ fn targets(args: &[String]) -> Result<Vec<SkillTarget>> {
 
 pub fn run_skill(args: &[String]) -> Result<()> {
     let Some(command) = args.first().map(String::as_str) else {
-        bail!("usage: kathamo skill <setup|status|show|remove> [--agent claude|shared|all]")
+        bail!("usage: shob skill <setup|status|show|remove> [--agent claude|shared|all]")
     };
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -342,7 +342,7 @@ pub fn run_skill(args: &[String]) -> Result<()> {
                     println!("Already installed {}", path.display());
                     continue;
                 }
-                let temp = path.with_extension(format!("kathamo-{}.tmp", std::process::id()));
+                let temp = path.with_extension(format!("shob-{}.tmp", std::process::id()));
                 std::fs::write(&temp, SKILL)?;
                 std::fs::rename(temp, path)?;
                 println!("Installed {}", path.display());
@@ -448,7 +448,7 @@ mod tests {
         let root = Path::new("/tmp/example");
         assert_eq!(
             skill_paths(root, None, SkillTarget::Shared),
-            vec![root.join(".agents/skills/kathamo-status/SKILL.md")]
+            vec![root.join(".agents/skills/shob-status/SKILL.md")]
         );
     }
 }

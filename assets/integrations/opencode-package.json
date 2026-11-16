@@ -1,1 +1,1 @@
-{"name":"kathamo-status","private":true,"type":"module","exports":{".":"./index.js","./tui":"./tui.js"}}
+{"name":"shob-status","private":true,"type":"module","exports":{".":"./index.js","./tui":"./tui.js"}}

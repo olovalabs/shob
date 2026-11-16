@@ -2,7 +2,7 @@
 //!
 //! The terminal crate cannot see the app's `diagnostics` module, so it keeps
 //! its own cumulative counters here and the app drains them with
-//! [`take_paint_stats`] when it prints a report. When `KATHAMO_DIAGNOSTICS` is
+//! [`take_paint_stats`] when it prints a report. When `SHOB_DIAGNOSTICS` is
 //! unset the hooks are a single relaxed load.
 
 use std::sync::LazyLock;
@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 static ENABLED: LazyLock<bool> = LazyLock::new(|| {
-    std::env::var_os("KATHAMO_DIAGNOSTICS")
+    std::env::var_os("SHOB_DIAGNOSTICS")
         .or_else(|| std::env::var_os("MARKUP_DIAGNOSTICS"))
         .is_some_and(|value| value != "0")
 });

@@ -1,4 +1,4 @@
-//! File attachments for the Kathamo bottom input bar.
+//! File attachments for the Shob bottom input bar.
 //!
 //! Attachments are kept as files on disk (dropped files keep their original
 //! path, clipboard images are written to a session temp directory) so the
@@ -157,7 +157,7 @@ fn file_name(path: &Path) -> String {
 }
 
 fn attachment_directory() -> PathBuf {
-    let directory = std::env::temp_dir().join("kathamo-attachments");
+    let directory = std::env::temp_dir().join("shob-attachments");
     let _ = std::fs::create_dir_all(&directory);
     directory
 }
@@ -251,7 +251,7 @@ mod tests {
 
     fn temp_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
-            "kathamo-attachment-test-{}-{name}",
+            "shob-attachment-test-{}-{name}",
             std::process::id()
         ))
     }

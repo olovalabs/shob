@@ -194,7 +194,7 @@ const SUCCESS_HTML: &str = r#"<!DOCTYPE html>
     <div class="card">
         <div class="icon">&#10003;</div>
         <h1>Authentication Successful</h1>
-        <p>You can close this tab and return to Kathamo.</p>
+        <p>You can close this tab and return to Shob.</p>
     </div>
 </body>
 </html>"#;
@@ -232,7 +232,7 @@ const ERROR_HTML: &str = r#"<!DOCTYPE html>
     <div class="card">
         <div class="icon">&#10007;</div>
         <h1>Authentication Error</h1>
-        <p>Login was not completed. Please check Kathamo for details.</p>
+        <p>Login was not completed. Please check Shob for details.</p>
     </div>
 </body>
 </html>"#;

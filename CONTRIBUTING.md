@@ -1,6 +1,6 @@
-# Contributing to Kathamo
+# Contributing to Shob
 
-Thank you for your interest in contributing to Kathamo! Kathamo is an open-source, GPU-accelerated terminal emulator designed for orchestrating autonomous AI coding agents across multiple development projects.
+Thank you for your interest in contributing to Shob! Shob is an open-source, GPU-accelerated terminal emulator designed for orchestrating autonomous AI coding agents across multiple development projects.
 
 This guide outlines our development workflow, standards, and testing procedures.
 
@@ -47,8 +47,8 @@ Ensure your machine has the required toolchains and dependencies installed:
 
 1. **Fork and Clone**:
    ```bash
-   git clone https://github.com/<your-username>/kathamo.git
-   cd kathamo
+   git clone https://github.com/<your-username>/shob.git
+   cd shob
    ```
 
 2. **Check Out a Branch**:
@@ -109,7 +109,7 @@ Test the agent attention system, visual badges, and alert sounds:
 - **Rust Edition 2024**: Use modern Rust patterns and idioms. Keep code clean, idiomatic, and avoid unnecessary dependencies.
 - **UI Responsiveness**: The terminal must never freeze or drop below smooth interactive framerates. Heavy I/O, process scanning (e.g. `/proc`), and parsing must be bounded or offloaded from the UI thread.
 - **Agent Attention Model Invariants**:
-  - Parity with the Kathamo protocol: `blocked > done > working > idle`.
+  - Parity with the Shob protocol: `blocked > done > working > idle`.
   - An agent completion seen live transitions directly to `idle`/`active`. Only unviewed completions latch to `done`.
   - Never infer `done` simply from silence or inactivity.
 - **Security**: The status IPC Unix domain socket must enforce per-user permissions and authenticate pane generation IDs to prevent cross-session injection.

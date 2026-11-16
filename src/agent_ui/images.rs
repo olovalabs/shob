@@ -43,7 +43,7 @@ fn load_image(source: String) -> anyhow::Result<Arc<gpui::RenderImage>> {
         std::sync::LazyLock::new(|| {
             reqwest::blocking::Client::builder()
                 .user_agent(concat!(
-                    "Kathamo/",
+                    "Shob/",
                     env!("CARGO_PKG_VERSION"),
                     " (https://github.com/olovalabs/kathamo)"
                 ))
@@ -240,11 +240,7 @@ mod tests {
                 }
                 headers.push_str(&line);
             }
-            assert!(
-                headers
-                    .to_ascii_lowercase()
-                    .contains("user-agent: kathamo/")
-            );
+            assert!(headers.to_ascii_lowercase().contains("user-agent: shob/"));
             let mut png = std::io::Cursor::new(Vec::new());
             image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
                 1,

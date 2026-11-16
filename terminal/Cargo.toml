@@ -13,7 +13,7 @@
 edition = "2024"
 name = "terminal"
 version = "0.0.1"
-description = "Terminal emulator component for Kathamo"
+description = "Terminal emulator component for Shob"
 license = "MIT OR Apache-2.0"
 
 [lib]

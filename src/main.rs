@@ -48,12 +48,12 @@ mod diagnostics;
 mod file_icons;
 mod file_preview;
 mod integrations;
-#[cfg(unix)]
-mod kathamo_compat;
 mod logos;
 mod paths;
 mod project_diff;
 mod rpi_storage;
+#[cfg(unix)]
+mod shob_compat;
 use terminal::pty_session;
 mod settings;
 mod shell_history;
@@ -70,21 +70,21 @@ mod workspace_state;
 
 use theme::{PaletteScheme, ThemePreference, ThemeTokens};
 
-/// Key context of the Kathamo input bar.
+/// Key context of the Shob input bar.
 ///
 /// Tab has to be bound here rather than handled from `on_key_down`: the input
 /// component binds `tab` to `IndentInline` and `gpui-component` binds it at the
 /// `Root` context for focus traversal, which would otherwise consume the key
 /// before the completion handler runs.
-const KATHAMO_INPUT_CONTEXT: &str = "KathamoInput";
+const SHOB_INPUT_CONTEXT: &str = "ShobInput";
 
-actions!(kathamo_input, [CompleteCommand, IgnoreKey]);
+actions!(shob_input, [CompleteCommand, IgnoreKey]);
 
-fn init_kathamo_input_bindings(cx: &mut App) {
+fn init_shob_input_bindings(cx: &mut App) {
     cx.bind_keys([
-        gpui::KeyBinding::new("tab", CompleteCommand, Some(KATHAMO_INPUT_CONTEXT)),
+        gpui::KeyBinding::new("tab", CompleteCommand, Some(SHOB_INPUT_CONTEXT)),
         // Keep Shift+Tab from running the Root context's focus traversal.
-        gpui::KeyBinding::new("shift-tab", IgnoreKey, Some(KATHAMO_INPUT_CONTEXT)),
+        gpui::KeyBinding::new("shift-tab", IgnoreKey, Some(SHOB_INPUT_CONTEXT)),
     ]);
 }
 
@@ -97,8 +97,8 @@ pub enum ActiveView {
 
 use assets::{CombinedAssets, MONO_FONT, load_embedded_fonts, sync_component_fonts};
 use status::{SessionStatus, StatusInput};
-pub const APP_ICON_PNG: &[u8] = include_bytes!("../assets/logo/kathamo.png");
-/// Default width of the navigation sidebar (Kathamo style).
+pub const APP_ICON_PNG: &[u8] = include_bytes!("../assets/icons/shob.png");
+/// Default width of the navigation sidebar (Shob style).
 const COMPACT_WINDOW_WIDTH: Pixels = px(768.0);
 pub const SIDEBAR_WIDTH: Pixels = px(260.0);
 /// Narrowest the sidebar can be dragged to; below this the session rows stop
@@ -2940,10 +2940,10 @@ pub struct TerminalPane {
     /// a fresh Done/Error be raised.
     pub ack_screen: Option<u64>,
     /// A recognized agent CLI was the foreground process on the previous tick.
-    /// Its disappearance means the agent finished (Done), like kathamo.
+    /// Its disappearance means the agent finished (Done), like shob.
     pub agent_active: bool,
     pub detector: status::Detector,
-    /// Kathamo-style seen/recency bookkeeping for this pane's finalized status.
+    /// Shob-style seen/recency bookkeeping for this pane's finalized status.
     pub attention: attention::Attention,
     /// The agent's own name from its OSC 7501 report (`app`), when it reports one.
     pub app: Option<SharedString>,
@@ -2967,7 +2967,7 @@ pub struct TerminalPane {
     /// Prevent duplicate submissions while physical PTY writes are outstanding.
     input_submitting: bool,
     input_cancel: Option<smol::channel::Sender<()>>,
-    /// Open completion menu (Kathamo-style suggestions above the input).
+    /// Open completion menu (Shob-style suggestions above the input).
     pub completion_menu: Option<CompletionMenuState>,
     pub bottom_input_visible: bool,
     pub plus_menu_open: bool,
@@ -3042,7 +3042,7 @@ pub struct CompletionMenuState {
 impl Drop for TerminalPane {
     fn drop(&mut self) {
         #[cfg(unix)]
-        kathamo_compat::unregister(&self.generation);
+        shob_compat::unregister(&self.generation);
     }
 }
 
@@ -3479,7 +3479,7 @@ struct AppState {
     dirty: bool,
     /// Last known window geometry, captured on close and while saving.
     last_window_bounds: Option<settings::SavedWindow>,
-    /// False when launched with `KATHAMO_DISABLE_RESTORE`; the app then never
+    /// False when launched with `SHOB_DISABLE_RESTORE`; the app then never
     /// writes to the saved state (read-only troubleshooting mode).
     persistence_enabled: bool,
     /// Two-step confirmation state for "clear saved sessions".
@@ -3493,7 +3493,7 @@ struct ImageViewerState {
     dimensions: Option<(u32, u32)>,
 }
 
-/// Kathamo-style "search command history" palette.
+/// Shob-style "search command history" palette.
 struct HistorySearchState {
     pane_id: usize,
     input: Entity<InputState>,
@@ -4316,7 +4316,7 @@ impl AppState {
         let generation = format!("pane-{pane_id}-{}", std::process::id());
         #[cfg(unix)]
         if let Some(bus) = STATUS_BUS.as_ref() {
-            kathamo_compat::register(&bus.app_id, pane_id, &generation);
+            shob_compat::register(&bus.app_id, pane_id, &generation);
         }
         let startup_generation = generation.clone();
         let dir = dir.cloned();
@@ -4338,44 +4338,44 @@ impl AppState {
             shell_integration::configure_shell(&mut cmd, &shell_name);
             cmd.env("TERM", "xterm-256color");
             cmd.env("COLORTERM", "truecolor");
-            cmd.env("TERM_PROGRAM", "kathamo");
+            cmd.env("TERM_PROGRAM", "shob");
             cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
             cmd.env("LANG", "en_US.UTF-8");
             cmd.env("LC_ALL", "en_US.UTF-8");
             if let Ok(executable) = std::env::current_exe() {
-                cmd.env("KATHAMO_EXECUTABLE", &executable);
+                cmd.env("SHOB_EXECUTABLE", &executable);
                 cmd.env("MARKUP_EXECUTABLE", &executable);
             }
             #[cfg(unix)]
             if let Some(bus) = STATUS_BUS.as_ref() {
-                cmd.env("KATHAMO_STATUS_SOCKET", &bus.socket);
-                cmd.env("KATHAMO_APP_ID", &bus.app_id);
-                cmd.env("KATHAMO_PANE_ID", pane_id.to_string());
-                cmd.env("KATHAMO_PANE_GENERATION", &generation);
+                cmd.env("SHOB_STATUS_SOCKET", &bus.socket);
+                cmd.env("SHOB_APP_ID", &bus.app_id);
+                cmd.env("SHOB_PANE_ID", pane_id.to_string());
+                cmd.env("SHOB_PANE_GENERATION", &generation);
                 cmd.env("MARKUP_STATUS_SOCKET", &bus.socket);
                 cmd.env("MARKUP_APP_ID", &bus.app_id);
                 cmd.env("MARKUP_PANE_ID", pane_id.to_string());
                 cmd.env("MARKUP_PANE_GENERATION", &generation);
                 // Scoped vendor reporters bind to this exact pane generation.
-                cmd.env("KATHAMO_ENV", "1");
-                cmd.env("KATHAMO_SOCKET_PATH", &bus.socket);
-                cmd.env("KATHAMO_PANE_ID", &generation);
+                cmd.env("SHOB_ENV", "1");
+                cmd.env("SHOB_SOCKET_PATH", &bus.socket);
+                cmd.env("SHOB_PANE_ID", &generation);
                 cmd.env("HERDR_ENV", "1");
                 cmd.env("HERDR_SOCKET_PATH", &bus.socket);
                 cmd.env("HERDR_PANE_ID", &generation);
-                cmd.env_remove("CMD_KATHAMO_PANE_OWNER");
+                cmd.env_remove("CMD_SHOB_PANE_OWNER");
                 cmd.env_remove("CMD_HERDR_PANE_OWNER");
                 if let Ok(executable) = std::env::current_exe() {
-                    cmd.env("KATHAMO_BIN_PATH", &executable);
+                    cmd.env("SHOB_BIN_PATH", &executable);
                     cmd.env("HERDR_BIN_PATH", executable);
                 }
                 let snapshot_path = status_bus::snapshot_path(bus, pane_id, &generation);
-                cmd.env("KATHAMO_STATUS_SNAPSHOT", &snapshot_path);
+                cmd.env("SHOB_STATUS_SNAPSHOT", &snapshot_path);
                 cmd.env("MARKUP_STATUS_SNAPSHOT", &snapshot_path);
             }
             #[cfg(unix)]
             if let Some(tty) = pair.master.tty_name() {
-                cmd.env("KATHAMO_STATUS_TTY", &tty);
+                cmd.env("SHOB_STATUS_TTY", &tty);
                 cmd.env("MARKUP_STATUS_TTY", &tty);
             }
             pty_session::PreparedPty::spawn(pair, cmd)
@@ -4466,7 +4466,7 @@ impl AppState {
                     }
                     pty_session::PtyEvent::Error(error) => {
                         #[cfg(unix)]
-                        kathamo_compat::unregister(&event_generation);
+                        shob_compat::unregister(&event_generation);
                         let _ = terminal_weak.update(cx, |term, cx| {
                             term.report_io_error(error, cx);
                         });
@@ -4534,7 +4534,7 @@ impl AppState {
         cx.notify();
     }
 
-    /// Periodic detection tick, Kathamo-style: screen scrape + OSC title +
+    /// Periodic detection tick, Shob-style: screen scrape + OSC title +
     /// foreground process tree, with sticky Done/Error and focus resolution.
     /// Every pane of every session is polled; the session badge is the
     /// highest-ranked pane status and the sidebar title/logo follow the pane
@@ -5103,7 +5103,7 @@ impl AppState {
                         let mut debug_match = None;
 
                         // Exit of the PTY child wins: the real exit code decides
-                        // Done (0) vs Error (non-zero / signal), Kathamo-style.
+                        // Done (0) vs Error (non-zero / signal), Shob-style.
                         let next = if terminal.has_exited() {
                             if debug {
                                 debug_match = status::explain(&StatusInput {
@@ -5432,7 +5432,7 @@ impl AppState {
                 }
             }
         }
-        // Kathamo's attention pass. It finalizes every pane's badge: a finish the
+        // Shob's attention pass. It finalizes every pane's badge: a finish the
         // person missed becomes Done, and looking at a Done pane clears it. It
         // runs for every pane every tick because visibility and window focus
         // change without any screen output.
@@ -5840,7 +5840,7 @@ impl AppState {
             saved.and_then(|()| workspace_state::finish_deletion(&deletion_path, &deletion));
         if let Err(error) = result {
             window.push_notification(Notification::new().title("Session deletion incomplete")
-                .message(format!("{error}. Check the data folder permissions; cleanup will retry when Kathamo restarts."))
+                .message(format!("{error}. Check the data folder permissions; cleanup will retry when Shob restarts."))
                 .with_type(NotificationType::Error), cx);
         }
         cx.notify();
@@ -8292,7 +8292,7 @@ impl AppState {
             return;
         }
         if !agent_auth::provider_visible_in_chat_ui(&provider) {
-            auth.error = Some("Local providers are unavailable in Kathamo agent chat.".into());
+            auth.error = Some("Local providers are unavailable in Shob agent chat.".into());
             cx.notify();
             return;
         }
@@ -8800,7 +8800,7 @@ impl AppState {
                         .map(|(name, description)| format!("{name} — {description}"))
                         .collect::<Vec<_>>()
                         .join("\n"),
-                    "/version" => format!("Kathamo {}", env!("CARGO_PKG_VERSION")),
+                    "/version" => format!("Shob {}", env!("CARGO_PKG_VERSION")),
                     _ => {
                         let reply = pane
                             .chat
@@ -9413,7 +9413,7 @@ impl AppState {
             return;
         }
 
-        // Shift+Enter: insert a newline (multi-line commands, Kathamo style).
+        // Shift+Enter: insert a newline (multi-line commands, Shob style).
         if (key == "enter" || key == "return")
             && modifiers.shift
             && !modifiers.control
@@ -11237,7 +11237,7 @@ impl AppState {
         )
     }
 
-    fn render_kathamo_input_bar(
+    fn render_shob_input_bar(
         &self,
         pane: &TerminalPane,
         _is_focused: bool,
@@ -11358,7 +11358,7 @@ impl AppState {
             let browser_mentioned = pane.chat.active
                 && agent_bridge::has_browser_mention(input_state.read(cx).value().as_str());
             div()
-                .id(("kathamo-input-wrapper", pane_id))
+                .id(("shob-input-wrapper", pane_id))
                 .debug_selector(|| "agent-composer-input".to_string())
                 .w_full()
                 .min_h(px(30.0))
@@ -11372,7 +11372,7 @@ impl AppState {
                     MONO_FONT
                 })
                 .text_size(px(14.0))
-                .key_context(KATHAMO_INPUT_CONTEXT)
+                .key_context(SHOB_INPUT_CONTEXT)
                 .on_action(cx.listener(move |this, _: &CompleteCommand, window, cx| {
                     cx.stop_propagation();
                     if !this.pane_ref(pane_id).is_some_and(|pane| pane.chat.active) {
@@ -11424,7 +11424,7 @@ impl AppState {
                 .into_any_element()
         } else {
             div()
-                .id(("kathamo-input-wrapper-empty", pane_id))
+                .id(("shob-input-wrapper-empty", pane_id))
                 .w_full()
                 .min_h(px(30.0))
                 .into_any_element()
@@ -11435,7 +11435,7 @@ impl AppState {
         let plus_menu = if pane.plus_menu_open {
             Some(
                 div()
-                    .id(("kathamo-plus-menu", pane_id))
+                    .id(("shob-plus-menu", pane_id))
                     .absolute()
                     .bottom(px(100.0))
                     .left(px(12.0))
@@ -11519,15 +11519,15 @@ impl AppState {
             rgba(0x2d7a2d12).into()
         };
         div()
-            .id(("kathamo-composer-stack", pane_id))
+            .id(("shob-composer-stack", pane_id))
             .w_full()
             .flex()
             .flex_col()
             .children(pane.chat.active.then(|| self.render_agent_follow_ups(pane, &tokens, cx)).flatten())
             .child(
         div()
-            .id(("kathamo-input-bar", pane_id))
-            .debug_selector(|| "kathamo-input-bar".to_string())
+            .id(("shob-input-bar", pane_id))
+            .debug_selector(|| "shob-input-bar".to_string())
             .relative()
             .w_full()
             .flex()
@@ -11795,7 +11795,7 @@ impl AppState {
                     // Agent metadata lives in the right-side info drawer.
                     .when(!pane.chat.active, |row| row.child(
                         div()
-                            .id(("kathamo-badge-cwd", pane_id))
+                            .id(("shob-badge-cwd", pane_id))
                             .flex()
                             .items_center()
                             .gap(px(5.0))
@@ -11823,7 +11823,7 @@ impl AppState {
                     .when_some(git_branch, |this, branch| {
                         this.child(
                             div()
-                                .id(("kathamo-badge-git", pane_id))
+                                .id(("shob-badge-git", pane_id))
                                 .flex()
                                 .items_center()
                                 .gap(px(5.0))
@@ -11955,7 +11955,7 @@ impl AppState {
             }))
     }
 
-    /// Kathamo-style completion popup, anchored above the input bar.
+    /// Shob-style completion popup, anchored above the input bar.
     fn render_completion_menu(
         &self,
         pane: &TerminalPane,
@@ -14538,23 +14538,6 @@ impl AppState {
             pane.chat.scroll_handler_installed.set(true);
         }
         let default_screen: Option<AnyElement> = if pane.chat.visible_messages().is_empty() {
-            #[cfg(test)]
-            let wordmark: gpui::ImageSource = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("assets/kathamo-wordmark.png")
-                .into();
-            #[cfg(not(test))]
-            let wordmark: gpui::ImageSource = "kathamo-wordmark.png".into();
-            let wordmark_width = if self.settings.agent_layout {
-                let available = window.viewport_size().width
-                    - if Self::sidebar_docked(self.sidebar_visible, window.viewport_size().width) {
-                        self.sidebar_width
-                    } else {
-                        px(0.0)
-                    };
-                px(300.0).min(available.max(px(0.0)) * 0.70)
-            } else {
-                px(300.0)
-            };
             let screen = div()
                 .id(("agent-default-screen", pane_id))
                 .debug_selector(|| "agent-default-screen".to_string())
@@ -14565,12 +14548,7 @@ impl AppState {
                 .items_center()
                 .justify_center()
                 .gap(px(16.0))
-                .child(
-                    img(wordmark)
-                        .w(wordmark_width)
-                        .h(px(48.0))
-                        .object_fit(ObjectFit::Contain),
-                );
+                .child(div().text_size(px(36.0)).child("Shob"));
             Some(screen.into_any_element())
         } else {
             None
@@ -15747,7 +15725,7 @@ impl AppState {
                     && pane.diff_preview.is_none()
                     && pane.should_show_bottom_input(cx)
                     && pane.chat.worker_view.is_none(),
-                |this| this.child(self.render_kathamo_input_bar(pane, is_focused, window, cx)),
+                |this| this.child(self.render_shob_input_bar(pane, is_focused, window, cx)),
             )
     }
 
@@ -16851,7 +16829,7 @@ impl AppState {
                         div()
                             .text_size(px(12.5))
                             .text_color(tokens.text_secondary)
-                            .child("Kathamo data and RPI sessions are stored in this folder."),
+                            .child("Shob data and RPI sessions are stored in this folder."),
                     ),
             )
             .child(
@@ -16936,7 +16914,7 @@ impl AppState {
                                 div()
                                     .text_size(px(11.0))
                                     .text_color(tokens.text_secondary)
-                                    .child("Deletes saved layouts, scrollback and Kathamo-owned RPI sessions. Settings are kept."),
+                                    .child("Deletes saved layouts, scrollback and Shob-owned RPI sessions. Settings are kept."),
                             ),
                     )
                     .child(
@@ -17246,7 +17224,7 @@ impl AppState {
             .gap(px(7.0))
             .child(div().text_size(px(12.0)).font_weight(gpui::FontWeight::BOLD).text_color(tokens.sidebar_fg).child("Agent integrations"))
             .child(div().text_size(px(10.5)).text_color(tokens.sidebar_muted).child("Claude Code · Codex · OpenCode · Pi · OMP · Command Code"))
-            .child(div().text_size(px(10.0)).text_color(tokens.sidebar_muted).child("Versions and hook trust: kathamo integration doctor"))
+            .child(div().text_size(px(10.0)).text_color(tokens.sidebar_muted).child("Versions and hook trust: shob integration doctor"))
             .child(div().text_size(px(10.0)).text_color(tokens.sidebar_muted).child(self.integration_feedback.clone()))
             .child(
                 div()
@@ -17887,7 +17865,7 @@ impl AppState {
                     }),
                 )
                 .tooltip(|window, cx| {
-                    gpui_component::tooltip::Tooltip::new("Delete session and Kathamo history")
+                    gpui_component::tooltip::Tooltip::new("Delete session and Shob history")
                         .build(window, cx)
                 })
                 .invisible()
@@ -18165,7 +18143,7 @@ impl Render for AppState {
                 .items_center()
                 .justify_center()
                 .bg(self.tokens(cx).window_bg)
-                .child(gpui::img("kathamo.png").w(px(96.0)).h(px(96.0)))
+                .child(gpui::img("shob.png").w(px(96.0)).h(px(96.0)))
                 .into_any_element();
         }
         let diag_render = diagnostics::render_start();
@@ -18357,7 +18335,7 @@ impl Render for AppState {
                                                     })
                                                     .px(px(16.0))
                                                     .pb(px(8.0))
-                                                    .child(self.render_kathamo_input_bar(
+                                                    .child(self.render_shob_input_bar(
                                                         pane, true, _window, cx,
                                                     )),
                                             ),
@@ -18384,7 +18362,7 @@ impl Render for AppState {
                                                     .max_w(px(784.0))
                                                     .px(px(16.0))
                                                     .pb(px(8.0))
-                                                    .child(self.render_kathamo_input_bar(
+                                                    .child(self.render_shob_input_bar(
                                                         pane, true, _window, cx,
                                                     )),
                                             )
@@ -18931,7 +18909,7 @@ fn ensure_linux_desktop_entry() {
     let _ = std::fs::create_dir_all(&apps_dir);
     let _ = std::fs::create_dir_all(&icons_512_dir);
 
-    let icon_path = icons_512_dir.join("kathamo.png");
+    let icon_path = icons_512_dir.join("shob-brand-v3.png");
     let needs_icon_update = match std::fs::read(&icon_path) {
         Ok(existing) => existing != APP_ICON_PNG,
         Err(_) => true,
@@ -18943,29 +18921,29 @@ fn ensure_linux_desktop_entry() {
             for size in [256, 128, 64, 48, 32, 16] {
                 let size_dir = data_dir.join(format!("icons/hicolor/{size}x{size}/apps"));
                 let _ = std::fs::create_dir_all(&size_dir);
-                let target = size_dir.join("kathamo.png");
+                let target = size_dir.join("shob-brand-v3.png");
                 let resized = img.resize_exact(size, size, image::imageops::FilterType::Lanczos3);
                 let _ = resized.save_with_format(&target, image::ImageFormat::Png);
             }
         }
     }
 
-    let exe_path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("kathamo"));
+    let exe_path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("shob"));
     let exe_str = exe_path.to_string_lossy();
 
     let desktop_content = format!(
         "[Desktop Entry]\n\
         Type=Application\n\
-        Name=Kathamo\n\
+        Name=Shob\n\
         Comment=GPU-accelerated terminal\n\
         Exec={exe_str}\n\
-        Icon=kathamo\n\
+        Icon=shob-brand-v3\n\
         Terminal=false\n\
         Categories=System;TerminalEmulator;\n\
-        StartupWMClass=kathamo\n"
+        StartupWMClass=shob\n"
     );
 
-    let desktop_path = apps_dir.join("kathamo.desktop");
+    let desktop_path = apps_dir.join("shob.desktop");
     if std::fs::read(&desktop_path).ok().as_deref() != Some(desktop_content.as_bytes()) {
         let _ = std::fs::write(desktop_path, desktop_content);
     }
@@ -18973,7 +18951,7 @@ fn ensure_linux_desktop_entry() {
 
 fn startup_mark(label: &str) {
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    if std::env::var_os("KATHAMO_STARTUP_TIMINGS").is_some() {
+    if std::env::var_os("SHOB_STARTUP_TIMINGS").is_some() {
         eprintln!(
             "[startup] {label}: {:.2}ms",
             START
@@ -18997,21 +18975,21 @@ fn main() -> Result<()> {
         Some("status") => return cli::run_status(&args.collect::<Vec<_>>()),
         Some("pane") => {
             #[cfg(unix)]
-            return kathamo_compat::run_cli(&args.collect::<Vec<_>>());
+            return shob_compat::run_cli(&args.collect::<Vec<_>>());
             #[cfg(not(unix))]
             anyhow::bail!("native reporting compatibility requires a Unix socket");
         }
         Some("--help" | "-h") => {
             println!(
-                "Usage: kathamo [report|skill|integration|status|status-event|status-hook]\nNative compatibility: kathamo pane <report-agent|report-agent-session|release-agent> ..."
+                "Usage: shob [report|skill|integration|status|status-event|status-hook]\nNative compatibility: shob pane <report-agent|report-agent-session|release-agent> ..."
             );
             return Ok(());
         }
         Some("--version" | "-V") => {
-            println!("kathamo {}", env!("CARGO_PKG_VERSION"));
+            println!("shob {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
-        Some(command) => anyhow::bail!("unsupported Kathamo command: {command}"),
+        Some(command) => anyhow::bail!("unsupported Shob command: {command}"),
         None => {}
     }
     rpi_embedded::set_tool_arrival_hook(crate::stream_timing::tool_arrived);
@@ -19042,18 +19020,18 @@ fn main() -> Result<()> {
             let app_settings = settings::load();
             startup_mark("settings loaded");
             let restore_enabled = app_settings.restore.sessions
-                && std::env::var_os("KATHAMO_DISABLE_RESTORE").is_none();
+                && std::env::var_os("SHOB_DISABLE_RESTORE").is_none();
             let load_history = app_settings.restore.agent_history && restore_enabled;
             let load_scrollback = app_settings.restore.scrollback;
             let window_icon = image::load_from_memory(APP_ICON_PNG).ok().map(|image| Arc::new(image.into_rgba8()));
             gpui_component::init(cx);
-            // Kathamo uses two gpui-component generations: its own 0.5.1 fork
+            // Shob uses two gpui-component generations: its own 0.5.1 fork
             // and the 0.9 stack behind gpui-kit. Their action names collide, so
             // initialize only gpui-kit's theme layer (globals + TextView
             // defaults) and leave its action-registering inits alone.
             gpui_kit::component::theme::init(cx);
             gpui_kit::component::GlobalState::init(cx);
-            init_kathamo_input_bindings(cx);
+            init_shob_input_bindings(cx);
             let initial_mode = app_settings.theme.resolve_mode(cx.window_appearance());
             theme::apply_component_theme(initial_mode, None, cx);
             load_embedded_fonts(cx);
@@ -19080,7 +19058,7 @@ fn main() -> Result<()> {
                     window_bounds: Some(bounds),
                     window_min_size: Some(settings::minimum_window_size()),
                     window_decorations: Some(WindowDecorations::Client),
-                    app_id: Some("kathamo".to_string()),
+                    app_id: Some("shob".to_string()),
                     icon: window_icon,
                     ..TitleBar::window_options()
                 },
@@ -19125,7 +19103,7 @@ fn main() -> Result<()> {
                         settings: app_settings.clone(),
                         dirty: false,
                         last_window_bounds: app_settings.window,
-                        persistence_enabled: std::env::var_os("KATHAMO_DISABLE_RESTORE").is_none(),
+                        persistence_enabled: std::env::var_os("SHOB_DISABLE_RESTORE").is_none(),
                         clear_data_confirm: false,
                     });
                     app_state.update(cx, |state, cx| state.observe_appearance(window, cx));
@@ -19392,7 +19370,7 @@ fn main() -> Result<()> {
 
                     // Opt-in diagnostics: one line per second with frame
                     // timing, UI-thread work, CPU, RSS and wakeups. Not spawned
-                    // at all unless `KATHAMO_DIAGNOSTICS` is set.
+                    // at all unless `SHOB_DIAGNOSTICS` is set.
                     if diagnostics::enabled() {
                         cx.spawn(async move |cx: &mut gpui::AsyncApp| {
                             let mut sampler = diagnostics::Sampler::new();
@@ -19406,10 +19384,10 @@ fn main() -> Result<()> {
                         .detach();
                     }
 
-                    // TEMPORARY DIAGNOSTIC: KATHAMO_RESIZE_PROBE=<rounds> drags
+                    // TEMPORARY DIAGNOSTIC: SHOB_RESIZE_PROBE=<rounds> drags
                     // the window edge in small steps, the way a real resize
                     // does, while the status poller keeps ticking.
-                    if let Some(probe) = std::env::var_os("KATHAMO_RESIZE_PROBE").or_else(|| std::env::var_os("MARKUP_RESIZE_PROBE")) {
+                    if let Some(probe) = std::env::var_os("SHOB_RESIZE_PROBE").or_else(|| std::env::var_os("MARKUP_RESIZE_PROBE")) {
                         let rounds: usize = probe.to_string_lossy().parse().unwrap_or(10);
                         let handle = window.window_handle();
                         cx.spawn(async move |cx: &mut gpui::AsyncApp| {
@@ -19575,7 +19553,7 @@ mod resize_tests {
         AppState {
             projects: vec![Project {
                 id: 1,
-                name: SharedString::from("kathamo"),
+                name: SharedString::from("shob"),
                 path: dir,
                 sessions: vec![Session {
                     id: 1,
@@ -19642,7 +19620,7 @@ mod resize_tests {
             gpui_component::init(cx);
             gpui_kit::component::theme::init(cx);
             gpui_kit::component::GlobalState::init(cx);
-            init_kathamo_input_bindings(cx);
+            init_shob_input_bindings(cx);
             theme::apply_component_theme(gpui_component::ThemeMode::Dark, None, cx);
             load_embedded_fonts(cx);
             sync_component_fonts(cx);
@@ -19656,7 +19634,7 @@ mod resize_tests {
                     WindowOptions {
                         window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),
                         window_decorations: Some(WindowDecorations::Client),
-                        app_id: Some("kathamo".to_string()),
+                        app_id: Some("shob".to_string()),
                         icon: image::load_from_memory(APP_ICON_PNG)
                             .ok()
                             .map(|image| Arc::new(image.into_rgba8())),
@@ -19701,9 +19679,7 @@ mod resize_tests {
             let artwork = cx
                 .debug_bounds("theme-ascii-glow")
                 .expect("ASCII background");
-            let composer = cx
-                .debug_bounds("kathamo-input-bar")
-                .expect("welcome composer");
+            let composer = cx.debug_bounds("shob-input-bar").expect("welcome composer");
             assert!(
                 cx.debug_bounds("focused-agent-info").is_none(),
                 "welcome screen hides project details"
@@ -19718,7 +19694,7 @@ mod resize_tests {
             assert!(composer.left() >= px(0.0));
             assert!(composer.right() <= px(width));
             assert!(composer.bottom() <= px(height));
-            if let Some(dir) = std::env::var_os("KATHAMO_WELCOME_SCREENSHOT_DIR") {
+            if let Some(dir) = std::env::var_os("SHOB_WELCOME_SCREENSHOT_DIR") {
                 for _ in 0..4 {
                     cx.run_until_parked();
                     cx.draw_frame().unwrap();
@@ -19795,7 +19771,7 @@ mod resize_tests {
                 cx.notify();
             });
             cx.draw_frame().unwrap();
-            let bar = cx.debug_bounds("kathamo-input-bar").expect("input bar");
+            let bar = cx.debug_bounds("shob-input-bar").expect("input bar");
             let pixel = cx.update(|window, _| {
                 let image = window.render_to_image().unwrap();
                 let scale = window.scale_factor();
@@ -19823,7 +19799,7 @@ mod resize_tests {
                 chat.selected_model = Some(agent_auth::AgentModel {
                     provider: "google-antigravity".into(),
                     id: "gemini-3.8-flash".into(),
-                    backend: agent_auth::ModelBackend::Kathamo,
+                    backend: agent_auth::ModelBackend::Shob,
                 });
                 s.apply_theme_preference(None, cx);
                 cx.notify();
@@ -19849,8 +19825,7 @@ mod resize_tests {
             let picker = cx.debug_bounds("agent-model-panel").unwrap();
             assert!((trigger.top() - picker.bottom() - px(4.0)).abs() < px(1.0));
             assert!((trigger.right() - picker.right()).abs() < px(1.0));
-            if agent_layout && let Some(path) = std::env::var_os("KATHAMO_MODEL_PICKER_SCREENSHOT")
-            {
+            if agent_layout && let Some(path) = std::env::var_os("SHOB_MODEL_PICKER_SCREENSHOT") {
                 cx.update(|window, _| window.render_to_image().unwrap().save(path).unwrap());
             }
             let medium = cx.debug_bounds("model-reasoning-medium").unwrap();
@@ -19903,8 +19878,8 @@ mod resize_tests {
         let row = cx.debug_bounds("agent-model-0").unwrap();
         let manage = cx.debug_bounds("agent-more-providers").unwrap();
         assert!(row.bottom() < manage.top());
-        if let Some(path) = std::env::var_os("KATHAMO_MODEL_PICKER_SCREENSHOT") {
-            let path = PathBuf::from(path).with_file_name("kathamo-picker-light-narrow.png");
+        if let Some(path) = std::env::var_os("SHOB_MODEL_PICKER_SCREENSHOT") {
+            let path = PathBuf::from(path).with_file_name("shob-picker-light-narrow.png");
             cx.update(|window, _| window.render_to_image().unwrap().save(path).unwrap());
         }
     }
@@ -20014,7 +19989,7 @@ mod resize_tests {
         });
         cx.draw_frame().unwrap();
         let usage = cx.debug_bounds("agent-usage").expect("usage visible");
-        let composer = cx.debug_bounds("kathamo-input-bar").unwrap();
+        let composer = cx.debug_bounds("shob-input-bar").unwrap();
         assert!(cx.debug_bounds("input-mode-terminal-pill").is_none());
         assert!(cx.debug_bounds("input-mode-agent-pill").is_none());
         let chat = cx.debug_bounds("agent-chat").unwrap();
@@ -20044,7 +20019,7 @@ mod resize_tests {
             cx.debug_bounds("agent-usage").is_none(),
             "usage is hidden before a response"
         );
-        let empty_bar_height = cx.debug_bounds("kathamo-input-bar").unwrap().size.height;
+        let empty_bar_height = cx.debug_bounds("shob-input-bar").unwrap().size.height;
         cx.update_window_entity(&state, |s, _, cx| {
             let chat = &mut s.projects[0].sessions[0].panes[0].chat;
             chat.observe_status(&AgentEvent::Usage(rpi_embedded::AgentUsage::default()));
@@ -20089,7 +20064,7 @@ mod resize_tests {
         cx.draw_frame().expect("render usage footer");
         let footer = cx.debug_bounds("agent-usage").expect("agent usage visible");
         let editor = cx.debug_bounds("agent-composer-input").unwrap();
-        let bar = cx.debug_bounds("kathamo-input-bar").unwrap();
+        let bar = cx.debug_bounds("shob-input-bar").unwrap();
         assert_eq!(
             empty_bar_height, bar.size.height,
             "usage must not change input height"
@@ -20097,7 +20072,7 @@ mod resize_tests {
         assert!(footer.top() >= editor.bottom());
         assert!(footer.bottom() <= bar.bottom());
         assert!(footer.right() <= bar.right());
-        if let Some(path) = std::env::var_os("KATHAMO_USAGE_SCREENSHOT") {
+        if let Some(path) = std::env::var_os("SHOB_USAGE_SCREENSHOT") {
             cx.update(|window, _| window.render_to_image().unwrap().save(path).unwrap());
         }
         cx.update_window_entity(&state, |s, _, cx| {
@@ -20169,7 +20144,7 @@ mod resize_tests {
             s.set_chat_mode(id, true, window, cx)
         });
         cx.draw_frame().unwrap();
-        let input = cx.debug_bounds("kathamo-input-bar").unwrap();
+        let input = cx.debug_bounds("shob-input-bar").unwrap();
         let mode = cx.debug_bounds("input-mode-agent-pill").unwrap();
         let toggle = cx.debug_bounds("agent-info-toggle").unwrap();
         let editor = cx.debug_bounds("agent-composer-input").unwrap();
@@ -20274,7 +20249,7 @@ mod resize_tests {
         let model = agent_auth::AgentModel {
             provider: "google-antigravity".into(),
             id: "gemini-test".into(),
-            backend: agent_auth::ModelBackend::Kathamo,
+            backend: agent_auth::ModelBackend::Shob,
         };
         cx.update_window_entity(&state, |s, window, cx| {
             s.create_new_session_in_project(0, window, cx);
@@ -20603,7 +20578,7 @@ mod resize_tests {
         });
         cx.draw_frame().unwrap();
         let menu = cx.debug_bounds("completion-menu").unwrap();
-        let bar = cx.debug_bounds("kathamo-input-bar").unwrap();
+        let bar = cx.debug_bounds("shob-input-bar").unwrap();
         let input = cx.debug_bounds("agent-composer-input").unwrap();
         assert!(
             menu.bottom() <= input.top(),
@@ -20632,7 +20607,7 @@ mod resize_tests {
             cx.run_until_parked();
             cx.draw_frame().unwrap();
             let menu = cx.debug_bounds("completion-menu").unwrap();
-            let bar = cx.debug_bounds("kathamo-input-bar").unwrap();
+            let bar = cx.debug_bounds("shob-input-bar").unwrap();
             assert!(
                 (menu.center().x - bar.center().x).abs() <= px(1.0),
                 "menu {menu:?}, bar {bar:?}"
@@ -20968,12 +20943,12 @@ mod resize_tests {
         let deepseek = agent_auth::AgentModel {
             provider: "commandcode".into(),
             id: "deepseek/deepseek-v4-flash".into(),
-            backend: agent_auth::ModelBackend::Kathamo,
+            backend: agent_auth::ModelBackend::Shob,
         };
         let grok = agent_auth::AgentModel {
             provider: "xai-oauth".into(),
             id: "grok-4.7".into(),
-            backend: agent_auth::ModelBackend::Kathamo,
+            backend: agent_auth::ModelBackend::Shob,
         };
         cx.update_window_entity(&state, |s, window, cx| {
             s.set_chat_mode(pane_id, true, window, cx);
@@ -21038,7 +21013,7 @@ mod resize_tests {
         let model = agent_auth::AgentModel {
             provider: "google-antigravity".into(),
             id: "gemini-default".into(),
-            backend: agent_auth::ModelBackend::Kathamo,
+            backend: agent_auth::ModelBackend::Shob,
         };
         let pane_id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
         cx.update_window_entity(&state, |s, window, cx| {
@@ -21087,7 +21062,7 @@ mod resize_tests {
  "rating":{"type":"Rating","props":{"value":4,"max":5}},
  "spinner":{"type":"Spinner","props":{"size":"sm"}},
  "skeleton":{"type":"Skeleton","props":{"height":12}},
- "avatar":{"type":"Avatar","props":{"name":"Kathamo"}},
+ "avatar":{"type":"Avatar","props":{"name":"Shob"}},
  "icon":{"type":"Icon","props":{"name":"sparkles","size":"sm"}},
  "kbd":{"type":"Kbd","props":{"keys":"cmd-k"}},
  "desc":{"type":"DescriptionList","props":{"items":[{"label":"Owner","value":"platform"},{"label":"Window","value":"7 days"}]}},
@@ -21220,12 +21195,12 @@ Done."#
         let deepseek = agent_auth::AgentModel {
             provider: "commandcode".into(),
             id: "deepseek/deepseek-v4-flash".into(),
-            backend: agent_auth::ModelBackend::Kathamo,
+            backend: agent_auth::ModelBackend::Shob,
         };
         let grok = agent_auth::AgentModel {
             provider: "xai-oauth".into(),
             id: "grok-4.7".into(),
-            backend: agent_auth::ModelBackend::Kathamo,
+            backend: agent_auth::ModelBackend::Shob,
         };
         cx.update_window_entity(&state, |s, window, cx| {
             s.split_pane(1, gpui::Axis::Horizontal, window, cx);
@@ -21256,7 +21231,7 @@ Done."#
             projects: vec![workspace_state::SavedProject {
                 id: 1,
                 path: std::env::current_dir().unwrap(),
-                name: "kathamo".into(),
+                name: "shob".into(),
                 expanded: true,
                 active_session: 0,
                 sessions: vec![workspace_state::SavedSession {
@@ -21284,7 +21259,7 @@ Done."#
                                 selected_model: Some(agent_auth::AgentModel {
                                     provider: "commandcode".into(),
                                     id: "deepseek/deepseek-v4-flash".into(),
-                                    backend: agent_auth::ModelBackend::Kathamo,
+                                    backend: agent_auth::ModelBackend::Shob,
                                 }),
                                 model_explicit: true,
                                 ..Default::default()
@@ -21301,7 +21276,7 @@ Done."#
                                 selected_model: Some(agent_auth::AgentModel {
                                     provider: "xai-oauth".into(),
                                     id: "grok-4.7".into(),
-                                    backend: agent_auth::ModelBackend::Kathamo,
+                                    backend: agent_auth::ModelBackend::Shob,
                                 }),
                                 model_explicit: true,
                                 ..Default::default()
@@ -21335,7 +21310,7 @@ Done."#
         let default = agent_auth::AgentModel {
             provider: "google-antigravity".into(),
             id: "gemini-3.8-flash".into(),
-            backend: agent_auth::ModelBackend::Kathamo,
+            backend: agent_auth::ModelBackend::Shob,
         };
         cx.update_window_entity(&state, |s, _, cx| {
             s.settings.default_agent_model = Some(default.clone());
@@ -21390,7 +21365,7 @@ Done."#
             projects: vec![workspace_state::SavedProject {
                 id: 1,
                 path: std::env::current_dir().unwrap(),
-                name: "kathamo".into(),
+                name: "shob".into(),
                 expanded: true,
                 active_session: 0,
                 sessions: vec![workspace_state::SavedSession {
@@ -21423,7 +21398,7 @@ Done."#
             s.settings.default_agent_model = Some(agent_auth::AgentModel {
                 provider: "xai-oauth".into(),
                 id: "grok-4.7".into(),
-                backend: agent_auth::ModelBackend::Kathamo,
+                backend: agent_auth::ModelBackend::Shob,
             });
             s.startup_loaded = false;
             s.apply_saved_workspace(
@@ -21453,7 +21428,7 @@ Done."#
         let model = agent_auth::AgentModel {
             provider: "commandcode".into(),
             id: "deepseek/deepseek-v4-flash".into(),
-            backend: agent_auth::ModelBackend::Kathamo,
+            backend: agent_auth::ModelBackend::Shob,
         };
         assert_eq!(
             agent_model_selector(&model),
@@ -21915,8 +21890,7 @@ mod pane_tests {
 
     #[test]
     fn repeated_links_and_changes_reuse_the_same_preview_pane() {
-        let dir =
-            std::env::temp_dir().join(format!("kathamo-reuse-preview-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("shob-reuse-preview-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let first = dir.join("first.md");
         let second = dir.join("second.md");
@@ -21968,7 +21942,7 @@ mod pane_tests {
 
     #[test]
     fn local_file_url_opens_editor_beside_agent() {
-        let dir = std::env::temp_dir().join(format!("kathamo-local-link-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("shob-local-link-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("App.svelte");
         std::fs::write(&path, "<h1>Hello</h1>\n").unwrap();
@@ -22002,7 +21976,7 @@ mod pane_tests {
 
     #[test]
     fn clicking_changed_file_opens_read_only_editor() {
-        let dir = std::env::temp_dir().join(format!("kathamo-click-file-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("shob-click-file-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("example.rs"), "fn main() {}\n").unwrap();
         let mut cx = TestAppContext::new();
@@ -22244,7 +22218,7 @@ mod pane_tests {
 
     #[test]
     fn session_isolation_switch_tabs_keeps_screens_separate() {
-        // The Kathamo-style isolation contract: creating a second session must
+        // The Shob-style isolation contract: creating a second session must
         // not touch the first session's pane tree, and each tab renders its
         // own screen.
         let mut cx = TestAppContext::new();
@@ -22301,7 +22275,7 @@ mod pane_tests {
         let (mut cx, app_state) = open_app(&mut cx);
         cx.draw_frame().expect("initial frame");
 
-        let dir = scratch_project_dir("kathamo-multi-project-open");
+        let dir = scratch_project_dir("shob-multi-project-open");
         cx.update_window_entity(&app_state, |state, window, cx| {
             state.open_project_path(dir, window, cx);
         });
@@ -22330,7 +22304,7 @@ mod pane_tests {
         let (mut cx, app_state) = open_app(&mut cx);
         cx.draw_frame().expect("initial frame");
 
-        let dir = scratch_project_dir("kathamo-multi-project-sessions");
+        let dir = scratch_project_dir("shob-multi-project-sessions");
         cx.update_window_entity(&app_state, |state, window, cx| {
             state.open_project_path(dir, window, cx);
         });
@@ -22362,7 +22336,7 @@ mod pane_tests {
         let (mut cx, app_state) = open_app(&mut cx);
         cx.draw_frame().expect("initial frame");
 
-        let dir = scratch_project_dir("kathamo-multi-project-close");
+        let dir = scratch_project_dir("shob-multi-project-close");
         cx.update_window_entity(&app_state, |state, window, cx| {
             state.open_project_path(dir, window, cx);
         });
@@ -22400,7 +22374,7 @@ mod pane_tests {
         });
         assert_eq!(project_count, 1);
         assert_eq!(active_sessions, 1);
-        assert_eq!(name, "kathamo-multi-project-close");
+        assert_eq!(name, "shob-multi-project-close");
     }
 
     #[test]
@@ -22434,7 +22408,7 @@ mod pane_tests {
         let (mut cx, app_state) = open_app(&mut cx);
         cx.draw_frame().expect("initial frame");
 
-        let dir = scratch_project_dir("kathamo-multi-project-collapse");
+        let dir = scratch_project_dir("shob-multi-project-collapse");
         cx.update_window_entity(&app_state, |state, window, cx| {
             state.open_project_path(dir, window, cx);
         });
@@ -22660,7 +22634,7 @@ mod pane_tests {
         let mut cx = TestAppContext::new();
         let (mut cx, app_state) = open_app(&mut cx);
 
-        let dir = scratch_project_dir("kathamo-menu-remove");
+        let dir = scratch_project_dir("shob-menu-remove");
         cx.update_window_entity(&app_state, |state, window, cx| {
             state.open_project_path(dir, window, cx);
         });
@@ -22884,7 +22858,7 @@ mod settings_and_theme_tests {
 }
 
 #[cfg(test)]
-mod kathamo_bottom_input_tests {
+mod shob_bottom_input_tests {
     use super::*;
     use gpui::{Modifiers, VisualContext, point};
     use resize_tests::{DrawFrame, TestAppContext, open_app};
@@ -22974,7 +22948,7 @@ mod kathamo_bottom_input_tests {
             .debug_bounds("agent-composer-input")
             .expect("terminal input renders");
         let terminal_bar = cx
-            .debug_bounds("kathamo-input-bar")
+            .debug_bounds("shob-input-bar")
             .expect("terminal composer renders");
         let terminal_terminal_mode = cx
             .debug_bounds("input-mode-terminal-pill")
@@ -23010,7 +22984,7 @@ mod kathamo_bottom_input_tests {
             .debug_bounds("agent-composer-input")
             .expect("agent input renders");
         let agent_bar = cx
-            .debug_bounds("kathamo-input-bar")
+            .debug_bounds("shob-input-bar")
             .expect("agent composer renders");
         assert_eq!(
             agent_bar.size.height, terminal_bar.size.height,
@@ -23568,7 +23542,7 @@ First report
             selected_model: Some(agent_auth::AgentModel {
                 provider: "google-antigravity".into(),
                 id: "gemini-3.8-flash".into(),
-                backend: agent_auth::ModelBackend::Kathamo,
+                backend: agent_auth::ModelBackend::Shob,
             }),
             ..PaneChat::default()
         };
@@ -23610,7 +23584,7 @@ First report
         let model = |provider: &str| agent_auth::AgentModel {
             provider: provider.into(),
             id: "model".into(),
-            backend: agent_auth::ModelBackend::Kathamo,
+            backend: agent_auth::ModelBackend::Shob,
         };
         let mut chat = PaneChat {
             bridge_model: Some(model("anthropic")),
@@ -23920,7 +23894,7 @@ First report
         let model = agent_auth::AgentModel {
             provider: "google-antigravity".into(),
             id: "gemini-example".into(),
-            backend: agent_auth::ModelBackend::Kathamo,
+            backend: agent_auth::ModelBackend::Shob,
         };
         cx.update_window_entity(&state, |s, window, cx| {
             s.set_chat_mode(id, true, window, cx);
@@ -23933,7 +23907,7 @@ First report
             auth.providers = vec![agent_auth::Provider {
                 id: "google-antigravity".into(),
                 ready: true,
-                source: Some("Kathamo credential".into()),
+                source: Some("Shob credential".into()),
             }];
             auth.models = vec![model.clone()];
         });
@@ -24110,7 +24084,7 @@ First report
         let connected = agent_auth::AgentModel {
             provider: "google-antigravity".into(),
             id: "gemini-connected".into(),
-            backend: agent_auth::ModelBackend::Kathamo,
+            backend: agent_auth::ModelBackend::Shob,
         };
         let disconnected = agent_auth::AgentModel {
             provider: "anthropic".into(),
@@ -24144,7 +24118,7 @@ First report
                 agent_auth::Provider {
                     id: "google-antigravity".into(),
                     ready: true,
-                    source: Some("Kathamo credential".into()),
+                    source: Some("Shob credential".into()),
                 },
                 agent_auth::Provider {
                     id: "ollama".into(),
@@ -24390,7 +24364,7 @@ First report
                 agent_auth::Provider {
                     id: "google-antigravity".into(),
                     ready: true,
-                    source: Some("Kathamo credential".into()),
+                    source: Some("Shob credential".into()),
                 },
             ];
         });
@@ -24426,7 +24400,7 @@ First report
     }
 
     #[test]
-    fn kathamo_bottom_input_history_and_execution() {
+    fn shob_bottom_input_history_and_execution() {
         let mut cx = TestAppContext::new();
         let (mut cx, app_state) = open_app(&mut cx);
         cx.draw_frame().expect("draw initial frame");
@@ -24527,7 +24501,7 @@ First report
     }
 
     #[test]
-    fn kathamo_bottom_input_clear_and_cancel() {
+    fn shob_bottom_input_clear_and_cancel() {
         let mut cx = TestAppContext::new();
         let (mut cx, app_state) = open_app(&mut cx);
         cx.draw_frame().expect("draw initial frame");
@@ -24899,7 +24873,7 @@ First report
         cx.draw_frame().expect("draw initial frame");
 
         let path =
-            std::env::temp_dir().join(format!("kathamo-ui-attachment-{}.png", std::process::id()));
+            std::env::temp_dir().join(format!("shob-ui-attachment-{}.png", std::process::id()));
         image::RgbaImage::from_pixel(4, 3, image::Rgba([200, 80, 20, 255]))
             .save(&path)
             .expect("write test image");
@@ -24960,10 +24934,8 @@ First report
         let (mut cx, app_state) = open_app(&mut cx);
         cx.draw_frame().expect("draw initial frame");
 
-        let path = std::env::temp_dir().join(format!(
-            "kathamo-copied-image-path-{}.png",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("shob-copied-image-path-{}.png", std::process::id()));
         image::RgbaImage::from_pixel(2, 2, image::Rgba([5, 90, 150, 255]))
             .save(&path)
             .expect("write test image");
@@ -25726,7 +25698,7 @@ First report
         // Force the metadata timings this test prints. Safe here: the ignored
         // benchmark runs alone and this happens before the first frame.
         unsafe {
-            std::env::set_var("KATHAMO_STREAM_TIMINGS", "1");
+            std::env::set_var("SHOB_STREAM_TIMINGS", "1");
         }
         measure_chat_frames("short", 24, 16, 1);
         measure_chat_frames("long", 240, 3, 1);
@@ -25734,7 +25706,7 @@ First report
     }
 
     #[test]
-    #[ignore = "real PTY output through headless GPUI; enable KATHAMO_DIAGNOSTICS"]
+    #[ignore = "real PTY output through headless GPUI; enable SHOB_DIAGNOSTICS"]
     fn terminal_stream_frame_benchmark() {
         let mut app = TestAppContext::new();
         let (mut cx, state) = open_app(&mut app);
@@ -25753,7 +25725,7 @@ First report
         cx.update_window_entity(&state, |state, window, cx| {
             let input = state.pane_ref(id).unwrap().input_state.clone().unwrap();
             input.update(cx, |input, cx| input.set_value(
-                "bash -c 'for ((i=0;i<20000;i++)); do printf \"\\033[31mstream line %s\\033[0m\\n\" \"$i\"; done; printf \"KATHAMO_STREAM_%s\\n\" END'",
+                "bash -c 'for ((i=0;i<20000;i++)); do printf \"\\033[31mstream line %s\\033[0m\\n\" \"$i\"; done; printf \"SHOB_STREAM_%s\\n\" END'",
                 window, cx,
             ));
             state.execute_pane_input(id, window, cx);
@@ -25776,7 +25748,7 @@ First report
                     .read(cx)
                     .bottom_lines(8)
                     .iter()
-                    .any(|line| line.trim() == "KATHAMO_STREAM_END")
+                    .any(|line| line.trim() == "SHOB_STREAM_END")
             });
             if complete {
                 break;
@@ -25848,7 +25820,7 @@ First report
             });
             cx.draw_frame().unwrap();
             if sample == 0 {
-                if let Some(path) = std::env::var_os("KATHAMO_BENCH_SCREENSHOT") {
+                if let Some(path) = std::env::var_os("SHOB_BENCH_SCREENSHOT") {
                     cx.update(|window, _| {
                         window
                             .render_to_image()
@@ -25883,7 +25855,7 @@ First report
         use agent_bridge::AgentEvent;
         use std::time::Duration;
 
-        let cwd = PathBuf::from(std::env::var_os("KATHAMO_BENCH_CWD").unwrap());
+        let cwd = PathBuf::from(std::env::var_os("SHOB_BENCH_CWD").unwrap());
         let (wake_tx, wake_rx) = std::sync::mpsc::sync_channel(1);
         agent_bridge::set_wake(Arc::new(move || {
             let _ = wake_tx.try_send(());
@@ -25946,7 +25918,7 @@ First report
         rpi_embedded::set_tool_arrival_hook(timing::tool_arrived);
         rpi_embedded::set_tool_end_hook(timing::tool_finished);
         rpi_embedded::set_tool_output_hook(timing::tool_output_arrived);
-        let cwd = PathBuf::from(std::env::var_os("KATHAMO_BENCH_CWD").unwrap());
+        let cwd = PathBuf::from(std::env::var_os("SHOB_BENCH_CWD").unwrap());
         let (wake_tx, wake_rx) = std::sync::mpsc::sync_channel(1);
         agent_bridge::set_wake(Arc::new(move || {
             let _ = wake_tx.try_send(());
@@ -26043,7 +26015,7 @@ First report
         use agent_bridge::AgentEvent;
         use std::time::{Duration, Instant};
 
-        let cwd = PathBuf::from(std::env::var_os("KATHAMO_BENCH_CWD").unwrap());
+        let cwd = PathBuf::from(std::env::var_os("SHOB_BENCH_CWD").unwrap());
         let (wake_tx, wake_rx) = std::sync::mpsc::sync_channel(1);
         agent_bridge::set_wake(Arc::new(move || {
             let _ = wake_tx.try_send(());
@@ -26106,15 +26078,15 @@ First report
         use std::sync::Arc;
         use std::time::{Duration, Instant};
 
-        let cwd = PathBuf::from(std::env::var_os("KATHAMO_BENCH_CWD").unwrap());
+        let cwd = PathBuf::from(std::env::var_os("SHOB_BENCH_CWD").unwrap());
         let (wake_tx, wake_rx) = std::sync::mpsc::sync_channel(1);
         agent_bridge::set_wake(Arc::new(move || {
             let _ = wake_tx.try_send(());
         }));
         unsafe {
-            std::env::set_var("KATHAMO_STREAM_TIMINGS", "1");
+            std::env::set_var("SHOB_STREAM_TIMINGS", "1");
         }
-        let settle = std::env::var_os("KATHAMO_BENCH_SETTLE").is_some();
+        let settle = std::env::var_os("SHOB_BENCH_SETTLE").is_some();
         let mut resumed_session: Option<String> = None;
         for sample in 0..12 {
             let startup = Instant::now();
@@ -26568,7 +26540,7 @@ First report
         // 3. Transcript history: serialize + write + flush on the UI thread
         // before, serialize + enqueue after.
         let path = std::env::temp_dir().join(format!(
-            "kathamo-stream-bench-{}-{}.jsonl",
+            "shob-stream-bench-{}-{}.jsonl",
             std::process::id(),
             paths::uid("b")
         ));

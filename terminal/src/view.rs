@@ -886,7 +886,7 @@ impl TerminalView {
     }
 
     /// Write `text` to the PTY with paste semantics even while the view is
-    /// read-only. The Kathamo input bar owns delivery, so agent TUIs still
+    /// read-only. The Shob input bar owns delivery, so agent TUIs still
     /// need bracketed-paste framing to recognize pasted image paths and attach
     /// them instead of showing the raw path.
     pub fn paste_text_from_app(&mut self, text: &str, cx: &mut Context<Self>) {

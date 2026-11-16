@@ -54,7 +54,7 @@ const MAX_NODES: usize = 300;
 const MAX_DEPTH: usize = 24;
 const MAX_SPEC_BYTES: usize = 256 * 1024;
 
-pub(crate) const CATALOG_PROMPT: &str = r#"## Kathamo UI cards
+pub(crate) const CATALOG_PROMPT: &str = r#"## Shob UI cards
 
 When a visual, chart, comparison, or dashboard would help the user, render it
 inline using the format below. Use the components creatively for the user's

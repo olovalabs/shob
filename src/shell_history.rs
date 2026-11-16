@@ -1,6 +1,6 @@
 //! Shell history loading and merging.
 //!
-//! Kathamo's input bar is backed by the shell's own command history, not just the
+//! Shob's input bar is backed by the shell's own command history, not just the
 //! commands typed since the app started: on first use the
 //! common history files (zsh, bash, fish) are read once and cached for the
 //! process, then merged with the in-session commands each time the input bar
@@ -193,8 +193,7 @@ mod tests {
     use super::*;
 
     fn write_temp(name: &str, contents: &str) -> PathBuf {
-        let path =
-            std::env::temp_dir().join(format!("kathamo-history-{}-{name}", std::process::id()));
+        let path = std::env::temp_dir().join(format!("shob-history-{}-{name}", std::process::id()));
         std::fs::write(&path, contents).expect("write history fixture");
         path
     }

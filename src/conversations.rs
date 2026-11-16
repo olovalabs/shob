@@ -76,7 +76,7 @@ enum WriteJob {
 static WRITER: LazyLock<Writer> = LazyLock::new(|| {
     let (sender, receiver) = mpsc::sync_channel::<WriteJob>(MAX_QUEUED_ENTRIES);
     let _ = std::thread::Builder::new()
-        .name("kathamo-conversation-writer".into())
+        .name("shob-conversation-writer".into())
         .spawn(move || writer_loop(receiver));
     Writer {
         sender,
@@ -398,7 +398,7 @@ pub fn conversation_key(model: Option<&AgentModel>) -> String {
         Some(model) => {
             let backend = match model.backend {
                 ModelBackend::Rpi => "rpi",
-                ModelBackend::Kathamo => "kathamo",
+                ModelBackend::Shob => "shob",
             };
             sanitize(&format!("{backend}_{}_{}", model.provider, model.id))
         }
@@ -408,7 +408,7 @@ pub fn conversation_key(model: Option<&AgentModel>) -> String {
 /// Historical model-specific transcripts used the former backend name.
 pub fn legacy_conversation_key(model: Option<&AgentModel>) -> String {
     match model {
-        Some(model) if model.backend == ModelBackend::Kathamo => {
+        Some(model) if model.backend == ModelBackend::Shob => {
             sanitize(&format!("omp_{}_{}", model.provider, model.id))
         }
         _ => conversation_key(model),
@@ -591,7 +591,7 @@ mod tests {
 
     fn temp_log(name: &str, max_bytes: u64) -> Log {
         let path = std::env::temp_dir().join(format!(
-            "kathamo-conversations-{name}-{}.jsonl",
+            "shob-conversations-{name}-{}.jsonl",
             paths::uid("t")
         ));
         Log::at_path(path, max_bytes)
@@ -895,10 +895,10 @@ mod tests {
         let model = AgentModel {
             provider: "google/antigravity".into(),
             id: "gemini:3.1".into(),
-            backend: ModelBackend::Kathamo,
+            backend: ModelBackend::Shob,
         };
         let key = conversation_key(Some(&model));
-        assert_eq!(key, "kathamo_google_antigravity_gemini_3.1");
+        assert_eq!(key, "shob_google_antigravity_gemini_3.1");
         assert_eq!(conversation_key(None), "default");
     }
 

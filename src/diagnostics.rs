@@ -1,7 +1,7 @@
 //! Opt-in runtime diagnostics for frame timing, UI-thread work, process CPU,
 //! memory and wakeups.
 //!
-//! Enabled with `KATHAMO_DIAGNOSTICS=1`. Disabled by default, and when disabled
+//! Enabled with `SHOB_DIAGNOSTICS=1`. Disabled by default, and when disabled
 //! every hook is a single relaxed atomic load — there is no sampling task and
 //! no per-frame syscall. When enabled, one task prints a line per second from
 //! `/proc/self`, which is coarse enough not to perturb what it measures.
@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 static ENABLED: LazyLock<bool> = LazyLock::new(|| {
-    std::env::var_os("KATHAMO_DIAGNOSTICS")
+    std::env::var_os("SHOB_DIAGNOSTICS")
         .or_else(|| std::env::var_os("MARKUP_DIAGNOSTICS"))
         .is_some_and(|value| value != "0")
 });

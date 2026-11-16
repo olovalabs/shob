@@ -1,5 +1,5 @@
 [package]
-name = "kathamo"
+name = "shob"
 version = "0.0.1"
 edition = "2024"
 rust-version = "1.94.1"
@@ -56,7 +56,7 @@ incremental = false
 opt-level = 3
 debug = false
 
-[profile.dev.package.kathamo]
+[profile.dev.package.shob]
 opt-level = 2
 
 [profile.dev.package.gpui-fast]

@@ -265,7 +265,7 @@ mod tests {
     #[test]
     fn markdown_preview_limits_input_and_reports_read_errors() {
         let path = std::env::temp_dir().join(format!(
-            "kathamo-markdown-{}-{}",
+            "shob-markdown-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn marks_staged_unstaged_added_and_deleted_lines_against_head() {
         let dir = std::env::temp_dir().join(format!(
-            "kathamo-markers-{}-{}",
+            "shob-markers-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -426,7 +426,7 @@ mod tests {
     #[test]
     fn reads_text_rejects_binary_and_loads_deleted_from_head() {
         let dir = std::env::temp_dir().join(format!(
-            "kathamo-file-preview-{}-{}",
+            "shob-file-preview-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));

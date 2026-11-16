@@ -1,8 +1,8 @@
-//! Per-user, per-Kathamo-instance lifecycle event transport.
+//! Per-user, per-Shob-instance lifecycle event transport.
 //!
 //! The socket accepts small newline-delimited JSON events from integrations.
 //! Each event is addressed to the pane generation that launched the agent; a
-//! delayed event cannot affect a replacement pane or a second Kathamo window.
+//! delayed event cannot affect a replacement pane or a second Shob window.
 
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -82,7 +82,7 @@ pub fn start() -> std::io::Result<BusIdentity> {
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
         .unwrap_or_else(std::env::temp_dir)
-        .join(format!("kathamo-{uid}"));
+        .join(format!("shob-{uid}"));
     std::fs::create_dir_all(&base)?;
     #[cfg(unix)]
     std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o700))?;
@@ -109,7 +109,7 @@ pub fn start() -> std::io::Result<BusIdentity> {
     std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
     let queue = Arc::clone(&EVENTS);
     std::thread::Builder::new()
-        .name("kathamo-status-socket".into())
+        .name("shob-status-socket".into())
         .spawn(move || {
             for connection in listener.incoming() {
                 let Ok(stream) = connection else { continue };
@@ -118,7 +118,7 @@ pub fn start() -> std::io::Result<BusIdentity> {
                 }
                 let queue = Arc::clone(&queue);
                 let _ = std::thread::Builder::new()
-                    .name("kathamo-status-event".into())
+                    .name("shob-status-event".into())
                     .spawn(move || {
                         read_events(stream, queue);
                     });
@@ -166,7 +166,7 @@ fn read_events(stream: UnixStream, queue: Arc<Mutex<VecDeque<StatusEvent>>>) {
                 if let Ok(request) = serde_json::from_slice::<serde_json::Value>(&line)
                     && request.get("method").is_some()
                 {
-                    let (events, response) = crate::kathamo_compat::request(request);
+                    let (events, response) = crate::shob_compat::request(request);
                     {
                         let mut queue = queue.lock();
                         for event in events.into_iter().filter(valid) {
@@ -246,10 +246,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn kathamo_compat_socket_requests_normalize_and_reply_before_the_next_report() {
+    fn shob_compat_socket_requests_normalize_and_reply_before_the_next_report() {
         use serde_json::json;
         let token = "socket-compatibility-test";
-        crate::kathamo_compat::register("socket-test-app", 21, token);
+        crate::shob_compat::register("socket-test-app", 21, token);
         let (client, server) = UnixStream::pair().unwrap();
         client
             .set_read_timeout(Some(std::time::Duration::from_secs(2)))
@@ -282,7 +282,7 @@ mod tests {
             assert!(events.iter().all(valid));
             events.clear();
         }
-        crate::kathamo_compat::unregister(token);
+        crate::shob_compat::unregister(token);
         drop(client);
         worker.join().unwrap();
     }

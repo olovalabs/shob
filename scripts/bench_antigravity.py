@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Compare cold and warm turns using Kathamo's installed Antigravity runtime.
+"""Compare cold and warm turns using Shob's installed Antigravity runtime.
 
-Pass the installed kathamo-provider executable as the first argument.
+Pass the installed shob-provider executable as the first argument.
 Uses the existing Antigravity login and makes real inference requests.
 Each pair runs the same prompt twice in one process. Cold timing includes
 process startup. Warm timing includes the context from the first turn.
@@ -24,7 +24,7 @@ import time
 
 
 MODEL = "google-antigravity/gemini-3.8-flash"
-PROBE_PREFIX = "kathamo-timing:"
+PROBE_PREFIX = "shob-timing:"
 TIMING_EXTENSION = Path(__file__).resolve().parents[1] / "assets/integrations/omp-timing.mjs"
 EVENTS = [
     "turn_start", "message_update", "auto_retry_start", "tool_execution_start", "tool_execution_end",
@@ -124,7 +124,7 @@ class Turn:
 def provider_env(root):
     env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("OMP_", "PI_"))}
     home = str(root / "home")
-    env.update(HOME=home, USERPROFILE=home, PI_CONFIG_DIR=".kathamo-provider",
+    env.update(HOME=home, USERPROFILE=home, PI_CONFIG_DIR=".shob-provider",
                PI_CODING_AGENT_DIR=str(root / "agent"), OMP_PROFILE="", PI_PROFILE="",
                OMP_AUTH_BROKER_URL="", OMP_AUTH_BROKER_TOKEN="", PI_CONFIG_FILES="")
     for key, folder in {
@@ -175,7 +175,7 @@ def run_turn(process, frames, prompt_id, prompt, start, timeout, ui_handler=None
 
 
 def run_pair(runtime, root, workload, effort, timeout):
-    with tempfile.TemporaryDirectory(prefix="kathamo-antigravity-bench-") as path:
+    with tempfile.TemporaryDirectory(prefix="shob-antigravity-bench-") as path:
         workspace = Path(path)
         (workspace / "alpha.txt").write_text("113\n", encoding="utf-8")
         (workspace / "beta.txt").write_text("127\n", encoding="utf-8")
@@ -251,7 +251,7 @@ def summarize(turns):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("runtime", type=Path, help="path to Kathamo's installed kathamo-provider")
+    parser.add_argument("runtime", type=Path, help="path to Shob's installed shob-provider")
     parser.add_argument("--provider-root", type=Path, help="defaults to the runtime's provider directory")
     parser.add_argument("--samples", type=int, default=3, help="cold/warm pairs per workload, 1–20")
     parser.add_argument("--timeout", type=float, default=75, help="maximum seconds per turn, 1–180")
@@ -266,7 +266,7 @@ def main():
         parser.error("pass --provider-root for a runtime outside the installed directory layout")
     root = args.provider_root.resolve() if args.provider_root else runtime.parents[2]
     if not (root / "agent").is_dir():
-        parser.error("Kathamo provider agent directory not found")
+        parser.error("Shob provider agent directory not found")
     result = {}
     for workload in WORKLOADS:
         pairs = [run_pair(runtime, root, workload, args.effort, args.timeout) for _ in range(args.samples)]

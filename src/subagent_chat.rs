@@ -168,7 +168,7 @@ pub fn structured(name: &str, details: &Value, session: Option<&Path>) -> Vec<Wo
         .collect()
 }
 
-// Older Kathamo logs only stored the rendered OMP tool output.
+// Older Shob logs only stored the rendered OMP tool output.
 pub fn legacy(name: &str, text: &str) -> Vec<Worker> {
     let spawn = is_agent_tool(name) && text.starts_with("Spawned ");
     let wait = name.eq_ignore_ascii_case("wait")

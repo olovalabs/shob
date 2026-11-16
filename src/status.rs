@@ -976,7 +976,7 @@ mod tests {
         // whenever a pack is active.
         assert_ne!(
             eval(
-                &["error: could not compile `kathamo`", "❯ "],
+                &["error: could not compile `shob`", "❯ "],
                 &["claude"],
                 false
             ),
@@ -1013,10 +1013,7 @@ mod tests {
         // be visible in the window.
         assert_eq!(
             eval(
-                &[
-                    "error: could not compile `kathamo`",
-                    "user@host ~/kathamo ❯"
-                ],
+                &["error: could not compile `shob`", "user@host ~/shob ❯"],
                 &[],
                 false
             ),

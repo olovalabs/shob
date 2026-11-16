@@ -26,7 +26,7 @@ pub fn authenticated_providers() -> HashSet<String> {
 }
 
 fn credentials_file_path() -> Option<PathBuf> {
-    if let Some(custom) = std::env::var_os("KATHAMO_DATA_DIR").filter(|v| !v.is_empty()) {
+    if let Some(custom) = std::env::var_os("SHOB_DATA_DIR").filter(|v| !v.is_empty()) {
         return Some(
             PathBuf::from(custom)
                 .join("config")
@@ -34,10 +34,10 @@ fn credentials_file_path() -> Option<PathBuf> {
         );
     }
     directories::BaseDirs::new()
-        .map(|dirs| dirs.config_dir().join("kathamo").join("credentials.json"))
+        .map(|dirs| dirs.config_dir().join("shob").join("credentials.json"))
 }
 
-/// Load credentials map from Kathamo's credentials store.
+/// Load credentials map from Shob's credentials store.
 pub fn load_local_credentials() -> HashMap<String, StoredCredential> {
     let Some(path) = credentials_file_path() else {
         return HashMap::new();
@@ -54,7 +54,7 @@ pub fn load_local_credentials() -> HashMap<String, StoredCredential> {
     serde_json::from_str(&data).unwrap_or_default()
 }
 
-/// Save a credential for a provider in Kathamo's credentials store.
+/// Save a credential for a provider in Shob's credentials store.
 pub fn save_local_credential(provider_id: &str, cred: StoredCredential) -> Result<(), String> {
     let path = credentials_file_path()
         .ok_or_else(|| "Could not determine config directory".to_string())?;
@@ -76,7 +76,7 @@ fn lock_local_credentials(path: &Path) -> Result<fs::File, String> {
         lock.lock()?;
         Ok(lock)
     };
-    acquire().map_err(|error| format!("Could not lock Kathamo credentials: {error}"))
+    acquire().map_err(|error| format!("Could not lock Shob credentials: {error}"))
 }
 
 fn update_local_credentials(
@@ -95,7 +95,7 @@ fn update_local_credentials(
         temporary.persist(path)?;
         Ok(())
     };
-    write().map_err(|error| format!("Could not update Kathamo credentials: {error}"))
+    write().map_err(|error| format!("Could not update Shob credentials: {error}"))
 }
 
 pub fn get_local_credential(provider_id: &str) -> Option<StoredCredential> {
@@ -129,7 +129,7 @@ pub fn disconnect_provider(provider_id: &str) -> Result<(), String> {
             )?;
             Ok(())
         };
-        remove().map_err(|error| format!("Could not disconnect the Kathamo provider: {error}"))?;
+        remove().map_err(|error| format!("Could not disconnect the Shob provider: {error}"))?;
     }
     if let Some(path) = path.filter(|path| path.exists()) {
         update_local_credentials(&path, |map| {

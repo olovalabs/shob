@@ -1,6 +1,6 @@
 //! Opt-in baseline: the pre-embedding rpi RPC subprocess bridge.
 //!
-//! The embedded bridge is the default. Setting `KATHAMO_RPI_BACKEND=rpc` keeps
+//! The embedded bridge is the default. Setting `SHOB_RPI_BACKEND=rpc` keeps
 //! the old process/stdio/JSONL path available for before/after measurements on
 //! a credentialed machine, without changing the UI or the event contract.
 
@@ -112,7 +112,7 @@ impl RpcAgentBridge {
                 emit(&error_events, AgentEvent::Error(error));
             },
         );
-        writer.send_json(json!({"type":"get_state","id":"kathamo-session"}))?;
+        writer.send_json(json!({"type":"get_state","id":"shob-session"}))?;
         let session_id = Arc::new(Mutex::new(session.map(str::to_owned)));
         let model_id = Arc::new(Mutex::new(model.map(str::to_owned)));
         let (stop, stopped) = mpsc::channel();
@@ -337,7 +337,7 @@ impl RpcAgentBridge {
         }
         self.next_id = self.next_id.wrapping_add(1);
         self.writer
-            .send_prompt(format!("kathamo-{}", self.next_id), prompt.to_owned())
+            .send_prompt(format!("shob-{}", self.next_id), prompt.to_owned())
     }
 
     pub(crate) fn steer(&self, text: &str) -> Result<(), String> {
@@ -351,7 +351,7 @@ impl RpcAgentBridge {
         }
         self.next_id = self.next_id.wrapping_add(1);
         self.writer
-            .send_json(json!({"type":"abort","id":format!("kathamo-{}", self.next_id)}))
+            .send_json(json!({"type":"abort","id":format!("shob-{}", self.next_id)}))
     }
 
     pub(crate) fn poll(&mut self) -> Vec<AgentEvent> {
@@ -680,7 +680,7 @@ mod tests {
 
     #[test]
     fn a_slow_rpc_reader_does_not_block_prompt_abort_or_drop() {
-        let dir = std::env::temp_dir().join(crate::paths::uid("kathamo-slow-rpc"));
+        let dir = std::env::temp_dir().join(crate::paths::uid("shob-slow-rpc"));
         std::fs::create_dir_all(&dir).unwrap();
         let script = dir.join("slow-rpi.sh");
         std::fs::write(

@@ -169,7 +169,7 @@ pub struct AppearanceColors {
 }
 
 impl ThemeColors {
-    /// A complete editable copy of Kathamo's built-in Warp colors.
+    /// A complete editable copy of Shob's built-in Warp colors.
     pub fn complete_defaults(scheme: PaletteScheme) -> Self {
         fn hex(color: Hsla) -> String {
             let rgb = terminal::hsla_to_rgb(color);

@@ -60,27 +60,27 @@ jobs:
           test "${GITHUB_REF_NAME#v}" = "$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)"
 
       - name: Build
-        run: cargo build --release -p kathamo
+        run: cargo build --release -p shob
 
       - name: Package
         run: |
           set -euo pipefail
           TARGET=x86_64-unknown-linux-gnu
-          rm -rf "dist/kathamo-$TARGET"
-          mkdir -p "dist/kathamo-$TARGET"
-          cp target/release/kathamo "dist/kathamo-$TARGET/"
-          cp README.md "dist/kathamo-$TARGET/" 2>/dev/null || true
-          tar czf "kathamo-$TARGET.tar.gz" -C dist "kathamo-$TARGET"
-          sha256sum "kathamo-$TARGET.tar.gz" > "kathamo-$TARGET.tar.gz.sha256"
-          ls -lh "kathamo-$TARGET.tar.gz"
+          rm -rf "dist/shob-$TARGET"
+          mkdir -p "dist/shob-$TARGET"
+          cp target/release/shob "dist/shob-$TARGET/"
+          cp README.md "dist/shob-$TARGET/" 2>/dev/null || true
+          tar czf "shob-$TARGET.tar.gz" -C dist "shob-$TARGET"
+          sha256sum "shob-$TARGET.tar.gz" > "shob-$TARGET.tar.gz.sha256"
+          ls -lh "shob-$TARGET.tar.gz"
 
       - name: Upload to the release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            kathamo-x86_64-unknown-linux-gnu.tar.gz
-            kathamo-x86_64-unknown-linux-gnu.tar.gz.sha256
+            shob-x86_64-unknown-linux-gnu.tar.gz
+            shob-x86_64-unknown-linux-gnu.tar.gz.sha256
           generate_release_notes: true
           fail_on_unmatched_files: true
 
@@ -108,32 +108,32 @@ jobs:
           test "${GITHUB_REF_NAME#v}" = "$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)"
 
       - name: Build
-        run: cargo build --release -p kathamo
+        run: cargo build --release -p shob
 
       - name: Package
         shell: pwsh
         run: |
           $t = "x86_64-pc-windows-msvc"
-          Remove-Item -Recurse -Force "dist/kathamo-$t" -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force -Path "dist/kathamo-$t" | Out-Null
-          Copy-Item "target/release/kathamo.exe" "dist/kathamo-$t/"
-          Copy-Item "README.md" "dist/kathamo-$t/" -ErrorAction SilentlyContinue
-          Compress-Archive -Path "dist/kathamo-$t" -DestinationPath "kathamo-$t.zip" -Force
-          ((Get-FileHash "kathamo-$t.zip" -Algorithm SHA256).Hash.ToLower() + "  kathamo-$t.zip`n") | Out-File -FilePath "kathamo-$t.zip.sha256" -NoNewline -Encoding ascii
+          Remove-Item -Recurse -Force "dist/shob-$t" -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path "dist/shob-$t" | Out-Null
+          Copy-Item "target/release/shob.exe" "dist/shob-$t/"
+          Copy-Item "README.md" "dist/shob-$t/" -ErrorAction SilentlyContinue
+          Compress-Archive -Path "dist/shob-$t" -DestinationPath "shob-$t.zip" -Force
+          ((Get-FileHash "shob-$t.zip" -Algorithm SHA256).Hash.ToLower() + "  shob-$t.zip`n") | Out-File -FilePath "shob-$t.zip.sha256" -NoNewline -Encoding ascii
           # Standalone exe next to the zip, so users can grab it directly.
-          Copy-Item "target/release/kathamo.exe" "kathamo-$t.exe"
-          ((Get-FileHash "kathamo-$t.exe" -Algorithm SHA256).Hash.ToLower() + "  kathamo-$t.exe`n") | Out-File -FilePath "kathamo-$t.exe.sha256" -NoNewline -Encoding ascii
-          Get-ChildItem "kathamo-$t.*"
+          Copy-Item "target/release/shob.exe" "shob-$t.exe"
+          ((Get-FileHash "shob-$t.exe" -Algorithm SHA256).Hash.ToLower() + "  shob-$t.exe`n") | Out-File -FilePath "shob-$t.exe.sha256" -NoNewline -Encoding ascii
+          Get-ChildItem "shob-$t.*"
 
       - name: Upload to the release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            kathamo-x86_64-pc-windows-msvc.zip
-            kathamo-x86_64-pc-windows-msvc.zip.sha256
-            kathamo-x86_64-pc-windows-msvc.exe
-            kathamo-x86_64-pc-windows-msvc.exe.sha256
+            shob-x86_64-pc-windows-msvc.zip
+            shob-x86_64-pc-windows-msvc.zip.sha256
+            shob-x86_64-pc-windows-msvc.exe
+            shob-x86_64-pc-windows-msvc.exe.sha256
 
   build-macos:
     name: macos apple-silicon
@@ -158,27 +158,27 @@ jobs:
           test "${GITHUB_REF_NAME#v}" = "$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)"
 
       - name: Build
-        run: cargo build --release -p kathamo
+        run: cargo build --release -p shob
 
       - name: Package
         run: |
           set -euo pipefail
           TARGET=aarch64-apple-darwin
-          rm -rf "dist/kathamo-$TARGET"
-          mkdir -p "dist/kathamo-$TARGET"
-          cp target/release/kathamo "dist/kathamo-$TARGET/"
-          cp README.md "dist/kathamo-$TARGET/" 2>/dev/null || true
-          tar czf "kathamo-$TARGET.tar.gz" -C dist "kathamo-$TARGET"
-          shasum -a 256 "kathamo-$TARGET.tar.gz" > "kathamo-$TARGET.tar.gz.sha256"
-          ls -lh "kathamo-$TARGET.tar.gz"
+          rm -rf "dist/shob-$TARGET"
+          mkdir -p "dist/shob-$TARGET"
+          cp target/release/shob "dist/shob-$TARGET/"
+          cp README.md "dist/shob-$TARGET/" 2>/dev/null || true
+          tar czf "shob-$TARGET.tar.gz" -C dist "shob-$TARGET"
+          shasum -a 256 "shob-$TARGET.tar.gz" > "shob-$TARGET.tar.gz.sha256"
+          ls -lh "shob-$TARGET.tar.gz"
 
       - name: Upload to the release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            kathamo-aarch64-apple-darwin.tar.gz
-            kathamo-aarch64-apple-darwin.tar.gz.sha256
+            shob-aarch64-apple-darwin.tar.gz
+            shob-aarch64-apple-darwin.tar.gz.sha256
 
   # MSI installer for Windows, built from the zip that build-windows
   # already uploaded. Needs ONLY build-windows, so a queued macOS or
@@ -215,13 +215,13 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           New-Item -ItemType Directory -Force -Path "target/distrib" | Out-Null
-          gh release download "$TAG" -p "kathamo-x86_64-pc-windows-msvc.zip" -D "target/distrib/"
+          gh release download "$TAG" -p "shob-x86_64-pc-windows-msvc.zip" -D "target/distrib/"
         shell: pwsh
 
       - name: Extract the zip
         run: |
-          $zip = Get-ChildItem "target/distrib/kathamo-x86_64-pc-windows-msvc.zip" | Select-Object -First 1
-          $extract = Join-Path $env:TEMP "kathamo-msi"
+          $zip = Get-ChildItem "target/distrib/shob-x86_64-pc-windows-msvc.zip" | Select-Object -First 1
+          $extract = Join-Path $env:TEMP "shob-msi"
           Remove-Item -Recurse -Force $extract -ErrorAction SilentlyContinue
           Expand-Archive -Path $zip.FullName -DestinationPath $extract -Force
           Write-Output "extract=$extract"
@@ -229,9 +229,9 @@ jobs:
 
       - name: Build MSI installer
         run: |
-          $extract = Join-Path $env:TEMP "kathamo-msi"
-          $exe = Get-ChildItem "$extract/kathamo.exe" -Recurse | Select-Object -First 1
-          if (-not $exe) { Write-Error "kathamo.exe not found in zip"; exit 1 }
+          $extract = Join-Path $env:TEMP "shob-msi"
+          $exe = Get-ChildItem "$extract/shob.exe" -Recurse | Select-Object -First 1
+          if (-not $exe) { Write-Error "shob.exe not found in zip"; exit 1 }
           $wixDir = "${{ steps.wix.outputs.wixDir }}"
           $candle = Join-Path $wixDir "candle.exe"
           $light = Join-Path $wixDir "light.exe"
@@ -244,46 +244,46 @@ jobs:
           $wxs = @"
           <?xml version="1.0" encoding="UTF-8"?>
           <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-            <Product Id="*" Name="kathamo" Language="1033" Version="$ver" Manufacturer="olovalabs" UpgradeCode="AF6CCD6E-1A15-4EF8-81B6-7BC71C0BEA46">
+            <Product Id="*" Name="shob" Language="1033" Version="$ver" Manufacturer="olovalabs" UpgradeCode="AF6CCD6E-1A15-4EF8-81B6-7BC71C0BEA46">
               <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" />
-              <MajorUpgrade DowngradeErrorMessage="A newer version of kathamo is already installed." />
+              <MajorUpgrade DowngradeErrorMessage="A newer version of shob is already installed." />
               <MediaTemplate EmbedCab="yes" />
-              <Feature Id="ProductFeature" Title="kathamo" Level="1">
+              <Feature Id="ProductFeature" Title="shob" Level="1">
                 <ComponentGroupRef Id="ProductComponents" />
               </Feature>
             </Product>
             <Fragment>
               <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
-                <Component Id="kathamo.exe" Guid="8CD2BADD-7F87-4013-B283-16A4859EF571">
-                  <File Id="kathamo.exe" Source="$($exe.FullName)" KeyPath="yes" />
+                <Component Id="shob.exe" Guid="8CD2BADD-7F87-4013-B283-16A4859EF571">
+                  <File Id="shob.exe" Source="$($exe.FullName)" KeyPath="yes" />
                 </Component>
               </ComponentGroup>
             </Fragment>
             <Fragment>
               <Directory Id="TARGETDIR" Name="SourceDir">
                 <Directory Id="ProgramFilesFolder">
-                  <Directory Id="INSTALLFOLDER" Name="kathamo" />
+                  <Directory Id="INSTALLFOLDER" Name="shob" />
                 </Directory>
               </Directory>
             </Fragment>
           </Wix>
           "@
-          $wxs | Out-File -FilePath "$extract\kathamo.wxs" -Encoding utf8
+          $wxs | Out-File -FilePath "$extract\shob.wxs" -Encoding utf8
 
           # Build the MSI the WiX v3 way: candle (compile) then light (link).
-          & $candle "$extract\kathamo.wxs" -out "$extract\kathamo.wixobj"
-          & $light "$extract\kathamo.wixobj" -out "kathamo-x86_64-pc-windows-msvc.msi"
-          $msiHash = (Get-FileHash "kathamo-x86_64-pc-windows-msvc.msi" -Algorithm SHA256).Hash.ToLower()
-          "$msiHash  kathamo-x86_64-pc-windows-msvc.msi`n" | Out-File -FilePath "kathamo-x86_64-pc-windows-msvc.msi.sha256" -NoNewline -Encoding ascii
-          Get-ChildItem "kathamo-x86_64-pc-windows-msvc.msi*"
+          & $candle "$extract\shob.wxs" -out "$extract\shob.wixobj"
+          & $light "$extract\shob.wixobj" -out "shob-x86_64-pc-windows-msvc.msi"
+          $msiHash = (Get-FileHash "shob-x86_64-pc-windows-msvc.msi" -Algorithm SHA256).Hash.ToLower()
+          "$msiHash  shob-x86_64-pc-windows-msvc.msi`n" | Out-File -FilePath "shob-x86_64-pc-windows-msvc.msi.sha256" -NoNewline -Encoding ascii
+          Get-ChildItem "shob-x86_64-pc-windows-msvc.msi*"
 
       - name: Upload MSI to the release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            kathamo-x86_64-pc-windows-msvc.msi
-            kathamo-x86_64-pc-windows-msvc.msi.sha256
+            shob-x86_64-pc-windows-msvc.msi
+            shob-x86_64-pc-windows-msvc.msi.sha256
           fail_on_unmatched_files: true
 
   # .deb / .rpm / Arch / AppImage, built from the Linux tarball that
@@ -321,7 +321,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           mkdir -p target/distrib
-          gh release download "$TAG" -p "kathamo-x86_64-unknown-linux-gnu.tar.gz" -D target/distrib/
+          gh release download "$TAG" -p "shob-x86_64-unknown-linux-gnu.tar.gz" -D target/distrib/
 
       # Builds a FUSE-less `payload/` tree that the four packagers below all
       # read from, so none of them has to know where the tarball came from.
@@ -332,7 +332,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          TARBALL=$(ls target/distrib/kathamo-x86_64-unknown-linux-gnu.tar.gz)
+          TARBALL=$(ls target/distrib/shob-x86_64-unknown-linux-gnu.tar.gz)
           VERSION="${TAG#v}"
           if [ -z "$VERSION" ]; then
             echo "::error::could not read the version out of $TAG"
@@ -382,16 +382,16 @@ jobs:
 
           # Assert rather than assume: an empty package is much worse than a
           # red build.
-          if [ ! -x "$extract/kathamo" ]; then
-            echo "::error::no kathamo binary in $TARBALL"
+          if [ ! -x "$extract/shob" ]; then
+            echo "::error::no shob binary in $TARBALL"
             ls -l "$extract"
             exit 1
           fi
-          file "$extract/kathamo"
+          file "$extract/shob"
 
           # usr/, and only usr/. Nothing may be left at the root of payload/:
           # dpkg-deb and rpmbuild would faithfully install it at /.
-          install -Dm755 "$extract/kathamo" payload/usr/bin/kathamo
+          install -Dm755 "$extract/shob" payload/usr/bin/shob
           rm -rf "$extract"
 
           # Icons at the sizes a panel is likely to ask for. hicolor is keyed by
@@ -403,7 +403,7 @@ jobs:
             dir="payload/usr/share/icons/hicolor/${size}x${size}/apps"
             mkdir -p "$dir"
             if ! convert -background none -resize "${size}x${size}" \
-                 assets/logo/kathamo.png "$dir/kathamo.png"; then
+                 assets/icons/shob.png "$dir/shob-brand-v3.png"; then
               echo "::error::could not resize the logo to ${size}px"
               exit 1
             fi
@@ -413,10 +413,10 @@ jobs:
           # icon. Exec is rewritten to the installed path and TryExec dropped,
           # since the dev path in the template is not valid once installed.
           mkdir -p payload/usr/share/applications
-          sed -e 's|^Exec=.*|Exec=/usr/bin/kathamo %F|' \
+          sed -e 's|^Exec=.*|Exec=/usr/bin/shob %F|' \
               -e '/^TryExec=/d' \
-              kathamo.desktop > payload/usr/share/applications/kathamo.desktop
-          desktop-file-validate payload/usr/share/applications/kathamo.desktop
+              shob.desktop > payload/usr/share/applications/shob.desktop
+          desktop-file-validate payload/usr/share/applications/shob.desktop
 
       # Anything left at the root of payload/ gets installed at / by dpkg-deb
       # and rpmbuild, so assert the tree is usr/-only rather than trusting the
@@ -439,11 +439,11 @@ jobs:
           VERSION="${{ steps.payload.outputs.deb_version }}"
           mkdir -p payload/DEBIAN
 
-          # Depends mirrors `readelf -d payload/usr/bin/kathamo` plus libvulkan1,
+          # Depends mirrors `readelf -d payload/usr/bin/shob` plus libvulkan1,
           # which is not linked but is dlopen'd by blade-graphics at runtime:
           # without it the window opens and renders nothing.
           cat > payload/DEBIAN/control <<EOF
-          Package: kathamo
+          Package: shob
           Version: $VERSION
           Section: devel
           Priority: optional
@@ -457,9 +457,9 @@ jobs:
            AI coding agents.
           EOF
 
-          dpkg-deb --root-owner-group --build payload "kathamo_${VERSION}_amd64.deb"
-          dpkg-deb --info "kathamo_${VERSION}_amd64.deb"
-          dpkg-deb --contents "kathamo_${VERSION}_amd64.deb"
+          dpkg-deb --root-owner-group --build payload "shob_${VERSION}_amd64.deb"
+          dpkg-deb --info "shob_${VERSION}_amd64.deb"
+          dpkg-deb --contents "shob_${VERSION}_amd64.deb"
 
       # --- .rpm (Fedora, RHEL, openSUSE) ------------------------------------
       - name: Build .rpm
@@ -472,18 +472,18 @@ jobs:
 
           # %install runs with its working directory set to %{_topdir}/BUILD,
           # so these are the files the spec installs from.
-          cp payload/usr/bin/kathamo rpmbuild/BUILD/kathamo
-          cp payload/usr/share/applications/kathamo.desktop rpmbuild/BUILD/kathamo.desktop
+          cp payload/usr/bin/shob rpmbuild/BUILD/shob
+          cp payload/usr/share/applications/shob.desktop rpmbuild/BUILD/shob.desktop
           for size in 16 24 32 48 64 128 256 512; do
             mkdir -p "rpmbuild/BUILD/icons/${size}x${size}"
-            cp "payload/usr/share/icons/hicolor/${size}x${size}/apps/kathamo.png" \
-               "rpmbuild/BUILD/icons/${size}x${size}/kathamo.png"
+            cp "payload/usr/share/icons/hicolor/${size}x${size}/apps/shob-brand-v3.png" \
+               "rpmbuild/BUILD/icons/${size}x${size}/shob-brand-v3.png"
           done
 
           cp LICENSE-MIT rpmbuild/BUILD/LICENSE
 
           {
-            echo "Name:           kathamo"
+            echo "Name:           shob"
             echo "Version:        $VERSION"
             echo "Release:        1%{?dist}"
             echo "Summary:        GPU-accelerated terminal emulator built for developers orchestrating AI coding agents"
@@ -504,31 +504,31 @@ jobs:
             echo "%build"
             echo "%install"
             echo "mkdir -p %{buildroot}/usr/bin"
-            echo "install -m 755 kathamo %{buildroot}/usr/bin/kathamo"
-            echo "install -Dm644 kathamo.desktop %{buildroot}/usr/share/applications/kathamo.desktop"
+            echo "install -m 755 shob %{buildroot}/usr/bin/shob"
+            echo "install -Dm644 shob.desktop %{buildroot}/usr/share/applications/shob.desktop"
             echo "install -Dm644 LICENSE %{buildroot}/usr/share/licenses/%{name}/LICENSE"
             for size in 16 24 32 48 64 128 256 512; do
-              echo "  install -Dm644 icons/${size}x${size}/kathamo.png \\"
-              echo "    %{buildroot}/usr/share/icons/hicolor/${size}x${size}/apps/kathamo.png"
+              echo "  install -Dm644 icons/${size}x${size}/shob-brand-v3.png \\"
+              echo "    %{buildroot}/usr/share/icons/hicolor/${size}x${size}/apps/shob-brand-v3.png"
             done
             echo
             echo "%files"
-            echo "/usr/bin/kathamo"
-            echo "/usr/share/applications/kathamo.desktop"
+            echo "/usr/bin/shob"
+            echo "/usr/share/applications/shob.desktop"
             echo "/usr/share/licenses/%{name}/LICENSE"
             for size in 16 24 32 48 64 128 256 512; do
-              echo "/usr/share/icons/hicolor/${size}x${size}/apps/kathamo.png"
+              echo "/usr/share/icons/hicolor/${size}x${size}/apps/shob-brand-v3.png"
             done
-          } > rpmbuild/SPECS/kathamo.spec
+          } > rpmbuild/SPECS/shob.spec
           # No --buildroot: let rpmbuild manage its own, so %install and %files
           # agree on where the staged files are.
           rpmbuild --define "_topdir $PWD/rpmbuild" \
                    --define "_build_idlinks none" \
-                   -bb rpmbuild/SPECS/kathamo.spec
+                   -bb rpmbuild/SPECS/shob.spec
 
           find rpmbuild/RPMS -name '*.rpm' -exec mv {} . \;
-          rpm -qip kathamo-*.rpm
-          rpm -qlp kathamo-*.rpm
+          rpm -qip shob-*.rpm
+          rpm -qlp shob-*.rpm
 
       # --- .pkg.tar.zst (Arch) ----------------------------------------------
       - name: Build Arch package
@@ -537,12 +537,12 @@ jobs:
           PKGVER="${{ steps.payload.outputs.arch_pkgver }}"
 
           rm -rf build-arch build-arch-out && mkdir -p build-arch/icons build-arch-out
-          cp payload/usr/bin/kathamo build-arch/kathamo
-          cp payload/usr/share/applications/kathamo.desktop build-arch/kathamo.desktop
+          cp payload/usr/bin/shob build-arch/shob
+          cp payload/usr/share/applications/shob.desktop build-arch/shob.desktop
           for size in 16 24 32 48 64 128 256 512; do
             mkdir -p "build-arch/icons/${size}x${size}"
-            cp "payload/usr/share/icons/hicolor/${size}x${size}/apps/kathamo.png" \
-               "build-arch/icons/${size}x${size}/kathamo.png"
+            cp "payload/usr/share/icons/hicolor/${size}x${size}/apps/shob-brand-v3.png" \
+               "build-arch/icons/${size}x${size}/shob-brand-v3.png"
           done
 
           # depends mirrors the Depends: in the .deb control file above.
@@ -550,7 +550,7 @@ jobs:
           # makepkg's check_pkgver rejects a hyphen outright.
           cat > build-arch/PKGBUILD <<EOF
           # Generated by .github/workflows/release.yml -- do not edit.
-          pkgname=kathamo
+          pkgname=shob
           pkgver=$PKGVER
           pkgrel=1
           pkgdesc="GPU-accelerated terminal emulator built for developers orchestrating AI coding agents"
@@ -558,18 +558,18 @@ jobs:
           license=('MIT' 'Apache-2.0')
           url="https://github.com/olovalabs/kathamo"
           depends=('glibc' 'vulkan-icd-loader' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11')
-          provides=('kathamo')
+          provides=('shob')
           options=('!strip')
           source=()
           sha256sums=()
 
           package() {
-            install -Dm755 "\$startdir/kathamo" "\$pkgdir/usr/bin/kathamo"
-            install -Dm644 "\$startdir/kathamo.desktop" \\
-              "\$pkgdir/usr/share/applications/kathamo.desktop"
+            install -Dm755 "\$startdir/shob" "\$pkgdir/usr/bin/shob"
+            install -Dm644 "\$startdir/shob.desktop" \\
+              "\$pkgdir/usr/share/applications/shob.desktop"
             for size in 16 24 32 48 64 128 256 512; do
-              install -Dm644 "\$startdir/icons/\${size}x\${size}/kathamo.png" \\
-                "\$pkgdir/usr/share/icons/hicolor/\${size}x\${size}/apps/kathamo.png"
+              install -Dm644 "\$startdir/icons/\${size}x\${size}/shob-brand-v3.png" \\
+                "\$pkgdir/usr/share/icons/hicolor/\${size}x\${size}/apps/shob-brand-v3.png"
             done
           }
           EOF
@@ -596,7 +596,7 @@ jobs:
           '
 
           mv build-arch-out/*.pkg.tar.zst ./
-          tar --zstd -tf kathamo-*.pkg.tar.zst | sort
+          tar --zstd -tf shob-*.pkg.tar.zst | sort
 
       # --- AppImage ---------------------------------------------------------
       - name: Build AppImage
@@ -604,49 +604,49 @@ jobs:
           set -euo pipefail
           VERSION="${{ steps.payload.outputs.version }}"
 
-          APPDIR=kathamo.AppDir
+          APPDIR=shob.AppDir
           rm -rf "$APPDIR"
           mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" \
                    "$APPDIR/usr/share/icons/hicolor/256x256/apps"
 
-          install -m755 payload/usr/bin/kathamo "$APPDIR/usr/bin/kathamo"
-          install -m644 payload/usr/share/applications/kathamo.desktop \
-            "$APPDIR/usr/share/applications/kathamo.desktop"
+          install -m755 payload/usr/bin/shob "$APPDIR/usr/bin/shob"
+          install -m644 payload/usr/share/applications/shob.desktop \
+            "$APPDIR/usr/share/applications/shob.desktop"
           # appimagetool aborts with "Desktop file not found" unless one is at
           # the AppDir root, so ship it in both places.
-          install -m644 payload/usr/share/applications/kathamo.desktop \
-            "$APPDIR/kathamo.desktop"
-          install -m644 payload/usr/share/icons/hicolor/256x256/apps/kathamo.png \
-            "$APPDIR/usr/share/icons/hicolor/256x256/apps/kathamo.png"
+          install -m644 payload/usr/share/applications/shob.desktop \
+            "$APPDIR/shob.desktop"
+          install -m644 payload/usr/share/icons/hicolor/256x256/apps/shob-brand-v3.png \
+            "$APPDIR/usr/share/icons/hicolor/256x256/apps/shob-brand-v3.png"
           # .DirIcon is a symlink, not a copy and not base64.
-          ln -sf usr/share/icons/hicolor/256x256/apps/kathamo.png "$APPDIR/.DirIcon"
+          ln -sf usr/share/icons/hicolor/256x256/apps/shob-brand-v3.png "$APPDIR/.DirIcon"
           # appimagetool resolves the desktop file's `Icon=` relative to the
           # AppDir root and aborts if it finds nothing there, so the 256px icon
           # goes in the root as well.
-          install -m644 payload/usr/share/icons/hicolor/256x256/apps/kathamo.png \
-            "$APPDIR/kathamo.png"
+          install -m644 payload/usr/share/icons/hicolor/256x256/apps/shob-brand-v3.png \
+            "$APPDIR/shob-brand-v3.png"
 
           cat > "$APPDIR/AppRun" <<'EOF'
           #!/bin/sh
           HERE=$(dirname "$(readlink -f "$0")")
           export PATH="$HERE/usr/bin:$PATH"
-          exec "$HERE/usr/bin/kathamo" "$@"
+          exec "$HERE/usr/bin/shob" "$@"
           EOF
           chmod +x "$APPDIR/AppRun"
 
-          cat > "$APPDIR/kathamo.appdata.xml" <<'EOF'
+          cat > "$APPDIR/shob.appdata.xml" <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <component type="desktop-application">
-            <id>kathamo.desktop</id>
+            <id>shob.desktop</id>
             <metadata_license>CC0-1.0</metadata_license>
             <project_license>MIT</project_license>
-            <name>kathamo</name>
+            <name>shob</name>
             <summary>GPU-accelerated terminal emulator built for developers orchestrating AI coding agents</summary>
             <description>
               <p>A GPU-accelerated terminal emulator built for developers orchestrating AI coding agents.</p>
             </description>
-            <launchable type="desktop-id">kathamo.desktop</launchable>
-            <provides><binary>kathamo</binary></provides>
+            <launchable type="desktop-id">shob.desktop</launchable>
+            <provides><binary>shob</binary></provides>
             <content_rating type="oars-1.1"/>
           </component>
           EOF
@@ -657,11 +657,11 @@ jobs:
           # --appimage-extract-and-run works around the absence of FUSE, which
           # is the normal state inside a container.
           /tmp/appimagetool --appimage-extract-and-run --no-appstream \
-            "$APPDIR" "kathamo-${VERSION}-x86_64.AppImage"
-          chmod +x "kathamo-${VERSION}-x86_64.AppImage"
-          ls -lh "kathamo-${VERSION}-x86_64.AppImage"
+            "$APPDIR" "shob-${VERSION}-x86_64.AppImage"
+          chmod +x "shob-${VERSION}-x86_64.AppImage"
+          ls -lh "shob-${VERSION}-x86_64.AppImage"
           # A real AppImage is an ELF header followed by a squashfs filesystem.
-          file "kathamo-${VERSION}-x86_64.AppImage"
+          file "shob-${VERSION}-x86_64.AppImage"
 
       # Straight onto the release -- no artifact relay, no host job.
       - name: Upload packages to the release
@@ -670,13 +670,13 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          ls kathamo_*.deb kathamo-*.rpm kathamo-*.pkg.tar.zst kathamo-*.AppImage
-          for f in kathamo_*.deb kathamo-*.rpm kathamo-*.pkg.tar.zst kathamo-*.AppImage; do
+          ls shob_*.deb shob-*.rpm shob-*.pkg.tar.zst shob-*.AppImage
+          for f in shob_*.deb shob-*.rpm shob-*.pkg.tar.zst shob-*.AppImage; do
             sha256sum "$f" > "$f.sha256"
           done
           gh release upload "$TAG" \
-            kathamo_*.deb kathamo_*.deb.sha256 \
-            kathamo-*.rpm kathamo-*.rpm.sha256 \
-            kathamo-*.pkg.tar.zst kathamo-*.pkg.tar.zst.sha256 \
-            kathamo-*.AppImage kathamo-*.AppImage.sha256 \
+            shob_*.deb shob_*.deb.sha256 \
+            shob-*.rpm shob-*.rpm.sha256 \
+            shob-*.pkg.tar.zst shob-*.pkg.tar.zst.sha256 \
+            shob-*.AppImage shob-*.AppImage.sha256 \
             --clobber

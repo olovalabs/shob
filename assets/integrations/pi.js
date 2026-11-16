@@ -1,11 +1,11 @@
-// Kathamo lifecycle adapter for Pi. Reports only when launched by Kathamo.
+// Shob lifecycle adapter for Pi. Reports only when launched by Shob.
 import { spawnSync } from "node:child_process";
-const executable = process.env.KATHAMO_EXECUTABLE || process.env.MARKUP_EXECUTABLE;
+const executable = process.env.SHOB_EXECUTABLE || process.env.MARKUP_EXECUTABLE;
 const reporter_generation = `${process.pid}-${Date.now()}`;
 let sequence = 0;
 let sessionID;
 function report(event, extra = {}) {
-  if (!executable || !(process.env.KATHAMO_STATUS_SOCKET || process.env.MARKUP_STATUS_SOCKET)) return;
+  if (!executable || !(process.env.SHOB_STATUS_SOCKET || process.env.MARKUP_STATUS_SOCKET)) return;
   const record = { version: 1, reporter: "pi", reporter_generation, sequence: ++sequence,
     session_id: sessionID, turn_id: extra.turn_id, event, message: extra.message,
     approval_id: extra.approval_id };

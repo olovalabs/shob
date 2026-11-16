@@ -11,6 +11,8 @@ pub const MONO_FONT: &str = "Lilex";
 // binary and out of every asset enumeration.
 #[exclude = "file_icons/*"]
 #[exclude = "logo/*"]
+#[exclude = "logos/kathamo.png"]
+#[exclude = "icons/shob.png"]
 pub struct AppAssets;
 
 pub struct CombinedAssets;
@@ -22,7 +24,9 @@ impl gpui::AssetSource for CombinedAssets {
             .trim_start_matches("assets/")
             .trim_start_matches('/');
         if clean == "logo/kathamo.png"
-            || clean == "kathamo.png"
+            || clean == "logos/kathamo.png"
+            || clean == "logos/shob.png"
+            || clean == "shob.png"
             || clean == "logo/markup.png"
             || clean == "markup.png"
         {

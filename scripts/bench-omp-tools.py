@@ -77,7 +77,7 @@ class ToolFixture(http.server.BaseHTTPRequestHandler):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("runtime", type=Path, help="installed kathamo-provider executable")
+    parser.add_argument("runtime", type=Path, help="installed shob-provider executable")
     parser.add_argument("--samples", type=int, default=3, help="cold/warm pairs (1–20)")
     parser.add_argument("--approval-mode", choices=("write", "yolo"), default="write",
                         help="write exercises real approval round trips; yolo is confined to the disposable fixture")
@@ -85,7 +85,7 @@ def main():
     runtime = args.runtime.resolve()
     if not runtime.is_file() or not 1 <= args.samples <= 20:
         parser.error("runtime must exist and samples must be 1–20")
-    with tempfile.TemporaryDirectory(prefix="kathamo-omp-tools-") as temporary, http.server.ThreadingHTTPServer(
+    with tempfile.TemporaryDirectory(prefix="shob-omp-tools-") as temporary, http.server.ThreadingHTTPServer(
         ("127.0.0.1", 0), ToolFixture
     ) as server:
         root = Path(temporary)

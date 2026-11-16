@@ -1,11 +1,11 @@
 [Desktop Entry]
-Name=Kathamo
+Name=Shob
 GenericName=Terminal Emulator
 Comment=GPU-accelerated terminal emulator built for developers orchestrating AI coding agents
-Exec=kathamo %F
-Icon=kathamo
+Exec=shob %F
+Icon=shob-brand-v3
 Terminal=false
 Type=Application
 Categories=System;TerminalEmulator;
 StartupNotify=false
-StartupWMClass=kathamo
+StartupWMClass=shob

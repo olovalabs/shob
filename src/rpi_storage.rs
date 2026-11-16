@@ -1,4 +1,4 @@
-//! Session files owned by Kathamo's embedded RPI conversations.
+//! Session files owned by Shob's embedded RPI conversations.
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -129,7 +129,7 @@ mod tests {
     #[test]
     fn legacy_copy_and_owned_deletion_leave_other_sessions_untouched() {
         let base =
-            std::env::temp_dir().join(format!("kathamo-rpi-storage-{}", crate::paths::uid("test")));
+            std::env::temp_dir().join(format!("shob-rpi-storage-{}", crate::paths::uid("test")));
         let project = base.join("project");
         let root = base.join("data/rpi/sessions");
         let old = project.join(".rpi/sessions").join(project_dir(&project));

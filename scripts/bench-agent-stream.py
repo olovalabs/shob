@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Run the Kathamo bridge benchmark against a deterministic local SSE endpoint.
+"""Run the Shob bridge benchmark against a deterministic local SSE endpoint.
 
-Build with cargo test --locked --bin kathamo --no-run, then pass the printed
+Build with cargo test --locked --bin shob --no-run, then pass the printed
 test executable. Pass --cli to also run a matching rpi RPC workload.
 """
 
@@ -237,13 +237,13 @@ def main():
         (config / "models.json").write_text(json.dumps({"providers": providers}))
         env = dict(os.environ, RPI_CODING_AGENT_DIR=str(config),
                    RPI_CODING_AGENT_SESSION_DIR=str(Path(tmp, "sessions")),
-                   KATHAMO_BENCH_CWD=str(cwd))
-        for key in ("KATHAMO_RPI_BACKEND", "KATHAMO_BENCH_SETTLE", "KATHAMO_STREAM_TIMINGS"):
+                   SHOB_BENCH_CWD=str(cwd))
+        for key in ("SHOB_RPI_BACKEND", "SHOB_BENCH_SETTLE", "SHOB_STREAM_TIMINGS"):
             env.pop(key, None)
         if args.settle:
-            env["KATHAMO_BENCH_SETTLE"] = "1"
+            env["SHOB_BENCH_SETTLE"] = "1"
         if args.rpc:
-            env["KATHAMO_RPI_BACKEND"] = "rpc"
+            env["SHOB_RPI_BACKEND"] = "rpc"
         before = resource.getrusage(resource.RUSAGE_CHILDREN)
         subprocess.run([args.test_executable, "loopback_agent_stream_benchmark",
                         "--ignored", "--nocapture"], env=env, check=True, timeout=60)
@@ -265,7 +265,7 @@ def main():
                   f"/{primary}")
         subprocess.run([args.test_executable, "loopback_tool_latency_benchmark",
                         "--ignored", "--nocapture"],
-                       env=dict(env, KATHAMO_STREAM_TIMINGS="1"), check=True, timeout=60)
+                       env=dict(env, SHOB_STREAM_TIMINGS="1"), check=True, timeout=60)
         subprocess.run([args.test_executable, "loopback_gemini_tool_round_trip",
                         "--ignored", "--nocapture"], env=env, check=True, timeout=60)
         subprocess.run([args.test_executable, "loopback_provider_switch_keeps_context",

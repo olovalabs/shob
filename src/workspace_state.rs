@@ -831,7 +831,7 @@ mod tests {
                                 selected_model: Some(AgentModel {
                                     provider: "xai-oauth".into(),
                                     id: "grok-4.7".into(),
-                                    backend: crate::agent_auth::ModelBackend::Kathamo,
+                                    backend: crate::agent_auth::ModelBackend::Shob,
                                 }),
                                 first_response_provider: Some("anthropic".into()),
                                 model_explicit: true,
@@ -843,7 +843,7 @@ mod tests {
                                     model: Some(AgentModel {
                                         provider: "commandcode".into(),
                                         id: "deepseek/deepseek-v4-flash".into(),
-                                        backend: crate::agent_auth::ModelBackend::Kathamo,
+                                        backend: crate::agent_auth::ModelBackend::Shob,
                                     }),
                                     rpi_session_id: None,
                                     conversation: "omp_commandcode_deepseek_deepseek-v4-flash"
@@ -1013,7 +1013,7 @@ mod tests {
 
     #[test]
     fn atomic_save_and_load_roundtrip() {
-        let path = std::env::temp_dir().join(format!("kathamo-ws-{}.json", paths::uid("t")));
+        let path = std::env::temp_dir().join(format!("shob-ws-{}.json", paths::uid("t")));
         let workspace = SavedWorkspace {
             version: CURRENT_VERSION,
             active_project: Some(PathBuf::from("/tmp/one")),
@@ -1028,7 +1028,7 @@ mod tests {
                     uid: "s-1".into(),
                     title: "shell".into(),
                     display_title: "shell".into(),
-                    logo: "kathamo".into(),
+                    logo: "shob".into(),
                     focused_pane: Some(3),
                     tree: SavedPaneNode::Leaf { pane: 3 },
                     panes: vec![SavedPane {

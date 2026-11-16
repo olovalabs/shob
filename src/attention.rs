@@ -1,4 +1,4 @@
-//! Kathamo attention rules on top of the detected status.
+//! Shob attention rules on top of the detected status.
 //!
 //! The detector in [`crate::status`] answers *what the terminal is doing*. This
 //! module answers *what the person needs to know about it*:
@@ -121,7 +121,7 @@ pub fn resolve(
     Resolved { status: next }
 }
 
-/// Kathamo's alert rule for one finalized transition.
+/// Shob's alert rule for one finalized transition.
 pub fn alert_for(
     prev: Option<SessionStatus>,
     next: SessionStatus,

@@ -1,6 +1,6 @@
-// Loaded only for KATHAMO_STREAM_TIMINGS. Never inspect or serialize payloads,
+// Loaded only for SHOB_STREAM_TIMINGS. Never inspect or serialize payloads,
 // response headers, request IDs, credentials, tool arguments, or model output.
-const PREFIX = "kathamo-timing:";
+const PREFIX = "shob-timing:";
 
 export default function (omp) {
   let requestStarted;

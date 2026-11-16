@@ -1,4 +1,4 @@
-//! Monochrome theme bindings for agent cards, derived from Kathamo's resolved tokens.
+//! Monochrome theme bindings for agent cards, derived from Shob's resolved tokens.
 use crate::theme::ThemeTokens;
 use gpui::{App, rgba};
 
@@ -28,7 +28,7 @@ pub(super) fn monochrome(mut tokens: ThemeTokens) -> ThemeTokens {
     tokens
 }
 
-/// Keep the agent component library in sync with Kathamo's current palette.
+/// Keep the agent component library in sync with Shob's current palette.
 pub(crate) fn sync(tokens: ThemeTokens, cx: &mut App) {
     let tokens = monochrome(tokens);
     let colors = &mut gpui_kit::component::Theme::global_mut(cx).colors;

@@ -211,7 +211,7 @@ pub fn run_interactive_oauth(
         .login
         .as_ref()
         .and_then(|l| l.instructions.as_deref())
-        .unwrap_or("Complete login in your browser, then return to Kathamo.");
+        .unwrap_or("Complete login in your browser, then return to Shob.");
 
     on_auth_url(&auth_url, instructions);
 

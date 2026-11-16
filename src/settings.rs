@@ -2,7 +2,7 @@
 //!
 //! Settings are loaded synchronously before the window is created so the saved
 //! bounds can be restored. The file is parsed with `jsonc-parser`, so comments
-//! and trailing commas are tolerated even though Kathamo writes plain JSON.
+//! and trailing commas are tolerated even though Shob writes plain JSON.
 
 use crate::agent_auth::AgentModel;
 use crate::paths;
@@ -131,9 +131,9 @@ pub struct AppSettings {
     pub permission_mode: crate::agent_bridge::PermissionMode,
     #[serde(alias = "enabled_agent_models")]
     pub favorite_agent_models: Vec<AgentModel>,
-    /// Explicit Kathamo execution opt-ins, scoped to canonical workspace paths.
+    /// Explicit Shob execution opt-ins, scoped to canonical workspace paths.
     #[serde(alias = "trusted_omp_workspaces")]
-    pub trusted_kathamo_workspaces: Vec<PathBuf>,
+    pub trusted_shob_workspaces: Vec<PathBuf>,
     pub sidebar: SavedSidebar,
     /// Show one centered agent conversation instead of the split workspace.
     pub agent_layout: bool,
@@ -151,7 +151,7 @@ impl Default for AppSettings {
             default_agent_model: None,
             permission_mode: crate::agent_bridge::PermissionMode::Ask,
             favorite_agent_models: Vec::new(),
-            trusted_kathamo_workspaces: Vec::new(),
+            trusted_shob_workspaces: Vec::new(),
             sidebar: SavedSidebar::default(),
             agent_layout: false,
             window: None,
@@ -346,7 +346,7 @@ mod tests {
             permission_mode: crate::agent_bridge::PermissionMode::Full,
             theme: ThemePreference::Dark,
             palette_scheme: PaletteScheme::Github,
-            trusted_kathamo_workspaces: vec![PathBuf::from("/tmp/explicit-workspace")],
+            trusted_shob_workspaces: vec![PathBuf::from("/tmp/explicit-workspace")],
             sidebar: SavedSidebar {
                 visible: false,
                 width: 300.0,
@@ -371,15 +371,15 @@ mod tests {
     }
 
     #[test]
-    fn legacy_settings_never_grant_kathamo_trust() {
+    fn legacy_settings_never_grant_shob_trust() {
         let settings: AppSettings =
             serde_json::from_str(r#"{"version":1,"theme":"dark"}"#).unwrap();
-        assert!(settings.trusted_kathamo_workspaces.is_empty());
+        assert!(settings.trusted_shob_workspaces.is_empty());
         assert_eq!(
             settings.permission_mode,
             crate::agent_bridge::PermissionMode::Ask
         );
-        assert!(AppSettings::default().trusted_kathamo_workspaces.is_empty());
+        assert!(AppSettings::default().trusted_shob_workspaces.is_empty());
     }
 
     #[test]
@@ -388,11 +388,11 @@ mod tests {
             serde_json::from_str(r#"{"trusted_omp_workspaces":["/tmp/explicit-workspace"]}"#)
                 .unwrap();
         assert_eq!(
-            settings.trusted_kathamo_workspaces,
+            settings.trusted_shob_workspaces,
             vec![PathBuf::from("/tmp/explicit-workspace")]
         );
         let saved = serde_json::to_value(settings).unwrap();
-        assert!(saved.get("trusted_kathamo_workspaces").is_some());
+        assert!(saved.get("trusted_shob_workspaces").is_some());
         assert!(saved.get("trusted_omp_workspaces").is_none());
     }
 

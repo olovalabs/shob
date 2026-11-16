@@ -468,7 +468,7 @@ fn parse_osc_body(body: &[u8], expected_token: &str) -> Option<MarkerKind> {
             && !std::str::from_utf8(params)
                 .ok()?
                 .split(';')
-                .any(|param| param.strip_prefix("KATHAMO=") == Some(expected_token))
+                .any(|param| param.strip_prefix("SHOB=") == Some(expected_token))
         {
             return None;
         }
@@ -854,11 +854,11 @@ mod tests {
         assert!(terminal.process_bytes(b"\x1b]133;A\x07").is_empty());
         assert!(
             terminal
-                .process_bytes(b"\x1b]133;A;KATHAMO=other\x07")
+                .process_bytes(b"\x1b]133;A;SHOB=other\x07")
                 .is_empty()
         );
 
-        let events = terminal.process_bytes(b"\x1b]133;A;KATHAMO=secret\x07");
+        let events = terminal.process_bytes(b"\x1b]133;A;SHOB=secret\x07");
         assert_eq!(kinds(&events), vec!["A"]);
     }
 

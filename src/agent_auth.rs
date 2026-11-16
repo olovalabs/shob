@@ -20,7 +20,7 @@ pub struct Provider {
 pub enum ModelBackend {
     Rpi,
     #[serde(alias = "Omp")]
-    Kathamo,
+    Shob,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

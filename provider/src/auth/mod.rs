@@ -65,7 +65,7 @@ pub fn check_auth_with_active(
         return AuthStatus {
             provider: spec.id.clone(),
             ready: true,
-            source: Some("Kathamo credential".to_string()),
+            source: Some("Shob credential".to_string()),
             auth_type,
         };
     }

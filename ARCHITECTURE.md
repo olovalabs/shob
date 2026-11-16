@@ -1,14 +1,14 @@
-# Kathamo Architecture
+# Shob Architecture
 
-This document describes the architectural design, core subsystems, and data flows of the **Kathamo** terminal emulator.
+This document describes the architectural design, core subsystems, and data flows of the **Shob** terminal emulator.
 
 ---
 
 ## 1. System Overview
 
-Kathamo is designed around three primary concerns:
+Shob is designed around three primary concerns:
 1. **High-throughput, GPU-accelerated terminal emulation** using GPUI and Alacritty's VTE parser.
-2. **Autonomous AI agent state tracking** via an IPC status bus and the Kathamo attention protocol.
+2. **Autonomous AI agent state tracking** via an IPC status bus and the Shob attention protocol.
 3. **Multi-project workspace management** with persistent project-scoped terminal sessions.
 
 ```mermaid
@@ -38,7 +38,7 @@ graph TD
 
     subgraph Integrations ["Agent Integrations"]
         Hooks[Claude / Codex / Pi / OMP Hooks]
-        KathamoCompat[Command Code Kathamo Compatibility]
+        ShobCompat[Command Code Shob Compatibility]
         ScreenDetect[Manifest Regex Screen Scanner]
     end
 
@@ -56,7 +56,7 @@ graph TD
     VTE --> Grid
 
     Hooks --> Socket
-    KathamoCompat --> Socket
+    ShobCompat --> Socket
     PTY --> OSC
     Socket --> Bus
     OSC --> Bus
@@ -76,19 +76,19 @@ graph TD
 
 The terminal widget is implemented in the `terminal` sub-crate:
 - **PTY Management**: Spawns user shells using `portable-pty` with asynchronous read and write loops.
-- **Throughput Protection**: Uncontrolled terminal streams (e.g., fast compiler output or large file dumps) can overwhelm desktop UI threads. Kathamo employs an adaptive **1 ms stream coalescer** and a **128 KiB parse cap per frame**. This ensures UI responsiveness even at stream rates exceeding 40 MB/s.
+- **Throughput Protection**: Uncontrolled terminal streams (e.g., fast compiler output or large file dumps) can overwhelm desktop UI threads. Shob employs an adaptive **1 ms stream coalescer** and a **128 KiB parse cap per frame**. This ensures UI responsiveness even at stream rates exceeding 40 MB/s.
 - **Rendering**: Terminal glyphs and styling (bold, italic, 24-bit RGB true color) are painted directly via GPUI primitives using embedded monospace fonts (`Mononoki`).
 
 ### 2.2 Status Bus & IPC (`src/status_bus.rs`, `src/status.rs`)
 
 The status bus receives events from running agent processes:
-- **Unix Domain Socket**: Kathamo binds a private per-user Unix socket at `$XDG_RUNTIME_DIR/kathamo-status.sock` (or `/tmp/kathamo-$UID/status.sock`).
-- **Generation Authentication**: Each terminal pane receives a unique `pane_generation` token in its environment (`KATHAMO_PANE_GENERATION`). The status bus verifies this token to reject stale or unauthorized events from old processes.
+- **Unix Domain Socket**: Shob binds a private per-user Unix socket at `$XDG_RUNTIME_DIR/shob-status.sock` (or `/tmp/shob-$UID/status.sock`).
+- **Generation Authentication**: Each terminal pane receives a unique `pane_generation` token in its environment (`SHOB_PANE_GENERATION`). The status bus verifies this token to reject stale or unauthorized events from old processes.
 - **OSC 7501 Fallback**: For environments where local sockets cannot be bridged, agents can emit custom OSC 7501 ANSI sequences directly to stdout (`\x1b]7501;state=working...\x1b\`).
 
 ### 2.3 Agent Attention Model (`src/attention.rs`)
 
-Kathamo implements the agent attention model to eliminate notification fatigue while guaranteeing critical tasks are never missed:
+Shob implements the agent attention model to eliminate notification fatigue while guaranteeing critical tasks are never missed:
 - **Attention Hierarchy**:
   $$\text{Blocked} > \text{Done} > \text{Working} > \text{Idle}$$
   - `Error` ranks as `Blocked`.
@@ -100,23 +100,23 @@ Kathamo implements the agent attention model to eliminate notification fatigue w
 
 ### 2.4 Agent Integrations (`src/integrations.rs`, `src/agent_rules.rs`)
 
-Kathamo provides automated one-command setup for developer agent ecosystems:
+Shob provides automated one-command setup for developer agent ecosystems:
 - **Claude Code**: Hooks registered into `~/.claude/settings.json`.
 - **Codex**: Hooks registered into `~/.codex/hooks.json`.
 - **Pi & OMP**: Extension modules placed into dedicated agent directories.
 - **OpenCode**: Upstream V2 TUI session listener plugin (`assets/integrations/opencode-tui.js`).
-- **Command Code**: Direct native compatibility via socket environment variables (`KATHAMO_SOCKET_PATH`, `KATHAMO_PANE_ID`).
+- **Command Code**: Direct native compatibility via socket environment variables (`SHOB_SOCKET_PATH`, `SHOB_PANE_ID`).
 - **Screen Detection**: Embedded TOML manifests (`assets/agent-detection/*.toml`) evaluate regex patterns on visible terminal screen buffers to detect agent activity without requiring agent configuration.
 
 ### 2.5 Workspace State & Persistence (`src/workspace_state.rs`, `src/settings.rs`, `src/conversations.rs`)
 
-Kathamo follows Zed's per-platform directory convention (`src/paths.rs`):
+Shob follows Zed's per-platform directory convention (`src/paths.rs`):
 
 | Platform | Data dir | Config dir |
 |---|---|---|
-| Linux | `$XDG_DATA_HOME/kathamo` (`~/.local/share/kathamo`) | `$XDG_CONFIG_HOME/kathamo` (`~/.config/kathamo`) |
-| macOS | `~/Library/Application Support/Kathamo` | `~/.config/kathamo` |
-| Windows | `%LOCALAPPDATA%\Kathamo` | `%APPDATA%\Kathamo` |
+| Linux | `$XDG_DATA_HOME/shob` (`~/.local/share/shob`) | `$XDG_CONFIG_HOME/shob` (`~/.config/shob`) |
+| macOS | `~/Library/Application Support/Shob` | `~/.config/shob` |
+| Windows | `%LOCALAPPDATA%\Shob` | `%APPDATA%\Shob` |
 
 ```
 <data>/
@@ -135,7 +135,7 @@ Kathamo follows Zed's per-platform directory convention (`src/paths.rs`):
 - Window geometry is loaded synchronously before `open_window`, validated against the current displays, and saved on close/quit.
 - Legacy v1 `workspace.json` files (including the old `com.Markup.Markup` location) are backed up to `<data>/backups/` and migrated automatically.
 
-Environment overrides: `KATHAMO_DATA_DIR=/absolute/path` (derives config/state/logs from it) and `KATHAMO_DISABLE_RESTORE=1` (clean launch without reading saved state).
+Environment overrides: `SHOB_DATA_DIR=/absolute/path` (derives config/state/logs from it) and `SHOB_DISABLE_RESTORE=1` (clean launch without reading saved state).
 
 ### 2.6 Embedded rpi agent (`agent/`)
 
@@ -143,7 +143,7 @@ The pi-rust v0.21.0 library crates and CLI sources are vendored as a Git subtree
 under `agent/` and kept as its own Cargo workspace. Non-build upstream assets
 (website, docs, scripts, packaging, deploy/demo, CI metadata and most examples)
 were removed after import; `examples/plugin-stub` remains as a test fixture.
-Kathamo path-depends on `agent/crates/rpi-embedded`, a host-facing library built
+Shob path-depends on `agent/crates/rpi-embedded`, a host-facing library built
 from the upstream library crates.
 
 - **Default backend.** `src/agent_bridge.rs` opens one `EmbeddedSession` per rpi
@@ -164,8 +164,8 @@ from the upstream library crates.
   in-process through `rpi_embedded::catalog`/`providers`. rpi-only API-key and
   OAuth logins are driven in-process through the embedded provider configuration.
 - **Baseline.** The old subprocess bridge is retained behind
-  `KATHAMO_RPI_BACKEND=rpc` for before/after measurements. The default is the
-  embedded backend. `KATHAMO_STREAM_TIMINGS=1` reports startup, UI drain/apply,
+  `SHOB_RPI_BACKEND=rpc` for before/after measurements. The default is the
+  embedded backend. `SHOB_STREAM_TIMINGS=1` reports startup, UI drain/apply,
   render, markdown parse and tool arrival→card/output percentiles for both.
 - **Isolation.** Embedded sessions build with `no_extensions` because upstream
   extension identity is process-global. Built-in tools/providers, `models.json`,
@@ -216,7 +216,7 @@ tool approval path as the public Gemini API.
 
 `rpi-runtime::catalog` embeds a frozen, MIT-licensed provider/model snapshot from
 Oh My Pi revision `73d7521269a1212fc2b2790a2e8c08424496c953`, unioned with
-Kathamo's existing identities. Provider endpoints, wire APIs, capabilities and
+Shob's existing identities. Provider endpoints, wire APIs, capabilities and
 credential environment aliases are native Rust metadata; no OMP code executes.
 Explicit `models.json` configuration retains precedence. Server/account model
 discovery supplies real model IDs for dynamic providers.
@@ -253,9 +253,9 @@ AWS SDK credentials or Google ADC at request time, not during local discovery.
   painting selects row-local ranges from the ordered match list. One
   cancellable timer delivers an owed throttled search refresh even if output
   stops.
-- `KATHAMO_STREAM_TIMINGS=1` reports queue admission/lock/backpressure/residence,
+- `SHOB_STREAM_TIMINGS=1` reports queue admission/lock/backpressure/residence,
   projection, UI apply, Markdown parse/wait, first-token paint and first tool
-  snapshot-to-paint timings. `KATHAMO_DIAGNOSTICS=1` adds PTY read-to-parse,
+  snapshot-to-paint timings. `SHOB_DIAGNOSTICS=1` adds PTY read-to-parse,
   queue depth, read-to-paint and parse-to-paint counters, CPU and RSS.
   Paint timestamps end at CPU paint-command recording, not compositor scanout.
 

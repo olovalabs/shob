@@ -1,4 +1,4 @@
-//! Scoped compatibility with Kathamo's native reporting subset, not its general API.
+//! Scoped compatibility with Shob's native reporting subset, not its general API.
 //! Protocol compatible with Herdr native reporting.
 use crate::status_bus::StatusEvent;
 use parking_lot::Mutex;
@@ -38,7 +38,7 @@ pub fn unregister(generation: &str) {
     ROUTES.lock().remove(generation);
 }
 
-/// Only the documented reporting commands are exposed through KATHAMO_BIN_PATH / HERDR_BIN_PATH.
+/// Only the documented reporting commands are exposed through SHOB_BIN_PATH / HERDR_BIN_PATH.
 /// Requests for unsupported API commands fail instead of starting a GUI window.
 pub fn run_cli(args: &[String]) -> anyhow::Result<()> {
     use anyhow::{Context, bail};
@@ -49,19 +49,17 @@ pub fn run_cli(args: &[String]) -> anyhow::Result<()> {
         Some("report-agent-session") => "pane.report_agent_session",
         Some("release-agent") => "pane.release_agent",
         _ => {
-            bail!(
-                "Kathamo supports only pane report-agent, report-agent-session, and release-agent"
-            )
+            bail!("Shob supports only pane report-agent, report-agent-session, and release-agent")
         }
     };
     let pane = args.get(1).context("missing pane token")?;
-    if std::env::var("KATHAMO_PANE_GENERATION")
+    if std::env::var("SHOB_PANE_GENERATION")
         .or_else(|_| std::env::var("MARKUP_PANE_GENERATION"))
         .ok()
         .as_ref()
         != Some(pane)
     {
-        bail!("report must target the launching Kathamo pane");
+        bail!("report must target the launching Shob pane");
     }
     let mut params = serde_json::Map::new();
     params.insert("pane_id".into(), pane.clone().into());
@@ -89,14 +87,14 @@ pub fn run_cli(args: &[String]) -> anyhow::Result<()> {
         };
         params.insert(key.into(), value);
     }
-    let socket = std::env::var_os("KATHAMO_STATUS_SOCKET")
+    let socket = std::env::var_os("SHOB_STATUS_SOCKET")
         .or_else(|| std::env::var_os("MARKUP_STATUS_SOCKET"))
-        .context("not running in a Kathamo terminal")?;
+        .context("not running in a Shob terminal")?;
     let mut stream = UnixStream::connect(std::path::Path::new(&socket))?;
     stream.set_read_timeout(Some(std::time::Duration::from_secs(1)))?;
     serde_json::to_writer(
         &mut stream,
-        &json!({"id":"kathamo-report", "method":method,"params":params}),
+        &json!({"id":"shob-report", "method":method,"params":params}),
     )?;
     stream.write_all(b"\n")?;
     let mut line = String::new();
@@ -198,7 +196,7 @@ pub fn request(input: Value) -> (Vec<StatusEvent>, Value) {
             pane_id: route.pane,
             pane_generation: token.into(),
             reporter: source.into(),
-            reporter_generation: format!("kathamo:{token}"),
+            reporter_generation: format!("shob:{token}"),
             sequence: current.sequence,
             session_id: native_session,
             turn_id: None,

@@ -1,9 +1,9 @@
-// Kathamo lifecycle adapter for Command Code's ModApi.
+// Shob lifecycle adapter for Command Code's ModApi.
 import { spawnSync } from "node:child_process";
 
 export default function (cmd) {
-  const executable = process.env.KATHAMO_EXECUTABLE || process.env.MARKUP_EXECUTABLE;
-  if (!executable || !(process.env.KATHAMO_STATUS_SOCKET || process.env.MARKUP_STATUS_SOCKET)) return;
+  const executable = process.env.SHOB_EXECUTABLE || process.env.MARKUP_EXECUTABLE;
+  if (!executable || !(process.env.SHOB_STATUS_SOCKET || process.env.MARKUP_STATUS_SOCKET)) return;
   const reporter_generation = `${process.pid}-${Date.now()}`;
   let sequence = 0;
   let sessionID;

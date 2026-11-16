@@ -255,7 +255,7 @@ mod tests {
                 .unwrap();
         }
         let prompt = "x".repeat(2 * 1024 * 1024);
-        writer.send_prompt("kathamo-large".into(), prompt).unwrap();
+        writer.send_prompt("shob-large".into(), prompt).unwrap();
         assert!(
             start.elapsed() < Duration::from_millis(100),
             "enqueue blocked for {:?}",
