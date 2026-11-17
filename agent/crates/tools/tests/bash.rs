@@ -165,6 +165,85 @@ async fn abort_returns_error() {
     assert!(msg.contains("aborted") || msg.contains("Aborted"), "{msg}");
 }
 
+/// A failing command whose cause is printed first and whose output is far past the
+/// display limits must still show that cause. Tail-only display would drop it, and
+/// the caller would need a second tool call (`... | head`) to find it.
+#[tokio::test]
+async fn failed_truncated_command_keeps_the_first_lines_visible() {
+    let (env, ctx) = fresh_context();
+    let total = 20_000;
+    let mut lines = String::from("error: the cause is on line 1\n");
+    for i in 1..total {
+        lines.push_str(&format!("line-{i}\n"));
+    }
+    env.register_shell(
+        "build",
+        ShellScript {
+            stdout: lines,
+            stderr: String::new(),
+            exit_code: 1,
+            delay_ms: None,
+        },
+    )
+    .await;
+
+    let tool = tools::create_bash_tool(&ctx, None);
+    let err = run_bash(tool, serde_json::json!({ "command": "build" }))
+        .await
+        .expect_err("non-zero exit → Err");
+    // The rendered text is the window; use `err_text`'s message plus the structured
+    // content so an Image/other block cannot silently shorten the comparison.
+    let msg = err_text(&err);
+
+    // The head window is present and really is the beginning of the output.
+    assert!(msg.starts_with("error: the cause is on line 1"), "{msg}");
+    // The tail is still there, so the verdict is not traded for the cause.
+    assert!(msg.contains(&format!("line-{}", total - 1)), "{msg}");
+    // The elided middle is counted and the full log is reachable.
+    assert!(msg.contains("lines elided, at least ("), "{msg}");
+    let AgentError::StructuredTool(result) = &err else {
+        panic!("bash failures must carry structured details: {err:?}");
+    };
+    let full_path = result.details["full_output_path"]
+        .as_str()
+        .expect("full_output_path present on a truncated capture");
+    assert!(msg.contains(full_path), "{msg}");
+    // The structured metadata describes the window, not just the tail.
+    let trunc = &result.details["truncation"];
+    assert_eq!(trunc["truncated"], true);
+    assert_eq!(trunc["total_lines"], total);
+    let shown = trunc["output_lines"].as_u64().unwrap();
+    assert!(
+        shown > DEFAULT_MAX_LINES as u64,
+        "window must show more than the tail alone: {shown}"
+    );
+    // The cause is genuinely recoverable from the surviving full log too.
+    let full = env.read_text_file(full_path, None).await.expect("read log");
+    assert!(full.starts_with("error: the cause is on line 1"));
+}
+
+/// The same truncation on a *successful* command keeps the tail-only format: the
+/// feature only pays for itself where the head usually holds the cause.
+#[tokio::test]
+async fn successful_truncated_command_stays_tail_only() {
+    let (env, ctx) = fresh_context();
+    let lines: String = (0..20_000)
+        .map(|i| format!("line-{i}\n"))
+        .collect::<String>();
+    env.register_shell("noisy", ShellScript::success(lines)).await;
+
+    let tool = tools::create_bash_tool(&ctx, None);
+    let r = run_bash(tool, serde_json::json!({ "command": "noisy" }))
+        .await
+        .expect("ok");
+    let out = text_output(&r);
+    assert!(!out.starts_with("line-0"), "{}", &out[..80.min(out.len())]);
+    assert!(out.contains(&format!("line-{}", 20_000 - 1)), "{out}");
+    assert!(out.contains("Showing lines "), "{out}");
+    assert!(!out.contains("lines elided"), "{out}");
+    assert_eq!(r.details["truncation"]["output_lines"], DEFAULT_MAX_LINES);
+}
+
 #[tokio::test]
 async fn persists_truncated_full_output_to_temp_file() {
     let (env, ctx) = fresh_context();
