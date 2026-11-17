@@ -11495,6 +11495,7 @@ impl AppState {
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let pane_id = pane.id;
+        let focused_composer = self.settings.agent_layout && pane.chat.active;
         let tokens = self.tokens(cx);
         let agent_cwd = pane.chat.active.then_some(pane.chat.cwd.as_ref()).flatten();
         let cwd_display = agent_cwd
@@ -11539,8 +11540,6 @@ impl AppState {
         } else {
             tokens.pane_header_bg
         };
-        // Derive the composer surface and outline from the selected palette,
-        // preserving its hue while keeping a subtle edge around the input.
         let mut focused_bar_bg = tokens.card_hover;
         if tokens.is_dark {
             focused_bar_bg.l = (focused_bar_bg.l + 0.04).min(1.0);
@@ -11657,6 +11656,7 @@ impl AppState {
                             .bordered(false)
                             .focus_bordered(false)
                             .cleanable(false)
+                            .when(focused_composer, |input| input.text_size(px(16.0)))
                             .px_0()
                             .py_0()
                             .when(browser_mentioned, |input| {
@@ -11783,11 +11783,27 @@ impl AppState {
             .w_full()
             .flex()
             .flex_col()
-            .px(px(12.0))
+            .px(if focused_composer { px(16.0) } else { px(12.0) })
             .pt(px(11.0))
-            .pb(if self.settings.agent_layout && pane.chat.active { px(5.0) } else { px(10.0) })
+            .pb(if focused_composer { px(5.0) } else { px(10.0) })
             .when(self.settings.agent_layout && pane.chat.active, |bar| {
-                bar.rounded(px(20.0)).border_1().bg(focused_bar_bg)
+                bar.rounded(px(28.0)).border_1().bg(focused_bar_bg)
+                    .shadow(vec![
+                        gpui::BoxShadow {
+                            color: tokens.card_border,
+                            blur_radius: px(0.0),
+                            spread_radius: px(6.0),
+                            offset: gpui::point(px(0.0), px(0.0)),
+                            inset: false,
+                        },
+                        gpui::BoxShadow {
+                            color: tokens.card_bg,
+                            blur_radius: px(0.0),
+                            spread_radius: px(5.0),
+                            offset: gpui::point(px(0.0), px(0.0)),
+                            inset: false,
+                        },
+                    ])
             })
             .when(!self.settings.agent_layout || !pane.chat.active, |bar| bar.border_t_1().bg(bar_bg))
             .border_color(if self.settings.agent_layout && pane.chat.active { focused_bar_border } else { bar_border })
@@ -11860,11 +11876,12 @@ impl AppState {
                     .when(pane.chat.active, |row| row.child(
                         div().id(("agent-attach-file", pane_id))
                             .debug_selector(|| "agent-attach-file".into())
-                            .size(px(26.0)).flex().items_center().justify_center()
-                            .rounded(px(5.0)).cursor_pointer()
+                            .size(px(26.0)).flex_shrink_0()
+                            .flex().items_center().justify_center()
+                            .rounded_full().cursor_pointer()
                             .hover(|style| style.bg(tokens.pane_header_btn_hover))
                             .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new("Add attachments").build(window, cx))
-                            .child(svg().path("icons/paperclip.svg").size(px(16.0)).text_color(tokens.text_muted))
+                            .child(svg().path("icons/paperclip.svg").size(if focused_composer { px(18.0) } else { px(16.0) }).text_color(tokens.text_muted))
                             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
                                 cx.stop_propagation();
                                 this.choose_attachments(pane_id, cx);
@@ -11992,6 +12009,7 @@ impl AppState {
                             .id(("select-agent-model", pane_id))
                             .debug_selector(|| "select-agent-model-pill".to_string())
                             .relative()
+                            .min_w_0()
                             .flex()
                             .items_center()
                             .gap(px(6.0))
@@ -12006,7 +12024,11 @@ impl AppState {
                             .when_some(model_provider_icon, |pill, icon| {
                                 pill.child(svg().path(icon).size(px(15.0)).flex_shrink_0().text_color(tokens.text_primary))
                             })
-                            .child(div().max_w(px(224.0)).truncate().child(model_pill))
+                            .child(div().min_w_0().max_w(px(224.0)).truncate().child(model_pill))
+                            .when(focused_composer, |pill| pill.child(
+                                svg().path("icons/chevron-down.svg").size(px(12.0))
+                                    .flex_shrink_0().text_color(tokens.text_muted)
+                            ))
                             .child(canvas(move |area, _, _| bounds.set(area), |_, _, _, _| {})
                                 .absolute().top_0().left_0().size_full())
                             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
@@ -12018,13 +12040,13 @@ impl AppState {
                         div().id(("agent-stop", pane_id))
                             .size(px(28.0)).flex_shrink_0().rounded_full()
                             .flex().items_center().justify_center()
-                            .bg(rgba(0x3568d4ff))
-                            .hover(|button| button.bg(rgba(0x477be7ff)))
+                            .bg(tokens.text_primary)
+                            .hover(|button| button.bg(tokens.text_secondary))
                             .cursor(CursorStyle::PointingHand)
                             .tooltip(|window, cx| {
                                 gpui_component::tooltip::Tooltip::new("Stop").build(window, cx)
                             })
-                            .child(div().size(px(9.0)).flex_shrink_0().rounded(px(1.0)).bg(gpui::white()))
+                            .child(div().size(px(9.0)).flex_shrink_0().rounded(px(1.0)).bg(focused_bar_bg))
                             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
                                 cx.stop_propagation();
                                 this.handle_pane_ctrl_c(pane_id, window, cx);
@@ -12034,10 +12056,10 @@ impl AppState {
                         div().id(("agent-send", pane_id)).debug_selector(|| "agent-send".into())
                             .size(px(28.0)).flex_shrink_0().rounded_full()
                             .flex().items_center().justify_center()
-                            .bg(rgba(0x3568d4ff)).hover(|button| button.bg(rgba(0x477be7ff)))
+                            .bg(tokens.text_primary).hover(|button| button.bg(tokens.text_secondary))
                             .cursor_pointer()
                             .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new("Send message").build(window, cx))
-                            .child(svg().path("icons/arrow-up.svg").size(px(16.0)).text_color(gpui::white()))
+                            .child(svg().path("icons/arrow-up.svg").size(px(18.0)).text_color(focused_bar_bg))
                             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
                                 cx.stop_propagation();
                                 this.submit_agent_prompt(pane_id, window, cx);
@@ -20466,11 +20488,12 @@ mod resize_tests {
                 !text.all_font_names().is_empty(),
                 "headless visual tests require a real text system and installed fonts; enable gpui-platform's x11 or wayland feature on Linux"
             );
-            let headless = HeadlessAppContext::with_platform(text.clone(), Arc::new(()), || {
-                let renderer = gpui_platform::current_headless_renderer()?
-                    .ok_or_else(|| anyhow::anyhow!("headless GPU renderer unavailable"))?;
-                Ok(Some(renderer))
-            });
+            let headless =
+                HeadlessAppContext::with_platform(text.clone(), Arc::new(CombinedAssets), || {
+                    let renderer = gpui_platform::current_headless_renderer()?
+                        .ok_or_else(|| anyhow::anyhow!("headless GPU renderer unavailable"))?;
+                    Ok(Some(renderer))
+                });
             let mut visual = gpui::TestAppContext::build_with_text_system(
                 gpui::TestDispatcher::new(0),
                 None,
