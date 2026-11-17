@@ -3365,6 +3365,28 @@ pub struct Project {
     visible_session_count: usize,
 }
 
+#[derive(Clone)]
+struct DragProject {
+    id: usize,
+    index: usize,
+    name: SharedString,
+}
+
+impl Render for DragProject {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px(px(12.0))
+            .py(px(7.0))
+            .rounded(px(6.0))
+            .bg(cx.theme().popover)
+            .text_color(cx.theme().foreground)
+            .border_1()
+            .border_color(cx.theme().drag_border)
+            .shadow_md()
+            .child(self.name.clone())
+    }
+}
+
 /// Storage order is oldest-first so restore, selection, and close indices stay
 /// stable. The sidebar shows the newest `visible_count` sessions, newest first.
 fn sidebar_session_indices(
@@ -17377,8 +17399,39 @@ impl AppState {
             )
     }
 
-    /// One collapsible project block: the project header (activate, expand,
-    /// new session, close project) followed by its session rows.
+    fn reorder_project(&mut self, source_id: usize, target_id: usize, cx: &mut Context<Self>) {
+        let Some(source) = self
+            .projects
+            .iter()
+            .position(|project| project.id == source_id)
+        else {
+            return;
+        };
+        let Some(target) = self
+            .projects
+            .iter()
+            .position(|project| project.id == target_id)
+        else {
+            return;
+        };
+        if source == target {
+            return;
+        }
+        let active_id = self.active_project().map(|project| project.id);
+        let project = self.projects.remove(source);
+        self.projects.insert(target, project);
+        if let Some(index) = self
+            .projects
+            .iter()
+            .position(|project| Some(project.id) == active_id)
+        {
+            self.active_project_idx = index;
+        }
+        self.schedule_workspace_save(cx);
+        cx.notify();
+    }
+
+    /// One collapsible project block: the project header followed by its session rows.
     fn render_project_entry(
         &self,
         project_idx: usize,
@@ -17656,9 +17709,25 @@ impl AppState {
         };
 
         div()
+            .id(("project-entry", project.id))
             .flex()
             .flex_col()
             .mb(px(12.0))
+            .when(!is_renaming, |entry| {
+                entry
+                    .drag_over::<DragProject>(move |style, drag, _, cx| {
+                        if drag.id == project_id {
+                            style
+                        } else if drag.index > project_idx {
+                            style.border_t_2().border_color(cx.theme().drag_border)
+                        } else {
+                            style.border_b_2().border_color(cx.theme().drag_border)
+                        }
+                    })
+                    .on_drop(cx.listener(move |this, drag: &DragProject, _, cx| {
+                        this.reorder_project(drag.id, project_id, cx);
+                    }))
+            })
             .child(
                 div()
                     .id(("project-row", project.id))
@@ -17676,6 +17745,16 @@ impl AppState {
                     .gap(px(10.0))
                     .bg(rgba(0x00000000))
                     .hover(move |s| s.bg(tokens.sidebar_item_hover))
+                    .when(!is_renaming, |row| {
+                        row.on_drag(
+                            DragProject {
+                                id: project_id,
+                                index: project_idx,
+                                name: project.name.clone(),
+                            },
+                            |drag, _, _, cx| cx.new(|_| drag.clone()),
+                        )
+                    })
                     .child(
                         div()
                             .id(("project-chevron", project.id))
@@ -17704,17 +17783,13 @@ impl AppState {
                             ),
                     )
                     .child(header_content)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener::<MouseDownEvent>(move |this, _, window, cx| {
-                            if this.renaming_project.as_ref().map(|r| r.project_id)
-                                == Some(project_id)
-                            {
-                                return;
-                            }
-                            this.activate_project(project_idx, window, cx);
-                        }),
-                    ),
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if this.renaming_project.as_ref().map(|r| r.project_id) == Some(project_id)
+                        {
+                            return;
+                        }
+                        this.activate_project(project_idx, window, cx);
+                    })),
             )
             .children(rows)
             .into_any_element()
@@ -22434,6 +22509,36 @@ mod pane_tests {
         assert_eq!(first_sessions, 1, "the first project keeps its session");
         assert_eq!(second_sessions, 1, "the new project starts with a session");
         assert!(expanded, "the newly opened project is expanded");
+    }
+
+    #[test]
+    fn reordering_projects_preserves_selection_and_saved_order() {
+        let mut cx = TestAppContext::new();
+        let (mut cx, app_state) = open_app(&mut cx);
+        cx.update_window_entity(&app_state, |state, window, cx| {
+            state.open_project_path(scratch_project_dir("shob-reorder-second"), window, cx);
+            state.open_project_path(scratch_project_dir("shob-reorder-third"), window, cx);
+        });
+        app_state.update(&mut cx, |state, cx| {
+            let ids: Vec<_> = state.projects.iter().map(|project| project.id).collect();
+            state.reorder_project(ids[0], ids[2], cx);
+            assert_eq!(
+                state.projects.iter().map(|p| p.id).collect::<Vec<_>>(),
+                [ids[1], ids[2], ids[0]]
+            );
+            assert_eq!(state.active_project().unwrap().id, ids[2]);
+            let saved = serde_json::to_string(&state.saved_workspace(cx)).unwrap();
+            let mut restored: workspace_state::SavedWorkspace =
+                serde_json::from_str(&saved).unwrap();
+            restored.normalize();
+            assert_eq!(
+                restored.projects.iter().map(|p| p.id).collect::<Vec<_>>(),
+                [ids[1], ids[2], ids[0]]
+            );
+            state.reorder_project(ids[0], ids[1], cx);
+            assert_eq!(state.projects.iter().map(|p| p.id).collect::<Vec<_>>(), ids);
+            assert_eq!(state.active_project().unwrap().id, ids[2]);
+        });
     }
 
     #[test]
