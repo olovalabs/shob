@@ -11,7 +11,7 @@ Upstream project
     Copyright (c) 2025 Mario Zechner
     Licensed under the MIT License.
 
-The `rpi-*` crates re-implement the original MIT-licensed TypeScript SDK in
+The Rust port's crates re-implement the original MIT-licensed TypeScript SDK in
 Rust. The license text in `LICENSE` therefore carries both the upstream
 copyright notice and the notice for the Rust port, as required by the MIT
 License's retention clause.

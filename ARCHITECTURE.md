@@ -143,12 +143,12 @@ The pi-rust v0.21.0 library crates and CLI sources are vendored as a Git subtree
 under `agent/` and kept as its own Cargo workspace. Non-build upstream assets
 (website, docs, scripts, packaging, deploy/demo, CI metadata and most examples)
 were removed after import; `examples/plugin-stub` remains as a test fixture.
-Shob path-depends on `agent/crates/rpi-embedded`, a host-facing library built
+Shob path-depends on `agent/crates/embedded`, a host-facing library built
 from the upstream library crates.
 
 - **Default backend.** `src/agent_bridge.rs` opens one `EmbeddedSession` per rpi
   conversation. The session owns a dedicated multi-thread Tokio runtime and
-  reuses upstream's `rpi_cli::session::build`: model/credential resolution,
+  reuses upstream's `cli::session::build`: model/credential resolution,
   built-in `read`/`bash`/`edit`/`write`/`docs` tools, the coding system prompt,
   durable JSONL session storage and `AgentHarness`.
 - **Typed transport.** A dedicated host emitter retains shared tool snapshots
@@ -161,7 +161,7 @@ from the upstream library crates.
   `request_stop_round` + `abort_reclaiming`, which cancels active tools. A
   stale resumed session id falls back to a fresh durable session.
 - **Discovery and login.** Model catalogs and provider readiness are read
-  in-process through `rpi_embedded::catalog`/`providers`. rpi-only API-key and
+  in-process through `embedded::catalog`/`providers`. rpi-only API-key and
   OAuth logins are driven in-process through the embedded provider configuration.
 - **Baseline.** The old subprocess bridge is retained behind
   `SHOB_RPI_BACKEND=rpc` for before/after measurements. The default is the
@@ -214,19 +214,19 @@ tool approval path as the public Gemini API.
 
 ### 2.8 Native provider catalog and authentication
 
-`rpi-runtime::catalog` embeds a frozen, MIT-licensed provider/model snapshot from
+`runtime::catalog` embeds a frozen, MIT-licensed provider/model snapshot from
 Oh My Pi revision `73d7521269a1212fc2b2790a2e8c08424496c953`, unioned with
 Shob's existing identities. Provider endpoints, wire APIs, capabilities and
 credential environment aliases are native Rust metadata; no OMP code executes.
 Explicit `models.json` configuration retains precedence. Server/account model
 discovery supplies real model IDs for dynamic providers.
 
-`rpi-embedded::catalog()` exposes every catalog identity; `chat_catalog()` is the
+`embedded::catalog()` exposes every catalog identity; `chat_catalog()` is the
 agent picker surface. Non-chat model metadata remains available through
-`rpi-runtime::catalog::model_metadata`. Unsupported non-chat/auxiliary protocols
+`runtime::catalog::model_metadata`. Unsupported non-chat/auxiliary protocols
 cannot block resolution of unrelated chat providers.
 
-`rpi-cli::native_auth` implements browser PKCE, device grants, provider-specific
+`cli::native_auth` implements browser PKCE, device grants, provider-specific
 sign-in and token renewal using the same atomic `auth.json` store as inference.
 Native and extension OAuth refreshers compose without replacing extensions.
 Capability lookup is side-effect-free on the UI thread; extension capabilities

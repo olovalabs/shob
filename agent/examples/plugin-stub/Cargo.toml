@@ -10,5 +10,5 @@ description = "Minimal rpi Rust-cdylib plugin: registers an `echo` tool + one ev
 crate-type = ["cdylib"]
 
 [dependencies]
-rpi-plugin-sdk = { workspace = true }
+plugin-sdk = { workspace = true }
 serde_json = { workspace = true }

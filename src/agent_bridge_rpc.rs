@@ -11,7 +11,7 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
-use rpi_embedded::EventQueue;
+use embedded::EventQueue;
 use serde_json::{Value, json};
 
 use super::{AgentEvent, coalesce_events, decode_message_update, decode_tool_event};
@@ -617,7 +617,7 @@ fn decode_event(record: &Value) -> Vec<AgentEvent> {
                     .get("cost")
                     .and_then(|cost| cost["total"].as_f64())
                     .filter(|cost| cost.is_finite() && *cost > 0.0);
-                events.push(AgentEvent::Usage(rpi_embedded::AgentUsage {
+                events.push(AgentEvent::Usage(embedded::AgentUsage {
                     input: count("input"),
                     output: count("output"),
                     cache_read: count("cacheRead"),

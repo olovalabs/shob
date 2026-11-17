@@ -29,5 +29,5 @@ limited to what Shob compiles:
 
 All library crates under `crates/`, their in-crate tests, `LICENSE`, `NOTICE`,
 `Cargo.toml` and `Cargo.lock` remain. Shob's host-facing wrapper is
-`agent/crates/rpi-embedded`; see `../EMBEDDED_AGENT.md` for integration and
+`agent/crates/embedded`; see `../EMBEDDED_AGENT.md` for integration and
 verification details.

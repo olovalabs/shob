@@ -144,7 +144,7 @@ Architecture and its constraints: [ARCHITECTURE.md](ARCHITECTURE.md).
   - `theme.rs`, `logos.rs`, `sound.rs`, `diagnostics.rs`, `stream_timing.rs` — presentation and diagnostics.
 - `terminal/` — the standalone terminal widget crate: PTY management, coalescer, VTE integration, cell grid, selection, rendering.
 - `components/` — the local gpui-component fork, wired in through `[patch.crates-io]`. GPUI UI primitives live here; treat upstream API carefully when bumping.
-- `agent/` — the vendored pi-rust Git subtree with its own Cargo workspace. Shob path-depends on `agent/crates/rpi-embedded`. Do not restructure casually; syncs are subtree operations. Non-build upstream assets were removed at import.
+- `agent/` — the vendored pi-rust Git subtree with its own Cargo workspace. Shob path-depends on `agent/crates/embedded`. Do not restructure casually; syncs are subtree operations. Non-build upstream assets were removed at import.
 - `provider/` — the native provider and authentication catalog crate (based on Oh My Pi), built and tested standalone.
 - `assets/` — icons, sounds, themes, agent-detection TOML manifests, integration scripts.
 - `scripts/` — demo and benchmark utilities.

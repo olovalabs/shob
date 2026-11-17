@@ -1906,34 +1906,34 @@ fn is_task_list_event(event: &agent_bridge::AgentEvent) -> bool {
         AgentEvent::ToolStart { name, .. }
             | AgentEvent::ToolUpdate { name, .. }
             | AgentEvent::ToolEnd { name, .. }
-            if name == rpi_embedded::task_list::NAME
+            if name == embedded::task_list::NAME
     )
 }
 
-fn task_list_update(event: &agent_bridge::AgentEvent) -> Option<rpi_embedded::task_list::TaskList> {
+fn task_list_update(event: &agent_bridge::AgentEvent) -> Option<embedded::task_list::TaskList> {
     match event {
         agent_bridge::AgentEvent::ToolEnd {
             name,
             output,
             failed: false,
             ..
-        } if name == rpi_embedded::task_list::NAME => serde_json::from_str(output).ok(),
+        } if name == embedded::task_list::NAME => serde_json::from_str(output).ok(),
         _ => None,
     }
 }
 
-fn active_task_index(list: &rpi_embedded::task_list::TaskList) -> Option<usize> {
+fn active_task_index(list: &embedded::task_list::TaskList) -> Option<usize> {
     list.tasks
         .iter()
-        .position(|task| task.status == rpi_embedded::task_list::TaskStatus::InProgress)
+        .position(|task| task.status == embedded::task_list::TaskStatus::InProgress)
 }
 
-fn task_list_completed(list: &rpi_embedded::task_list::TaskList) -> bool {
+fn task_list_completed(list: &embedded::task_list::TaskList) -> bool {
     !list.tasks.is_empty()
         && list
             .tasks
             .iter()
-            .all(|task| task.status == rpi_embedded::task_list::TaskStatus::Completed)
+            .all(|task| task.status == embedded::task_list::TaskStatus::Completed)
 }
 
 fn push_chat_event(messages: &mut Vec<Arc<ChatMessage>>, event: agent_bridge::AgentEvent) {
@@ -2422,7 +2422,7 @@ fn reasoning_effort_label(level: &str) -> &str {
 
 #[derive(Default)]
 struct AgentChecklist {
-    list: Option<rpi_embedded::task_list::TaskList>,
+    list: Option<embedded::task_list::TaskList>,
     dismissal: Option<gpui::Task<()>>,
     scroll: gpui::ScrollHandle,
     browsing: bool,
@@ -2452,7 +2452,7 @@ struct PaneChat {
     status: SessionStatus,
     /// Completed turns in this conversation.
     completed_turns: u64,
-    usage: Option<rpi_embedded::AgentUsage>,
+    usage: Option<embedded::AgentUsage>,
     usage_label: SharedString,
     usage_detail: SharedString,
     terminal_draft: String,
@@ -2552,7 +2552,7 @@ impl Default for PaneChat {
 }
 
 impl PaneChat {
-    fn set_usage(&mut self, usage: rpi_embedded::AgentUsage) {
+    fn set_usage(&mut self, usage: embedded::AgentUsage) {
         fn compact(count: i64) -> String {
             if count >= 1_000_000 {
                 format!("{:.1}m", count as f64 / 1_000_000.0)
@@ -2925,6 +2925,11 @@ pub struct TerminalPane {
     diff_preview: Option<DiffPreview>,
     /// Agent pane that owns this reusable preview. Preview panes reuse themselves.
     preview_owner: Option<usize>,
+    one_mode: bool,
+    regular_focus: Option<usize>,
+    tool_panel: bool,
+    tool_panel_picker: bool,
+    tool_panel_chat_ratio: Option<f32>,
     /// Invalidates background work whenever the preview content is replaced.
     preview_generation: u64,
     pub status: SessionStatus,
@@ -3082,6 +3087,11 @@ impl TerminalPane {
             markdown_preview: None,
             diff_preview: None,
             preview_owner: None,
+            one_mode: false,
+            regular_focus: None,
+            tool_panel: false,
+            tool_panel_picker: false,
+            tool_panel_chat_ratio: None,
             preview_generation: 0,
             status: SessionStatus::Idle,
             detection: status::DetectionResult::new(
@@ -3227,6 +3237,18 @@ pub enum PaneNode {
 }
 
 impl PaneNode {
+    fn has_terminal_layout_pane(&self, session: &Session) -> bool {
+        match self {
+            Self::Leaf(id) => session
+                .panes
+                .iter()
+                .any(|pane| pane.id == *id && !pane.tool_panel && !pane.one_mode),
+            Self::Split { left, right, .. } => {
+                left.has_terminal_layout_pane(session) || right.has_terminal_layout_pane(session)
+            }
+        }
+    }
+
     pub fn contains(&self, id: usize) -> bool {
         match self {
             PaneNode::Leaf(leaf_id) => *leaf_id == id,
@@ -3553,7 +3575,7 @@ struct RestoreData {
     workspace: workspace_state::SavedWorkspace,
     scrollbacks: HashMap<String, String>,
     transcripts: HashMap<String, conversations::RestoredConversation>,
-    usage: HashMap<String, rpi_embedded::AgentUsage>,
+    usage: HashMap<String, embedded::AgentUsage>,
 }
 
 fn transcript_key(uid: &str, key: &str) -> String {
@@ -3653,6 +3675,16 @@ impl AppState {
                                         .cloned()
                                         .collect(),
                                     chat_active: pane.chat.active,
+                                    one_mode: pane.one_mode,
+                                    regular_focus: pane.regular_focus,
+                                    tool_panel_owner: pane
+                                        .tool_panel
+                                        .then_some(pane.preview_owner)
+                                        .flatten(),
+                                    tool_panel_changes: pane.tool_panel
+                                        && pane.diff_preview.is_some(),
+                                    tool_panel_picker: pane.tool_panel && pane.tool_panel_picker,
+                                    tool_panel_chat_ratio: pane.tool_panel_chat_ratio,
                                     chat: workspace_state::SavedChat {
                                         fast_mode: pane.chat.fast_mode,
                                         thinking_override: pane.chat.thinking_override.clone(),
@@ -3952,9 +3984,31 @@ impl AppState {
                         saved_pane.uid.clone()
                     };
                     pane.cwd = Some(dir);
+                    pane.one_mode = saved_pane.one_mode;
+                    pane.regular_focus = saved_pane.regular_focus;
+                    pane.preview_owner = saved_pane.tool_panel_owner;
+                    pane.tool_panel = saved_pane.tool_panel_owner.is_some();
+                    pane.tool_panel_picker = pane.tool_panel && saved_pane.tool_panel_picker;
+                    pane.tool_panel_chat_ratio = saved_pane
+                        .tool_panel_chat_ratio
+                        .filter(|ratio| ratio.is_finite())
+                        .map(|ratio| ratio.clamp(0.0, 1.0));
+                    if pane.tool_panel && saved_pane.tool_panel_changes {
+                        pane.diff_preview = Some(DiffPreview {
+                            directory: project_path.clone(),
+                            result: None,
+                            expanded: HashSet::new(),
+                            tracked_collapsed: false,
+                            untracked_collapsed: false,
+                            request: 0,
+                            file_request: 0,
+                            file_view: None,
+                            file_only: false,
+                        });
+                    }
                     pane.command_history = saved_pane.command_history;
                     pane.restore_draft = Some(saved_pane.draft.clone());
-                    pane.chat.active = saved_pane.chat_active;
+                    pane.chat.active = saved_pane.chat_active && !pane.tool_panel;
                     pane.chat.fast_mode = saved_pane.chat.fast_mode;
                     pane.chat.thinking_override = saved_pane
                         .chat
@@ -4162,6 +4216,17 @@ impl AppState {
         }
 
         self.rebuild_session_index();
+        let restored_changes: Vec<_> = self
+            .projects
+            .iter()
+            .flat_map(|project| &project.sessions)
+            .flat_map(|session| &session.panes)
+            .filter(|pane| pane.tool_panel && pane.diff_preview.is_some())
+            .map(|pane| pane.id)
+            .collect();
+        for pane_id in restored_changes {
+            self.refresh_project_diff(pane_id, cx);
+        }
         if let Some(pane_id) = self.focused_pane_id
             && self
                 .pane_ref(pane_id)
@@ -6113,6 +6178,9 @@ impl AppState {
                 display_title,
                 pid,
             );
+            pane.one_mode = self
+                .pane_ref(target_pane_id)
+                .is_some_and(|pane| pane.one_mode);
             pane.chat.selected_model = self.effective_default_agent_model().cloned();
             pane.chat.permission_mode = self.settings.permission_mode;
             pane.terminal_subscription = Some(terminal_subscription);
@@ -6123,8 +6191,11 @@ impl AppState {
 
             if let Some(project) = self.projects.get_mut(p_idx) {
                 if let Some(session) = project.sessions.get_mut(s_idx) {
+                    let one_mode = pane.one_mode;
                     session.panes.push(pane);
-                    session.maximized_pane_id = None;
+                    if !one_mode {
+                        session.maximized_pane_id = None;
+                    }
                     if let Some(tree) = &mut session.pane_tree {
                         tree.split(target_pane_id, next_id, split_id, axis);
                     } else {
@@ -6181,7 +6252,9 @@ impl AppState {
             }
             id
         };
-        self.projects[project].sessions[session].maximized_pane_id = None;
+        if !self.pane_ref(source).is_some_and(|pane| pane.one_mode) {
+            self.projects[project].sessions[session].maximized_pane_id = None;
+        }
         let pane = self.pane_mut(preview)?;
         pane.preview_generation = pane.preview_generation.wrapping_add(1);
         pane.markdown_preview = None;
@@ -6357,7 +6430,13 @@ impl AppState {
         let Some(pane) = self.pane_mut(new_id) else {
             return;
         };
-        pane.display_title = "Project changes".into();
+        pane.tool_panel_picker = false;
+        pane.display_title = if pane.tool_panel {
+            "Files"
+        } else {
+            "Project changes"
+        }
+        .into();
         pane.diff_preview = Some(DiffPreview {
             directory,
             result: None,
@@ -6370,6 +6449,34 @@ impl AppState {
             file_only: false,
         });
         self.refresh_project_diff(new_id, cx);
+    }
+
+    fn open_tool_panel(&mut self, source: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.prepare_preview_pane(source, window, cx) else {
+            return;
+        };
+        if let Some(pane) = self.pane_mut(id) {
+            pane.tool_panel = true;
+            pane.chat.active = false;
+            pane.tool_panel_picker = true;
+            pane.display_title = "Open a surface".into();
+        }
+        self.schedule_workspace_save(cx);
+        cx.notify();
+    }
+
+    fn show_panel_terminal(&mut self, pane_id: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(pane) = self.pane_mut(pane_id) {
+            pane.preview_generation = pane.preview_generation.wrapping_add(1);
+            pane.tool_panel_picker = false;
+            pane.chat.active = false;
+            pane.diff_preview = None;
+            pane.markdown_preview = None;
+            pane.display_title = "Terminal".into();
+        }
+        self.focus_pane(pane_id, window, cx);
+        self.schedule_workspace_save(cx);
+        cx.notify();
     }
 
     fn refresh_project_diff(&mut self, pane_id: usize, cx: &mut Context<Self>) {
@@ -7057,6 +7164,12 @@ impl AppState {
                 if let Some(closed_pane) = session.panes.iter().find(|pane| pane.id == pane_id) {
                     status::forget_pid(closed_pane.pid);
                 }
+                for pane in &mut session.panes {
+                    if pane.tool_panel && pane.preview_owner == Some(pane_id) {
+                        pane.tool_panel = false;
+                        pane.preview_owner = None;
+                    }
+                }
                 session.pane_tree = session.pane_tree.take().and_then(|t| t.remove(pane_id));
                 session.panes.retain(|p| p.id != pane_id);
                 if session.pane_tree.is_none() || session.panes.is_empty() {
@@ -7096,6 +7209,14 @@ impl AppState {
     }
 
     fn focus_pane(&mut self, pane_id: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let pane_id = if !self.settings.agent_layout {
+            self.pane_ref(pane_id)
+                .filter(|pane| pane.tool_panel)
+                .and_then(|pane| pane.preview_owner)
+                .unwrap_or(pane_id)
+        } else {
+            pane_id
+        };
         if self.focused_pane_id.is_some_and(|old| old != pane_id) {}
         self.active_view = ActiveView::Workspace;
         self.focused_pane_id = Some(pane_id);
@@ -7909,6 +8030,87 @@ impl AppState {
         cx.notify();
     }
 
+    fn switch_agent_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings.agent_layout {
+            self.settings.agent_layout = false;
+            let target = self.active_session().and_then(|session| {
+                session
+                    .panes
+                    .iter()
+                    .find(|pane| pane.one_mode && !pane.tool_panel)
+                    .and_then(|pane| pane.regular_focus)
+                    .filter(|id| {
+                        session
+                            .panes
+                            .iter()
+                            .any(|pane| pane.id == *id && !pane.one_mode && !pane.tool_panel)
+                    })
+                    .or_else(|| {
+                        session
+                            .panes
+                            .iter()
+                            .find(|pane| !pane.one_mode && !pane.tool_panel)
+                            .map(|pane| pane.id)
+                    })
+            });
+            if let Some(id) = target {
+                self.focus_pane(id, window, cx);
+            }
+        } else {
+            let Some(source) = self.active_session().and_then(|session| {
+                self.focused_pane_id
+                    .filter(|id| {
+                        session
+                            .panes
+                            .iter()
+                            .any(|pane| pane.id == *id && !pane.one_mode && !pane.tool_panel)
+                    })
+                    .or_else(|| {
+                        session
+                            .panes
+                            .iter()
+                            .find(|pane| !pane.one_mode && !pane.tool_panel)
+                            .map(|pane| pane.id)
+                    })
+            }) else {
+                return;
+            };
+            let existing = self.active_session().and_then(|session| {
+                session
+                    .panes
+                    .iter()
+                    .find(|pane| pane.one_mode && !pane.tool_panel)
+                    .map(|pane| pane.id)
+            });
+            let id = if let Some(id) = existing {
+                id
+            } else {
+                let maximized = self
+                    .active_session()
+                    .and_then(|session| session.maximized_pane_id);
+                self.split_pane(source, gpui::Axis::Horizontal, window, cx);
+                if let Some(&(project, session, _)) = self.pane_index.get(&source) {
+                    self.projects[project].sessions[session].maximized_pane_id = maximized;
+                }
+                let Some(id) = self.focused_pane_id.filter(|id| *id != source) else {
+                    return;
+                };
+                if let Some(pane) = self.pane_mut(id) {
+                    pane.one_mode = true;
+                }
+                id
+            };
+            if let Some(pane) = self.pane_mut(id) {
+                pane.regular_focus = Some(source);
+            }
+            self.settings.agent_layout = true;
+            self.set_chat_mode(id, true, window, cx);
+            self.focus_pane(id, window, cx);
+        }
+        self.schedule_workspace_save(cx);
+        cx.notify();
+    }
+
     fn set_chat_mode(
         &mut self,
         pane_id: usize,
@@ -7916,9 +8118,22 @@ impl AppState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if active
+            && self.settings.agent_layout
+            && self
+                .pane_ref(pane_id)
+                .is_some_and(|pane| !pane.one_mode && !pane.tool_panel)
+        {
+            self.settings.agent_layout = false;
+            self.switch_agent_layout(window, cx);
+            return;
+        }
         let Some(pane) = self.pane_mut(pane_id) else {
             return;
         };
+        if pane.tool_panel {
+            return;
+        }
         if pane.chat.active == active {
             return;
         }
@@ -11115,7 +11330,7 @@ impl AppState {
 
     fn apply_task_list(
         pane: &mut TerminalPane,
-        list: rpi_embedded::task_list::TaskList,
+        list: embedded::task_list::TaskList,
         cx: &mut Context<Self>,
     ) -> bool {
         let checklist = &mut pane.chat.checklist;
@@ -11157,8 +11372,8 @@ impl AppState {
         tokens: &ThemeTokens,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
+        use embedded::task_list::TaskStatus;
         use gpui_component::{Icon, IconName, spinner::Spinner};
-        use rpi_embedded::task_list::TaskStatus;
 
         if !pane.chat.active || pane.chat.worker_view.is_some() {
             return None;
@@ -15523,24 +15738,26 @@ impl AppState {
             .flex_col()
             .size_full()
             .bg(tokens.pane_bg)
-            .rounded(px(10.0))
-            .shadow(vec![gpui::BoxShadow {
-                color: gpui::Hsla {
-                    h: 0.0,
-                    s: 0.0,
-                    l: 0.0,
-                    a: 0.22,
-                },
-                blur_radius: px(8.0),
-                spread_radius: px(0.0),
-                offset: gpui::point(px(0.0), px(2.0)),
-                inset: false,
-            }])
-            .border(px(0.5))
-            .border_color(if is_focused {
-                tokens.pane_border_focused
-            } else {
-                tokens.pane_border
+            .when(!pane.tool_panel, |view| {
+                view.rounded(px(10.0))
+                    .shadow(vec![gpui::BoxShadow {
+                        color: gpui::Hsla {
+                            h: 0.0,
+                            s: 0.0,
+                            l: 0.0,
+                            a: 0.22,
+                        },
+                        blur_radius: px(8.0),
+                        spread_radius: px(0.0),
+                        offset: gpui::point(px(0.0), px(2.0)),
+                        inset: false,
+                    }])
+                    .border(px(0.5))
+                    .border_color(if is_focused {
+                        tokens.pane_border_focused
+                    } else {
+                        tokens.pane_border
+                    })
             })
             .overflow_hidden()
             .on_mouse_down(
@@ -15554,165 +15771,247 @@ impl AppState {
                     this.focus_pane(pane_id, window, cx);
                 }),
             )
-            .child(preview_tab.unwrap_or_else(|| {
-                div()
-                    .h(px(28.0))
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .px(px(8.0))
-                    .bg(tokens.pane_header_bg)
-                    .child(
-                        div()
-                            .text_size(px(11.5))
-                            .text_color(tokens.pane_header_fg)
-                            .child(pane.display_title.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.0))
-                            .when(
-                                pane.diff_preview.is_none()
-                                    && pane.markdown_preview.is_none()
-                                    && !pane.should_show_bottom_input(cx),
-                                |row| {
+            .child(
+                (if pane.tool_panel { None } else { preview_tab }).unwrap_or_else(|| {
+                    div()
+                        .h(px(28.0))
+                        .w_full()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .px(px(8.0))
+                        .bg(tokens.pane_header_bg)
+                        .child(
+                            div()
+                                .text_size(px(11.5))
+                                .text_color(tokens.pane_header_fg)
+                                .child(pane.display_title.clone()),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(6.0))
+                                .when(pane.tool_panel, |row| {
                                     row.child(
                                         div()
-                                            .id(("header-agent", pane_id))
+                                            .id(("panel-changes", pane_id))
                                             .px(px(7.0))
                                             .text_size(px(11.0))
                                             .text_color(tokens.pane_header_fg)
-                                            .cursor(CursorStyle::PointingHand)
-                                            .child("Agent")
+                                            .cursor_pointer()
+                                            .child("Files")
                                             .on_mouse_down(
                                                 MouseButton::Left,
                                                 cx.listener(move |this, _, window, cx| {
                                                     cx.stop_propagation();
-                                                    this.set_chat_mode(pane_id, true, window, cx);
+                                                    this.open_project_diff(pane_id, window, cx);
+                                                    this.schedule_workspace_save(cx);
                                                 }),
                                             ),
                                     )
-                                },
-                            )
-                            .child(
-                                div()
-                                    .id(("split-v-btn", pane_id))
-                                    .size(px(22.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded(px(4.0))
-                                    .cursor(CursorStyle::PointingHand)
-                                    .hover(|s| s.bg(tokens.pane_header_btn_hover))
                                     .child(
-                                        svg()
-                                            .path("icons/split-vertical.svg")
-                                            .size(px(13.0))
-                                            .text_color(tokens.pane_header_icon)
-                                            .hover(|s| s.text_color(tokens.pane_header_icon_hover)),
+                                        div()
+                                            .id(("panel-terminal", pane_id))
+                                            .px(px(7.0))
+                                            .text_size(px(11.0))
+                                            .text_color(tokens.pane_header_fg)
+                                            .cursor_pointer()
+                                            .child("Terminal")
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(move |this, _, window, cx| {
+                                                    cx.stop_propagation();
+                                                    this.show_panel_terminal(pane_id, window, cx);
+                                                }),
+                                            ),
                                     )
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(move |this, _, window, cx| {
-                                            cx.stop_propagation();
-                                            this.split_pane(
-                                                pane_id,
-                                                gpui::Axis::Horizontal,
-                                                window,
-                                                cx,
-                                            );
-                                        }),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .id(("split-h-btn", pane_id))
-                                    .size(px(22.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded(px(4.0))
-                                    .cursor(CursorStyle::PointingHand)
-                                    .hover(|s| s.bg(tokens.pane_header_btn_hover))
-                                    .child(
-                                        svg()
-                                            .path("icons/split-horizontal.svg")
-                                            .size(px(13.0))
-                                            .text_color(tokens.pane_header_icon)
-                                            .hover(|s| s.text_color(tokens.pane_header_icon_hover)),
-                                    )
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(move |this, _, window, cx| {
-                                            cx.stop_propagation();
-                                            this.split_pane(
-                                                pane_id,
-                                                gpui::Axis::Vertical,
-                                                window,
-                                                cx,
-                                            );
-                                        }),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .id(("maximize-btn", pane_id))
-                                    .size(px(22.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded(px(4.0))
-                                    .cursor(CursorStyle::PointingHand)
-                                    .hover(|s| s.bg(tokens.pane_header_btn_hover))
-                                    .child(
-                                        svg()
-                                            .path(if is_maximized {
-                                                "icons/pane-restore.svg"
-                                            } else {
-                                                "icons/pane-maximize.svg"
-                                            })
-                                            .size(px(13.0))
-                                            .text_color(tokens.pane_header_icon)
-                                            .hover(|s| s.text_color(tokens.pane_header_icon_hover)),
-                                    )
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(move |this, _, _, cx| {
-                                            cx.stop_propagation();
-                                            this.toggle_maximize_pane(pane_id, cx);
-                                        }),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .id(("close-btn", pane_id))
-                                    .size(px(22.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded(px(4.0))
-                                    .cursor(CursorStyle::PointingHand)
-                                    .hover(|s| s.bg(tokens.pane_header_btn_hover))
-                                    .child(
-                                        svg()
-                                            .path("icons/pane-close.svg")
-                                            .size(px(13.0))
-                                            .text_color(tokens.pane_header_icon)
-                                            .hover(|s| s.text_color(rgba(0xf87171ff))),
-                                    )
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(move |this, _, window, cx| {
-                                            cx.stop_propagation();
-                                            this.close_pane(pane_id, window, cx);
-                                        }),
-                                    ),
-                            ),
-                    )
-            }))
+                                })
+                                .when(
+                                    !pane.tool_panel
+                                        && pane.diff_preview.is_none()
+                                        && pane.markdown_preview.is_none()
+                                        && !pane.should_show_bottom_input(cx),
+                                    |row| {
+                                        row.child(
+                                            div()
+                                                .id(("header-agent", pane_id))
+                                                .px(px(7.0))
+                                                .text_size(px(11.0))
+                                                .text_color(tokens.pane_header_fg)
+                                                .cursor(CursorStyle::PointingHand)
+                                                .child("Agent")
+                                                .on_mouse_down(
+                                                    MouseButton::Left,
+                                                    cx.listener(move |this, _, window, cx| {
+                                                        cx.stop_propagation();
+                                                        this.set_chat_mode(
+                                                            pane_id, true, window, cx,
+                                                        );
+                                                    }),
+                                                ),
+                                        )
+                                    },
+                                )
+                                .child(
+                                    div()
+                                        .id(("split-v-btn", pane_id))
+                                        .size(px(22.0))
+                                        .when(pane.tool_panel, |button| {
+                                            button.size(px(0.0)).invisible()
+                                        })
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .rounded(px(4.0))
+                                        .cursor(CursorStyle::PointingHand)
+                                        .hover(|s| s.bg(tokens.pane_header_btn_hover))
+                                        .child(
+                                            svg()
+                                                .path("icons/split-vertical.svg")
+                                                .size(px(13.0))
+                                                .text_color(tokens.pane_header_icon)
+                                                .hover(|s| {
+                                                    s.text_color(tokens.pane_header_icon_hover)
+                                                }),
+                                        )
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(move |this, _, window, cx| {
+                                                cx.stop_propagation();
+                                                this.split_pane(
+                                                    pane_id,
+                                                    gpui::Axis::Horizontal,
+                                                    window,
+                                                    cx,
+                                                );
+                                            }),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id(("split-h-btn", pane_id))
+                                        .size(px(22.0))
+                                        .when(pane.tool_panel, |button| {
+                                            button.size(px(0.0)).invisible()
+                                        })
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .rounded(px(4.0))
+                                        .cursor(CursorStyle::PointingHand)
+                                        .hover(|s| s.bg(tokens.pane_header_btn_hover))
+                                        .child(
+                                            svg()
+                                                .path("icons/split-horizontal.svg")
+                                                .size(px(13.0))
+                                                .text_color(tokens.pane_header_icon)
+                                                .hover(|s| {
+                                                    s.text_color(tokens.pane_header_icon_hover)
+                                                }),
+                                        )
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(move |this, _, window, cx| {
+                                                cx.stop_propagation();
+                                                this.split_pane(
+                                                    pane_id,
+                                                    gpui::Axis::Vertical,
+                                                    window,
+                                                    cx,
+                                                );
+                                            }),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id(("maximize-btn", pane_id))
+                                        .size(px(22.0))
+                                        .when(pane.tool_panel, |button| {
+                                            button.size(px(0.0)).invisible()
+                                        })
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .rounded(px(4.0))
+                                        .cursor(CursorStyle::PointingHand)
+                                        .hover(|s| s.bg(tokens.pane_header_btn_hover))
+                                        .child(
+                                            svg()
+                                                .path(if is_maximized {
+                                                    "icons/pane-restore.svg"
+                                                } else {
+                                                    "icons/pane-maximize.svg"
+                                                })
+                                                .size(px(13.0))
+                                                .text_color(tokens.pane_header_icon)
+                                                .hover(|s| {
+                                                    s.text_color(tokens.pane_header_icon_hover)
+                                                }),
+                                        )
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(move |this, _, _, cx| {
+                                                cx.stop_propagation();
+                                                this.toggle_maximize_pane(pane_id, cx);
+                                            }),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id(("close-btn", pane_id))
+                                        .size(px(22.0))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .rounded(px(4.0))
+                                        .cursor(CursorStyle::PointingHand)
+                                        .hover(|s| s.bg(tokens.pane_header_btn_hover))
+                                        .child(
+                                            svg()
+                                                .path("icons/pane-close.svg")
+                                                .size(px(13.0))
+                                                .text_color(tokens.pane_header_icon)
+                                                .hover(|s| s.text_color(rgba(0xf87171ff))),
+                                        )
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(move |this, _, window, cx| {
+                                                cx.stop_propagation();
+                                                this.close_pane(pane_id, window, cx);
+                                            }),
+                                        ),
+                                ),
+                        )
+                }),
+            )
+            .when(pane.tool_panel, |container| {
+                if let Some((view, file)) = pane
+                    .diff_preview
+                    .as_ref()
+                    .and_then(|view| view.file_view.as_ref().map(|file| (view, file)))
+                {
+                    let deleted =
+                        matches!(file.state, ReadOnlyFileState::Ready { deleted: true, .. });
+                    container.child(self.render_preview_tab(
+                        pane_id,
+                        &file.path,
+                        !view.file_only,
+                        deleted,
+                        cx,
+                    ))
+                } else if let Some((path, _)) = &pane.markdown_preview {
+                    container.child(self.render_preview_tab(
+                        pane_id,
+                        &path.to_string_lossy(),
+                        false,
+                        false,
+                        cx,
+                    ))
+                } else {
+                    container
+                }
+            })
             .child(
                 div()
                     .flex_1()
@@ -15728,7 +16027,9 @@ impl AppState {
                         MouseButton::Right,
                         cx.listener(move |this, event: &MouseDownEvent, window, cx| {
                             if this.pane_ref(pane_id).is_some_and(|pane| {
-                                pane.diff_preview.is_none() && pane.markdown_preview.is_none()
+                                !pane.tool_panel_picker
+                                    && pane.diff_preview.is_none()
+                                    && pane.markdown_preview.is_none()
                             }) {
                                 cx.stop_propagation();
                                 this.open_terminal_context_menu(
@@ -15740,7 +16041,99 @@ impl AppState {
                             }
                         }),
                     )
-                    .child(if let Some(view) = &pane.diff_preview {
+                    .child(if pane.tool_panel && pane.tool_panel_picker {
+                        div()
+                            .id(("tool-panel-picker", pane_id))
+                            .debug_selector(|| "tool-panel-picker".into())
+                            .size_full()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                div()
+                                    .w(px(220.0))
+                                    .max_w_full()
+                                    .flex_shrink_0()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(8.0))
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .text_center()
+                                            .pb(px(8.0))
+                                            .text_size(px(13.0))
+                                            .text_color(tokens.text_primary)
+                                            .child("Open a surface"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id(("tool-panel-choose-terminal", pane_id))
+                                            .debug_selector(|| "tool-panel-choose-terminal".into())
+                                            .h(px(32.0))
+                                            .px(px(8.0))
+                                            .rounded(px(5.0))
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(10.0))
+                                            .cursor_pointer()
+                                            .hover(|style| style.bg(tokens.pane_header_btn_hover))
+                                            .child(
+                                                svg()
+                                                    .path("icons/terminal.svg")
+                                                    .size(px(15.0))
+                                                    .text_color(tokens.text_secondary),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(13.0))
+                                                    .text_color(tokens.text_primary)
+                                                    .child("Terminal"),
+                                            )
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(move |this, _, window, cx| {
+                                                    cx.stop_propagation();
+                                                    this.show_panel_terminal(pane_id, window, cx);
+                                                }),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .id(("tool-panel-choose-files", pane_id))
+                                            .debug_selector(|| "tool-panel-choose-files".into())
+                                            .h(px(32.0))
+                                            .px(px(8.0))
+                                            .rounded(px(5.0))
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(10.0))
+                                            .cursor_pointer()
+                                            .hover(|style| style.bg(tokens.pane_header_btn_hover))
+                                            .child(
+                                                svg()
+                                                    .path("icons/folder.svg")
+                                                    .size(px(15.0))
+                                                    .text_color(tokens.text_secondary),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(13.0))
+                                                    .text_color(tokens.text_primary)
+                                                    .child("Files"),
+                                            )
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(move |this, _, window, cx| {
+                                                    cx.stop_propagation();
+                                                    this.open_project_diff(pane_id, window, cx);
+                                                    this.schedule_workspace_save(cx);
+                                                }),
+                                            ),
+                                    ),
+                            )
+                            .into_any_element()
+                    } else if let Some(view) = &pane.diff_preview {
                         self.render_project_diff(pane_id, view, window, cx)
                     } else if let Some((_, html)) = &pane.markdown_preview {
                         div()
@@ -15765,7 +16158,8 @@ impl AppState {
                     }),
             )
             .when(
-                pane.markdown_preview.is_none()
+                !pane.tool_panel_picker
+                    && pane.markdown_preview.is_none()
                     && pane.diff_preview.is_none()
                     && pane.should_show_bottom_input(cx)
                     && pane.chat.worker_view.is_none(),
@@ -15783,7 +16177,11 @@ impl AppState {
     ) -> gpui::AnyElement {
         match node {
             PaneNode::Leaf(pane_id) => {
-                if let Some(pane) = session.panes.iter().find(|p| p.id == *pane_id) {
+                if let Some(pane) = session
+                    .panes
+                    .iter()
+                    .find(|p| p.id == *pane_id && !p.tool_panel && !p.one_mode)
+                {
                     div()
                         .size_full()
                         .p(px(4.0))
@@ -15799,6 +16197,12 @@ impl AppState {
                 left,
                 right,
             } => {
+                if !left.has_terminal_layout_pane(session) {
+                    return self.render_pane_node(right, session, is_maximized, window, cx);
+                }
+                if !right.has_terminal_layout_pane(session) {
+                    return self.render_pane_node(left, session, is_maximized, window, cx);
+                }
                 let left_el = self.render_pane_node(left, session, is_maximized, window, cx);
                 let right_el = self.render_pane_node(right, session, is_maximized, window, cx);
                 let is_horizontal = *axis == gpui::Axis::Horizontal;
@@ -16462,29 +16866,7 @@ impl AppState {
                         MouseButton::Left,
                         cx.listener(|this, _, window, cx| {
                             cx.stop_propagation();
-                            this.settings.agent_layout = !this.settings.agent_layout;
-                            if this.settings.agent_layout {
-                                let pane_id = this.active_session().and_then(|session| {
-                                    session
-                                        .panes
-                                        .iter()
-                                        .find(|pane| pane.chat.active)
-                                        .or_else(|| {
-                                            session
-                                                .panes
-                                                .iter()
-                                                .find(|pane| Some(pane.id) == this.focused_pane_id)
-                                        })
-                                        .or_else(|| session.panes.first())
-                                        .map(|pane| pane.id)
-                                });
-                                if let Some(pane_id) = pane_id {
-                                    this.focused_pane_id = Some(pane_id);
-                                    this.set_chat_mode(pane_id, true, window, cx);
-                                }
-                            }
-                            this.schedule_workspace_save(cx);
-                            cx.notify();
+                            this.switch_agent_layout(window, cx);
                         }),
                     )
                     .child(svg().path("icons/one-view.svg").size(px(15.0)).text_color(
@@ -18724,8 +19106,20 @@ impl Render for AppState {
                 let pane = session
                     .panes
                     .iter()
-                    .find(|pane| pane.chat.active && Some(pane.id) == self.focused_pane_id)
-                    .or_else(|| session.panes.iter().find(|pane| pane.chat.active))
+                    .find(|pane| pane.one_mode && !pane.tool_panel)
+                    .or_else(|| {
+                        session.panes.iter().find(|pane| {
+                            pane.chat.active
+                                && !pane.tool_panel
+                                && Some(pane.id) == self.focused_pane_id
+                        })
+                    })
+                    .or_else(|| {
+                        session
+                            .panes
+                            .iter()
+                            .find(|pane| pane.chat.active && !pane.tool_panel)
+                    })
                     .or_else(|| {
                         session
                             .panes
@@ -18763,7 +19157,7 @@ impl Render for AppState {
                             && tokens.is_dark
                             && pane.chat.visible_messages().is_empty()
                             && pane.chat.worker_view.is_none();
-                        div()
+                        let chat = div()
                             .relative()
                             .size_full()
                             .overflow_hidden()
@@ -18906,7 +19300,46 @@ impl Render for AppState {
                                     )
                                 },
                             )
-                            .into_any_element()
+                            .into_any_element();
+                        if let Some(panel) = session.panes.iter().find(|candidate| {
+                            candidate.tool_panel && candidate.preview_owner == Some(pane.id)
+                        }) {
+                            let panel_id = panel.id;
+                            let width = (workspace_width - px(8.0)).max(px(200.0));
+                            let ratio = panel.tool_panel_chat_ratio.unwrap_or(0.5);
+                            let owner = cx.entity().downgrade();
+                            h_resizable(("chat-tool-panel", panel_id))
+                                .child(
+                                    resizable_panel()
+                                        .size(width * ratio)
+                                        .size_range(px(100.0)..px(10000.0))
+                                        .child(div().size_full().overflow_hidden().child(chat)),
+                                )
+                                .child(
+                                    resizable_panel()
+                                        .size(width * (1.0 - ratio))
+                                        .size_range(px(100.0)..px(10000.0))
+                                        .child(
+                                            self.render_terminal_pane(panel, false, _window, cx),
+                                        ),
+                                )
+                                .on_resize(move |state, _, cx| {
+                                    let sizes = state.read(cx).sizes();
+                                    if sizes.len() != 2 || sizes[0] + sizes[1] <= px(0.0) {
+                                        return;
+                                    }
+                                    let ratio = (sizes[0] / (sizes[0] + sizes[1])).clamp(0.0, 1.0);
+                                    let _ = owner.update(cx, |this, cx| {
+                                        if let Some(panel) = this.pane_mut(panel_id) {
+                                            panel.tool_panel_chat_ratio = Some(ratio);
+                                        }
+                                        this.schedule_workspace_save(cx);
+                                    });
+                                })
+                                .into_any_element()
+                        } else {
+                            chat
+                        }
                     } else {
                         self.render_terminal_pane(pane, true, _window, cx)
                             .into_any_element()
@@ -18915,7 +19348,11 @@ impl Render for AppState {
                     div().into_any_element()
                 }
             } else if let Some(max_pane_id) = session.maximized_pane_id {
-                if let Some(pane) = session.panes.iter().find(|p| p.id == max_pane_id) {
+                if let Some(pane) = session
+                    .panes
+                    .iter()
+                    .find(|p| p.id == max_pane_id && !p.tool_panel && !p.one_mode)
+                {
                     div()
                         .size_full()
                         .p(px(4.0))
@@ -18943,6 +19380,32 @@ impl Render for AppState {
         // Focused terminal's status and logo, mirrored in the title bar.
         let titlebar_status = self.active_session().map(|s| s.status);
         let titlebar_logo = self.active_session().map(|s| s.logo.clone());
+        let panel_source = self
+            .settings
+            .agent_layout
+            .then(|| self.active_session())
+            .flatten()
+            .and_then(|session| {
+                session
+                    .panes
+                    .iter()
+                    .find(|pane| pane.one_mode && !pane.tool_panel)
+                    .or_else(|| {
+                        session.panes.iter().find(|pane| {
+                            pane.chat.active
+                                && !pane.tool_panel
+                                && Some(pane.id) == self.focused_pane_id
+                        })
+                    })
+                    .or_else(|| {
+                        session
+                            .panes
+                            .iter()
+                            .find(|pane| pane.chat.active && !pane.tool_panel)
+                    })
+                    .filter(|pane| pane.diff_preview.is_none() && pane.markdown_preview.is_none())
+                    .map(|pane| pane.id)
+            });
 
         let terminal_content = div()
             .flex()
@@ -19030,7 +19493,35 @@ impl Render for AppState {
                                     .text_color(rgba(text_color))
                                     .child(div().size(px(6.0)).rounded_full().bg(rgba(dot_color)))
                                     .child(status.label())
-                            })),
+                            }))
+                            .when_some(panel_source, |row, pane_id| {
+                                row.child(div().flex_1()).child(
+                                    div()
+                                        .id(("open-tool-panel", pane_id))
+                                        .debug_selector(|| "open-tool-panel".into())
+                                        .occlude()
+                                        .size(px(28.0))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .rounded(px(5.0))
+                                        .cursor_pointer()
+                                        .hover(|style| style.bg(tokens.titlebar_btn_hover))
+                                        .child(
+                                            svg()
+                                                .path("icons/panel-right.svg")
+                                                .size(px(15.0))
+                                                .text_color(tokens.titlebar_fg),
+                                        )
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(move |this, _, window, cx| {
+                                                cx.stop_propagation();
+                                                this.open_tool_panel(pane_id, window, cx);
+                                            }),
+                                        ),
+                                )
+                            }),
                     ),
             )
             .child(
@@ -19478,9 +19969,9 @@ fn main() -> Result<()> {
         Some(command) => anyhow::bail!("unsupported Shob command: {command}"),
         None => {}
     }
-    rpi_embedded::set_tool_arrival_hook(crate::stream_timing::tool_arrived);
-    rpi_embedded::set_tool_end_hook(crate::stream_timing::tool_finished);
-    rpi_embedded::set_tool_output_hook(crate::stream_timing::tool_output_arrived);
+    embedded::set_tool_arrival_hook(crate::stream_timing::tool_arrived);
+    embedded::set_tool_end_hook(crate::stream_timing::tool_finished);
+    embedded::set_tool_output_hook(crate::stream_timing::tool_output_arrived);
     gpui_platform::application()
         .with_assets(CombinedAssets)
         .run(|cx: &mut App| {
@@ -20478,7 +20969,7 @@ mod resize_tests {
             chat.active = true;
             chat.messages
                 .push(Arc::new(ChatMessage::new(ChatRole::User, "Hello".into())));
-            chat.set_usage(rpi_embedded::AgentUsage {
+            chat.set_usage(embedded::AgentUsage {
                 input: 100,
                 output: 20,
                 ..Default::default()
@@ -20520,7 +21011,7 @@ mod resize_tests {
         let empty_bar_height = cx.debug_bounds("shob-input-bar").unwrap().size.height;
         cx.update_window_entity(&state, |s, _, cx| {
             let chat = &mut s.projects[0].sessions[0].panes[0].chat;
-            chat.observe_status(&AgentEvent::Usage(rpi_embedded::AgentUsage::default()));
+            chat.observe_status(&AgentEvent::Usage(embedded::AgentUsage::default()));
             cx.notify();
         });
         cx.draw_frame().unwrap();
@@ -20532,14 +21023,14 @@ mod resize_tests {
             let chat = &mut s.projects[0].sessions[0].panes[0].chat;
             // Start a fresh total so the test below can verify known cost accumulation.
             chat.usage = None;
-            chat.observe_status(&AgentEvent::Usage(rpi_embedded::AgentUsage {
+            chat.observe_status(&AgentEvent::Usage(embedded::AgentUsage {
                 input: 1200,
                 output: 80,
                 cache_read: 8000,
                 cache_write: 500,
                 cost: Some(0.012),
             }));
-            chat.observe_status(&AgentEvent::Usage(rpi_embedded::AgentUsage {
+            chat.observe_status(&AgentEvent::Usage(embedded::AgentUsage {
                 input: 300,
                 output: 20,
                 cache_read: 1000,
@@ -20549,7 +21040,7 @@ mod resize_tests {
             chat.observe_status(&AgentEvent::Done);
             assert_eq!(
                 chat.usage.unwrap(),
-                rpi_embedded::AgentUsage {
+                embedded::AgentUsage {
                     input: 1500,
                     output: 100,
                     cache_read: 9000,
@@ -20575,7 +21066,7 @@ mod resize_tests {
         }
         cx.update_window_entity(&state, |s, _, cx| {
             let chat = &mut s.projects[0].sessions[0].panes[0].chat;
-            chat.observe_status(&AgentEvent::Usage(rpi_embedded::AgentUsage {
+            chat.observe_status(&AgentEvent::Usage(embedded::AgentUsage {
                 input: 5,
                 output: 1,
                 ..Default::default()
@@ -20895,7 +21386,7 @@ mod resize_tests {
         let (mut cx, state) = open_app(&mut app);
         let report = |first: &str, second: &str| AgentEvent::ToolEnd {
             id: Some("checklist".into()),
-            name: rpi_embedded::task_list::NAME.into(),
+            name: embedded::task_list::NAME.into(),
             output: serde_json::json!({"tasks": [
                 {"text": "Inspect the inputs", "status": first},
                 {"text": "Prepare the report", "status": second}
@@ -21000,7 +21491,7 @@ mod resize_tests {
 
     #[test]
     fn agent_checklist_scrolls_to_active_step_unless_user_is_browsing() {
-        use rpi_embedded::task_list::{Task, TaskList, TaskStatus};
+        use embedded::task_list::{Task, TaskList, TaskStatus};
 
         let mut app = TestAppContext::new();
         let (mut cx, state) = open_app(&mut app);
@@ -22317,6 +22808,106 @@ mod pane_tests {
             state.active_project().unwrap().sessions[0].panes.len()
         });
         assert_eq!(pane_count_after, 1);
+    }
+
+    #[test]
+    fn one_mode_keeps_chat_and_panel_separate_from_regular_panes() {
+        let mut cx = TestAppContext::new();
+        let (mut cx, state) = open_app(&mut cx);
+        cx.update_window_entity(&state, |state, window, cx| {
+            state.settings.agent_layout = false;
+            let regular_chat = state.pane_ref(1).unwrap().chat.active;
+            state.projects[0].sessions[0].maximized_pane_id = Some(1);
+            state.switch_agent_layout(window, cx);
+            let chat = state.focused_pane_id.unwrap();
+            assert_ne!(chat, 1);
+            assert!(state.pane_ref(chat).unwrap().one_mode);
+            state.open_tool_panel(chat, window, cx);
+            let panel = state.focused_pane_id.unwrap();
+            state.show_panel_terminal(panel, window, cx);
+            state.set_chat_mode(panel, true, window, cx);
+            assert!(!state.pane_ref(panel).unwrap().chat.active);
+            state.switch_agent_layout(window, cx);
+            assert_eq!(state.active_session().unwrap().maximized_pane_id, Some(1));
+            assert_eq!(state.focused_pane_id, Some(1));
+            assert_eq!(state.pane_ref(1).unwrap().chat.active, regular_chat);
+            assert!(state.pane_ref(chat).unwrap().chat.active);
+            let saved = state.saved_workspace(cx);
+            let panes = &saved.projects[0].sessions[0].panes;
+            assert!(panes.iter().find(|pane| pane.id == chat).unwrap().one_mode);
+            assert_eq!(
+                panes
+                    .iter()
+                    .find(|pane| pane.id == chat)
+                    .unwrap()
+                    .regular_focus,
+                Some(1)
+            );
+            state.switch_agent_layout(window, cx);
+            assert_eq!(state.focused_pane_id, Some(chat));
+            assert_eq!(state.active_session().unwrap().panes.len(), 3);
+        });
+    }
+
+    #[test]
+    fn tool_panel_switches_views_and_saves_its_state() {
+        let mut cx = TestAppContext::new();
+        let (mut cx, app_state) = open_app(&mut cx);
+        cx.update_window_entity(&app_state, |state, window, cx| {
+            state.settings.agent_layout = true;
+            state.pane_mut(1).unwrap().chat.active = true;
+            state.open_tool_panel(1, window, cx);
+            let panel = state.focused_pane_id.unwrap();
+            assert_eq!(state.pane_ref(panel).unwrap().preview_owner, Some(1));
+            assert!(state.pane_ref(panel).unwrap().tool_panel_picker);
+            assert!(
+                state.saved_workspace(cx).projects[0].sessions[0]
+                    .panes
+                    .iter()
+                    .find(|pane| pane.id == panel)
+                    .unwrap()
+                    .tool_panel_picker
+            );
+            state.show_panel_terminal(panel, window, cx);
+            assert!(state.pane_ref(panel).unwrap().diff_preview.is_none());
+            let saved = state.saved_workspace(cx);
+            let saved_panel = saved.projects[0].sessions[0]
+                .panes
+                .iter()
+                .find(|pane| pane.id == panel)
+                .unwrap();
+            assert_eq!(saved_panel.tool_panel_owner, Some(1));
+            assert!(!saved_panel.tool_panel_changes);
+            state.open_project_diff(panel, window, cx);
+            assert!(state.pane_ref(panel).unwrap().diff_preview.is_some());
+            assert!(
+                state.saved_workspace(cx).projects[0].sessions[0]
+                    .panes
+                    .iter()
+                    .find(|pane| pane.id == panel)
+                    .unwrap()
+                    .tool_panel_changes
+            );
+            assert_eq!(state.active_project().unwrap().sessions[0].panes.len(), 2);
+        });
+        cx.draw_frame().expect("tool panel draws beside chat");
+        assert!(cx.debug_bounds("open-tool-panel").is_some());
+        cx.update_window_entity(&app_state, |state, window, cx| {
+            state.open_tool_panel(1, window, cx);
+            state.settings.agent_layout = false;
+            let panel = state.focused_pane_id.unwrap();
+            state.focus_pane(panel, window, cx);
+            assert_eq!(state.focused_pane_id, Some(1));
+        });
+        cx.draw_frame().expect("regular layout hides One panel");
+        assert!(cx.debug_bounds("tool-panel-picker").is_none());
+        assert!(cx.debug_bounds("open-tool-panel").is_none());
+        cx.update_window_entity(&app_state, |state, _, cx| {
+            state.settings.agent_layout = true;
+            cx.notify();
+        });
+        cx.draw_frame().expect("One layout restores panel");
+        assert!(cx.debug_bounds("tool-panel-picker").is_some());
     }
 
     #[test]
@@ -26443,9 +27034,9 @@ First report
         use agent_bridge::{AgentBridge, AgentEvent};
         use std::time::Duration;
 
-        rpi_embedded::set_tool_arrival_hook(timing::tool_arrived);
-        rpi_embedded::set_tool_end_hook(timing::tool_finished);
-        rpi_embedded::set_tool_output_hook(timing::tool_output_arrived);
+        embedded::set_tool_arrival_hook(timing::tool_arrived);
+        embedded::set_tool_end_hook(timing::tool_finished);
+        embedded::set_tool_output_hook(timing::tool_output_arrived);
         let cwd = PathBuf::from(std::env::var_os("SHOB_BENCH_CWD").unwrap());
         let (wake_tx, wake_rx) = std::sync::mpsc::sync_channel(1);
         agent_bridge::set_wake(Arc::new(move || {
