@@ -36,6 +36,8 @@ pulldown-cmark = "0.12"
 toml = "1"
 unicode-width = "0.2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+gpui-updater-core = { version = "=0.4.4", features = ["delta"] }
+tempfile = "3"
 
 [dev-dependencies]
 tree-sitter = "0.25"
