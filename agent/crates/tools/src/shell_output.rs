@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::env::{ExecutionEnv, FileContent, ShellExecOptions, ShellOutputChunk};
 use crate::error::{ExecutionError, ExecutionErrorCode};
+use crate::output_window::DEFAULT_HEAD_SHARE;
 use crate::truncate::{
     trim_to_last_utf8_bytes, truncate_tail, TruncationLimit, TruncationOptions, TruncationResult,
     DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES,
@@ -30,6 +31,11 @@ use crate::truncate::{
 /// The 100KB cap on the in-memory `tail_output` rolling buffer.
 const MAX_OUTPUT_BYTES: usize = DEFAULT_MAX_BYTES * 2;
 const SPOOL_BATCH_BYTES: usize = 64 * 1024;
+/// Cap on the retained *head* prefix, sized to exactly the head window the
+/// head+tail display uses (`output_window.rs`). Bounded so a runaway command
+/// costs at most one extra `DEFAULT_MAX_BYTES / DEFAULT_HEAD_SHARE` (6 KB)
+/// allocation, filled from the first chunks and never grown again.
+const MAX_HEAD_BYTES: usize = DEFAULT_MAX_BYTES / DEFAULT_HEAD_SHARE;
 
 /// Mirrors `ShellCaptureProgress`.
 #[derive(Clone)]
@@ -44,6 +50,11 @@ pub struct ShellCaptureProgress {
 #[derive(Clone)]
 pub struct ShellCaptureResult {
     pub output: String,
+    /// Leading complete lines of the *complete* output, capped at
+    /// [`MAX_HEAD_BYTES`]. Empty for commands that never filled it, which is the
+    /// common case. The terminal formatting step uses it to show a head window
+    /// when a bounded tail alone would hide the cause of a failure.
+    pub head_output: String,
     pub truncation: TruncationResult,
     pub full_output_path: Option<PathBuf>,
     pub last_line_bytes: usize,
@@ -89,6 +100,10 @@ impl<'a> Default for ShellCaptureOptions<'a> {
 struct CaptureState {
     tail_output: String,
     tail_start: usize,
+    /// Leading bytes of the output, snapshotted before the rolling tail evicts
+    /// them. Never grows past [`MAX_HEAD_BYTES`]; `head_full` stops the copies.
+    head_output: String,
+    head_full: bool,
     total_bytes: usize,
     completed_lines: usize,
     has_open_line: bool,
@@ -114,6 +129,28 @@ impl CaptureState {
                 self.has_open_line = true;
             }
             None => {}
+        }
+        // Retain the leading output before the rolling tail overwrites it. This
+        // runs only until the cap is reached, and only ever appends to a
+        // `MAX_HEAD_BYTES`-bounded buffer, so a long-running command pays one
+        // small memcpy for its first chunks and nothing afterwards.
+        if !self.head_full {
+            self.head_output.push_str(text);
+            if self.head_output.len() > MAX_HEAD_BYTES {
+                let mut cut = MAX_HEAD_BYTES;
+                while cut > 0 && !self.head_output.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                // Snap down to the last complete line so the head never ends
+                // mid-line; a single line longer than the cap keeps nothing.
+                let keep = self.head_output[..cut]
+                    .rfind('\n')
+                    .map(|newline| newline + 1)
+                    .unwrap_or(0);
+                self.head_output.truncate(keep);
+                self.head_output.shrink_to_fit();
+                self.head_full = true;
+            }
         }
         // Advance a logical start without moving the tail on every pipe read.
         self.tail_output.push_str(text);
@@ -390,10 +427,17 @@ pub async fn execute_shell_with_capture(
         if let Some(cb) = on_chunk.as_mut() {
             cb("", &|| Some(progress.clone()));
         }
-        progress
+        // Move the retained prefix out with the final snapshot; the capture state is
+        // done afterwards. `mem::take` keeps this a move, not a copy.
+        let head_output = if progress.truncation.truncated {
+            std::mem::take(&mut state.head_output)
+        } else {
+            String::new()
+        };
+        (progress, head_output)
     };
     // A stalled spool backpressures reads, not child status/kill/deadline.
-    let (exec_result, progress) = tokio::join!(execution, consumer);
+    let (exec_result, (progress, head_output)) = tokio::join!(execution, consumer);
     // Pull the scalar/move fields out once so we never read a partially-moved
     // `progress` (e.g. `progress.truncation.truncated` after `truncation:` moved it).
     let ShellCaptureProgress {
@@ -408,6 +452,7 @@ pub async fn execute_shell_with_capture(
             let cancelled = options.cancel.map(|t| t.is_cancelled()).unwrap_or(false);
             Ok(ShellCaptureResult {
                 output,
+                head_output,
                 truncation,
                 full_output_path,
                 last_line_bytes,
@@ -423,6 +468,7 @@ pub async fn execute_shell_with_capture(
             if is_aborted {
                 Ok(ShellCaptureResult {
                     output,
+                    head_output,
                     truncation,
                     full_output_path,
                     last_line_bytes,
@@ -434,6 +480,7 @@ pub async fn execute_shell_with_capture(
             } else if options.return_execution_errors {
                 Ok(ShellCaptureResult {
                     output,
+                    head_output,
                     truncation,
                     full_output_path,
                     last_line_bytes,
@@ -560,6 +607,49 @@ mod tests {
             output.push_str(&sanitizer.push_owned(character.to_string()));
         }
         assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn capture_state_retains_a_bounded_head_prefix() {
+        let mut s = CaptureState::default();
+        // 4 KiB chunks of numbered lines; the prefix must stop at MAX_HEAD_BYTES
+        // and stop mid-line only by snapping down to the last complete line.
+        for chunk in 0..64 {
+            let text: String = (0..128)
+                .map(|i| format!("C{chunk:03}L{i:03}\n"))
+                .collect();
+            s.ingest_chunk(&text);
+        }
+        assert!(s.head_full);
+        assert!(s.head_output.len() <= MAX_HEAD_BYTES);
+        assert!(s.head_output.len() > MAX_HEAD_BYTES / 2);
+        assert!(s.head_output.ends_with('\n'));
+        assert!(s.head_output.starts_with("C000L000"));
+        // The retained prefix is stable: later chunks must not extend it.
+        let len = s.head_output.len();
+        s.ingest_chunk("tail\n");
+        assert_eq!(s.head_output.len(), len);
+        // The tail still tracks recent output.
+        assert!(s.create_progress().output.trim_end().ends_with("tail"));
+    }
+
+    #[test]
+    fn capture_state_head_survives_a_single_line_longer_than_the_cap() {
+        let mut s = CaptureState::default();
+        s.ingest_chunk("first line\n");
+        s.ingest_chunk(&"x".repeat(MAX_HEAD_BYTES * 2));
+        assert!(s.head_full);
+        // A cap-sized single line has no newline to snap to, so nothing is kept —
+        // the window then falls back to the existing tail notice.
+        assert_eq!(s.head_output, "first line\n");
+    }
+
+    #[test]
+    fn capture_state_keeps_everything_when_output_is_small() {
+        let mut s = CaptureState::default();
+        s.ingest_chunk("a\nb\n");
+        assert!(!s.head_full);
+        assert_eq!(s.head_output, "a\nb\n");
     }
 
     #[test]

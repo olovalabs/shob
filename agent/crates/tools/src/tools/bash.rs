@@ -30,7 +30,9 @@ use crate::shell_output::{
     execute_shell_with_capture, ShellCaptureOptions, ShellCaptureProgress, ShellCaptureResult,
 };
 use crate::tools::tool_context::ExecutionToolContext;
-use crate::truncate::{format_size, TruncationResult, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES};
+use crate::truncate::{
+    format_size, TruncationOptions, TruncationResult, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES,
+};
 
 /// Default throttle window for bash `on_update` flushes. The first chunk is
 /// emitted immediately; this window only coalesces later checkpoints.
@@ -142,6 +144,9 @@ impl BashTool {
                 "Execute a Bash command in the current working directory using Bash/POSIX syntax, even on Windows. PowerShell cmdlets (Get-ChildItem, Select-Object, Select-String) are not valid here; use ls, find, rg, and POSIX pipelines instead. Returns stdout and \
                  stderr. Output is truncated to last {DEFAULT_MAX_LINES} lines or {kb}KB \
                  (whichever is hit first). If truncated, full output is saved to a temp file. \
+                 If the command failed and the output was truncated, the first lines are shown \
+                 as well as the last, with the elided line count stated, so the cause is not \
+                 hidden; nothing is summarised or dropped silently. \
                  Defaults to a {default_timeout}-second timeout; provide timeout in seconds to override it. \
                  A non-zero exit code is a command result: probe commands such as grep (no match) or \
                  git config --get (missing key) legitimately return 1. Read the output before deciding \
@@ -361,16 +366,53 @@ pub(super) fn emit_update(
 
 /// Build the terminal `(output_text, details)` from a capture, appending the
 /// truncation continuation notice (mirrors the TS block).
+///
+/// When the command failed *and* its output was truncated, the tail alone is a
+/// bad summary: the cause is usually printed first (a compiler's first error, the
+/// first failing assertion). In that case a bounded head window is joined to the
+/// tail, with the elided count and the full-log path stated. The window is refused
+/// whenever it would not be strictly smaller than what it replaces, so this can
+/// never inflate a result.
 fn build_bash_output(capture: &ShellCaptureResult) -> (String, BashToolDetails) {
+    let path_str = capture
+        .full_output_path
+        .as_ref()
+        .map(|p| p.to_string_lossy().into_owned());
+    if capture.truncated && !matches!(capture.exit_code, Some(0) | None) {
+        let totals = crate::output_window::OutputTotals {
+            lines: capture.truncation.total_lines,
+            bytes: capture.truncation.total_bytes,
+        };
+        let window = crate::output_window::build_window(
+            &capture.head_output,
+            &capture.output,
+            totals,
+            TruncationOptions::default(),
+            crate::output_window::DEFAULT_HEAD_SHARE,
+            path_str.as_deref(),
+        );
+        if let Some(window) = window {
+            let truncation = crate::output_window::window_truncation(
+                &window,
+                totals,
+                TruncationOptions::default(),
+            );
+            return (
+                window.content,
+                BashToolDetails {
+                    truncation: Some(truncation),
+                    full_output_path: path_str,
+                    exit_code: None,
+                    failure_kind: None,
+                },
+            );
+        }
+    }
     let mut output_text = capture.output.clone();
     let details = if capture.truncated {
         let t = &capture.truncation;
         let start_line = t.total_lines.saturating_sub(t.output_lines) + 1;
         let end_line = t.total_lines;
-        let path_str = capture
-            .full_output_path
-            .as_ref()
-            .map(|p| p.to_string_lossy().into_owned());
         if t.last_line_partial {
             let last_line_size = format_size(capture.last_line_bytes);
             output_text.push_str(&format!(
@@ -455,6 +497,94 @@ mod tests {
         assert_eq!(resolve_timeout(None, Some(30.0)).unwrap(), 30.0);
         assert_eq!(resolve_timeout(Some(300.0), Some(30.0)).unwrap(), 300.0);
         assert_eq!(resolve_timeout(Some(300.0), None).unwrap(), 300.0);
+    }
+
+    /// A synthetic capture: `total` numbered lines, of which `head_output` is the
+    /// retained prefix and `output` the retained tail.
+    fn capture_with(
+        total: usize,
+        exit_code: Option<i32>,
+        path: Option<&str>,
+    ) -> ShellCaptureResult {
+        let all: Vec<String> = (0..total).map(|i| format!("L{i:06}")).collect();
+        let head_output: String = all[..total.min(200)].join("\n");
+        let tail: String = all[total.saturating_sub(2_000)..].join("\n");
+        let truncation = crate::truncate::TruncationResult {
+            content: tail.clone(),
+            truncated: true,
+            truncated_by: Some(crate::truncate::TruncationLimit::Lines),
+            total_lines: total,
+            total_bytes: total * 8,
+            output_lines: 2_000,
+            output_bytes: tail.len(),
+            last_line_partial: false,
+            first_line_exceeds_limit: false,
+            max_lines: DEFAULT_MAX_LINES,
+            max_bytes: DEFAULT_MAX_BYTES,
+        };
+        ShellCaptureResult {
+            output: tail,
+            head_output,
+            truncation,
+            full_output_path: path.map(std::path::PathBuf::from),
+            last_line_bytes: 7,
+            exit_code,
+            cancelled: false,
+            truncated: true,
+            execution_error: None,
+        }
+    }
+
+    #[test]
+    fn failed_truncated_command_shows_head_and_tail() {
+        let (text, details) = build_bash_output(&capture_with(20_000, Some(1), Some("/tmp/o.log")));
+        // The cause near the top and the verdict at the bottom both survive.
+        assert!(text.starts_with("L000000"));
+        assert!(text.contains("L019999"));
+        // The elided middle is counted, not silently dropped.
+        assert!(text.contains("lines elided, at least ("));
+        // The complete log is still reachable.
+        assert!(text.contains("[Full output: /tmp/o.log]"));
+        let truncation = details.truncation.expect("truncation metadata");
+        assert_eq!(truncation.total_lines, 20_000);
+        assert_eq!(
+            truncation.output_lines,
+            200 + 2_000,
+            "metadata must describe the window, not the tail"
+        );
+        assert_eq!(details.full_output_path.as_deref(), Some("/tmp/o.log"));
+    }
+
+    #[test]
+    fn successful_truncated_command_stays_tail_only() {
+        let (text, _) = build_bash_output(&capture_with(20_000, Some(0), Some("/tmp/o.log")));
+        assert!(!text.starts_with("L000000"));
+        assert!(text.starts_with("L018000"));
+        assert!(text.contains("Showing lines 18001-20000 of 20000"));
+        assert!(text.contains("Full output: /tmp/o.log"));
+    }
+
+    #[test]
+    fn untruncated_failed_command_is_untouched() {
+        let mut capture = capture_with(3, Some(1), None);
+        capture.truncated = false;
+        capture.output = "boom\n".to_string();
+        capture.head_output = String::new();
+        let (text, details) = build_bash_output(&capture);
+        assert_eq!(text, "boom\n");
+        assert!(details.truncation.is_none());
+        assert!(details.full_output_path.is_none());
+    }
+
+    #[test]
+    fn failed_command_without_retained_head_keeps_the_old_notice() {
+        // Nothing was retained (output arrived as one oversized chunk), so the
+        // existing tail notice is the honest message.
+        let mut capture = capture_with(20_000, Some(1), Some("/tmp/o.log"));
+        capture.head_output = String::new();
+        let (text, details) = build_bash_output(&capture);
+        assert!(text.contains("Showing lines 18001-20000 of 20000"));
+        assert_eq!(details.truncation.map(|t| t.output_lines), Some(2_000));
     }
 
     #[test]

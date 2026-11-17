@@ -20,6 +20,7 @@ pub mod image_processing;
 pub mod in_memory;
 pub mod os_env;
 pub mod output_decode;
+pub mod output_window;
 pub mod path_utils;
 pub mod search;
 pub mod shell_output;
@@ -51,6 +52,10 @@ pub use image::{detect_supported_image_mime_type, encode_base64};
 pub use in_memory::{InMemoryExecutionEnv, ShellScript};
 pub use os_env::{is_host_private_env, OsExecutionEnv, HOST_PRIVATE_ENV};
 pub use path_utils::{normalize_tool_path, resolve_read_tool_path, resolve_tool_path};
+pub use output_window::{
+    build_output_window, build_window, window_truncation, OutputTotals, OutputWindow,
+    DEFAULT_HEAD_SHARE,
+};
 pub use truncate::{
     format_size, split_lines_for_counting, truncate_head, truncate_line, truncate_tail,
     TruncateLineOutput, TruncationLimit, TruncationOptions, TruncationResult, DEFAULT_MAX_BYTES,

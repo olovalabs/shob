@@ -109,11 +109,22 @@ completed calls may intentionally leave background descendants alive.
 
 The capture layer maintains a bounded display tail and persists the complete
 sanitized stream after display truncation, batching existing backlogs up to
-64 KiB without delaying sparse writes. First progress is immediate; Bash and
+64 KiB without delaying sparse writes. It also retains the first 6 KiB of
+output (once, never grown) so a *failed* truncated command can show a bounded
+head window alongside the tail — see below. First progress is immediate; Bash and
 PowerShell coalesce later checkpoints with one 16 ms timer, including when
 output goes quiet. `RPI_BASH_UPDATE_THROTTLE_MS` overrides that window.
 `ShellCaptureOptions::update_interval = None` retains per-chunk callbacks for
 other capture consumers.
+
+Display truncation is tail-only by default. When a command failed and its
+output was truncated, the terminal notice additionally shows a bounded head
+window: the first complete lines, an exact elided-line count, then the tail, then
+the full-log path. Nothing is filtered, summarised, reordered or inferred — the
+exit code comes from the recorded child status, not from the text — and the window
+is refused unless it is strictly smaller than the output it replaces, so it can
+never inflate a result. Non-zero output that fits within the limits is unchanged,
+as is every successful command.
 
 Post-exit drain allows 100 ms plus at most 1 MiB of immediately ready bytes per
 pipe, not arbitrary future descendant output. Slow storage can delay final log

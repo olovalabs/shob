@@ -180,6 +180,15 @@ from the upstream library crates.
   log spool. First output is immediate; subsequent UI checkpoints use one
   execution-local 16 ms timer, including quiet periods. Timeouts do not add a
   post-reap sleep. Interrupted/dropped calls clean up their process groups.
+- **Failure visibility.** The capture layer also retains the first 6 KiB of
+  output, filled once from the leading chunks and never grown. When a command
+  fails and its output was truncated, the terminal result shows a bounded head
+  window, an exact elided-line count, the tail and the full-log path, so a cause
+  printed near the start is not hidden by a tail-only limit. The window is built
+  from a recorded exit code (never inferred from text), performs no filtering or
+  summarisation, and is refused unless strictly smaller than the output it
+  replaces; successful commands keep the tail-only format unchanged. See
+  `agent/crates/tools/src/output_window.rs`.
 - **Interactive PTYs.** `terminal::pty_session` owns setup, resize, termination,
   reaping and handle destruction off GPUI, using the existing smol pool and
   worker-only deferred I/O. One FIFO writer bounds accepted/in-flight input to
