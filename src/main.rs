@@ -47,6 +47,7 @@ mod conversations;
 mod diagnostics;
 mod file_icons;
 mod file_preview;
+mod files_surface;
 mod integrations;
 mod logos;
 mod paths;
@@ -2923,6 +2924,9 @@ pub struct TerminalPane {
     pub terminal: Entity<TerminalView>,
     markdown_preview: Option<(PathBuf, SharedString)>,
     diff_preview: Option<DiffPreview>,
+    files_surface: Option<(Entity<files_surface::FilesSurface>, gpui::Subscription)>,
+    files_active: bool,
+    files_restore: Option<files_surface::SavedFiles>,
     /// Agent pane that owns this reusable preview. Preview panes reuse themselves.
     preview_owner: Option<usize>,
     one_mode: bool,
@@ -3086,6 +3090,9 @@ impl TerminalPane {
             terminal,
             markdown_preview: None,
             diff_preview: None,
+            files_surface: None,
+            files_active: false,
+            files_restore: None,
             preview_owner: None,
             one_mode: false,
             regular_focus: None,
@@ -3685,6 +3692,15 @@ impl AppState {
                                         && pane.diff_preview.is_some(),
                                     tool_panel_picker: pane.tool_panel && pane.tool_panel_picker,
                                     tool_panel_chat_ratio: pane.tool_panel_chat_ratio,
+                                    files: pane
+                                        .files_surface
+                                        .as_ref()
+                                        .map(|(view, _)| {
+                                            let mut saved = view.read(cx).snapshot(cx);
+                                            saved.active = pane.files_active;
+                                            saved
+                                        })
+                                        .or_else(|| pane.files_restore.clone()),
                                     chat: workspace_state::SavedChat {
                                         fast_mode: pane.chat.fast_mode,
                                         thinking_override: pane.chat.thinking_override.clone(),
@@ -4005,6 +4021,10 @@ impl AppState {
                             file_view: None,
                             file_only: false,
                         });
+                    }
+                    if let Some(saved) = saved_pane.files {
+                        pane.files_active = saved.active;
+                        pane.files_restore = Some(saved);
                     }
                     pane.command_history = saved_pane.command_history;
                     pane.restore_draft = Some(saved_pane.draft.clone());
@@ -6259,6 +6279,7 @@ impl AppState {
         pane.preview_generation = pane.preview_generation.wrapping_add(1);
         pane.markdown_preview = None;
         pane.diff_preview = None;
+        pane.files_active = false;
         self.focused_pane_id = Some(preview);
         cx.notify();
         Some(preview)
@@ -6451,6 +6472,53 @@ impl AppState {
         self.refresh_project_diff(new_id, cx);
     }
 
+    fn build_files_surface(
+        &self,
+        pane_id: usize,
+        root: PathBuf,
+        saved: files_surface::SavedFiles,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Entity<files_surface::FilesSurface>, gpui::Subscription) {
+        let owner = cx.entity().downgrade();
+        let view =
+            cx.new(|cx| files_surface::FilesSurface::new(root, saved, owner, pane_id, window, cx));
+        let subscription = cx.subscribe(&view, |this, _, _: &files_surface::Changed, cx| {
+            this.schedule_workspace_save(cx);
+        });
+        (view, subscription)
+    }
+
+    fn open_files_surface(&mut self, source: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(&(project, _, _)) = self.pane_index.get(&source) else {
+            return;
+        };
+        let root = self.projects[project].path.clone();
+        let Some(id) = self.prepare_preview_pane(source, window, cx) else {
+            return;
+        };
+        if self
+            .pane_ref(id)
+            .is_some_and(|pane| pane.files_surface.is_none())
+        {
+            let view = self.build_files_surface(
+                id,
+                root,
+                files_surface::SavedFiles::default(),
+                window,
+                cx,
+            );
+            self.pane_mut(id).unwrap().files_surface = Some(view);
+        }
+        if let Some(pane) = self.pane_mut(id) {
+            pane.files_active = true;
+            pane.tool_panel_picker = false;
+            pane.display_title = "Files".into();
+        }
+        self.schedule_workspace_save(cx);
+        cx.notify();
+    }
+
     fn open_tool_panel(&mut self, source: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(id) = self.prepare_preview_pane(source, window, cx) else {
             return;
@@ -6469,6 +6537,7 @@ impl AppState {
         if let Some(pane) = self.pane_mut(pane_id) {
             pane.preview_generation = pane.preview_generation.wrapping_add(1);
             pane.tool_panel_picker = false;
+            pane.files_active = false;
             pane.chat.active = false;
             pane.diff_preview = None;
             pane.markdown_preview = None;
@@ -7150,6 +7219,20 @@ impl AppState {
     /// removes the session (screen) itself; an emptied project spawns a fresh
     /// session, like before.
     fn close_pane(&mut self, pane_id: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(view) = self
+            .pane_ref(pane_id)
+            .and_then(|pane| pane.files_surface.as_ref())
+            .map(|(view, _)| view.clone())
+            && !view.update(cx, |view, cx| view.prepare_close(cx))
+        {
+            if let Some(pane) = self.pane_mut(pane_id) {
+                pane.files_active = true;
+                pane.tool_panel_picker = false;
+                pane.display_title = "Files".into();
+            }
+            cx.notify();
+            return;
+        }
         let Some(&(p_idx, s_idx, _)) = self.pane_index.get(&pane_id) else {
             return;
         };
@@ -7226,7 +7309,7 @@ impl AppState {
                 p.active_session_idx = s_idx;
                 if let Some(session) = p.sessions.get_mut(s_idx) {
                     if let Some(pane) = session.panes.iter_mut().find(|p| p.id == pane_id) {
-                        if pane.chat.auth.is_some() {
+                        if pane.chat.auth.is_some() || pane.files_active {
                             return;
                         }
                         if let Some(ReadOnlyFile {
@@ -9923,6 +10006,22 @@ impl AppState {
     }
 
     fn ensure_panes_input_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut files = Vec::new();
+        for project in &mut self.projects {
+            for session in &mut project.sessions {
+                for pane in &mut session.panes {
+                    if let Some(saved) = pane.files_restore.take() {
+                        files.push((pane.id, project.path.clone(), saved));
+                    }
+                }
+            }
+        }
+        for (id, root, saved) in files {
+            let view = self.build_files_surface(id, root, saved, window, cx);
+            if let Some(pane) = self.pane_mut(id) {
+                pane.files_surface = Some(view);
+            }
+        }
         let mut missing = Vec::new();
         for project in &mut self.projects {
             for session in &mut project.sessions {
@@ -9957,7 +10056,8 @@ impl AppState {
                     if let Some(project) = self.projects.get(p_idx) {
                         if let Some(session) = project.sessions.get(s_idx) {
                             if let Some(pane) = session.panes.get(pane_idx) {
-                                if pane.chat.auth.is_some()
+                                if pane.files_active
+                                    || pane.chat.auth.is_some()
                                     || pane.chat.active && !pane.chat.requests.is_empty()
                                 {
                                     return;
@@ -15827,7 +15927,7 @@ impl AppState {
                                                 MouseButton::Left,
                                                 cx.listener(move |this, _, window, cx| {
                                                     cx.stop_propagation();
-                                                    this.open_project_diff(pane_id, window, cx);
+                                                    this.open_files_surface(pane_id, window, cx);
                                                     this.schedule_workspace_save(cx);
                                                 }),
                                             ),
@@ -16050,6 +16150,7 @@ impl AppState {
                         cx.listener(move |this, event: &MouseDownEvent, window, cx| {
                             if this.pane_ref(pane_id).is_some_and(|pane| {
                                 !pane.tool_panel_picker
+                                    && !pane.files_active
                                     && pane.diff_preview.is_none()
                                     && pane.markdown_preview.is_none()
                             }) {
@@ -16148,12 +16249,25 @@ impl AppState {
                                                 MouseButton::Left,
                                                 cx.listener(move |this, _, window, cx| {
                                                     cx.stop_propagation();
-                                                    this.open_project_diff(pane_id, window, cx);
+                                                    this.open_files_surface(pane_id, window, cx);
                                                     this.schedule_workspace_save(cx);
                                                 }),
                                             ),
                                     ),
                             )
+                            .into_any_element()
+                    } else if pane.files_active {
+                        div()
+                            .size_full()
+                            .capture_any_mouse_down(cx.listener(
+                                move |this, event: &MouseDownEvent, window, cx| {
+                                    if event.button == MouseButton::Left {
+                                        this.focus_pane(pane_id, window, cx);
+                                        cx.notify();
+                                    }
+                                },
+                            ))
+                            .child(pane.files_surface.as_ref().unwrap().0.clone())
                             .into_any_element()
                     } else if let Some(view) = &pane.diff_preview {
                         self.render_project_diff(pane_id, view, window, cx)
@@ -16181,6 +16295,7 @@ impl AppState {
             )
             .when(
                 !pane.tool_panel_picker
+                    && !pane.files_active
                     && pane.markdown_preview.is_none()
                     && pane.diff_preview.is_none()
                     && pane.should_show_bottom_input(cx)

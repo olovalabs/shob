@@ -73,9 +73,12 @@ Keep your development environment organized.
 - Manage multiple projects
 - Split terminal panes
 - Organize agent sessions
-- Review Git changes
+- Browse project files with Zed’s default file icons, edit text, and review Git diffs
+- Stage or unstage files and commit staged changes
 - Restore previous workspaces
 - Preserve terminal scrollback and conversations
+
+The Files surface restores open files, unsaved drafts, expanded folders, and the commit message. Use Refresh to pick up external changes. Editing supports UTF-8 files up to 1 MiB and eight open tabs; saves refuse to overwrite a file changed on disk. Read-only diff snapshots and scroll positions are transient.
 
 ### Make It Yours
 

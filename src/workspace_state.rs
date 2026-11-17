@@ -162,6 +162,7 @@ pub struct SavedPane {
     pub tool_panel_changes: bool,
     pub tool_panel_picker: bool,
     pub tool_panel_chat_ratio: Option<f32>,
+    pub files: Option<crate::files_surface::SavedFiles>,
     pub chat: SavedChat,
 }
 

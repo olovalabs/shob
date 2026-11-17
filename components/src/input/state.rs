@@ -291,6 +291,7 @@ pub struct InputState {
     pub(super) size: Size,
     pub(super) disabled: bool,
     pub(super) read_only: bool,
+    max_bytes: Option<usize>,
     pub(super) masked: bool,
     pub(super) clean_on_escape: bool,
     pub(super) soft_wrap: bool,
@@ -392,6 +393,7 @@ impl InputState {
             selecting: false,
             disabled: false,
             read_only: false,
+            max_bytes: None,
             masked: false,
             clean_on_escape: false,
             soft_wrap: true,
@@ -785,6 +787,12 @@ impl InputState {
     ) {
         debug_assert!(self.mode.is_single_line());
         self.pattern = Some(pattern);
+    }
+
+    /// Reject edits exceeding this UTF-8 byte limit, including paste and IME input.
+    pub fn max_bytes(mut self, limit: usize) -> Self {
+        self.max_bytes = Some(limit);
+        self
     }
 
     pub fn validate(mut self, f: impl Fn(&str, &mut Context<Self>) -> bool + 'static) -> Self {
@@ -1953,6 +1961,15 @@ impl EntityInputHandler for InputState {
             }))
             .unwrap_or(self.selected_range.into());
 
+        if self.max_bytes.is_some_and(|limit| {
+            self.text
+                .len()
+                .saturating_sub(range.len())
+                .saturating_add(new_text.len())
+                > limit
+        }) {
+            return;
+        }
         let old_text = self.text.clone();
         self.text.replace(range.clone(), new_text);
 
@@ -2021,6 +2038,15 @@ impl EntityInputHandler for InputState {
             }))
             .unwrap_or(self.selected_range.into());
 
+        if self.max_bytes.is_some_and(|limit| {
+            self.text
+                .len()
+                .saturating_sub(range.len())
+                .saturating_add(new_text.len())
+                > limit
+        }) {
+            return;
+        }
         let old_text = self.text.clone();
         self.text.replace(range.clone(), new_text);
 
