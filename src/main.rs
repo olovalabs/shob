@@ -95,6 +95,13 @@ pub enum ActiveView {
     Settings,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum SettingsSection {
+    #[default]
+    Appearance,
+    Data,
+}
+
 use assets::{CombinedAssets, MONO_FONT, load_embedded_fonts, sync_component_fonts};
 use status::{SessionStatus, StatusInput};
 pub const APP_ICON_PNG: &[u8] = include_bytes!("../assets/icons/shob.png");
@@ -3507,6 +3514,7 @@ struct AppState {
     /// writes to the saved state (read-only troubleshooting mode).
     persistence_enabled: bool,
     /// Two-step confirmation state for "clear saved sessions".
+    settings_section: SettingsSection,
     clear_data_confirm: bool,
 }
 
@@ -16522,6 +16530,7 @@ impl AppState {
                     .flex_1()
                     .items_center()
                     .gap(px(8.0))
+                    .when(!sidebar_docked, |row| row.child(settings_close))
                     .when(!sidebar_docked, |row| {
                         row.child(sidebar_icon_button(
                             "settings-sidebar-toggle-btn",
@@ -16552,8 +16561,7 @@ impl AppState {
                             .text_color(tokens.titlebar_fg)
                             .child("Settings"),
                     ),
-            )
-            .child(settings_close);
+            );
 
         // Small, self-contained previews make each appearance recognizable before
         // it is selected, including the split light/dark system preview.
@@ -16667,6 +16675,85 @@ impl AppState {
             })
             .collect::<Vec<_>>();
 
+        let navigation = [
+            (
+                SettingsSection::Appearance,
+                "settings-nav-appearance",
+                "icons/settings.svg",
+                "Appearance",
+            ),
+            (
+                SettingsSection::Data,
+                "settings-nav-data",
+                "icons/folder.svg",
+                "Data & sessions",
+            ),
+        ]
+        .into_iter()
+        .map(|(section, id, icon, label)| {
+            let selected = self.settings_section == section;
+            div()
+                .id(id)
+                .flex()
+                .items_center()
+                .gap(px(10.0))
+                .px(px(12.0))
+                .py(px(9.0))
+                .rounded(px(7.0))
+                .when(selected, |item| item.bg(tokens.card_hover))
+                .hover(move |item| item.bg(tokens.card_hover))
+                .cursor(CursorStyle::PointingHand)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings_section = section;
+                    this.clear_data_confirm = false;
+                    cx.notify();
+                }))
+                .child(
+                    svg()
+                        .path(icon)
+                        .size(px(15.0))
+                        .text_color(tokens.text_secondary),
+                )
+                .child(
+                    div()
+                        .text_size(px(13.0))
+                        .text_color(tokens.text_primary)
+                        .child(label),
+                )
+        })
+        .collect::<Vec<_>>();
+
+        let content = match self.settings_section {
+            SettingsSection::Appearance => div()
+                .flex()
+                .flex_col()
+                .gap(px(16.0))
+                .child(
+                    div()
+                        .text_size(px(13.0))
+                        .text_color(tokens.text_secondary)
+                        .child("Choose how Shob looks across your workspace."),
+                )
+                .child(
+                    div()
+                        .pt(px(12.0))
+                        .text_size(px(14.0))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(tokens.text_primary)
+                        .child("Color scheme"),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .when(narrow, |row| row.flex_col())
+                        .gap(px(12.0))
+                        .children(cards),
+                )
+                .child(self.render_palette_scheme_picker(narrow, cx))
+                .child(self.render_theme_file_section(cx)),
+            SettingsSection::Data => self.render_data_section(cx),
+        };
+
         div()
             .flex()
             .flex_col()
@@ -16676,35 +16763,48 @@ impl AppState {
             .child(
                 div()
                     .flex_1()
+                    .min_h(px(0.0))
                     .flex()
-                    .items_center()
-                    .justify_center()
-                    .overflow_y_scrollbar()
-                    .p(px(24.0))
+                    .when(narrow, |layout| layout.flex_col())
                     .child(
                         div()
-                            .w_full()
-                            .max_w(px(850.0))
+                            .when(!narrow, |nav| nav.w(px(210.0)).h_full().border_r_1())
+                            .when(narrow, |nav| nav.w_full().border_b_1())
+                            .border_color(tokens.card_border)
+                            .bg(tokens.titlebar_bg)
+                            .p(px(12.0))
                             .flex()
-                            .flex_col()
-                            .gap(px(18.0))
+                            .when(!narrow, |nav| nav.flex_col())
+                            .gap(px(2.0))
+                            .children(navigation),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .overflow_y_scrollbar()
+                            .px(if narrow { px(20.0) } else { px(40.0) })
+                            .py(px(32.0))
                             .child(
                                 div()
-                                    .text_size(px(16.0))
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(tokens.text_primary)
-                                    .child("Color scheme"),
-                            )
-                            .child(
-                                div()
+                                    .w_full()
+                                    .max_w(px(728.0))
+                                    .mx_auto()
                                     .flex()
-                                    .when(narrow, |row| row.flex_col())
-                                    .gap(px(12.0))
-                                    .children(cards),
-                            )
-                            .child(self.render_palette_scheme_picker(narrow, cx))
-                            .child(self.render_theme_file_section(cx))
-                            .child(self.render_data_section(cx)),
+                                    .flex_col()
+                                    .gap(px(20.0))
+                                    .child(
+                                        div()
+                                            .text_size(px(26.0))
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .text_color(tokens.text_primary)
+                                            .child(match self.settings_section {
+                                                SettingsSection::Appearance => "Appearance",
+                                                SettingsSection::Data => "Data & sessions",
+                                            }),
+                                    )
+                                    .child(content),
+                            ),
                     ),
             )
     }
@@ -16822,10 +16922,8 @@ impl AppState {
                     .gap(px(12.0))
                     .px(px(14.0))
                     .py(px(10.0))
-                    .rounded(px(8.0))
-                    .border_1()
+                    .border_b_1()
                     .border_color(tokens.card_border)
-                    .bg(tokens.card_bg)
                     .cursor(CursorStyle::PointingHand)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.toggle_restore_option(id, cx);
@@ -16851,21 +16949,20 @@ impl AppState {
                     )
                     .child(
                         div()
-                            .px(px(10.0))
-                            .py(px(4.0))
+                            .w(px(34.0))
+                            .h(px(20.0))
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .when(on, |switch| switch.justify_end())
+                            .p(px(2.0))
                             .rounded_full()
                             .bg(if on {
-                                tokens.pill_active_bg
+                                tokens.ring
                             } else {
                                 tokens.pill_inactive_bg
                             })
-                            .text_size(px(11.0))
-                            .text_color(if on {
-                                tokens.pill_active_fg
-                            } else {
-                                tokens.text_secondary
-                            })
-                            .child(if on { "On" } else { "Off" }),
+                            .child(div().size(px(16.0)).rounded_full().bg(tokens.text_primary)),
                     )
             })
             .collect::<Vec<_>>();
@@ -16881,13 +16978,6 @@ impl AppState {
                     .flex()
                     .flex_col()
                     .gap(px(4.0))
-                    .child(
-                        div()
-                            .text_size(px(20.0))
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(tokens.text_primary)
-                            .child("Data & Sessions"),
-                    )
                     .child(
                         div()
                             .text_size(px(12.5))
@@ -16943,7 +17033,15 @@ impl AppState {
                             .child("Open folder"),
                     ),
             )
-            .children(toggle_rows)
+            .child(
+                div()
+                    .rounded(px(8.0))
+                    .border_1()
+                    .border_color(tokens.card_border)
+                    .bg(tokens.card_bg)
+                    .overflow_hidden()
+                    .children(toggle_rows),
+            )
             .child(
                 div()
                     .id("clear-saved-data")
@@ -17232,10 +17330,11 @@ impl AppState {
 
     fn render_sidebar_toolbar(&self, window: &Window, cx: &mut Context<Self>) -> gpui::Div {
         let tokens = self.tokens(cx);
-        let can_back = self.navigation_history
-            [..self.navigation_position.min(self.navigation_history.len())]
-            .iter()
-            .any(|id| self.session_index.contains_key(id));
+        let can_back = self.active_view == ActiveView::Settings
+            || self.navigation_history
+                [..self.navigation_position.min(self.navigation_history.len())]
+                .iter()
+                .any(|id| self.session_index.contains_key(id));
         let can_forward = self
             .navigation_history
             .iter()
@@ -17310,6 +17409,7 @@ impl AppState {
         let tokens = self.tokens(cx);
         div()
             .id(id)
+            .debug_selector(move || id.to_string())
             .size(px(26.0))
             .flex()
             .items_center()
@@ -17326,7 +17426,10 @@ impl AppState {
                 MouseButton::Left,
                 cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
-                    if enabled {
+                    if !forward && this.active_view == ActiveView::Settings {
+                        this.active_view = ActiveView::Workspace;
+                        cx.notify();
+                    } else if enabled {
                         this.navigate_history(forward, window, cx);
                     }
                 }),
@@ -19315,7 +19418,8 @@ fn main() -> Result<()> {
                         dirty: false,
                         last_window_bounds: app_settings.window,
                         persistence_enabled: std::env::var_os("SHOB_DISABLE_RESTORE").is_none(),
-                        clear_data_confirm: false,
+                        settings_section: SettingsSection::default(),
+            clear_data_confirm: false,
                     });
                     app_state.update(cx, |state, cx| state.observe_appearance(window, cx));
 
@@ -19823,6 +19927,7 @@ mod resize_tests {
             dirty: false,
             last_window_bounds: None,
             persistence_enabled: false,
+            settings_section: SettingsSection::default(),
             clear_data_confirm: false,
         }
     }
@@ -22915,7 +23020,7 @@ mod settings_and_theme_tests {
     use resize_tests::{DrawFrame, TestAppContext, open_app};
 
     #[test]
-    fn settings_close_button_returns_to_workspace() {
+    fn settings_back_button_returns_to_workspace() {
         let mut cx = TestAppContext::new();
         let (mut cx, app_state) = open_app(&mut cx);
 
@@ -22926,8 +23031,8 @@ mod settings_and_theme_tests {
         cx.draw_frame().expect("draw settings page frame");
 
         let bounds = cx
-            .debug_bounds("settings-close-btn")
-            .expect("settings close button bounds");
+            .debug_bounds("navigation-back")
+            .expect("navigation back button bounds");
         let center = point(
             bounds.origin.x + bounds.size.width / 2.0,
             bounds.origin.y + bounds.size.height / 2.0,
@@ -22938,7 +23043,7 @@ mod settings_and_theme_tests {
         assert_eq!(
             app_state.read_with(&cx, |state, _| state.active_view),
             ActiveView::Workspace,
-            "clicking the top-right close button must leave Settings"
+            "clicking the back button must leave Settings"
         );
     }
 
