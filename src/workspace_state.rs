@@ -156,6 +156,12 @@ pub struct SavedPane {
     pub queued_messages: Vec<String>,
     pub command_history: Vec<String>,
     pub chat_active: bool,
+    pub one_mode: bool,
+    pub regular_focus: Option<usize>,
+    pub tool_panel_owner: Option<usize>,
+    pub tool_panel_changes: bool,
+    pub tool_panel_picker: bool,
+    pub tool_panel_chat_ratio: Option<f32>,
     pub chat: SavedChat,
 }
 

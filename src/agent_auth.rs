@@ -58,7 +58,7 @@ impl AgentModel {
 }
 
 pub fn available_models(_cwd: &Path) -> Result<Vec<AgentModel>, String> {
-    let catalog = rpi_embedded::chat_catalog()?;
+    let catalog = embedded::chat_catalog()?;
     {
         let mut levels = THINKING_LEVELS
             .write()
@@ -103,8 +103,8 @@ pub fn provider_visible_in_chat_ui(id: &str) -> bool {
 }
 
 pub fn providers(cwd: &Path) -> Result<Vec<Provider>, String> {
-    rpi_embedded::refresh_auth_methods(cwd)?;
-    Ok(rpi_embedded::providers()?
+    embedded::refresh_auth_methods(cwd)?;
+    Ok(embedded::providers()?
         .into_iter()
         .map(|state| Provider {
             id: state.id,
@@ -114,7 +114,7 @@ pub fn providers(cwd: &Path) -> Result<Vec<Provider>, String> {
         .collect())
 }
 
-pub use rpi_embedded::{Login, LoginEvent, cached_auth_methods as auth_methods};
+pub use embedded::{Login, LoginEvent, cached_auth_methods as auth_methods};
 
 pub fn key_label(provider: &str) -> &'static str {
     if provider == "google" {
@@ -125,11 +125,11 @@ pub fn key_label(provider: &str) -> &'static str {
 }
 
 pub fn save_api_key(provider: &str, key: &str) -> Result<(), String> {
-    rpi_embedded::save_api_key(provider, key)
+    embedded::save_api_key(provider, key)
 }
 
 pub fn disconnect_provider(provider: &str) -> Result<(), String> {
-    rpi_embedded::disconnect_provider(provider)
+    embedded::disconnect_provider(provider)
 }
 
 #[cfg(test)]

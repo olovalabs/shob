@@ -1,6 +1,6 @@
 //! `plugin-stub` — a minimal **Rust cdylib** rpi plugin.
 //!
-//! This is the Part B2 ABI smoke target. The host loads it via `rpi-extensions`
+//! This is the Part B2 ABI smoke target. The host loads it via `extensions`
 //! (`--extensions-dir examples/plugin-stub`'), which looks up
 //! `rpi_plugin_register` (the unified ABI) and calls it with the host vtable. In `register` this
 //! plugin:
@@ -21,8 +21,8 @@
 //!    loader). This is the "三者同交付" coherence point: a plugin's discovered
 //!    paths reuse the same loader as static `.pi/skills` dirs.
 //!
-//! It depends on **`rpi-plugin-sdk` only** — never on `rpi-extensions`,
-//! `rpi-harness`, or `rpi-cli` (a cdylib plugin must not link the host; the host
+//! It depends on **`plugin-sdk` only** — never on `extensions`,
+//! `harness`, or `cli` (a cdylib plugin must not link the host; the host
 //! links the plugin). The SDK is the ABI contract both sides share.
 //!
 //! ## Run
@@ -37,7 +37,7 @@
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use rpi_plugin_sdk::{
+use plugin_sdk::{
     EventTag, ProviderChunkKind, ProviderStreamCompletionFn, ProviderStreamControl,
     ProviderStreamEmitFn, StableToolSchema, StbString, StbStringRef, StepHandle, StepResult,
     StepResultTag, ToolPartialCb,
@@ -46,10 +46,10 @@ use rpi_plugin_sdk::{
 // `register_provider`/`register_markdown_transformer` vtable slots (the host
 // passes our `extern "C" fn`s as `ProviderRequestFn`/`RenderFn`-typed params).
 // Naming the types here keeps the import live and documents the contract.
-use rpi_plugin_sdk::callbacks::free_string as plugin_free_string;
-use rpi_plugin_sdk::handles::ToolHandles;
+use plugin_sdk::callbacks::free_string as plugin_free_string;
+use plugin_sdk::handles::ToolHandles;
 #[allow(unused_imports)]
-use rpi_plugin_sdk::{ProviderRequestFn, ProviderStreamRequestFn, RenderFn};
+use plugin_sdk::{ProviderRequestFn, ProviderStreamRequestFn, RenderFn};
 
 // ---------------------------------------------------------------------------
 // The echo tool's per-drive state — owned by the safe opaque-handle registry.
@@ -70,7 +70,7 @@ static ECHO_DRIVES: ToolHandles<EchoDrive> = ToolHandles::new();
 // The echo tool's 4 lifecycle fns (extern "C", no captured state)
 // ---------------------------------------------------------------------------
 
-rpi_plugin_sdk::execute_handler! {
+plugin_sdk::execute_handler! {
     /// `execute(tool_call_id, params, free_params) -> StepHandle`.
     ///
     /// The SDK adopts host-owned parameters and reclaims them through the host's
@@ -107,7 +107,7 @@ extern "C" fn echo_poll(
 ) -> StepResult {
     // Contain panics so a buggy poll reports a tool error instead of aborting
     // the host process.
-    rpi_plugin_sdk::guard(|| {
+    plugin_sdk::guard(|| {
         let Some(entry) = ECHO_DRIVES.get(handle) else {
             return StepResult::err(StbString::from_string(
                 r#"{"error":"invalid or destroyed echo handle"}"#.into(),
@@ -170,21 +170,21 @@ extern "C" fn echo_destroy(handle: StepHandle) {
 // ---------------------------------------------------------------------------
 
 /// How many `MessageEnd` events the handler has received. Read from the host
-/// (rpi-cli's smoke test asserts it fires when a run produces an assistant
+/// (cli's smoke test asserts it fires when a run produces an assistant
 /// message). A process-global atomic because `extern "C" fn` cannot capture.
 static MESSAGE_END_HITS: AtomicUsize = AtomicUsize::new(0);
 
 /// The handler the plugin registers for `MessageEnd`. Receives a
-/// [`rpi_plugin_sdk::StablePluginEvent`]; per the SDK contract the handler MUST
+/// [`plugin_sdk::StablePluginEvent`]; per the SDK contract the handler MUST
 /// NOT free the event's strings (the host frees exactly once after the fan-out).
 /// Returns 0 (success); nonzero would be logged but not abort the fan-out.
 extern "C" fn on_message_end(
-    _event: rpi_plugin_sdk::StablePluginEvent,
+    _event: plugin_sdk::StablePluginEvent,
     _user_data: *mut c_void,
 ) -> i32 {
     // Contain panics: returning nonzero is logged by the host (it never aborts
     // the fan-out), whereas unwinding would abort the host process.
-    rpi_plugin_sdk::guard_or(1, || {
+    plugin_sdk::guard_or(1, || {
         MESSAGE_END_HITS.fetch_add(1, Ordering::SeqCst);
         0
     })
@@ -230,7 +230,7 @@ pub extern "C" fn plugin_stub_discover_hits() -> usize {
 static DISCOVER_SKILL: &[u8] = b"plugin-stub-discovered/SKILL.md";
 static DISCOVER_HITS: AtomicUsize = AtomicUsize::new(0);
 
-rpi_plugin_sdk::string_handler! {
+plugin_sdk::string_handler! {
     /// `resources_discover(cwd, reason, out, user_data) -> i32`.
     ///
     /// Receives `cwd` + `reason` (`"startup"` or `"reload"`) as borrowed
@@ -269,7 +269,7 @@ pub extern "C" fn plugin_stub_prompt_transform_hits() -> usize {
     PROMPT_TRANSFORM_HITS.load(Ordering::SeqCst)
 }
 
-rpi_plugin_sdk::string_handler! {
+plugin_sdk::string_handler! {
     /// `before_agent_start(event_json, out, user_data) -> i32`.
     ///
     /// Reads `systemPrompt` out of the borrowed event envelope and writes back
@@ -306,7 +306,7 @@ pub extern "C" fn plugin_stub_provider_request_hits() -> usize {
     PROVIDER_REQUEST_HITS.load(Ordering::SeqCst)
 }
 
-rpi_plugin_sdk::string_handler! {
+plugin_sdk::string_handler! {
     /// The stub's `ProviderRequestFn`: `req_json` is a borrowed request envelope
     /// (`{model, context, options}`); `out` is an owning response we write a full
     /// assistant-message JSON into (the host parses it + reclaims it via our
@@ -364,7 +364,7 @@ extern "C" fn on_provider_stream_request(
     out: *mut StbString,
     _user_data: *mut c_void,
 ) -> i32 {
-    rpi_plugin_sdk::guard_or(1, || {
+    plugin_sdk::guard_or(1, || {
         // Parse the envelope so a real provider's first step is exercised.
         let request = unsafe { req_json.as_str() };
         if !request.contains("\"model\"") {
@@ -472,7 +472,7 @@ extern "C" fn on_cancellable_provider_stream_request(
     out: *mut StbString,
     _user_data: *mut c_void,
 ) -> i32 {
-    rpi_plugin_sdk::guard_or(1, || {
+    plugin_sdk::guard_or(1, || {
         let request = unsafe { req_json.as_str() };
         if !request.contains("\"model\"") {
             return 2;
@@ -556,7 +556,7 @@ pub extern "C" fn plugin_stub_markdown_transform_hits() -> usize {
     MARKDOWN_TRANSFORM_HITS.load(Ordering::SeqCst)
 }
 
-rpi_plugin_sdk::string_handler! {
+plugin_sdk::string_handler! {
     /// The stub's markdown `RenderFn`: `input_json` is a borrowed
     /// `{ "markdown": "..." }`; `out` gets the transformed markdown JSON
     /// `{ "markdown": "<uppercased>" }` (a trivial transform so the round-trip has a
@@ -583,7 +583,7 @@ rpi_plugin_sdk::string_handler! {
 // The SDK macro exports the unified `rpi_plugin_register` symbol and applies
 // the version/null checks before running our registration body. Return 0 on
 // success; nonzero means the host logs and skips this plugin.
-rpi_plugin_sdk::export_plugin!(|api| {
+plugin_sdk::export_plugin!(|api| {
     // Opt-in real registration side effect for native host lifecycle tests.
     // The build-only digest proves a test loaded its freshly built source, not
     // an unrelated DLL in a shared target directory. No output by default.
@@ -698,7 +698,7 @@ rpi_plugin_sdk::export_plugin!(|api| {
     }
 
     // Register a custom provider (B5c). The host wraps `on_provider_request`
-    // in a `PluggableProvider` impl of `rpi_ai::Provider` and injects it into
+    // in a `PluggableProvider` impl of `ai::Provider` and injects it into
     // `AgentHarnessOptions.models`; a catalog model whose `provider` field is
     // `"stub-provider"` routes to it. The host calls `request_fn` on
     // `spawn_blocking` (it's sync), reclaims the plugin-owned `out` via our
@@ -810,7 +810,7 @@ const _ASSERT_STEP_TAG_REPR: () = assert!(
 #[cfg(test)]
 mod echo_lifecycle_tests {
     use super::*;
-    use rpi_plugin_sdk::callbacks::Step;
+    use plugin_sdk::callbacks::Step;
 
     fn execute() -> StepHandle {
         echo_execute(
@@ -822,7 +822,7 @@ mod echo_lifecycle_tests {
 
     fn poll(handle: StepHandle) -> Step {
         // SAFETY: echo_poll transfers a result allocated by this SDK instance.
-        unsafe { rpi_plugin_sdk::take_step_result!(echo_poll(handle, None, std::ptr::null_mut())) }
+        unsafe { plugin_sdk::take_step_result!(echo_poll(handle, None, std::ptr::null_mut())) }
     }
 
     #[test]

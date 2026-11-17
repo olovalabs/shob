@@ -3,26 +3,26 @@
 # library crates remain complete.
 [workspace]
 members = [
-    "crates/rpi-telemetry",
-    "crates/rpi-ai",
-    "crates/rpi-agent",
-    "crates/rpi-tools",
-    "crates/rpi-durable",
-    "crates/rpi-harness",
-    "crates/rpi-cli",
-    "crates/rpi-runtime",
-    "crates/rpi-tui",
-    "crates/rpi-plugin-sdk",
-    "crates/rpi-extensions",
-    "crates/rpi-embedded",
+    "crates/telemetry",
+    "crates/ai",
+    "crates/agent",
+    "crates/tools",
+    "crates/durable",
+    "crates/harness",
+    "crates/cli",
+    "crates/runtime",
+    "crates/tui",
+    "crates/plugin-sdk",
+    "crates/extensions",
+    "crates/embedded",
     # Required by the upstream resource-selection integration tests.
     "examples/plugin-stub",
 ]
 default-members = [
-    "crates/rpi-agent",
-    "crates/rpi-tools",
-    "crates/rpi-harness",
-    "crates/rpi-cli",
+    "crates/agent",
+    "crates/tools",
+    "crates/harness",
+    "crates/cli",
 ]
 resolver = "2"
 
@@ -73,20 +73,20 @@ globset = "=0.4.15"
 dirs = "5"
 rpassword = "7"
 
-# rpi internal crates (package names and directories both use the `rpi-` prefix).
-rpi-telemetry = { path = "crates/rpi-telemetry", version = "0.21.0" }
-rpi-ai = { path = "crates/rpi-ai", version = "0.21.0" }
-rpi-agent = { path = "crates/rpi-agent", version = "0.21.0" }
-rpi-tools = { path = "crates/rpi-tools", version = "0.21.0" }
-rpi-durable = { path = "crates/rpi-durable", version = "0.21.0" }
-rpi-harness = { path = "crates/rpi-harness", version = "0.21.0" }
+# Internal crates.
+telemetry = { path = "crates/telemetry", version = "0.21.0" }
+ai = { path = "crates/ai", version = "0.21.0" }
+agent = { path = "crates/agent", version = "0.21.0" }
+tools = { path = "crates/tools", version = "0.21.0" }
+durable = { path = "crates/durable", version = "0.21.0" }
+harness = { path = "crates/harness", version = "0.21.0" }
 
-rpi-runtime = { path = "crates/rpi-runtime", version = "0.21.0" }
+runtime = { path = "crates/runtime", version = "0.21.0" }
 
-rpi-tui = { path = "crates/rpi-tui", version = "0.21.0" }
+tui = { path = "crates/tui", version = "0.21.0" }
 
-rpi-plugin-sdk = { path = "crates/rpi-plugin-sdk", version = "0.21.0" }
-rpi-extensions = { path = "crates/rpi-extensions", version = "0.21.0" }
+plugin-sdk = { path = "crates/plugin-sdk", version = "0.21.0" }
+extensions = { path = "crates/extensions", version = "0.21.0" }
 
 [profile.release]
 lto = "thin"

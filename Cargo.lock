@@ -110,6 +110,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent"
+version = "0.21.0"
+dependencies = [
+ "ai",
+ "async-trait",
+ "futures",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "telemetry",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -131,6 +148,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c982642fa9e8606056828ee9a8505737230110bb1099153c79efe865c59d12ba"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "ai"
+version = "0.21.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "crc32fast",
+ "eventsource-stream",
+ "flate2",
+ "futures",
+ "hmac 0.12.1",
+ "jsonschema",
+ "memchr",
+ "regex",
+ "reqwest 0.12.28",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "telemetry",
+ "thiserror 1.0.69",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -1568,6 +1614,50 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
+name = "cli"
+version = "0.21.0"
+dependencies = [
+ "agent",
+ "ai",
+ "arboard",
+ "async-trait",
+ "base64 0.22.1",
+ "crossterm",
+ "dirs",
+ "extensions",
+ "flate2",
+ "fs2",
+ "futures",
+ "globset",
+ "harness",
+ "indexmap 2.14.2",
+ "nix 0.29.0",
+ "percent-encoding",
+ "plugin-sdk",
+ "png 0.18.1",
+ "reqwest 0.12.28",
+ "rpassword",
+ "runtime",
+ "schemars 0.8.22",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "telemetry",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tools",
+ "tracing",
+ "tui",
+ "uuid",
+ "windows-sys 0.59.0",
+ "zip",
+]
+
+[[package]]
 name = "clipboard-win"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2288,6 +2378,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
+name = "durable"
+version = "0.21.0"
+dependencies = [
+ "serde",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "dwrote"
 version = "0.11.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2329,6 +2427,26 @@ dependencies = [
  "toml 1.1.6+spec-1.1.0",
  "vswhom",
  "winreg 0.56.0",
+]
+
+[[package]]
+name = "embedded"
+version = "0.21.0"
+dependencies = [
+ "agent",
+ "ai",
+ "base64 0.22.1",
+ "cli",
+ "extensions",
+ "harness",
+ "reqwest 0.12.28",
+ "runtime",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -2530,6 +2648,26 @@ dependencies = [
  "rayon-core",
  "smallvec",
  "zune-inflate",
+]
+
+[[package]]
+name = "extensions"
+version = "0.21.0"
+dependencies = [
+ "agent",
+ "ai",
+ "async-trait",
+ "dirs",
+ "futures",
+ "libloading",
+ "plugin-sdk",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -4338,6 +4476,31 @@ dependencies = [
  "core_maths",
  "read-fonts 0.37.0",
  "smallvec",
+]
+
+[[package]]
+name = "harness"
+version = "0.21.0"
+dependencies = [
+ "agent",
+ "ai",
+ "async-trait",
+ "base64 0.22.1",
+ "durable",
+ "futures",
+ "rusqlite",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "telemetry",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tools",
+ "tracing",
+ "uuid",
+ "yaml_serde",
 ]
 
 [[package]]
@@ -6780,6 +6943,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-sdk"
+version = "0.21.0"
+dependencies = [
+ "ciborium",
+ "libc",
+ "serde",
+ "serde_json",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "png"
 version = "0.17.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7687,264 +7861,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rpi-agent"
-version = "0.21.0"
-dependencies = [
- "async-trait",
- "futures",
- "rpi-ai",
- "rpi-telemetry",
- "schemars 0.8.22",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
-name = "rpi-ai"
-version = "0.21.0"
-dependencies = [
- "async-trait",
- "base64 0.22.1",
- "bytes",
- "crc32fast",
- "eventsource-stream",
- "flate2",
- "futures",
- "hmac 0.12.1",
- "jsonschema",
- "memchr",
- "regex",
- "reqwest 0.12.28",
- "rpi-telemetry",
- "schemars 0.8.22",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 1.0.69",
- "time",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "rpi-cli"
-version = "0.21.0"
-dependencies = [
- "arboard",
- "async-trait",
- "base64 0.22.1",
- "crossterm",
- "dirs",
- "flate2",
- "fs2",
- "futures",
- "globset",
- "indexmap 2.14.2",
- "nix 0.29.0",
- "percent-encoding",
- "png 0.18.1",
- "reqwest 0.12.28",
- "rpassword",
- "rpi-agent",
- "rpi-ai",
- "rpi-extensions",
- "rpi-harness",
- "rpi-plugin-sdk",
- "rpi-runtime",
- "rpi-telemetry",
- "rpi-tools",
- "rpi-tui",
- "schemars 0.8.22",
- "semver",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tar",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
- "windows-sys 0.59.0",
- "zip",
-]
-
-[[package]]
-name = "rpi-durable"
-version = "0.21.0"
-dependencies = [
- "serde",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "rpi-embedded"
-version = "0.21.0"
-dependencies = [
- "base64 0.22.1",
- "reqwest 0.12.28",
- "rpi-agent",
- "rpi-ai",
- "rpi-cli",
- "rpi-extensions",
- "rpi-harness",
- "rpi-runtime",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "rpi-extensions"
-version = "0.21.0"
-dependencies = [
- "async-trait",
- "dirs",
- "futures",
- "libloading",
- "rpi-agent",
- "rpi-ai",
- "rpi-plugin-sdk",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "rpi-harness"
-version = "0.21.0"
-dependencies = [
- "async-trait",
- "base64 0.22.1",
- "futures",
- "rpi-agent",
- "rpi-ai",
- "rpi-durable",
- "rpi-telemetry",
- "rpi-tools",
- "rusqlite",
- "schemars 0.8.22",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
- "yaml_serde",
-]
-
-[[package]]
-name = "rpi-plugin-sdk"
-version = "0.21.0"
-dependencies = [
- "ciborium",
- "libc",
- "serde",
- "serde_json",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "rpi-runtime"
-version = "0.21.0"
-dependencies = [
- "async-trait",
- "aws-config",
- "aws-credential-types",
- "google-cloud-auth",
- "http",
- "indexmap 2.14.2",
- "reqwest 0.12.28",
- "rpi-ai",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
-]
-
-[[package]]
-name = "rpi-telemetry"
-version = "0.21.0"
-dependencies = [
- "async-trait",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "rpi-tools"
-version = "0.21.0"
-dependencies = [
- "async-trait",
- "base64 0.22.1",
- "codepage",
- "dirs",
- "encoding_rs",
- "fast_image_resize",
- "futures",
- "globset",
- "grep-matcher",
- "grep-regex",
- "grep-searcher",
- "ignore",
- "image",
- "jsonschema",
- "nix 0.29.0",
- "regex",
- "rpi-agent",
- "rpi-ai",
- "rpi-plugin-sdk",
- "same-file",
- "schemars 0.8.22",
- "serde",
- "serde_json",
- "similar",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
- "tracing",
- "unicode-normalization",
- "uuid",
- "win32job",
- "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "rpi-tui"
-version = "0.21.0"
-dependencies = [
- "base64 0.22.1",
- "crossterm",
- "pulldown-cmark",
- "regex",
- "serde_json",
- "similar",
- "thiserror 1.0.69",
- "tracing",
- "unicode-segmentation",
- "unicode-width 0.1.14",
- "winapi",
-]
-
-[[package]]
 name = "rtoolbox"
 version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7952,6 +7868,24 @@ checksum = "9a1efe12a1469752d0e6ff5ebec0b6ef4924cc5c4c71046b0ec730040535819d"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "runtime"
+version = "0.21.0"
+dependencies = [
+ "ai",
+ "async-trait",
+ "aws-config",
+ "aws-credential-types",
+ "google-cloud-auth",
+ "http",
+ "indexmap 2.14.2",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
 ]
 
 [[package]]
@@ -8734,6 +8668,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "directories",
+ "embedded",
  "gpui-component 0.5.1",
  "gpui-fast",
  "gpui-fast-platform",
@@ -8748,7 +8683,6 @@ dependencies = [
  "regex",
  "reqwest 0.12.28",
  "rfd",
- "rpi-embedded",
  "rust-embed",
  "serde",
  "serde_json",
@@ -9309,6 +9243,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "telemetry"
+version = "0.21.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9671,6 +9615,45 @@ name = "toml_writer"
 version = "1.1.2+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
+
+[[package]]
+name = "tools"
+version = "0.21.0"
+dependencies = [
+ "agent",
+ "ai",
+ "async-trait",
+ "base64 0.22.1",
+ "codepage",
+ "dirs",
+ "encoding_rs",
+ "fast_image_resize",
+ "futures",
+ "globset",
+ "grep-matcher",
+ "grep-regex",
+ "grep-searcher",
+ "ignore",
+ "image",
+ "jsonschema",
+ "nix 0.29.0",
+ "plugin-sdk",
+ "regex",
+ "same-file",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "similar",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "unicode-normalization",
+ "uuid",
+ "win32job",
+ "windows-sys 0.59.0",
+]
 
 [[package]]
 name = "tower"
@@ -10099,6 +10082,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 dependencies = [
  "core_maths",
+]
+
+[[package]]
+name = "tui"
+version = "0.21.0"
+dependencies = [
+ "base64 0.22.1",
+ "crossterm",
+ "pulldown-cmark",
+ "regex",
+ "serde_json",
+ "similar",
+ "thiserror 1.0.69",
+ "tracing",
+ "unicode-segmentation",
+ "unicode-width 0.1.14",
+ "winapi",
 ]
 
 [[package]]

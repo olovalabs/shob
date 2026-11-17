@@ -382,7 +382,7 @@ fn project_event(event: &AgentEvent) -> AgentEvent {
 }
 
 fn entry_bytes(entry: &Entry) -> usize {
-    use rpi_embedded::QueuedEvent;
+    use embedded::QueuedEvent;
     std::mem::size_of::<Entry>()
         + match entry {
             Entry::User { text } | Entry::Local { text, .. } => text.capacity(),
@@ -433,7 +433,7 @@ fn sanitize(value: &str) -> String {
 #[derive(Default)]
 pub(crate) struct RestoredConversation {
     pub messages: Vec<Arc<ChatMessage>>,
-    pub checklist: Option<rpi_embedded::task_list::TaskList>,
+    pub checklist: Option<embedded::task_list::TaskList>,
 }
 
 #[cfg(test)]
@@ -482,9 +482,9 @@ pub(crate) fn restore(path: &Path) -> RestoredConversation {
 
 /// Restore cumulative usage from the same bounded history as the transcript.
 /// Missing usage or files yield `None`; any unknown message cost stays unknown.
-pub fn load_usage(path: &Path) -> Option<rpi_embedded::AgentUsage> {
+pub fn load_usage(path: &Path) -> Option<embedded::AgentUsage> {
     let text = read_bounded(path)?;
-    let mut total: Option<rpi_embedded::AgentUsage> = None;
+    let mut total: Option<embedded::AgentUsage> = None;
     for line in text.lines() {
         let Ok(Entry::Event {
             event: AgentEvent::Usage(usage),
@@ -669,7 +669,7 @@ mod tests {
         let mut log = temp_log("usage-messages", MAX_FILE_BYTES);
         log.append_user("first");
         log.append_event(&AgentEvent::Text("answer".into()));
-        log.append_event(&AgentEvent::Usage(rpi_embedded::AgentUsage {
+        log.append_event(&AgentEvent::Usage(embedded::AgentUsage {
             input: 100,
             output: 20,
             cache_read: 40,
@@ -679,7 +679,7 @@ mod tests {
         log.append_event(&AgentEvent::Done);
         log.append_user("second");
         log.append_event(&AgentEvent::Text("another answer".into()));
-        log.append_event(&AgentEvent::Usage(rpi_embedded::AgentUsage {
+        log.append_event(&AgentEvent::Usage(embedded::AgentUsage {
             input: 200,
             output: 30,
             cache_read: 80,
@@ -691,7 +691,7 @@ mod tests {
 
         assert_eq!(
             load_usage(log.path()),
-            Some(rpi_embedded::AgentUsage {
+            Some(embedded::AgentUsage {
                 input: 300,
                 output: 50,
                 cache_read: 120,
@@ -707,7 +707,7 @@ mod tests {
         // Replaying is read-only and never adds the deltas a second time.
         assert_eq!(
             load_usage(log.path()),
-            Some(rpi_embedded::AgentUsage {
+            Some(embedded::AgentUsage {
                 input: 300,
                 output: 50,
                 cache_read: 120,
@@ -726,7 +726,7 @@ mod tests {
         for costs in [[Some(0.25), None, Some(0.5)], [None, Some(0.25), Some(0.5)]] {
             let mut log = temp_log("usage-unknown-cost", MAX_FILE_BYTES);
             for cost in costs {
-                log.append_event(&AgentEvent::Usage(rpi_embedded::AgentUsage {
+                log.append_event(&AgentEvent::Usage(embedded::AgentUsage {
                     input: 10,
                     output: 2,
                     cache_read: 3,
@@ -737,7 +737,7 @@ mod tests {
             log.flush();
             assert_eq!(
                 load_usage(log.path()),
-                Some(rpi_embedded::AgentUsage {
+                Some(embedded::AgentUsage {
                     input: 30,
                     output: 6,
                     cache_read: 9,
@@ -759,7 +759,7 @@ mod tests {
         log.flush();
         assert_eq!(load_usage(log.path()), None);
 
-        let usage = rpi_embedded::AgentUsage {
+        let usage = embedded::AgentUsage {
             input: 15,
             output: 5,
             cache_read: 2,
@@ -777,7 +777,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             load_usage(log.path()),
-            Some(rpi_embedded::AgentUsage {
+            Some(embedded::AgentUsage {
                 input: 30,
                 output: 10,
                 cache_read: 4,
@@ -795,7 +795,7 @@ mod tests {
     #[test]
     fn usage_replay_uses_the_transcript_read_bound() {
         let log = temp_log("usage-bounded", MAX_FILE_BYTES);
-        let usage = rpi_embedded::AgentUsage {
+        let usage = embedded::AgentUsage {
             input: 10,
             output: 2,
             cache_read: 3,
