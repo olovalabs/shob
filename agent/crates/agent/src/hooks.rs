@@ -139,6 +139,9 @@ pub struct AgentLoopConfig {
 
     /// Per-batch execution mode. Default `Parallel`.
     pub tool_execution: ToolExecutionMode,
+    /// Maximum tool bodies that may overlap in a parallel batch. Host-controlled.
+    /// `0` resolves to [`DEFAULT_TOOL_PARALLELISM`]. Not a model hint.
+    pub tool_parallelism: usize,
 
     // ---- provider-options subset (forwarded into SimpleStreamOptions) ----
     pub thinking_level: ThinkingLevel,
@@ -216,6 +219,25 @@ impl AgentLoopConfig {
         }
         opts
     }
+}
+
+/// Default cap for overlapping tool bodies. Matches the nested tool-program
+/// semaphore so one turn cannot fan out without a host-set limit.
+pub const DEFAULT_TOOL_PARALLELISM: usize = 8;
+
+/// Resolve the parallel-tool cap. `RPI_TOOL_PARALLELISM` is the operator
+/// override; a non-zero config value wins so tests and hosts stay deterministic.
+pub fn effective_tool_parallelism(configured: usize) -> usize {
+    let limit = if configured > 0 {
+        configured
+    } else {
+        std::env::var("RPI_TOOL_PARALLELISM")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .filter(|limit| *limit > 0)
+            .unwrap_or(DEFAULT_TOOL_PARALLELISM)
+    };
+    limit.min(64)
 }
 
 /// The default `convert_to_llm`: keep only `user`/`assistant`/`toolResult`

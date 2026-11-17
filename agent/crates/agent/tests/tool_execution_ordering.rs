@@ -292,3 +292,154 @@ async fn tool_execution_end_in_completion_order_results_in_source_order() {
         "TurnEnd.toolResults must be in source/ordinal order"
     );
 }
+
+#[tokio::test]
+async fn tool_parallelism_cap_prevents_overlap() {
+    let coord = Coord {
+        release: Arc::new(Notify::new()),
+        first_resolved: Arc::new(AtomicBool::new(false)),
+        parallel_observed: Arc::new(AtomicBool::new(false)),
+    };
+    let tool = EchoTool {
+        schema: echo_schema(),
+        coord: Coord {
+            release: Arc::clone(&coord.release),
+            first_resolved: Arc::clone(&coord.first_resolved),
+            parallel_observed: Arc::clone(&coord.parallel_observed),
+        },
+    };
+    let context = AgentContext {
+        system_prompt: String::new(),
+        messages: Vec::new(),
+        tools: vec![Arc::new(tool)],
+    };
+    let mut config = base_config();
+    config.tool_execution = ToolExecutionMode::Parallel;
+    config.tool_parallelism = 1;
+
+    let stream_fn = two_call_stream_fn(Arc::clone(&coord.release));
+    let (events, _new_messages) =
+        run_and_collect(vec![user_message("echo both")], context, config, stream_fn).await;
+
+    assert!(
+        !coord.parallel_observed.load(Ordering::SeqCst),
+        "a cap of 1 must not run the second tool while the first is pending"
+    );
+    assert_eq!(
+        tool_execution_end_ids(&events),
+        vec!["tool-1".to_string(), "tool-2".to_string()]
+    );
+    assert_eq!(
+        tool_result_message_ids(&events),
+        vec!["tool-1".to_string(), "tool-2".to_string()]
+    );
+}
+
+struct BarrierTool {
+    schema: ai::types::Tool,
+    exclusive: bool,
+    first: Arc<tokio::sync::Barrier>,
+    second: Arc<tokio::sync::Barrier>,
+    active: Arc<std::sync::atomic::AtomicUsize>,
+    exclusive_seen: Arc<AtomicBool>,
+}
+
+#[async_trait::async_trait]
+impl agent::AgentTool for BarrierTool {
+    fn schema(&self) -> &ai::types::Tool {
+        &self.schema
+    }
+    fn label(&self) -> &str {
+        &self.schema.name
+    }
+    fn execution_mode(&self) -> ToolExecutionMode {
+        if self.exclusive {
+            ToolExecutionMode::Sequential
+        } else {
+            ToolExecutionMode::Parallel
+        }
+    }
+    async fn execute(
+        &self,
+        id: &str,
+        _: serde_json::Value,
+        _: tokio_util::sync::CancellationToken,
+        _: Arc<dyn Fn(agent::ToolResultPartial) + Send + Sync>,
+    ) -> Result<agent::AgentToolResult, agent::AgentError> {
+        if self.exclusive {
+            assert_eq!(self.active.load(Ordering::SeqCst), 0);
+            self.exclusive_seen.store(true, Ordering::SeqCst);
+        } else {
+            if id.starts_with('c') {
+                assert!(self.exclusive_seen.load(Ordering::SeqCst));
+            }
+            self.active.fetch_add(1, Ordering::SeqCst);
+            if id.starts_with('a') {
+                self.first.wait().await;
+            } else {
+                self.second.wait().await;
+            }
+            self.active.fetch_sub(1, Ordering::SeqCst);
+        }
+        Ok(agent::AgentToolResult::text(id))
+    }
+}
+
+#[tokio::test]
+async fn exclusive_tool_separates_parallel_groups() {
+    let first = Arc::new(tokio::sync::Barrier::new(2));
+    let second = Arc::new(tokio::sync::Barrier::new(2));
+    let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let exclusive_seen = Arc::new(AtomicBool::new(false));
+    let tool = |name: &str, exclusive| {
+        Arc::new(BarrierTool {
+            schema: ai::types::Tool {
+                name: name.into(),
+                description: String::new(),
+                parameters: ai::types::Schema::new(serde_json::json!({"type":"object"})),
+                constrained_sampling: None,
+            },
+            exclusive,
+            first: first.clone(),
+            second: second.clone(),
+            active: active.clone(),
+            exclusive_seen: exclusive_seen.clone(),
+        }) as Arc<dyn agent::AgentTool>
+    };
+    let context = AgentContext {
+        tools: vec![tool("read", false), tool("exclusive", true)],
+        ..Default::default()
+    };
+    let assistant = common::assistant_tool_calls(
+        vec![
+            ("a1", "read", serde_json::json!({})),
+            ("a2", "read", serde_json::json!({})),
+            ("b", "exclusive", serde_json::json!({})),
+            ("c1", "read", serde_json::json!({})),
+            ("c2", "read", serde_json::json!({})),
+        ],
+        StopReason::ToolUse,
+    );
+    let stream = common::mock_stream_fn(vec![
+        assistant,
+        common::assistant_text("done", StopReason::Stop),
+    ]);
+    let snapshots = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed = snapshots.clone();
+    let mut config = base_config();
+    config.after_tool_call = Some(Arc::new(move |ctx, _| {
+        observed
+            .lock()
+            .unwrap()
+            .push(ctx.context as *const AgentContext as usize);
+        Box::pin(async { None })
+    }));
+    let (events, _) = run_and_collect(vec![user_message("run")], context, config, stream).await;
+    assert_eq!(
+        tool_result_message_ids(&events),
+        ["a1", "a2", "b", "c1", "c2"]
+    );
+    let snapshots = snapshots.lock().unwrap();
+    assert_eq!(snapshots.len(), 5);
+    assert!(snapshots.iter().all(|snapshot| *snapshot == snapshots[0]));
+}

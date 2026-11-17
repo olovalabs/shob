@@ -163,3 +163,31 @@ async fn prepare_arguments_folds_legacy_oldtext_newtext_into_edits() {
         "prepare_arguments should fold oldText/newText into edits before validation"
     );
 }
+
+#[tokio::test]
+async fn malformed_arguments_do_not_execute_and_remain_actionable() {
+    let (tool, executed) = EditTool::new();
+    let context = AgentContext {
+        tools: vec![Arc::new(tool)],
+        ..Default::default()
+    };
+    let malformed = ai::json_parse::parse_terminal_tool_arguments(r#"{"edits":"#);
+    let stream = mock_stream_fn(vec![
+        common::assistant_tool_calls(vec![("bad", "edit", malformed)], StopReason::ToolUse),
+        assistant_text("done", StopReason::Stop),
+    ]);
+    let (_, messages) =
+        run_and_collect(vec![user_message("run")], context, base_config(), stream).await;
+    assert!(executed.lock().unwrap().is_empty());
+    let result = messages
+        .iter()
+        .find_map(|message| match message {
+            agent::AgentMessage::ToolResult(result) => Some(result),
+            _ => None,
+        })
+        .unwrap();
+    assert!(result.is_error);
+    let diagnostic = common::tool_result_text(result);
+    assert!(diagnostic.contains("Malformed tool arguments"));
+    assert!(diagnostic.contains("edits"));
+}

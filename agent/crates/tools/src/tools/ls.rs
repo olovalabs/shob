@@ -104,6 +104,9 @@ impl AgentTool for LsTool {
     fn label(&self) -> &str {
         "ls"
     }
+    fn execution_mode(&self) -> agent::ToolExecutionMode {
+        agent::ToolExecutionMode::Parallel
+    }
 
     async fn execute(
         &self,

@@ -7,7 +7,9 @@ use crate::event_stream::{
 use crate::model::{Model, StreamingProtocolCompat};
 use crate::provider::{CacheRetention, Provider, SimpleStreamOptions};
 use crate::providers::anthropic::cost::calculate_cost;
-use crate::providers::anthropic::json_parse::parse_streaming_json;
+use crate::providers::anthropic::json_parse::{
+    parse_streaming_json, parse_terminal_tool_arguments,
+};
 use crate::providers::anthropic::retry::retry_provider_request;
 use crate::providers::anthropic::sse::SseEventStream;
 use crate::providers::{DELTA_FLUSH_BYTES, DELTA_FLUSH_INTERVAL};
@@ -236,6 +238,12 @@ enum ResponseSlotKind {
     ToolCall,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum CustomToolInput<'a> {
+    Delta(&'a str),
+    Done(Option<&'a str>),
+}
+
 #[derive(Debug, Clone)]
 struct ResponseSlot {
     kind: ResponseSlotKind,
@@ -282,6 +290,12 @@ struct ResponsesStreamState {
     pending_text_index: Option<usize>,
     pending_thinking: String,
     pending_thinking_index: Option<usize>,
+    /// Tool-call argument deltas batched but not yet emitted. A snapshot
+    /// re-parses the accumulated JSON and clones the whole message, so one
+    /// event per wire fragment is quadratic for large arguments. Custom-tool
+    /// input uses the same batch; concatenated delta bytes stay identical.
+    pending_tool: String,
+    pending_tool_index: Option<usize>,
     /// When a batched delta was last emitted, for [`DELTA_FLUSH_INTERVAL`].
     last_flush: Option<tokio::time::Instant>,
 }
@@ -300,6 +314,8 @@ impl Default for ResponsesStreamState {
             pending_text_index: None,
             pending_thinking: String::new(),
             pending_thinking_index: None,
+            pending_tool: String::new(),
+            pending_tool_index: None,
             last_flush: None,
         }
     }
@@ -323,17 +339,19 @@ impl ResponsesStreamState {
     }
 
     fn flush_deadline(&self) -> Option<tokio::time::Instant> {
-        if !self.pending_text.is_empty() || !self.pending_thinking.is_empty() {
+        if !self.pending_text.is_empty()
+            || !self.pending_thinking.is_empty()
+            || !self.pending_tool.is_empty()
+        {
             self.last_flush.map(|last| last + DELTA_FLUSH_INTERVAL)
         } else {
             None
         }
     }
 
-    /// Emit whatever text/thinking is batched. Called at every item boundary
-    /// (`finish_item` / `finish_open_slots`, i.e. before each `*End`) and
-    /// whenever the stream switches channel, so no delta is dropped or
-    /// reordered.
+    /// Emit whatever text/thinking/tool-args are batched. Called at every item
+    /// boundary and whenever the stream switches channel, so no delta is
+    /// dropped or reordered.
     async fn flush_pending(
         &mut self,
         out: &mut AssistantMessage,
@@ -341,6 +359,7 @@ impl ResponsesStreamState {
     ) {
         self.flush_text(out, p).await;
         self.flush_thinking(out, p).await;
+        self.flush_tool(out, p).await;
     }
 
     async fn flush_text(
@@ -380,6 +399,55 @@ impl ResponsesStreamState {
         let delta = std::mem::take(&mut self.pending_thinking);
         self.last_flush = Some(tokio::time::Instant::now());
         p.push(AssistantMessageEvent::ThinkingDelta {
+            content_index,
+            delta,
+            partial: Arc::new(out.clone()),
+        })
+        .await;
+    }
+    async fn flush_tool(
+        &mut self,
+        out: &mut AssistantMessage,
+        p: &mut AssistantMessageEventStreamProducer,
+    ) {
+        if self.pending_tool.is_empty() {
+            return;
+        }
+        let Some(content_index) = self.pending_tool_index else {
+            self.pending_tool.clear();
+            return;
+        };
+        let delta = std::mem::take(&mut self.pending_tool);
+        let parsed = self
+            .slots
+            .values()
+            .find(|slot| slot.content_index == content_index)
+            .map(|slot| {
+                let arguments = if slot.custom {
+                    custom_tool_arguments(
+                        slot.custom_input_property.as_deref().unwrap_or("input"),
+                        &slot.arguments,
+                    )
+                } else {
+                    parse_streaming_json(Some(&slot.arguments))
+                };
+                (
+                    arguments,
+                    slot.name.clone(),
+                    compose_tool_call_id(slot.call_id.as_deref(), slot.item_id.as_deref()),
+                )
+            });
+        if let Some((arguments, name, id)) = parsed {
+            if let Some(Content::ToolCall(call)) = out.content.get_mut(content_index) {
+                call.arguments = arguments;
+                if !name.is_empty() {
+                    call.name = name;
+                }
+                call.id = id;
+            }
+        }
+        self.last_flush = Some(tokio::time::Instant::now());
+        p.push(AssistantMessageEvent::ToolCallDelta {
             content_index,
             delta,
             partial: Arc::new(out.clone()),
@@ -727,6 +795,7 @@ impl ResponsesStreamState {
             // Flush before modifying out: snapshots must not expose the next
             // channel's content before its delta has been emitted.
             self.flush_text(out, p).await;
+            self.flush_tool(out, p).await;
             if let Some(Content::Thinking(block)) = out.content.get_mut(slot.content_index) {
                 block.thinking.push_str(delta);
             }
@@ -737,6 +806,7 @@ impl ResponsesStreamState {
             }
         } else {
             self.flush_thinking(out, p).await;
+            self.flush_tool(out, p).await;
             if let Some(Content::Text(block)) = out.content.get_mut(slot.content_index) {
                 block.text.push_str(delta);
             }
@@ -756,36 +826,40 @@ impl ResponsesStreamState {
         out: &mut AssistantMessage,
         p: &mut AssistantMessageEventStreamProducer,
     ) {
-        self.flush_pending(out, p).await;
-        let Some(slot) = self.slots.get_mut(&index) else {
+        self.flush_text(out, p).await;
+        self.flush_thinking(out, p).await;
+        let Some(slot) = self.slots.get(&index) else {
             return;
         };
         if slot.kind != ResponseSlotKind::ToolCall || slot.ended {
             return;
         }
-        slot.arguments.push_str(delta);
-        // The initial raw arguments from output_item.added have not been
-        // emitted as a delta yet. Preserve their exact bytes on the first
-        // fragment, then emit only suffixes (without changing snapshots).
-        let wire_delta = if slot.function_arguments_started {
-            delta.to_string()
-        } else {
-            slot.function_arguments_started = true;
-            slot.arguments.clone()
-        };
-        if let Some(Content::ToolCall(call)) = out.content.get_mut(slot.content_index) {
-            call.arguments = parse_streaming_json(Some(&slot.arguments));
-            if !slot.name.is_empty() {
-                call.name = slot.name.clone();
-            }
-            call.id = compose_tool_call_id(slot.call_id.as_deref(), slot.item_id.as_deref());
+        let content_index = slot.content_index;
+        if self.pending_tool_index.is_some() && self.pending_tool_index != Some(content_index) {
+            self.flush_tool(out, p).await;
         }
-        p.push(AssistantMessageEvent::ToolCallDelta {
-            content_index: slot.content_index,
-            delta: wire_delta,
-            partial: Arc::new(out.clone()),
-        })
-        .await;
+        let queued = {
+            let Some(slot) = self.slots.get_mut(&index) else {
+                return;
+            };
+            slot.arguments.push_str(delta);
+            // The initial raw arguments from output_item.added have not been
+            // emitted as a delta yet. Preserve their exact bytes on the first
+            // fragment, then emit only suffixes.
+            let wire_delta = if slot.function_arguments_started {
+                delta.to_string()
+            } else {
+                slot.function_arguments_started = true;
+                slot.arguments.clone()
+            };
+            (slot.content_index, wire_delta)
+        };
+        let (content_index, wire_delta) = queued;
+        self.pending_tool_index = Some(content_index);
+        self.pending_tool.push_str(&wire_delta);
+        if self.should_flush(&self.pending_tool) {
+            self.flush_tool(out, p).await;
+        }
     }
 
     /// Append a custom-tool input fragment while exposing the neutral tool
@@ -795,75 +869,105 @@ impl ResponsesStreamState {
     async fn append_custom_tool_input(
         &mut self,
         index: usize,
-        next_input: &str,
-        close: bool,
+        input: CustomToolInput<'_>,
         out: &mut AssistantMessage,
         p: &mut AssistantMessageEventStreamProducer,
     ) {
-        self.flush_pending(out, p).await;
-        let Some(slot) = self.slots.get_mut(&index) else {
+        self.flush_text(out, p).await;
+        self.flush_thinking(out, p).await;
+        let Some(slot) = self.slots.get(&index) else {
             return;
         };
-        if slot.kind != ResponseSlotKind::ToolCall || !slot.custom {
+        if slot.kind != ResponseSlotKind::ToolCall || !slot.custom || slot.custom_input_closed {
             return;
         }
-        if slot.custom_input_closed {
-            // A repeated done event is harmless when it repeats the final
-            // input. A changed value would violate the provider's monotonic
-            // input contract; ignore it rather than emitting a corrupt delta.
-            return;
+        let content_index = slot.content_index;
+        if self.pending_tool_index.is_some() && self.pending_tool_index != Some(content_index) {
+            self.flush_tool(out, p).await;
         }
-
-        // Before the first emitted fragment, `slot.arguments` may contain the
-        // initial `input` from output_item.added. That value has not appeared in
-        // the neutral stream yet, so the first delta must include it in full.
-        let previous_emitted = if slot.custom_input_started {
-            slot.arguments.clone()
-        } else {
-            String::new()
-        };
-        if !next_input.starts_with(&previous_emitted) {
-            return;
-        }
-        let input_delta = &next_input[previous_emitted.len()..];
-        if !close && input_delta.is_empty() {
-            return;
-        }
-        let property = slot.custom_input_property.as_deref().unwrap_or("input");
-        let mut wire_delta = String::new();
-        if !slot.custom_input_started {
-            wire_delta.push('{');
-            wire_delta.push_str(
-                &serde_json::to_string(property).unwrap_or_else(|_| "\"input\"".to_string()),
-            );
-            wire_delta.push_str(":\"");
-            slot.custom_input_started = true;
-        }
-        if let Ok(escaped) = serde_json::to_string(input_delta) {
-            wire_delta.push_str(&escaped[1..escaped.len().saturating_sub(1)]);
-        } else {
-            return;
-        }
-        slot.arguments = next_input.to_string();
-        if close {
-            wire_delta.push_str("\"}");
-            slot.custom_input_closed = true;
-        }
-
-        if let Some(Content::ToolCall(call)) = out.content.get_mut(slot.content_index) {
-            call.arguments = custom_tool_arguments(property, next_input);
-            if !slot.name.is_empty() {
-                call.name = slot.name.clone();
+        let queued = {
+            let Some(slot) = self.slots.get_mut(&index) else {
+                return;
+            };
+            if slot.custom_input_closed {
+                return;
             }
-            call.id = compose_tool_call_id(slot.call_id.as_deref(), slot.item_id.as_deref());
-        }
-        if !wire_delta.is_empty() {
-            p.push(AssistantMessageEvent::ToolCallDelta {
-                content_index: slot.content_index,
-                delta: wire_delta,
-                partial: Arc::new(out.clone()),
-            })
-            .await;
+            let close = matches!(input, CustomToolInput::Done(_));
+            // Raw deltas append directly. Only a final snapshot needs a prefix
+            // check; rebuilding the complete input per fragment is quadratic.
+            let (initial_prefix, input_delta) = match input {
+                CustomToolInput::Delta(delta) => (
+                    if slot.custom_input_started {
+                        ""
+                    } else {
+                        slot.arguments.as_str()
+                    },
+                    delta,
+                ),
+                CustomToolInput::Done(full) => {
+                    let full = full.unwrap_or(&slot.arguments);
+                    let delta = if slot.custom_input_started {
+                        let Some(delta) = full.strip_prefix(slot.arguments.as_str()) else {
+                            return;
+                        };
+                        delta
+                    } else {
+                        full
+                    };
+                    ("", delta)
+                }
+            };
+            if !close && initial_prefix.is_empty() && input_delta.is_empty() {
+                return;
+            }
+            let mut wire_delta = String::new();
+            if !slot.custom_input_started {
+                wire_delta.push('{');
+                wire_delta.push_str(
+                    &serde_json::to_string(
+                        slot.custom_input_property.as_deref().unwrap_or("input"),
+                    )
+                    .unwrap_or_else(|_| "\"input\"".to_string()),
+                );
+                wire_delta.push_str(":\"");
+            }
+            // Escape the initial prefix once, then only new fragment bytes.
+            // Each fragment is valid UTF-8, so independently escaping them is
+            // byte-equivalent to escaping their concatenation.
+            for fragment in [initial_prefix, input_delta] {
+                if !fragment.is_empty() {
+                    if let Ok(escaped) = serde_json::to_string(fragment) {
+                        wire_delta.push_str(&escaped[1..escaped.len() - 1]);
+                    } else {
+                        return;
+                    }
+                }
+            }
+            match input {
+                CustomToolInput::Delta(delta) => slot.arguments.push_str(delta),
+                CustomToolInput::Done(Some(full)) if full != slot.arguments => {
+                    slot.arguments.clear();
+                    slot.arguments.push_str(full);
+                }
+                CustomToolInput::Done(_) => {}
+            }
+            slot.custom_input_started = true;
+            if close {
+                wire_delta.push_str("\"}");
+                slot.custom_input_closed = true;
+            }
+            if wire_delta.is_empty() {
+                return;
+            }
+            (slot.content_index, wire_delta, close)
+        };
+        let (content_index, wire_delta, close) = queued;
+        self.pending_tool_index = Some(content_index);
+        self.pending_tool.push_str(&wire_delta);
+        // Closing a custom call is a tool boundary: the `"}` must be in the
+        // delta stream before `ToolCallEnd`.
+        if close || self.should_flush(&self.pending_tool) {
+            self.flush_tool(out, p).await;
         }
     }
 
@@ -888,11 +992,8 @@ impl ResponsesStreamState {
             let input = item
                 .get("input")
                 .and_then(Value::as_str)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string)
-                .or_else(|| self.slots.get(&index).map(|slot| slot.arguments.clone()))
-                .unwrap_or_default();
-            self.append_custom_tool_input(index, &input, true, out, p)
+                .filter(|value| !value.is_empty());
+            self.append_custom_tool_input(index, CustomToolInput::Done(input), out, p)
                 .await;
         }
         let Some(slot) = self.slots.get_mut(&index) else {
@@ -1039,7 +1140,7 @@ impl ResponsesStreamState {
                             &slot.arguments,
                         )
                     } else {
-                        parse_streaming_json(Some(&slot.arguments))
+                        parse_terminal_tool_arguments(&slot.arguments)
                     },
                     thought_signature: None,
                     namespace: None,
@@ -1403,6 +1504,7 @@ async fn run_stream(
                 let value: Value = match serde_json::from_str(&ev.data) {
                     Ok(v) => v,
                     Err(error) => {
+                        state.flush_pending(&mut out, p).await;
                         emit_error(
                             p,
                             &mut out,
@@ -1567,12 +1669,18 @@ async fn run_stream(
                             if !suffix.is_empty() {
                                 state.append_tool_delta(index, suffix, &mut out, p).await;
                             }
-                        } else if let Some(slot) = state.slots.get_mut(&index) {
-                            slot.arguments = arguments.to_string();
-                            if let Some(Content::ToolCall(call)) =
-                                out.content.get_mut(slot.content_index)
-                            {
-                                call.arguments = parse_streaming_json(Some(arguments));
+                        } else {
+                            // Emit any batched prefix before replacing the
+                            // accumulated arguments. A non-prefix done payload
+                            // is authoritative and does not invent a delta.
+                            state.flush_tool(&mut out, p).await;
+                            if let Some(slot) = state.slots.get_mut(&index) {
+                                slot.arguments = arguments.to_string();
+                                if let Some(Content::ToolCall(call)) =
+                                    out.content.get_mut(slot.content_index)
+                                {
+                                    call.arguments = parse_terminal_tool_arguments(arguments);
+                                }
                             }
                         }
                     }
@@ -1592,15 +1700,13 @@ async fn run_stream(
                         else {
                             continue;
                         };
-                        let current = state
-                            .slots
-                            .get(&index)
-                            .map(|slot| slot.arguments.clone())
-                            .unwrap_or_default();
-                        let mut next = current;
-                        next.push_str(delta);
                         state
-                            .append_custom_tool_input(index, &next, false, &mut out, p)
+                            .append_custom_tool_input(
+                                index,
+                                CustomToolInput::Delta(delta),
+                                &mut out,
+                                p,
+                            )
                             .await;
                     }
                     "response.custom_tool_call_input.done" => {
@@ -1616,14 +1722,14 @@ async fn run_stream(
                         else {
                             continue;
                         };
-                        let input = value
-                            .get("input")
-                            .and_then(Value::as_str)
-                            .map(str::to_string)
-                            .or_else(|| state.slots.get(&index).map(|slot| slot.arguments.clone()))
-                            .unwrap_or_default();
+                        let input = value.get("input").and_then(Value::as_str);
                         state
-                            .append_custom_tool_input(index, &input, true, &mut out, p)
+                            .append_custom_tool_input(
+                                index,
+                                CustomToolInput::Done(input),
+                                &mut out,
+                                p,
+                            )
                             .await;
                     }
                     "response.output_item.done" => {
@@ -1664,6 +1770,7 @@ async fn run_stream(
                             out.raw_stop_reason = Some(status.to_string());
                         }
                         let msg = response_error_message(&value, response);
+                        state.flush_pending(&mut out, p).await;
                         emit_error(p, &mut out, msg, false).await;
                         return;
                     }
@@ -1673,6 +1780,7 @@ async fn run_stream(
             }
             Ok(None) => {
                 if !state.terminal {
+                    state.flush_pending(&mut out, p).await;
                     emit_error(
                         p,
                         &mut out,
@@ -1687,6 +1795,7 @@ async fn run_stream(
                 return;
             }
             Err(e) => {
+                state.flush_pending(&mut out, p).await;
                 emit_error(p, &mut out, e.to_string(), e.is_abort()).await;
                 return;
             }
@@ -3082,10 +3191,15 @@ mod tests {
             )
             .await;
         state
-            .append_custom_tool_input(0, "a\"", false, &mut output, &mut producer)
+            .append_custom_tool_input(0, CustomToolInput::Delta("a\""), &mut output, &mut producer)
             .await;
         state
-            .append_custom_tool_input(0, "a\"\nb", true, &mut output, &mut producer)
+            .append_custom_tool_input(
+                0,
+                CustomToolInput::Done(Some("a\"\nb")),
+                &mut output,
+                &mut producer,
+            )
             .await;
         state
             .finish_item(
@@ -3116,6 +3230,125 @@ mod tests {
             Content::ToolCall(call) if call.arguments == json!({"payload": "a\"\nb"})
         ));
         assert!(state.slots.get(&0).is_some_and(|slot| slot.ended));
+    }
+
+    #[tokio::test]
+    async fn fragmented_custom_input_preserves_prefix_unicode_and_close_boundaries() {
+        for close_mode in 0..4 {
+            let property = "pay\"load\\\n雪";
+            let prefix = "pré\\\"\n";
+            let fragments = "a\"\\\n\t雪🙂\u{0}".repeat(128);
+            let raw = format!("{prefix}{fragments}");
+            let (mut producer, stream) = create_assistant_message_event_stream();
+            let mut state = ResponsesStreamState::with_tools(HashMap::from([(
+                "run_grammar".to_string(),
+                property.to_string(),
+            )]));
+            let mut output = AssistantMessage::empty(Api::OpenaiResponses, "openai", "gpt-test", 1);
+            state
+                .add_item(
+                    0,
+                    &json!({
+                        "type": "custom_tool_call",
+                        "id": "ctc_fragmented",
+                        "name": "run_grammar",
+                        "input": prefix,
+                    }),
+                    &mut output,
+                    &mut producer,
+                )
+                .await;
+            let slot = state.slots.get_mut(&0).unwrap();
+            slot.arguments.reserve(fragments.len());
+            let buffer = slot.arguments.as_ptr();
+            state
+                .append_custom_tool_input(0, CustomToolInput::Delta(""), &mut output, &mut producer)
+                .await;
+            for ch in fragments.chars() {
+                let mut bytes = [0; 4];
+                state
+                    .append_custom_tool_input(
+                        0,
+                        CustomToolInput::Delta(ch.encode_utf8(&mut bytes)),
+                        &mut output,
+                        &mut producer,
+                    )
+                    .await;
+            }
+            // Reserved capacity must survive: do not replace the accumulator
+            // with a full-input clone on each fragment.
+            assert_eq!(state.slots[&0].arguments.as_ptr(), buffer);
+            assert_eq!(state.slots[&0].arguments, raw);
+            match close_mode {
+                0 | 1 => {
+                    state
+                        .append_custom_tool_input(
+                            0,
+                            CustomToolInput::Done(if close_mode == 0 {
+                                Some(raw.as_str())
+                            } else {
+                                None
+                            }),
+                            &mut output,
+                            &mut producer,
+                        )
+                        .await;
+                    // Replayed closes and post-close fragments cannot add bytes.
+                    state
+                        .append_custom_tool_input(
+                            0,
+                            CustomToolInput::Delta("ignored"),
+                            &mut output,
+                            &mut producer,
+                        )
+                        .await;
+                    state
+                        .finish_item(
+                            0,
+                            &json!({"type": "custom_tool_call", "input": raw}),
+                            &mut output,
+                            &mut producer,
+                        )
+                        .await;
+                }
+                2 => {
+                    state
+                        .finish_item(
+                            0,
+                            &json!({"type": "custom_tool_call"}),
+                            &mut output,
+                            &mut producer,
+                        )
+                        .await;
+                }
+                _ => state.finish_open_slots(&mut output, &mut producer).await,
+            }
+            drop(producer);
+            let mut receiver = stream;
+            let mut joined = String::new();
+            let mut end_seen = false;
+            let mut delta_count = 0;
+            while let Some(event) = receiver.next().await {
+                match event {
+                    AssistantMessageEvent::ToolCallDelta { delta, .. } => {
+                        assert!(!end_seen, "close bytes must precede ToolCallEnd");
+                        joined.push_str(&delta);
+                        delta_count += 1;
+                    }
+                    AssistantMessageEvent::ToolCallEnd { .. } => end_seen = true,
+                    _ => {}
+                }
+            }
+            let expected = custom_tool_arguments(property, &raw);
+            assert_eq!(joined, expected.to_string());
+            assert_eq!(serde_json::from_str::<Value>(&joined).unwrap(), expected);
+            assert!(delta_count < fragments.chars().count() / 2);
+            assert!(end_seen);
+            assert!(matches!(
+                &output.content[0],
+                Content::ToolCall(call) if call.arguments == expected
+            ));
+        }
     }
 
     #[test]
@@ -4136,7 +4369,8 @@ mod tests {
             let _ = socket.read(&mut request).await.unwrap();
             let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(), body
+                body.len(),
+                body
             );
             socket.write_all(response.as_bytes()).await.unwrap();
         });
@@ -4226,7 +4460,8 @@ mod tests {
             let _ = socket.read(&mut request).await;
             let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(), body
+                body.len(),
+                body
             );
             socket.write_all(response.as_bytes()).await.unwrap();
         });
@@ -4351,6 +4586,121 @@ mod tests {
         assert_eq!(input[output_index]["call_id"], legacy_id);
 
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn function_argument_deltas_are_batched_without_dropping_bytes() {
+        let (mut producer, stream) = create_assistant_message_event_stream();
+        let mut state = ResponsesStreamState::default();
+        let mut output = AssistantMessage::empty(Api::OpenaiResponses, "openai", "gpt-test", 1);
+        state
+            .add_item(
+                0,
+                &json!({"type":"function_call","id":"fc_1","call_id":"call_1","name":"write"}),
+                &mut output,
+                &mut producer,
+            )
+            .await;
+        let body = "y".repeat(2000);
+        let raw = format!("{{\"text\":\"{body}\"}}");
+        for ch in raw.chars() {
+            let fragment = ch.to_string();
+            state
+                .append_tool_delta(0, &fragment, &mut output, &mut producer)
+                .await;
+        }
+        state
+            .finish_item(
+                0,
+                &json!({
+                    "type":"function_call",
+                    "id":"fc_1",
+                    "call_id":"call_1",
+                    "name":"write",
+                    "arguments": raw
+                }),
+                &mut output,
+                &mut producer,
+            )
+            .await;
+        drop(producer);
+        let mut receiver = stream;
+        let mut deltas = Vec::new();
+        let mut end_seen = false;
+        let mut delta_after_end = false;
+        while let Some(event) = receiver.next().await {
+            match event {
+                AssistantMessageEvent::ToolCallDelta { delta, .. } => {
+                    if end_seen {
+                        delta_after_end = true;
+                    }
+                    deltas.push(delta);
+                }
+                AssistantMessageEvent::ToolCallEnd { .. } => end_seen = true,
+                _ => {}
+            }
+        }
+        assert_eq!(deltas.concat(), raw);
+        assert!(deltas.len() <= raw.len() / DELTA_FLUSH_BYTES + 5);
+        assert!(!delta_after_end);
+        assert!(matches!(
+            &output.content[0],
+            Content::ToolCall(call) if call.arguments["text"] == body
+        ));
+    }
+
+    #[tokio::test]
+    async fn interleaved_and_custom_tool_batches_keep_concatenated_bytes() {
+        let tool = grammar_tool();
+        let (mut producer, stream) = create_assistant_message_event_stream();
+        let mut state =
+            ResponsesStreamState::with_tools(grammar_tool_properties(&grammar_model(), &[tool]));
+        let mut output = AssistantMessage::empty(Api::OpenaiResponses, "openai", "gpt-test", 1);
+        state
+            .add_item(
+                0,
+                &json!({"type":"function_call","id":"fc_1","call_id":"call_1","name":"read","arguments":"{\"p\":"}),
+                &mut output,
+                &mut producer,
+            )
+            .await;
+        state
+            .append_tool_delta(0, "1}", &mut output, &mut producer)
+            .await;
+        state
+            .add_item(
+                1,
+                &json!({"type":"custom_tool_call","id":"ctc_1","call_id":"call_2","name":"run_grammar"}),
+                &mut output,
+                &mut producer,
+            )
+            .await;
+        state
+            .append_custom_tool_input(1, CustomToolInput::Delta("a\""), &mut output, &mut producer)
+            .await;
+        state
+            .append_custom_tool_input(
+                1,
+                CustomToolInput::Done(Some("a\"\nb")),
+                &mut output,
+                &mut producer,
+            )
+            .await;
+        drop(producer);
+        let mut receiver = stream;
+        let mut by_index: [String; 2] = [String::new(), String::new()];
+        while let Some(event) = receiver.next().await {
+            if let AssistantMessageEvent::ToolCallDelta {
+                content_index,
+                delta,
+                ..
+            } = event
+            {
+                by_index[content_index].push_str(&delta);
+            }
+        }
+        assert_eq!(by_index[0], "{\"p\":1}");
+        assert_eq!(by_index[1], "{\"payload\":\"a\\\"\\nb\"}");
     }
 }
 

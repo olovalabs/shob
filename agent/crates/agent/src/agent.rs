@@ -553,6 +553,7 @@ impl Agent {
             before_tool_call: None,
             after_tool_call: None,
             tool_execution: self.inner.tool_execution,
+            tool_parallelism: 0,
             thinking_level: state.thinking_level,
             api_key: None,
             timeout: None,

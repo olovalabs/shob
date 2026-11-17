@@ -33,11 +33,10 @@ pub trait AgentTool: Send + Sync {
     /// Human-readable label for UI display.
     fn label(&self) -> &str;
 
-    /// Per-tool execution-mode override. `Sequential` forces one-at-a-time for
-    /// the whole batch when any tool in it returns `Sequential`; `Parallel`
-    /// (default) allows concurrency.
+    /// `Sequential` (default) is an exclusive barrier within a batch.
+    /// Audited tools may opt into `Parallel` to overlap with adjacent parallel tools.
     fn execution_mode(&self) -> ToolExecutionMode {
-        ToolExecutionMode::Parallel
+        ToolExecutionMode::Sequential
     }
 
     /// Optional compatibility shim for raw tool-call arguments before schema
@@ -63,4 +62,43 @@ pub trait AgentTool: Send + Sync {
         signal: CancellationToken,
         on_update: Arc<dyn Fn(ToolResultPartial) + Send + Sync>,
     ) -> Result<AgentToolResult, AgentError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct UnclassifiedTool(Tool);
+
+    #[async_trait]
+    impl AgentTool for UnclassifiedTool {
+        fn schema(&self) -> &Tool {
+            &self.0
+        }
+
+        fn label(&self) -> &str {
+            "unclassified"
+        }
+
+        async fn execute(
+            &self,
+            _: &str,
+            _: serde_json::Value,
+            _: CancellationToken,
+            _: Arc<dyn Fn(ToolResultPartial) + Send + Sync>,
+        ) -> Result<AgentToolResult, AgentError> {
+            unreachable!("execution policy does not execute the tool")
+        }
+    }
+
+    #[test]
+    fn unclassified_tools_are_exclusive_by_default() {
+        let tool = UnclassifiedTool(Tool {
+            name: "unclassified".into(),
+            description: String::new(),
+            parameters: ai::types::Schema::new(serde_json::json!({"type": "object"})),
+            constrained_sampling: None,
+        });
+        assert_eq!(tool.execution_mode(), ToolExecutionMode::Sequential);
+    }
 }

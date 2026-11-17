@@ -364,6 +364,12 @@ impl FilesSurface {
         cx.defer_in(window, |this, window, cx| this.restore_next(window, cx));
         this
     }
+    pub fn show_git(&mut self, cx: &mut Context<Self>) {
+        self.git = true;
+        self.refresh(cx);
+        self.changed(cx);
+    }
+
     pub fn prepare_close(&mut self, cx: &mut Context<Self>) -> bool {
         if self.operation.is_some()
             || self.editors.iter().any(|e| e.dirty)

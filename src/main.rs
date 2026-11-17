@@ -9,6 +9,8 @@ use gpui::{
     WindowControlArea, WindowDecorations, WindowOptions, actions, canvas, deferred, div, img, list,
     px, relative, rems, rgba, size, svg,
 };
+#[cfg(target_os = "linux")]
+use gpui_component::TitleBar;
 use gpui_component::WindowExt as _;
 use gpui_component::button::Button;
 use gpui_component::highlighter::HighlightTheme;
@@ -19,6 +21,7 @@ use gpui_component::scroll::ScrollableElement as _;
 use gpui_component::text::{TextView, TextViewStyle};
 use gpui_component::{ActiveTheme as _, Root, Sizable as _};
 use gpui_kit::base::{Scrollbar as KitScrollbar, VirtualListScrollHandle, v_virtual_list};
+#[cfg(not(target_os = "linux"))]
 use gpui_kit::component::TitleBar;
 use parking_lot::Mutex;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
@@ -3399,6 +3402,22 @@ fn editor_icon(name: &str) -> &'static str {
     }
 }
 
+fn project_editor_icon(name: Option<&str>, color: Hsla) -> AnyElement {
+    if name == Some("Antigravity") {
+        img("icons/editors/antigravity.png")
+            .size(px(14.0))
+            .flex_none()
+            .into_any_element()
+    } else {
+        svg()
+            .path(name.map_or("icons/folder.svg", editor_icon))
+            .size(px(14.0))
+            .flex_none()
+            .text_color(color)
+            .into_any_element()
+    }
+}
+
 pub struct Project {
     pub id: usize,
     /// Shared (cheap to clone) because the render pass copies it every frame.
@@ -3538,7 +3557,8 @@ struct AppState {
     attention_seq: u64,
     /// Currently open project dropdown menu: Some(project_id).
     project_menu: Option<usize>,
-    editor_picker_open: bool,
+    editor_picker_open: Option<usize>,
+    project_script_form: Option<(usize, Entity<InputState>, Entity<InputState>)>,
     available_editors: Vec<(String, PathBuf)>,
     renaming_project: Option<RenamingProject>,
     pub terminal_context_menu: Option<TerminalContextMenu>,
@@ -5778,6 +5798,16 @@ impl AppState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.create_project_session(project_idx, self.settings.agent_layout, window, cx);
+    }
+
+    fn create_project_session(
+        &mut self,
+        project_idx: usize,
+        agent_chat: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let self_weak = cx.entity().downgrade();
         let next_id = self.next_id;
         self.next_id += 1;
@@ -5835,7 +5865,7 @@ impl AppState {
             self.active_project_idx = project_idx;
             self.focused_pane_id = Some(next_id);
             self.rebuild_session_index();
-            if self.settings.agent_layout {
+            if agent_chat {
                 self.set_chat_mode(next_id, true, window, cx);
             }
             self.schedule_workspace_save(cx);
@@ -15637,6 +15667,354 @@ impl AppState {
             content.into_any_element()
         }
     }
+    fn open_project_script_form(
+        &mut self,
+        pane_id: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let name = cx.new(|cx| InputState::new(window, cx).placeholder("Script name"));
+        let command =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Command, e.g. cargo test"));
+        name.update(cx, |state, cx| state.focus(window, cx));
+        self.project_script_form = Some((pane_id, name, command));
+        cx.notify();
+    }
+
+    fn save_project_script(&mut self, cx: &mut Context<Self>) {
+        let Some((pane, name, command)) = &self.project_script_form else {
+            return;
+        };
+        let name = name.read(cx).value().trim().to_owned();
+        let command = command.read(cx).value().trim().to_owned();
+        if name.is_empty() || name.len() > 128 || command.is_empty() || command.len() > 4096 {
+            return;
+        }
+        let Some(&(project, _, _)) = self.pane_index.get(pane) else {
+            return;
+        };
+        let scripts = self
+            .settings
+            .project_scripts
+            .entry(self.projects[project].path.clone())
+            .or_default();
+        if scripts.len() >= 32 {
+            return;
+        }
+        scripts.push(settings::ProjectScript { name, command });
+        self.project_script_form = None;
+        self.schedule_workspace_save(cx);
+        cx.notify();
+    }
+
+    fn run_project_script(
+        &mut self,
+        source: usize,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(&(project, _, _)) = self.pane_index.get(&source) else {
+            return;
+        };
+        let Some(script) = self
+            .settings
+            .project_scripts
+            .get(&self.projects[project].path)
+            .and_then(|s| s.get(index))
+            .cloned()
+        else {
+            return;
+        };
+        let next_id = self.next_id;
+        self.create_project_session(project, false, window, cx);
+        if self.focused_pane_id != Some(next_id) {
+            return;
+        }
+        let Some(input) = self.pane_ref(next_id).and_then(|p| p.input_state.clone()) else {
+            return;
+        };
+        set_input_text(&input, script.command, window, cx);
+        self.execute_pane_input(next_id, window, cx);
+    }
+
+    fn open_project_editor(
+        &mut self,
+        pane_id: usize,
+        selected: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(directory) = self
+            .pane_ref(pane_id)
+            .and_then(|pane| pane.chat.cwd.clone().or_else(|| self.pane_cwd_path(pane)))
+        else {
+            return;
+        };
+        let explicit_selection = selected.is_some();
+        let preferred = selected.or_else(|| self.settings.preferred_editor.clone());
+        self.editor_picker_open = None;
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let (editors, result) = cx
+                .background_executor()
+                .spawn(async move {
+                    let editors = Self::discover_project_editors();
+                    let editor = Self::preferred_project_editor(&editors, preferred.as_deref());
+                    let result = if let Some((name, executable)) = editor {
+                        std::process::Command::new(executable)
+                            .arg(&directory)
+                            .spawn()
+                            .map(|_| Some(name.clone()))
+                    } else {
+                        paths::open_in_file_manager(&directory).map(|_| None)
+                    };
+                    (editors, result)
+                })
+                .await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.available_editors = editors;
+                match result {
+                    Ok(Some(name))
+                        if explicit_selection || this.settings.preferred_editor.is_none() =>
+                    {
+                        this.settings.preferred_editor = Some(name);
+                        this.schedule_workspace_save(cx);
+                    }
+                    Err(error) => window.push_notification(
+                        Notification::new()
+                            .title("Could not open project")
+                            .message(error.to_string())
+                            .with_type(NotificationType::Error),
+                        cx,
+                    ),
+                    _ => {}
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn refresh_project_editors(&self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let editors = cx
+                .background_executor()
+                .spawn(async { Self::discover_project_editors() })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.available_editors = editors;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn preferred_project_editor<'a>(
+        editors: &'a [(String, PathBuf)],
+        preferred: Option<&str>,
+    ) -> Option<&'a (String, PathBuf)> {
+        editors
+            .iter()
+            .find(|(name, _)| preferred == Some(name.as_str()))
+            .or_else(|| editors.first())
+    }
+
+    fn discover_project_editors() -> Vec<(String, PathBuf)> {
+        let paths = std::env::var_os("PATH").unwrap_or_default();
+        [
+            ("Zed", "zed"),
+            ("VS Code", "code"),
+            ("VS Code Insiders", "code-insiders"),
+            ("VSCodium", "codium"),
+            ("Cursor", "cursor"),
+            ("Trae", "trae"),
+            ("Kiro", "kiro"),
+            ("Antigravity", "antigravity-ide"),
+            ("IntelliJ IDEA", "idea"),
+            ("Aqua", "aqua"),
+            ("CLion", "clion"),
+            ("DataGrip", "datagrip"),
+            ("DataSpell", "dataspell"),
+            ("GoLand", "goland"),
+            ("PhpStorm", "phpstorm"),
+            ("PyCharm", "pycharm"),
+            ("Rider", "rider"),
+            ("RubyMine", "rubymine"),
+            ("RustRover", "rustrover"),
+            ("WebStorm", "webstorm"),
+        ]
+        .into_iter()
+        .filter_map(|(name, command)| {
+            std::env::split_paths(&paths)
+                .map(|dir| {
+                    dir.join(if cfg!(windows) {
+                        format!("{command}.exe")
+                    } else {
+                        command.to_owned()
+                    })
+                })
+                .find(|path| path.is_file())
+                .map(|path| (name.to_owned(), path))
+        })
+        .collect()
+    }
+
+    fn render_project_editor(
+        &self,
+        pane: &TerminalPane,
+        tokens: &ThemeTokens,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let pane_id = pane.id;
+        let preferred = Self::preferred_project_editor(
+            &self.available_editors,
+            self.settings.preferred_editor.as_deref(),
+        )
+        .map(|(name, _)| name.as_str());
+        let open = self.editor_picker_open == Some(pane_id);
+        let hover = tokens.pane_header_btn_hover;
+        div()
+            .child(
+                div()
+                    .flex()
+                    .h(px(32.0))
+                    .items_center()
+                    .gap(px(2.0))
+                    .child(
+                        div()
+                            .id(("open-default-editor", pane_id))
+                            .debug_selector(|| "open-default-editor".into())
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .px(px(6.0))
+                            .rounded(px(6.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .cursor_pointer()
+                            .hover(move |style| style.bg(hover))
+                            .child(project_editor_icon(preferred, tokens.text_secondary))
+                            .child({
+                                let label = preferred.map_or_else(
+                                    || "Open in editor".to_owned(),
+                                    |name| format!("Open in {name}"),
+                                );
+                                div()
+                                    .id("default-editor-label")
+                                    .debug_selector({
+                                        let label = label.clone();
+                                        move || label.clone()
+                                    })
+                                    .truncate()
+                                    .text_size(px(13.0))
+                                    .child(label)
+                            })
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_project_editor(pane_id, None, window, cx)
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id(("open-editor-picker", pane_id))
+                            .debug_selector(|| "open-editor-picker".into())
+                            .size(px(30.0))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(6.0))
+                            .cursor_pointer()
+                            .hover(move |style| style.bg(hover))
+                            .tooltip(|window, cx| {
+                                gpui_component::tooltip::Tooltip::new("Choose editor")
+                                    .build(window, cx)
+                            })
+                            .child(
+                                svg()
+                                    .path(if open {
+                                        "ui_icons/chevron-up.svg"
+                                    } else {
+                                        "icons/chevron-down.svg"
+                                    })
+                                    .size(px(12.0))
+                                    .text_color(tokens.text_secondary),
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.editor_picker_open =
+                                    (this.editor_picker_open != Some(pane_id)).then_some(pane_id);
+                                if this.editor_picker_open.is_some() {
+                                    this.refresh_project_editors(cx);
+                                }
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .when(open, |menu| {
+                menu.child(
+                    div()
+                        .mx(px(4.0))
+                        .p(px(4.0))
+                        .rounded(px(7.0))
+                        .border_1()
+                        .border_color(tokens.border_subtle)
+                        .bg(tokens.card_bg)
+                        .when(self.available_editors.is_empty(), |rows| {
+                            rows.child(
+                                div()
+                                    .p(px(6.0))
+                                    .text_size(px(12.0))
+                                    .text_color(tokens.text_muted)
+                                    .child("No editors found on PATH"),
+                            )
+                        })
+                        .children(self.available_editors.iter().enumerate().map(
+                            |(index, (name, _))| {
+                                let name = name.clone();
+                                div()
+                                    .id(("open-editor", index))
+                                    .h(px(30.0))
+                                    .px(px(6.0))
+                                    .rounded(px(5.0))
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.0))
+                                    .cursor_pointer()
+                                    .hover(move |style| style.bg(hover))
+                                    .text_size(px(12.0))
+                                    .child(project_editor_icon(Some(&name), tokens.text_secondary))
+                                    .child(div().flex_1().child(name.clone()))
+                                    .when(preferred == Some(name.as_str()), |row| {
+                                        row.child(
+                                            svg()
+                                                .path("icons/status-check.svg")
+                                                .size(px(12.0))
+                                                .text_color(tokens.text_secondary),
+                                        )
+                                    })
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.open_project_editor(
+                                            pane_id,
+                                            Some(name.clone()),
+                                            window,
+                                            cx,
+                                        )
+                                    }))
+                            },
+                        )),
+                )
+            })
+    }
+
+    fn desktop_titlebar(&self, cx: &Context<Self>) -> TitleBar {
+        let state = cx.weak_entity();
+        TitleBar::new().on_close_window(move |_, window, cx| {
+            let _ = state.update(cx, |this, cx| this.save_all_sync(Some(window), cx));
+            window.remove_window();
+        })
+    }
+
     fn render_focused_agent_info(
         &self,
         pane: &TerminalPane,
@@ -15660,8 +16038,15 @@ impl AppState {
             .and_then(|project| self.project_change_counts.get(&project.path))
             .and_then(Option::as_ref)
             .filter(|summary| summary.files > 0);
-        let project = self
-            .active_project()
+        let owner = self
+            .pane_index
+            .get(&pane_id)
+            .and_then(|&(project, _, _)| self.projects.get(project));
+        let project_path = owner.map(|project| project.path.clone());
+        let scripts = project_path
+            .as_ref()
+            .and_then(|path| self.settings.project_scripts.get(path));
+        let project = owner
             .map(|project| project.name.clone())
             .unwrap_or_else(|| SharedString::from("Environment"));
         let expanded = wide || pane.chat.info_open;
@@ -15671,7 +16056,7 @@ impl AppState {
             .absolute()
             .top(if has_usage { px(32.0) } else { px(12.0) })
             .right(px(16.0))
-            .w(if expanded { px(260.0) } else { px(36.0) })
+            .w(if expanded { px(280.0) } else { px(36.0) })
             .rounded(px(14.0))
             .border_1()
             .border_color(tokens.card_border)
@@ -15699,6 +16084,7 @@ impl AppState {
                             MouseButton::Left,
                             cx.listener(move |this, _, _, cx| {
                                 cx.stop_propagation();
+                                this.editor_picker_open = None;
                                 if let Some(pane) = this.pane_mut(pane_id) {
                                     pane.chat.info_open = !pane.chat.info_open;
                                     cx.notify();
@@ -15710,9 +16096,12 @@ impl AppState {
             .when(expanded, |panel| {
                 panel.child(
                     div()
+                        .id(("project-details-body", pane_id))
+                        .max_h(px(520.0))
+                        .overflow_y_scrollbar()
                         .flex()
                         .flex_col()
-                        .p(px(12.0))
+                        .p(px(8.0))
                         .gap(px(2.0))
                         .child(
                             div()
@@ -15736,171 +16125,169 @@ impl AppState {
                                         .child(project),
                                 )
                                 .child(
-                                    svg()
-                                        .path("icons/folder.svg")
-                                        .size(px(15.0))
-                                        .text_color(tokens.text_secondary),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .id(("open-editor-picker", pane_id))
-                                .h(px(30.0))
-                                .px(px(6.0))
-                                .rounded(px(6.0))
-                                .flex()
-                                .items_center()
-                                .gap(px(8.0))
-                                .cursor_pointer()
-                                .hover(|style| style.bg(tokens.pane_header_btn_hover))
-                                .child(
-                                    svg()
-                                        .path(
-                                            self.available_editors
-                                                .first()
-                                                .map(|(name, _)| editor_icon(name))
-                                                .unwrap_or("icons/folder.svg"),
-                                        )
-                                        .size(px(14.0))
-                                        .text_color(tokens.text_secondary),
-                                )
-                                .child(
                                     div()
-                                        .flex_1()
-                                        .text_size(px(12.0))
-                                        .text_color(tokens.text_primary)
-                                        .child(
-                                            self.available_editors
-                                                .first()
-                                                .map(|(name, _)| format!("Open in {name}"))
-                                                .unwrap_or_else(|| "Open in editor".to_owned()),
-                                        ),
-                                )
-                                .child(
-                                    svg()
-                                        .path("icons/chevron-down.svg")
-                                        .size(px(12.0))
-                                        .text_color(tokens.text_secondary),
-                                )
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        this.editor_picker_open = !this.editor_picker_open;
-                                        if this.editor_picker_open {
-                                            cx.spawn(async move |this, cx| {
-                                                let editors = cx
-                                                    .background_executor()
-                                                    .spawn(async move {
-                                                        let paths = std::env::var_os("PATH")
-                                                            .unwrap_or_default();
-                                                        [
-                                                            ("Zed", "zed"),
-                                                            ("VS Code", "code"),
-                                                            ("VS Code Insiders", "code-insiders"),
-                                                            ("VSCodium", "codium"),
-                                                            ("Cursor", "cursor"),
-                                                            ("Trae", "trae"),
-                                                            ("Kiro", "kiro"),
-                                                            ("Antigravity", "antigravity-ide"),
-                                                            ("IntelliJ IDEA", "idea"),
-                                                            ("Aqua", "aqua"),
-                                                            ("CLion", "clion"),
-                                                            ("DataGrip", "datagrip"),
-                                                            ("DataSpell", "dataspell"),
-                                                            ("GoLand", "goland"),
-                                                            ("PhpStorm", "phpstorm"),
-                                                            ("PyCharm", "pycharm"),
-                                                            ("Rider", "rider"),
-                                                            ("RubyMine", "rubymine"),
-                                                            ("RustRover", "rustrover"),
-                                                            ("WebStorm", "webstorm"),
-                                                        ]
-                                                        .into_iter()
-                                                        .filter_map(|(name, command)| {
-                                                            std::env::split_paths(&paths)
-                                                                .map(|dir| {
-                                                                    dir.join(if cfg!(windows) {
-                                                                        format!("{command}.exe")
-                                                                    } else {
-                                                                        command.to_owned()
-                                                                    })
-                                                                })
-                                                                .find(|path| path.is_file())
-                                                                .map(|path| (name.to_owned(), path))
-                                                        })
-                                                        .collect()
-                                                    })
-                                                    .await;
-                                                let _ = this.update(cx, |this, cx| {
-                                                    this.available_editors = editors;
-                                                    cx.notify();
-                                                });
-                                            })
-                                            .detach();
-                                        }
-                                        cx.notify();
-                                    }),
-                                ),
-                        )
-                        .when(self.editor_picker_open, |container| {
-                            let directory =
-                                pane.chat.cwd.clone().or_else(|| self.pane_cwd_path(pane));
-                            container.children(self.available_editors.iter().enumerate().map(
-                                |(index, (name, executable))| {
-                                    let executable = executable.clone();
-                                    let directory = directory.clone();
-                                    div()
-                                        .id(("open-editor", index))
-                                        .h(px(28.0))
-                                        .pl(px(28.0))
-                                        .rounded(px(6.0))
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(8.0))
-                                        .child(if name == "Antigravity" {
-                                            img("icons/editors/antigravity.png")
-                                                .size(px(14.0))
-                                                .into_any_element()
-                                        } else {
-                                            svg()
-                                                .path(editor_icon(name))
-                                                .size(px(14.0))
-                                                .text_color(tokens.text_secondary)
-                                                .into_any_element()
-                                        })
-                                        .text_size(px(12.0))
-                                        .text_color(tokens.text_primary)
+                                        .id(("project-folder", pane_id))
                                         .cursor_pointer()
-                                        .hover(|style| style.bg(tokens.pane_header_btn_hover))
-                                        .child(name.clone())
+                                        .child(
+                                            svg()
+                                                .path("icons/folder.svg")
+                                                .size(px(15.0))
+                                                .text_color(tokens.text_secondary),
+                                        )
                                         .on_mouse_down(
                                             MouseButton::Left,
                                             cx.listener(move |this, _, _, cx| {
                                                 cx.stop_propagation();
-                                                if let Some(directory) = directory.clone() {
-                                                    let executable = executable.clone();
+                                                if let Some(&(project, _, _)) =
+                                                    this.pane_index.get(&pane_id)
+                                                {
+                                                    let path = this.projects[project].path.clone();
                                                     cx.background_executor()
                                                         .spawn(async move {
-                                                            let _ = std::process::Command::new(
-                                                                executable,
-                                                            )
-                                                            .arg(directory)
-                                                            .spawn();
+                                                            let _ =
+                                                                paths::open_in_file_manager(&path);
                                                         })
                                                         .detach();
                                                 }
-                                                this.editor_picker_open = false;
-                                                cx.notify();
                                             }),
-                                        )
-                                },
-                            ))
-                        })
+                                        ),
+                                ),
+                        )
+                        .child(self.render_project_editor(pane, &tokens, cx))
+                        .children(scripts.into_iter().flatten().take(32).enumerate().map(
+                            |(index, script)| {
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.0))
+                                    .px(px(6.0))
+                                    .h(px(30.0))
+                                    .child(
+                                        div()
+                                            .id(("run-project-script", index))
+                                            .flex_1()
+                                            .min_w_0()
+                                            .truncate()
+                                            .cursor_pointer()
+                                            .text_size(px(12.0))
+                                            .child(format!("▶  {}", script.name))
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(move |this, _, window, cx| {
+                                                    cx.stop_propagation();
+                                                    this.run_project_script(
+                                                        pane_id, index, window, cx,
+                                                    );
+                                                }),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .id(("remove-project-script", index))
+                                            .cursor_pointer()
+                                            .text_color(tokens.text_muted)
+                                            .child("×")
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(move |this, _, _, cx| {
+                                                    cx.stop_propagation();
+                                                    if let Some(&(project, _, _)) =
+                                                        this.pane_index.get(&pane_id)
+                                                        && let Some(scripts) = this
+                                                            .settings
+                                                            .project_scripts
+                                                            .get_mut(&this.projects[project].path)
+                                                        && index < scripts.len()
+                                                    {
+                                                        scripts.remove(index);
+                                                    }
+                                                    this.schedule_workspace_save(cx);
+                                                    cx.notify();
+                                                }),
+                                            ),
+                                    )
+                            },
+                        ))
                         .child(
                             div()
-                                .mt(px(8.0))
-                                .pt(px(8.0))
+                                .id(("add-project-script", pane_id))
+                                .h(px(30.0))
+                                .px(px(6.0))
+                                .flex()
+                                .items_center()
+                                .gap(px(10.0))
+                                .cursor_pointer()
+                                .text_color(tokens.text_secondary)
+                                .text_size(px(12.0))
+                                .child("+   Add project script")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _, window, cx| {
+                                        cx.stop_propagation();
+                                        this.open_project_script_form(pane_id, window, cx);
+                                    }),
+                                ),
+                        )
+                        .when_some(
+                            self.project_script_form
+                                .as_ref()
+                                .filter(|(id, _, _)| *id == pane_id),
+                            |view, (_, name, command)| {
+                                view.child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap(px(6.0))
+                                        .py(px(6.0))
+                                        .child(Input::new(name).appearance(true).bordered(true))
+                                        .child(Input::new(command).appearance(true).bordered(true))
+                                        .child(
+                                            div()
+                                                .text_size(px(10.0))
+                                                .text_color(tokens.text_muted)
+                                                .child(
+                                                    "Runs in a new terminal tab in this project.",
+                                                ),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .gap(px(12.0))
+                                                .child(
+                                                    div()
+                                                        .id(("save-project-script", pane_id))
+                                                        .cursor_pointer()
+                                                        .child("Save")
+                                                        .on_mouse_down(
+                                                            MouseButton::Left,
+                                                            cx.listener(|this, _, _, cx| {
+                                                                cx.stop_propagation();
+                                                                this.save_project_script(cx);
+                                                            }),
+                                                        ),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .id(("cancel-project-script", pane_id))
+                                                        .cursor_pointer()
+                                                        .child("Cancel")
+                                                        .on_mouse_down(
+                                                            MouseButton::Left,
+                                                            cx.listener(|this, _, _, cx| {
+                                                                cx.stop_propagation();
+                                                                this.project_script_form = None;
+                                                                cx.notify();
+                                                            }),
+                                                        ),
+                                                ),
+                                        ),
+                                )
+                            },
+                        )
+                        .child(
+                            div()
+                                .mt(px(5.0))
+                                .pt(px(5.0))
                                 .border_t_1()
                                 .border_color(tokens.border_subtle)
                                 .child(
@@ -15924,6 +16311,46 @@ impl AppState {
                                                 .truncate()
                                                 .child(branch.clone()),
                                         ),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .id(("project-commit", pane_id))
+                                .h(px(30.0))
+                                .px(px(6.0))
+                                .flex()
+                                .items_center()
+                                .gap(px(10.0))
+                                .cursor_pointer()
+                                .hover(|style| style.bg(tokens.pane_header_btn_hover))
+                                .text_size(px(12.0))
+                                .child(
+                                    svg()
+                                        .path("icons/git-branch.svg")
+                                        .size(px(14.0))
+                                        .text_color(tokens.text_secondary),
+                                )
+                                .child(div().flex_1().child("Commit"))
+                                .child(
+                                    svg()
+                                        .path("icons/chevron-right.svg")
+                                        .size(px(12.0))
+                                        .text_color(tokens.text_secondary),
+                                )
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _, window, cx| {
+                                        cx.stop_propagation();
+                                        this.open_files_surface(pane_id, window, cx);
+                                        if let Some(view) = this
+                                            .focused_pane_id
+                                            .and_then(|id| this.pane_ref(id))
+                                            .and_then(|p| p.files_surface.as_ref())
+                                            .map(|(view, _)| view.clone())
+                                        {
+                                            view.update(cx, |view, cx| view.show_git(cx));
+                                        }
+                                    }),
                                 ),
                         )
                         .child(
@@ -17340,7 +17767,8 @@ impl AppState {
                     .text_color(tokens.titlebar_fg),
             );
 
-        let titlebar = TitleBar::new()
+        let titlebar = self
+            .desktop_titlebar(cx)
             .h(px(38.0))
             .bg(tokens.titlebar_bg)
             .border_color(tokens.titlebar_border)
@@ -19828,7 +20256,7 @@ impl Render for AppState {
             .size_full()
             .bg(tokens.window_bg)
             .child(
-                TitleBar::new()
+                self.desktop_titlebar(cx)
                     .h(px(38.0))
                     .bg(tokens.titlebar_bg)
                     .border_color(tokens.titlebar_border)
@@ -20452,7 +20880,7 @@ fn main() -> Result<()> {
                     window_decorations: Some(WindowDecorations::Client),
                     app_id: Some("shob".to_string()),
                     icon: window_icon,
-                    ..TitleBar::window_options()
+                    ..gpui_kit::component::TitleBar::window_options()
                 },
                 |window, cx| {
                     startup_mark("window created");
@@ -20488,7 +20916,8 @@ fn main() -> Result<()> {
                         pending_alerts: Vec::new(),
                         attention_seq: 0,
                         project_menu: None,
-                        editor_picker_open: false,
+                        editor_picker_open: None,
+                        project_script_form: None,
                         available_editors: Vec::new(),
                         renaming_project: None,
                         terminal_context_menu: None,
@@ -20502,7 +20931,10 @@ fn main() -> Result<()> {
                         update_state: updater::State::default(),
                         clear_data_confirm: false,
                     });
-                    app_state.update(cx, |state, cx| state.observe_appearance(window, cx));
+                    app_state.update(cx, |state, cx| {
+                        state.observe_appearance(window, cx);
+                        state.refresh_project_editors(cx);
+                    });
 
                     // Close button / window-manager close: flush everything
                     // synchronously before the window goes away.
@@ -21003,7 +21435,8 @@ mod resize_tests {
             pending_alerts: Vec::new(),
             attention_seq: 0,
             project_menu: None,
-            editor_picker_open: false,
+            editor_picker_open: None,
+            project_script_form: None,
             available_editors: Vec::new(),
             renaming_project: None,
             terminal_context_menu: None,
@@ -21043,7 +21476,7 @@ mod resize_tests {
                         icon: image::load_from_memory(APP_ICON_PNG)
                             .ok()
                             .map(|image| Arc::new(image.into_rgba8())),
-                        ..TitleBar::window_options()
+                        ..gpui_kit::component::TitleBar::window_options()
                     },
                     |window, cx| {
                         state.update(cx, |state, cx| state.observe_appearance(window, cx));
@@ -21293,12 +21726,35 @@ mod resize_tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn titlebar_close_responds_at_the_edge_of_the_button() {
+        let mut app = TestAppContext::new();
+        let (mut cx, _) = open_app(&mut app);
+        let window = cx.update(|window, _| window.window_handle());
+        cx.simulate_window_decorations_change(
+            window,
+            gpui::Decorations::Client {
+                tiling: Default::default(),
+            },
+        );
+        cx.draw_frame().unwrap();
+        let close = cx.debug_bounds("close").expect("client close button");
+        cx.simulate_click(
+            point(close.left() + px(3.0), close.center().y),
+            Modifiers::none(),
+        );
+        cx.run_until_parked();
+        app.update(|cx| assert!(cx.windows().is_empty()));
+    }
+
     #[test]
     fn focused_environment_panel_opens_on_narrow_windows() {
         let mut app = TestAppContext::new();
         let (mut cx, state) = open_app(&mut app);
         cx.update_window_entity(&state, |s, _, cx| {
             s.settings.agent_layout = true;
+            s.available_editors = vec![("Zed".into(), PathBuf::from("zed"))];
             s.projects[0].sessions[0].panes[0].chat.active = true;
             cx.notify();
         });
@@ -21323,6 +21779,14 @@ mod resize_tests {
         cx.simulate_click(toggle.center(), Modifiers::none());
         cx.draw_frame().unwrap();
         assert!(cx.debug_bounds("agent-changes").is_some());
+        assert!(cx.debug_bounds("Open in Zed").is_some());
+        let primary = cx.debug_bounds("open-default-editor").unwrap();
+        let chevron = cx.debug_bounds("open-editor-picker").unwrap();
+        assert!(primary.right() <= chevron.left());
+        cx.simulate_click(chevron.center(), Modifiers::none());
+        assert!(state.read_with(&cx, |s, _| s.editor_picker_open.is_some()));
+        cx.simulate_click(chevron.center(), Modifiers::none());
+        assert!(state.read_with(&cx, |s, _| s.editor_picker_open.is_none()));
         cx.simulate_click(toggle.center(), Modifiers::none());
         cx.draw_frame().unwrap();
         assert!(cx.debug_bounds("agent-changes").is_none());
@@ -27536,6 +28000,13 @@ First report
             let mut answer = String::new();
             'turn: loop {
                 wake_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+                for request in bridge.poll_requests() {
+                    assert!(request.approval && request.title == "Allow bash?");
+                    request
+                        .reply
+                        .try_send(crate::agent_interaction::Response::AllowOnce)
+                        .unwrap();
+                }
                 for event in bridge.poll() {
                     match event {
                         AgentEvent::ToolEnd {

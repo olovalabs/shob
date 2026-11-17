@@ -26,6 +26,9 @@ impl AgentTool for ArgumentTool {
     fn label(&self) -> &str {
         "argument tool"
     }
+    fn execution_mode(&self) -> agent::ToolExecutionMode {
+        agent::ToolExecutionMode::Parallel
+    }
     fn prepare_arguments(&self, args: serde_json::Value) -> Result<serde_json::Value, AgentError> {
         self.preparations.fetch_add(1, Ordering::SeqCst);
         Ok(match args.get("legacy") {

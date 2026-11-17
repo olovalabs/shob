@@ -6,4 +6,6 @@
 //! This module keeps the historical `providers::anthropic::json_parse` path
 //! working for the SSE mapper and the other providers.
 
-pub use crate::json_parse::{parse_json_with_repair, parse_streaming_json, repair_json};
+pub use crate::json_parse::{
+    parse_json_with_repair, parse_streaming_json, parse_terminal_tool_arguments, repair_json,
+};

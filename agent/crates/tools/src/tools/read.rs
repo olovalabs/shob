@@ -123,7 +123,9 @@ impl ReadTool {
                 kb = DEFAULT_MAX_BYTES / 1024
             ),
             parameters: ai::types::Schema::new(serde_json::to_value(params).unwrap_or_default()),
-            constrained_sampling: Some(ConstrainedSamplingConfig::JsonSchema { strict: ConstrainedStrictness::Prefer }),
+            constrained_sampling: Some(ConstrainedSamplingConfig::JsonSchema {
+                strict: ConstrainedStrictness::Prefer,
+            }),
         }
     }
 }
@@ -151,6 +153,9 @@ impl AgentTool for ReadTool {
     }
     fn label(&self) -> &str {
         "read"
+    }
+    fn execution_mode(&self) -> agent::ToolExecutionMode {
+        agent::ToolExecutionMode::Parallel
     }
 
     async fn execute(
@@ -232,14 +237,14 @@ impl AgentTool for ReadTool {
         {
             let first_line_size = format_size(all_lines[start_line].as_bytes().len());
             (
-                    format!(
-                        "[Line {start_line_display} is {first_line_size}, exceeds {} limit. \
+                format!(
+                    "[Line {start_line_display} is {first_line_size}, exceeds {} limit. \
                          Use bash: sed -n '{start_line_display}p' {} | head -c {DEFAULT_MAX_BYTES}]",
-                        format_size(DEFAULT_MAX_BYTES),
-                        input.path
-                    ),
-                    Some(truncation),
-                )
+                    format_size(DEFAULT_MAX_BYTES),
+                    input.path
+                ),
+                Some(truncation),
+            )
         } else if truncation.truncated {
             let end_line_display = start_line_display + truncation.output_lines - 1;
             let next_offset = end_line_display + 1;
@@ -265,12 +270,12 @@ impl AgentTool for ReadTool {
                 let remaining = all_lines.len() - (start_line + ull);
                 let next_offset = start_line + ull + 1;
                 (
-                        format!(
-                            "{}\n\n[{remaining} more lines in file. Use offset={next_offset} to continue.]",
-                            truncation.content
-                        ),
-                        None,
-                    )
+                    format!(
+                        "{}\n\n[{remaining} more lines in file. Use offset={next_offset} to continue.]",
+                        truncation.content
+                    ),
+                    None,
+                )
             } else {
                 (truncation.content, None)
             }

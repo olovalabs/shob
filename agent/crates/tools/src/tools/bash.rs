@@ -181,6 +181,9 @@ impl AgentTool for BashTool {
     fn label(&self) -> &str {
         "bash"
     }
+    fn execution_mode(&self) -> agent::types::ToolExecutionMode {
+        agent::types::ToolExecutionMode::Sequential
+    }
 
     async fn execute(
         &self,

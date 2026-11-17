@@ -4990,6 +4990,7 @@ impl AgentHarness {
             before_tool_call: snap.before_tool_call.clone(),
             after_tool_call: snap.after_tool_call.clone(),
             tool_execution: snap.tool_execution.to_agent_mode(),
+            tool_parallelism: 0,
             thinking_level: snap.thinking_level,
             api_key: None,
             timeout: snap.stream_options.timeout,

@@ -215,6 +215,7 @@ pub fn loop_config_with_converter(convert_to_llm: agent::ConvertToLlm) -> agent:
         before_tool_call: None,
         after_tool_call: None,
         tool_execution: agent::ToolExecutionMode::Parallel,
+        tool_parallelism: 8,
         thinking_level: ai::types::ThinkingLevel::Off,
         api_key: None,
         timeout: None,

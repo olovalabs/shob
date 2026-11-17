@@ -79,7 +79,7 @@ struct State {
 pub struct ToolProgram {
     context: Arc<AgentContext>,
     assistant: Arc<AssistantMessage>,
-    config: AgentLoopConfig,
+    config: Arc<AgentLoopConfig>,
     ancestors: Vec<String>,
     identity: NestedParent,
     child_scope: Option<Arc<crate::tool_execution_scope::ToolExecutionScope>>,
@@ -100,7 +100,7 @@ impl ToolProgram {
         context: &Arc<AgentContext>,
         assistant: &Arc<AssistantMessage>,
         call: &ToolCall,
-        config: &AgentLoopConfig,
+        config: &Arc<AgentLoopConfig>,
         signal: CancellationToken,
         on_update: Arc<dyn Fn(crate::ToolResultPartial) + Send + Sync>,
         emit: &Arc<dyn AgentEmitter>,
@@ -130,7 +130,7 @@ impl ToolProgram {
         Arc::new(Self {
             context: context.clone(),
             assistant: assistant.clone(),
-            config: config.clone(),
+            config: Arc::clone(config),
             ancestors,
             identity,
             child_scope: crate::tool_execution_scope::current_scope(),
@@ -408,8 +408,9 @@ impl ToolProgram {
                                 namespace: None,
                                 recorded: None,
                             };
-                            let mut config = this.config.clone();
+                            let mut config = this.config.as_ref().clone();
                             config.signal = signal.clone();
+                            let config = Arc::new(config);
                             let emit: Arc<dyn AgentEmitter> = Arc::new(ProgressEmitter {
                                 program: Arc::downgrade(&this),
                                 request_id: request_id.clone(),

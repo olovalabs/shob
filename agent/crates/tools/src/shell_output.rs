@@ -180,26 +180,28 @@ enum Escape {
 }
 
 impl Sanitizer {
-    fn push_owned(&mut self, chunk: String) -> String {
+    fn push_owned(&mut self, mut chunk: String) -> String {
+        // ASCII output needs only a byte scan. 0xef includes the UTF-8 lead byte
+        // of the interlinear annotations; inspect those chunks as Unicode below.
         if matches!(self.escape, Escape::Text)
             && !chunk
-                .chars()
-                .any(|c| matches!(c, '\x00'..='\x08' | '\x0b'..='\x1f' | '\u{fff9}'..='\u{fffb}'))
+                .bytes()
+                .any(|byte| matches!(byte, 0x00..=0x08 | 0x0b..=0x1f | 0xef))
         {
             return chunk;
         }
-        self.push(&chunk)
-    }
-
-    fn push(&mut self, chunk: &str) -> String {
-        let mut out = String::with_capacity(chunk.len());
-        for c in chunk.chars() {
+        // Filtering an owned pipe chunk in place avoids a second allocation,
+        // including for ANSI-heavy output and sequences split across reads.
+        chunk.retain(|c| {
             match self.escape {
                 Escape::Text => match c {
-                    '\x1b' => self.escape = Escape::Start,
-                    '\t' | '\n' => out.push(c),
-                    '\x00'..='\x1f' | '\u{fff9}'..='\u{fffb}' => {}
-                    _ => out.push(c),
+                    '\x1b' => {
+                        self.escape = Escape::Start;
+                        return false;
+                    }
+                    '\t' | '\n' => return true,
+                    '\x00'..='\x1f' | '\u{fff9}'..='\u{fffb}' => return false,
+                    _ => return true,
                 },
                 Escape::Start => {
                     self.escape = match c {
@@ -224,14 +226,15 @@ impl Sanitizer {
                 }
                 Escape::Charset => self.escape = Escape::Text,
             }
-        }
-        out
+            false
+        });
+        chunk
     }
 }
 
 #[cfg(test)]
 fn sanitize_and_strip_cr(chunk: &str) -> String {
-    Sanitizer::default().push(chunk)
+    Sanitizer::default().push_owned(chunk.to_owned())
 }
 
 /// Capture with bounded asynchronous persistence and optional timed progress.
@@ -293,16 +296,16 @@ pub async fn execute_shell_with_capture(
                 continue;
             }
             state.ingest_chunk(&text);
-            dirty = true;
-            let now = tokio::time::Instant::now();
-            if first || options.update_interval.is_none() || now >= deadline {
-                if let Some(cb) = on_chunk.as_mut() {
+            if let Some(cb) = on_chunk.as_mut() {
+                dirty = true;
+                let now = tokio::time::Instant::now();
+                if first || options.update_interval.is_none() || now >= deadline {
                     cb(&text, &|| Some(state.create_progress()));
+                    first = false;
+                    dirty = false;
+                    deadline = now + options.update_interval.unwrap_or_default();
+                    timer.as_mut().reset(deadline);
                 }
-                first = false;
-                dirty = false;
-                deadline = now + options.update_interval.unwrap_or_default();
-                timer.as_mut().reset(deadline);
             }
 
             if !spool_failed {
@@ -316,7 +319,11 @@ pub async fn execute_shell_with_capture(
                     continue;
                 }
                 if state.full_output_path.is_some() {
-                    spool_buffer.push_str(&text);
+                    if spool_buffer.is_empty() && text.capacity() >= spool_buffer.capacity() {
+                        spool_buffer = text;
+                    } else {
+                        spool_buffer.push_str(&text);
+                    }
                     // Coalesce an existing backlog, never wait to create one.
                     // Sparse output still reaches disk immediately.
                     if spool_buffer.len() < SPOOL_BATCH_BYTES && !receiver.is_empty() {
@@ -330,7 +337,9 @@ pub async fn execute_shell_with_capture(
                                 .await
                                 .map(|()| None)
                         } else if needs_spool {
-                            init_full_output_file(env, &prefix).await.map(Some)
+                            init_full_output_file(env, std::mem::take(&mut prefix))
+                                .await
+                                .map(Some)
                         } else {
                             Ok(None)
                         }
@@ -354,7 +363,6 @@ pub async fn execute_shell_with_capture(
                     Ok(Some((path, writer))) => {
                         state.full_output_path = Some(path);
                         spool_writer = writer;
-                        prefix = String::new();
                     }
                     Ok(None) => {}
                     Err(error) => {
@@ -362,7 +370,6 @@ pub async fn execute_shell_with_capture(
                         // Never advertise a partial file as complete.
                         state.full_output_path = None;
                         spool_writer = None;
-                        prefix = String::new();
                         spool_failed = true;
                         spool_buffer.clear();
                     }
@@ -467,7 +474,7 @@ async fn append_full_output(
 /// when available; other environments keep their existing append implementation.
 async fn init_full_output_file(
     env: &Arc<dyn ExecutionEnv>,
-    initial: &str,
+    initial: String,
 ) -> Result<(PathBuf, Option<Box<dyn crate::env::AppendFile>>), ExecutionError> {
     let path = env
         .create_temp_file("bash-", ".log", None)
@@ -480,12 +487,8 @@ async fn init_full_output_file(
     match &mut writer {
         Some(writer) => writer.append(initial.as_bytes()).await,
         None => {
-            env.append_file(
-                &path.to_string_lossy(),
-                FileContent::Text(initial.to_string()),
-                None,
-            )
-            .await
+            env.append_file(&path.to_string_lossy(), FileContent::Text(initial), None)
+                .await
         }
     }
     .map_err(|e| ExecutionError::new(ExecutionErrorCode::Unknown, e.to_string()))?;
@@ -534,6 +537,29 @@ mod tests {
     fn sanitize_strips_osc_sequences() {
         assert_eq!(sanitize_and_strip_cr("a\x1b]0;title\x07b"), "ab");
         assert_eq!(sanitize_and_strip_cr("a\x1b]8;;http://x\x1b\\b"), "ab");
+    }
+
+    #[test]
+    fn sanitize_preserves_unicode_and_escape_state_at_every_chunk_boundary() {
+        let input = "前\u{feff}\u{fffd}a\x00\t\r\n\x1b[31m赤\x1b[0m\x1b]8;;https://x\x1b\\link\x1b]8;;\x07\x1b(B\u{fff9}b\u{fffa}c\u{fffb}😀\x7f\x1b]unfinished";
+        let expected = "前\u{feff}\u{fffd}a\t\n赤linkbc😀\x7f";
+        for split in input
+            .char_indices()
+            .map(|(index, _)| index)
+            .chain(std::iter::once(input.len()))
+        {
+            let mut sanitizer = Sanitizer::default();
+            let mut output = sanitizer.push_owned(input[..split].to_owned());
+            output.push_str(&sanitizer.push_owned(input[split..].to_owned()));
+            assert_eq!(output, expected, "split at byte {split}");
+        }
+
+        let mut sanitizer = Sanitizer::default();
+        let mut output = String::new();
+        for character in input.chars() {
+            output.push_str(&sanitizer.push_owned(character.to_string()));
+        }
+        assert_eq!(output, expected);
     }
 
     #[test]

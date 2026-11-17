@@ -50,6 +50,9 @@ impl agent::AgentTool for LifecycleTool {
     fn label(&self) -> &str {
         "lifecycle test"
     }
+    fn execution_mode(&self) -> agent::ToolExecutionMode {
+        agent::ToolExecutionMode::Parallel
+    }
     async fn execute(
         &self,
         _: &str,
@@ -83,8 +86,9 @@ async fn lifecycle_harness(tool: Arc<LifecycleTool>) -> AgentHarness {
     AgentHarness::create(AgentHarnessOptions {
         model: p.default_model().clone(),
         models: vec![p],
-        tools: vec![harness::types::HarnessTool::new(tool)
-            .with_replay(harness::types::ToolReplay::Safe)],
+        tools: vec![
+            harness::types::HarnessTool::new(tool).with_replay(harness::types::ToolReplay::Safe)
+        ],
         ..Default::default()
     })
     .await

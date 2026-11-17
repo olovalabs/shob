@@ -159,6 +159,16 @@ pub fn parse_streaming_json(json: Option<&str>) -> serde_json::Value {
     serde_json::Value::Object(serde_json::Map::new())
 }
 
+/// Parse complete arguments, retaining the existing invalid-escape repair.
+/// Preserve unrecoverable input as text for tool-owned validation diagnostics.
+pub fn parse_terminal_tool_arguments(raw: &str) -> serde_json::Value {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return serde_json::Value::Object(serde_json::Map::new());
+    }
+    parse_json_with_repair(trimmed).unwrap_or_else(|_| serde_json::Value::String(raw.to_owned()))
+}
+
 /// Incremental JSON parser: closes open strings/objects/arrays to coerce a
 /// truncated value into the nearest complete prefix. Returns the parsed value.
 /// Unlike a strict parser, unknown trailing characters after a complete value
@@ -281,6 +291,16 @@ mod tests {
         // Total parse failure must still yield an object, never panic.
         let v = parse_streaming_json(Some("not json at all"));
         assert!(v.is_object());
+    }
+
+    #[test]
+    fn terminal_parse_rejects_truncation_and_garbage() {
+        let truncated = parse_terminal_tool_arguments(r#"{"path":"A"#);
+        assert_eq!(truncated, json!(r#"{"path":"A"#));
+        assert_eq!(
+            parse_terminal_tool_arguments("not json at all"),
+            json!("not json at all")
+        );
     }
 
     #[test]

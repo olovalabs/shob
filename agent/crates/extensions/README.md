@@ -39,6 +39,8 @@ harness consumes its adapters through injection.
   during callback installation or poll are retained. Cancellation or caller drop
   cancels, unregisters the callback and destroys the handle exactly once, while
   retaining the library and invocation context through cleanup.
+  Plugin tools are exclusive unless their schema explicitly sets
+  `"x-rpi-execution-mode": "parallel"`; opt in only for concurrency-safe bodies.
 - **Partial results.** Tool progress flows back through an unbounded channel and
   is forwarded to `on_update`, behind a `catch_unwind` trampoline so a panicking
   callback cannot unwind across the FFI boundary.

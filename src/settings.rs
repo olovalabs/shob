@@ -137,8 +137,16 @@ pub struct AppSettings {
     pub sidebar: SavedSidebar,
     /// Show one centered agent conversation instead of the split workspace.
     pub agent_layout: bool,
+    pub preferred_editor: Option<String>,
+    pub project_scripts: std::collections::BTreeMap<PathBuf, Vec<ProjectScript>>,
     pub window: Option<SavedWindow>,
     pub restore: RestoreOptions,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ProjectScript {
+    pub name: String,
+    pub command: String,
 }
 
 impl Default for AppSettings {
@@ -154,6 +162,8 @@ impl Default for AppSettings {
             trusted_shob_workspaces: Vec::new(),
             sidebar: SavedSidebar::default(),
             agent_layout: false,
+            preferred_editor: None,
+            project_scripts: Default::default(),
             window: None,
             restore: RestoreOptions::default(),
         }
@@ -343,6 +353,15 @@ mod tests {
     fn settings_roundtrip() {
         let settings = AppSettings {
             agent_layout: true,
+            preferred_editor: Some("Zed".into()),
+            project_scripts: [(
+                PathBuf::from("/tmp/project"),
+                vec![ProjectScript {
+                    name: "Test".into(),
+                    command: "cargo test".into(),
+                }],
+            )]
+            .into(),
             permission_mode: crate::agent_bridge::PermissionMode::Full,
             theme: ThemePreference::Dark,
             palette_scheme: PaletteScheme::Github,

@@ -52,6 +52,9 @@ impl agent::AgentTool for Tool {
     fn label(&self) -> &str {
         "owned"
     }
+    fn execution_mode(&self) -> agent::ToolExecutionMode {
+        agent::ToolExecutionMode::Parallel
+    }
     async fn execute(
         &self,
         id: &str,

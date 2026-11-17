@@ -40,11 +40,11 @@ features = ["wayland-data-control"]
 version = "0.12"
 
 [dependencies.gpui]
-version = "0.1.16"
+version = "=0.1.16"
 package = "gpui-fast"
 
 [dependencies.gpui_platform]
-version = "0.1.16"
+version = "=0.1.16"
 package = "gpui-fast-platform"
 features = ["x11", "wayland"]
 

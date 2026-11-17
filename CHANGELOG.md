@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Align the standalone terminal's GPUI pins and lockfile with the app, and check its locked dependency resolution in CI so standalone tests do not fail on a stale lockfile.
 - List each project's sidebar sessions newest-first, so a newly created session appears at the top and remains visible when the project already has five or more sessions.
 - Show the OpenCode provider marks on the model dialog's popular-provider cards and on every row in the provider list.
 - Restored CI formatting compliance and removed a non-looping PTY benchmark readiness loop rejected by Clippy.
@@ -53,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Multi-line programmatic edits now leave the cursor at the end of the line.
 
 ### Changed
+- Make native agent tools exclusive by default, preserve parallel read-only groups around mutations, and order result hooks without serializing safe tool bodies. Reduce shell capture and custom-tool input copying, bound validator retention, and preserve malformed arguments for explicit validation errors.
 - Show built-in Agent activity, completion and failure in the sidebar's existing status indicators, independently of hidden terminal output. Unseen completions stay marked until viewed or acknowledged.
 - Match terminal and Agent pane frames with 0.5px slate outlines and 10px rounded corners, with focused and inactive colors shared across palettes in dark and light mode.
 - Moved the Agent composer's working-directory and Git-branch badges into a compact Environment panel. Click the info icon at the toolbar's top-right, on the same row as Agent and the model picker, to slide it open directly above the input, aligned to its right edge; click again or press Escape from the composer to close it. Terminal badges remain inline.

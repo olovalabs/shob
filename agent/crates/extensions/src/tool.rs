@@ -639,11 +639,12 @@ impl AgentTool for PluginToolAdapter {
     }
 
     fn execution_mode(&self) -> ToolExecutionMode {
-        // A JSON Schema extension keyword works with old SDK raw registration.
-        if self.schema.parameters.as_value()["x-rpi-execution-mode"] == "sequential" {
-            ToolExecutionMode::Sequential
-        } else {
+        // Old SDKs can opt in via a JSON Schema extension; missing or unknown
+        // values stay exclusive because plugin effects are not host-audited.
+        if self.schema.parameters.as_value()["x-rpi-execution-mode"] == "parallel" {
             ToolExecutionMode::Parallel
+        } else {
+            ToolExecutionMode::Sequential
         }
     }
 
@@ -1091,13 +1092,27 @@ mod tests {
     }
 
     #[test]
-    fn tool_program_sequential_metadata_supports_old_raw_schema() {
+    fn execution_mode_requires_explicit_parallel_opt_in() {
         let mut adapter = echo_adapter();
-        assert_eq!(adapter.execution_mode(), ToolExecutionMode::Parallel);
-        adapter.schema.parameters = ai::types::Schema::new(serde_json::json!({
-            "type": "object", "x-rpi-execution-mode": "sequential"
-        }));
         assert_eq!(adapter.execution_mode(), ToolExecutionMode::Sequential);
+        for mode in [
+            serde_json::json!("parallel"),
+            serde_json::json!("sequential"),
+            serde_json::json!("unknown"),
+            serde_json::json!("Parallel"),
+            serde_json::json!(true),
+            serde_json::Value::Null,
+        ] {
+            adapter.schema.parameters = ai::types::Schema::new(serde_json::json!({
+                "type": "object", "x-rpi-execution-mode": mode
+            }));
+            let expected = if mode == "parallel" {
+                ToolExecutionMode::Parallel
+            } else {
+                ToolExecutionMode::Sequential
+            };
+            assert_eq!(adapter.execution_mode(), expected, "metadata: {mode}");
+        }
     }
 
     struct BindingHost;
