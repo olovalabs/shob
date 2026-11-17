@@ -66,6 +66,7 @@ mod status_bus;
 mod stream_timing;
 mod subagent_chat;
 mod theme;
+mod updater;
 mod workspace_state;
 
 use theme::{PaletteScheme, ThemePreference, ThemeTokens};
@@ -100,6 +101,7 @@ enum SettingsSection {
     #[default]
     Appearance,
     Data,
+    Updates,
 }
 
 use assets::{CombinedAssets, MONO_FONT, load_embedded_fonts, sync_component_fonts};
@@ -3513,8 +3515,9 @@ struct AppState {
     /// False when launched with `SHOB_DISABLE_RESTORE`; the app then never
     /// writes to the saved state (read-only troubleshooting mode).
     persistence_enabled: bool,
-    /// Two-step confirmation state for "clear saved sessions".
     settings_section: SettingsSection,
+    update_state: updater::State,
+    /// Two-step confirmation state for "clear saved sessions".
     clear_data_confirm: bool,
 }
 
@@ -16357,6 +16360,7 @@ impl AppState {
                 div()
                     .id("sidebar-settings-btn")
                     .debug_selector(|| "activity-settings".into())
+                    .relative()
                     .size(px(36.0))
                     .rounded(px(8.0))
                     .flex()
@@ -16365,14 +16369,36 @@ impl AppState {
                     .cursor(CursorStyle::PointingHand)
                     .when(!is_home, |button| button.bg(tokens.sidebar_item_active))
                     .hover(move |button| button.bg(tokens.sidebar_item_hover))
-                    .tooltip(|window, cx| {
-                        gpui_component::tooltip::Tooltip::new("Settings").build(window, cx)
+                    .tooltip({
+                        let update = self.update_state.needs_attention();
+                        move |window, cx| {
+                            gpui_component::tooltip::Tooltip::new(if update {
+                                "Shob update available"
+                            } else {
+                                "Settings"
+                            })
+                            .build(window, cx)
+                        }
+                    })
+                    .when(self.update_state.needs_attention(), |button| {
+                        button.child(
+                            div()
+                                .absolute()
+                                .top(px(5.0))
+                                .right(px(5.0))
+                                .size(px(6.0))
+                                .rounded(px(3.0))
+                                .bg(tokens.ring),
+                        )
                     })
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, _, cx| {
                             cx.stop_propagation();
                             this.active_view = ActiveView::Settings;
+                            if this.update_state.needs_attention() {
+                                this.settings_section = SettingsSection::Updates;
+                            }
                             this.compact_sidebar_open = false;
                             cx.notify();
                         }),
@@ -16688,6 +16714,12 @@ impl AppState {
                 "icons/folder.svg",
                 "Data & sessions",
             ),
+            (
+                SettingsSection::Updates,
+                "settings-nav-updates",
+                "icons/settings.svg",
+                "Updates",
+            ),
         ]
         .into_iter()
         .map(|(section, id, icon, label)| {
@@ -16752,6 +16784,7 @@ impl AppState {
                 .child(self.render_palette_scheme_picker(narrow, cx))
                 .child(self.render_theme_file_section(cx)),
             SettingsSection::Data => self.render_data_section(cx),
+            SettingsSection::Updates => self.render_updates(cx),
         };
 
         div()
@@ -16801,10 +16834,151 @@ impl AppState {
                                             .child(match self.settings_section {
                                                 SettingsSection::Appearance => "Appearance",
                                                 SettingsSection::Data => "Data & sessions",
+                                                SettingsSection::Updates => "Updates",
                                             }),
                                     )
                                     .child(content),
                             ),
+                    ),
+            )
+    }
+
+    fn check_for_updates(&mut self, cx: &mut Context<Self>) {
+        self.update_state = updater::State::Checking;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = smol::unblock(updater::check).await;
+            let _ = this.update(cx, |this, cx| {
+                this.update_state =
+                    result.unwrap_or_else(|error| updater::State::Failed(error.to_string()));
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn activate_update(&mut self, window: &Window, cx: &mut Context<Self>) {
+        use updater::State;
+        match &mut self.update_state {
+            State::Available(_) => {
+                let State::Available(update) =
+                    std::mem::replace(&mut self.update_state, State::Installing)
+                else {
+                    unreachable!();
+                };
+                cx.notify();
+                cx.spawn(async move |this, cx| {
+                    let result = smol::unblock(move || updater::apply(*update)).await;
+                    let _ = this.update(cx, |this, cx| {
+                        this.update_state = match result {
+                            Ok(ready) => State::Ready(ready),
+                            Err(error) => State::Failed(error.to_string()),
+                        };
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
+            #[cfg(windows)]
+            State::Ready(ready) => {
+                let path = ready.path.clone();
+                if let Some(temp) = ready.installer_files.take() {
+                    // Windows Installer needs these files after Shob exits.
+                    let _ = temp.keep();
+                }
+                self.save_all_sync(Some(window), cx);
+                cx.set_restart_path(path);
+                cx.restart();
+            }
+            #[cfg(unix)]
+            State::Ready(ready) => {
+                let path = ready.path.clone();
+                let app_image = ready.app_image;
+                self.save_all_sync(Some(window), cx);
+                self.update_state = State::Restarting;
+                cx.notify();
+                cx.spawn(async move |this, cx| {
+                    let result =
+                        smol::unblock(move || updater::schedule_restart(&path, app_image)).await;
+                    let _ = this.update(cx, |this, cx| match result {
+                        Ok(()) => cx.quit(),
+                        Err(error) => {
+                            this.update_state = State::Failed(error.to_string());
+                            cx.notify();
+                        }
+                    });
+                })
+                .detach();
+            }
+            #[cfg(unix)]
+            State::Restarting => {}
+            State::Checking | State::Installing => {}
+            _ if updater::enabled() => self.check_for_updates(cx),
+            _ => {}
+        }
+    }
+
+    fn render_updates(&self, cx: &mut Context<Self>) -> gpui::Div {
+        use updater::State;
+        let tokens = self.tokens(cx);
+        let (message, action) = match &self.update_state {
+            State::Idle if !updater::enabled() => (
+                "In-app updates are available in official release builds.".into(),
+                None,
+            ),
+            State::Idle => (
+                "Check GitHub for a new version.".into(),
+                Some("Check for updates"),
+            ),
+            State::Checking => ("Checking for updates…".into(), None),
+            State::Current => ("Shob is up to date.".into(), Some("Check for updates")),
+            State::Available(update) => (
+                format!("Shob {} is available.", update.version()),
+                Some("Download update"),
+            ),
+            State::Installing => ("Downloading and preparing the update…".into(), None),
+            State::Ready(ready) => (
+                format!(
+                    "Shob {} is ready. Restart when you can close your running terminals.",
+                    ready.version
+                ),
+                Some("Restart to update"),
+            ),
+            #[cfg(unix)]
+            State::Restarting => ("Restarting Shob…".into(), None),
+            State::External(message) => (message.clone(), Some("Check again")),
+            State::Failed(error) => (format!("Update failed. {error}"), Some("Try again")),
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(12.0))
+            .child(
+                div()
+                    .text_size(px(13.0))
+                    .text_color(tokens.text_primary)
+                    .child(concat!("Shob ", env!("CARGO_PKG_VERSION"))),
+            )
+            .child(
+                div()
+                    .text_size(px(13.0))
+                    .text_color(tokens.text_secondary)
+                    .child(message),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(8.0))
+                    .children(action.map(|label| {
+                        Button::new("shob-update-action").label(label).on_click(
+                            cx.listener(|this, _, window, cx| this.activate_update(window, cx)),
+                        )
+                    }))
+                    .child(
+                        Button::new("shob-release-notes")
+                            .label("View releases")
+                            .on_click(|_, _, cx| cx.open_url(updater::RELEASES)),
                     ),
             )
     }
@@ -19419,7 +19593,8 @@ fn main() -> Result<()> {
                         last_window_bounds: app_settings.window,
                         persistence_enabled: std::env::var_os("SHOB_DISABLE_RESTORE").is_none(),
                         settings_section: SettingsSection::default(),
-            clear_data_confirm: false,
+                        update_state: updater::State::default(),
+                        clear_data_confirm: false,
                     });
                     app_state.update(cx, |state, cx| state.observe_appearance(window, cx));
 
@@ -19514,8 +19689,12 @@ fn main() -> Result<()> {
                             })
                             .await;
                         startup_mark("restore data loaded");
-                        let _ = weak_state
-                            .update(cx, |state, cx| state.apply_saved_workspace(restored, cx));
+                        let _ = weak_state.update(cx, |state, cx| {
+                            state.apply_saved_workspace(restored, cx);
+                            if updater::enabled() {
+                                state.check_for_updates(cx);
+                            }
+                        });
                         startup_mark("restore applied");
                     })
                     .detach();
@@ -19928,6 +20107,7 @@ mod resize_tests {
             last_window_bounds: None,
             persistence_enabled: false,
             settings_section: SettingsSection::default(),
+            update_state: updater::State::default(),
             clear_data_confirm: false,
         }
     }

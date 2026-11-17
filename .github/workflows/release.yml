@@ -60,7 +60,9 @@ jobs:
           test "${GITHUB_REF_NAME#v}" = "$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)"
 
       - name: Build
-        run: cargo build --release -p shob
+        env:
+          SHOB_OFFICIAL_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
+        run: cargo build --locked --release -p shob
 
       - name: Package
         run: |
@@ -74,13 +76,22 @@ jobs:
           sha256sum "shob-$TARGET.tar.gz" > "shob-$TARGET.tar.gz.sha256"
           ls -lh "shob-$TARGET.tar.gz"
 
+      - name: Build update delta
+        id: delta
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/build-update-delta.sh shob-x86_64-unknown-linux-gnu.tar.gz target/release/shob
+
       - name: Upload to the release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             shob-x86_64-unknown-linux-gnu.tar.gz
             shob-x86_64-unknown-linux-gnu.tar.gz.sha256
+            ${{ steps.delta.outputs.file }}
           generate_release_notes: true
           fail_on_unmatched_files: true
 
@@ -108,7 +119,9 @@ jobs:
           test "${GITHUB_REF_NAME#v}" = "$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)"
 
       - name: Build
-        run: cargo build --release -p shob
+        env:
+          SHOB_OFFICIAL_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
+        run: cargo build --locked --release -p shob
 
       - name: Package
         shell: pwsh
@@ -125,15 +138,25 @@ jobs:
           ((Get-FileHash "shob-$t.exe" -Algorithm SHA256).Hash.ToLower() + "  shob-$t.exe`n") | Out-File -FilePath "shob-$t.exe.sha256" -NoNewline -Encoding ascii
           Get-ChildItem "shob-$t.*"
 
+      - name: Build update delta
+        id: delta
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/build-update-delta.sh shob-x86_64-pc-windows-msvc.exe target/release/shob.exe
+
       - name: Upload to the release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             shob-x86_64-pc-windows-msvc.zip
             shob-x86_64-pc-windows-msvc.zip.sha256
             shob-x86_64-pc-windows-msvc.exe
             shob-x86_64-pc-windows-msvc.exe.sha256
+            ${{ steps.delta.outputs.file }}
 
   build-macos:
     name: macos apple-silicon
@@ -158,7 +181,9 @@ jobs:
           test "${GITHUB_REF_NAME#v}" = "$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)"
 
       - name: Build
-        run: cargo build --release -p shob
+        env:
+          SHOB_OFFICIAL_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
+        run: cargo build --locked --release -p shob
 
       - name: Package
         run: |
@@ -170,15 +195,25 @@ jobs:
           cp README.md "dist/shob-$TARGET/" 2>/dev/null || true
           tar czf "shob-$TARGET.tar.gz" -C dist "shob-$TARGET"
           shasum -a 256 "shob-$TARGET.tar.gz" > "shob-$TARGET.tar.gz.sha256"
+          codesign --verify --strict target/release/shob
           ls -lh "shob-$TARGET.tar.gz"
+
+      - name: Build update delta
+        id: delta
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/build-update-delta.sh shob-aarch64-apple-darwin.tar.gz target/release/shob
 
       - name: Upload to the release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             shob-aarch64-apple-darwin.tar.gz
             shob-aarch64-apple-darwin.tar.gz.sha256
+            ${{ steps.delta.outputs.file }}
 
   # MSI installer for Windows, built from the zip that build-windows
   # already uploaded. Needs ONLY build-windows, so a queued macOS or
@@ -281,6 +316,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             shob-x86_64-pc-windows-msvc.msi
             shob-x86_64-pc-windows-msvc.msi.sha256
@@ -300,6 +336,8 @@ jobs:
       # writes a per-user copy of both at runtime; an installed package has
       # to ship them properly instead.
       - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Install packaging tools
         run: |
@@ -663,6 +701,12 @@ jobs:
           # A real AppImage is an ELF header followed by a squashfs filesystem.
           file "shob-${VERSION}-x86_64.AppImage"
 
+      - name: Build AppImage update delta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.payload.outputs.version }}
+        run: bash scripts/build-update-delta.sh "shob-${VERSION}-x86_64.AppImage" "shob-${VERSION}-x86_64.AppImage"
+
       # Straight onto the release -- no artifact relay, no host job.
       - name: Upload packages to the release
         env:
@@ -674,7 +718,10 @@ jobs:
           for f in shob_*.deb shob-*.rpm shob-*.pkg.tar.zst shob-*.AppImage; do
             sha256sum "$f" > "$f.sha256"
           done
+          shopt -s nullglob
+          deltas=(shob-*.AppImage.from-*.delta)
           gh release upload "$TAG" \
+            "${deltas[@]}" \
             shob_*.deb shob_*.deb.sha256 \
             shob-*.rpm shob-*.rpm.sha256 \
             shob-*.pkg.tar.zst shob-*.pkg.tar.zst.sha256 \

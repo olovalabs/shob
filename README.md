@@ -88,7 +88,11 @@ Customize Shob to match your workflow.
 
 ## Getting Started
 
-Shob currently supports building from source.
+Download Shob from [GitHub Releases](https://github.com/olovalabs/shob/releases) or build it from source.
+
+Official builds check for stable updates at launch. Open **Settings → Updates** to check manually, download an available update, and restart when you can close your running terminals. Linux x86-64 portable installs and AppImages, macOS Apple Silicon portable installs, and Windows x86-64 portable installs use a verified binary delta from the previous release when available. Shob downloads the full package when it cannot use a delta. Windows MSI installs upgrade through Windows Installer. Update Linux DEB, RPM, and Arch installs through their package manager.
+
+If your current release predates the updater, install the first release that includes it using your usual installation method.
 
 ### Prerequisites
 
