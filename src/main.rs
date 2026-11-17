@@ -3423,6 +3423,8 @@ struct AppState {
     palette: ColorPalette,
     /// O(1) session lookup by id: session id -> (project idx, session idx).
     session_index: HashMap<usize, (usize, usize)>,
+    navigation_history: Vec<usize>,
+    navigation_position: usize,
     /// O(1) pane lookup by id: pane id -> (project idx, session idx, pane idx).
     pane_index: HashMap<usize, (usize, usize, usize)>,
     /// Background-computed working-tree counts, shared by panes in a project.
@@ -11260,7 +11262,8 @@ impl AppState {
             .get(&pane_id)
             .and_then(|&(project, _, _)| self.projects.get(project))
             .and_then(|project| self.project_change_counts.get(&project.path))
-            .and_then(Option::as_ref);
+            .and_then(Option::as_ref)
+            .filter(|summary| summary.files > 0);
         let model_pill = pane
             .chat
             .selected_model
@@ -14548,7 +14551,14 @@ impl AppState {
                 .items_center()
                 .justify_center()
                 .gap(px(16.0))
-                .child(div().text_size(px(36.0)).child("Shob"));
+                .child(
+                    svg()
+                        .path("shob-agent-wordmark.svg")
+                        .w_full()
+                        .max_w(px(300.0))
+                        .h(px(105.0))
+                        .text_color(tokens.text_primary),
+                );
             Some(screen.into_any_element())
         } else {
             None
@@ -15000,7 +15010,8 @@ impl AppState {
             .get(&pane_id)
             .and_then(|&(project, _, _)| self.projects.get(project))
             .and_then(|project| self.project_change_counts.get(&project.path))
-            .and_then(Option::as_ref);
+            .and_then(Option::as_ref)
+            .filter(|summary| summary.files > 0);
         let project = self
             .active_project()
             .map(|project| project.name.clone())
@@ -16006,7 +16017,7 @@ impl AppState {
 
         let tokens = self.tokens(cx);
 
-        div()
+        let content = div()
             .size_full()
             .flex()
             .flex_col()
@@ -16033,7 +16044,6 @@ impl AppState {
                     .priority(100),
                 )
             })
-            .child(self.render_sidebar_toolbar(window, cx))
             .child(
                 div()
                     .flex_1()
@@ -16109,7 +16119,22 @@ impl AppState {
                 }),
                 |this| this.child(self.render_running_sessions(cx)),
             )
-            .child(self.render_sidebar_footer(cx))
+            .child(self.render_sidebar_footer(cx));
+
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(tokens.sidebar_bg)
+            .child(self.render_sidebar_toolbar(window, cx))
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(self.render_activity_bar(cx))
+                    .child(div().flex_1().min_w_0().h_full().child(content)),
+            )
             .into_any_element()
     }
 
@@ -16247,8 +16272,92 @@ impl AppState {
             .into_any_element()
     }
 
+    fn render_activity_bar(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let tokens = self.tokens(cx);
+        let is_home = self.active_view == ActiveView::Workspace;
+        div()
+            .id("activity-bar")
+            .w(px(48.0))
+            .h_full()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .items_center()
+            .pt(px(8.0))
+            .pb(px(8.0))
+            .bg(tokens.sidebar_bg)
+            .border_r_1()
+            .border_color(tokens.sidebar_border)
+            .child(
+                div()
+                    .id("activity-home")
+                    .debug_selector(|| "activity-home".into())
+                    .size(px(36.0))
+                    .rounded(px(8.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor(CursorStyle::PointingHand)
+                    .when(is_home, |button| button.bg(tokens.sidebar_item_active))
+                    .hover(move |button| button.bg(tokens.sidebar_item_hover))
+                    .tooltip(|window, cx| {
+                        gpui_component::tooltip::Tooltip::new("Home").build(window, cx)
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.active_view = ActiveView::Workspace;
+                            cx.notify();
+                        }),
+                    )
+                    .child(
+                        svg()
+                            .path("icons/home.svg")
+                            .size(px(18.0))
+                            .text_color(if is_home {
+                                tokens.sidebar_item_active_fg
+                            } else {
+                                tokens.sidebar_icon
+                            }),
+                    ),
+            )
+            .child(div().flex_1())
+            .child(
+                div()
+                    .id("sidebar-settings-btn")
+                    .debug_selector(|| "activity-settings".into())
+                    .size(px(36.0))
+                    .rounded(px(8.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor(CursorStyle::PointingHand)
+                    .when(!is_home, |button| button.bg(tokens.sidebar_item_active))
+                    .hover(move |button| button.bg(tokens.sidebar_item_hover))
+                    .tooltip(|window, cx| {
+                        gpui_component::tooltip::Tooltip::new("Settings").build(window, cx)
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.active_view = ActiveView::Settings;
+                            this.compact_sidebar_open = false;
+                            cx.notify();
+                        }),
+                    )
+                    .child(svg().path("icons/settings.svg").size(px(18.0)).text_color(
+                        if !is_home {
+                            tokens.sidebar_item_active_fg
+                        } else {
+                            tokens.sidebar_icon
+                        },
+                    )),
+            )
+    }
+
     fn render_sidebar_footer(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
-        let is_settings = self.active_view == ActiveView::Settings;
         let tokens = self.tokens(cx);
 
         div()
@@ -16261,71 +16370,7 @@ impl AppState {
             .bg(tokens.sidebar_footer_bg)
             .flex()
             .items_center()
-            .child(
-                div()
-                    .id("sidebar-settings-btn")
-                    .h(px(34.0))
-                    .flex_1()
-                    .px(px(10.0))
-                    .rounded(px(6.0))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .cursor(CursorStyle::PointingHand)
-                    .bg(if is_settings {
-                        tokens.sidebar_item_active
-                    } else {
-                        rgba(0x00000000).into()
-                    })
-                    .hover(move |s| {
-                        if is_settings {
-                            s
-                        } else {
-                            s.bg(tokens.sidebar_item_hover)
-                        }
-                    })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.active_view = if this.active_view == ActiveView::Settings {
-                                ActiveView::Workspace
-                            } else {
-                                ActiveView::Settings
-                            };
-                            this.compact_sidebar_open = false;
-                            cx.notify();
-                        }),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.0))
-                            .child(svg().path("icons/settings.svg").size(px(15.0)).text_color(
-                                if is_settings {
-                                    tokens.sidebar_item_active_fg
-                                } else {
-                                    tokens.sidebar_icon
-                                },
-                            ))
-                            .child(
-                                div()
-                                    .text_size(px(12.5))
-                                    .font_weight(if is_settings {
-                                        gpui::FontWeight::SEMIBOLD
-                                    } else {
-                                        gpui::FontWeight::NORMAL
-                                    })
-                                    .text_color(if is_settings {
-                                        tokens.sidebar_item_active_fg
-                                    } else {
-                                        tokens.sidebar_fg
-                                    })
-                                    .child("Settings"),
-                            ),
-                    ),
-            )
+            .justify_end()
             .child(
                 div()
                     .id("layout-switch")
@@ -16339,11 +16384,7 @@ impl AppState {
                     .h(px(30.0))
                     .rounded_full()
                     .border_1()
-                    .border_color(if self.settings.agent_layout {
-                        tokens.pane_border_focused
-                    } else {
-                        tokens.border
-                    })
+                    .border_color(tokens.border)
                     .bg(if self.settings.agent_layout {
                         tokens.sidebar_item_active
                     } else {
@@ -16397,7 +16438,7 @@ impl AppState {
                             tokens.sidebar_icon
                         },
                     ))
-                    .when(self.sidebar_width >= px(200.0), |pill| {
+                    .when(self.sidebar_width >= px(248.0), |pill| {
                         pill.child(
                             div()
                                 .text_size(px(11.0))
@@ -17169,6 +17210,15 @@ impl AppState {
 
     fn render_sidebar_toolbar(&self, window: &Window, cx: &mut Context<Self>) -> gpui::Div {
         let tokens = self.tokens(cx);
+        let can_back = self.navigation_history
+            [..self.navigation_position.min(self.navigation_history.len())]
+            .iter()
+            .any(|id| self.session_index.contains_key(id));
+        let can_forward = self
+            .navigation_history
+            .iter()
+            .skip(self.navigation_position + 1)
+            .any(|id| self.session_index.contains_key(id));
         div()
             .h(px(38.0))
             .flex_shrink_0()
@@ -17179,9 +17229,25 @@ impl AppState {
             .pl(if cfg!(target_os = "macos") && !window.is_fullscreen() {
                 px(80.0)
             } else {
-                px(14.0)
+                px(11.0)
             })
             .pr(px(10.0))
+            .child(self.navigation_button(
+                "navigation-back",
+                "icons/arrow-left.svg",
+                "Back",
+                can_back,
+                false,
+                cx,
+            ))
+            .child(self.navigation_button(
+                "navigation-forward",
+                "icons/arrow-right.svg",
+                "Forward",
+                can_forward,
+                true,
+                cx,
+            ))
             .child(sidebar_icon_button(
                 "sidebar-toggle-btn",
                 "icons/panel-left.svg",
@@ -17208,6 +17274,63 @@ impl AppState {
                     this.select_folder_and_add_project(window, cx);
                 }),
             )))
+    }
+
+    fn navigation_button(
+        &self,
+        id: &'static str,
+        icon: &'static str,
+        label: &'static str,
+        enabled: bool,
+        forward: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let tokens = self.tokens(cx);
+        div()
+            .id(id)
+            .size(px(26.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .when(enabled, |button| {
+                button
+                    .cursor(CursorStyle::PointingHand)
+                    .hover(move |style| style.bg(tokens.sidebar_icon_btn_hover))
+            })
+            .tooltip(move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(label).build(window, cx)
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    if enabled {
+                        this.navigate_history(forward, window, cx);
+                    }
+                }),
+            )
+            .child(svg().path(icon).size(px(15.0)).text_color(if enabled {
+                tokens.sidebar_icon
+            } else {
+                tokens.text_muted.opacity(0.45)
+            }))
+    }
+
+    fn navigate_history(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let positions: Box<dyn Iterator<Item = usize>> = if forward {
+            Box::new(self.navigation_position + 1..self.navigation_history.len())
+        } else {
+            Box::new((0..self.navigation_position).rev())
+        };
+        for position in positions {
+            if let Some(&(project, session)) =
+                self.session_index.get(&self.navigation_history[position])
+            {
+                self.navigation_position = position;
+                self.select_session(project, session, window, cx);
+                return;
+            }
+        }
     }
 
     fn render_integrations_panel(&self, cx: &mut Context<Self>) -> gpui::Div {
@@ -18146,6 +18269,17 @@ impl Render for AppState {
                 .child(gpui::img("shob.png").w(px(96.0)).h(px(96.0)))
                 .into_any_element();
         }
+        if let Some(id) = self.active_session().map(|session| session.id)
+            && self.navigation_history.get(self.navigation_position) != Some(&id)
+        {
+            self.navigation_history
+                .truncate(self.navigation_position.saturating_add(1));
+            if self.navigation_history.len() == 100 {
+                self.navigation_history.remove(0);
+            }
+            self.navigation_history.push(id);
+            self.navigation_position = self.navigation_history.len() - 1;
+        }
         let diag_render = diagnostics::render_start();
         // "Looking" needs an active window: a visible but backgrounded window
         // has not been seen, so a finish there must still become Done.
@@ -19069,6 +19203,8 @@ fn main() -> Result<()> {
                         active_project_idx: 0,
                         next_id: 1,
                         session_index: HashMap::new(),
+                        navigation_history: Vec::new(),
+                        navigation_position: 0,
                         pane_index: HashMap::new(),
                         project_change_counts: HashMap::new(),
                         palette: palette.clone(),
@@ -19573,6 +19709,8 @@ mod resize_tests {
             active_project_idx: 0,
             next_id: 2,
             session_index: HashMap::from([(1, (0, 0))]),
+            navigation_history: Vec::new(),
+            navigation_position: 0,
             pane_index: HashMap::from([(1, (0, 0, 0))]),
             project_change_counts: HashMap::new(),
             palette,
