@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use agent::types::TextContentOrImage;
-use tools::{create_bash_tool, ExecutionToolContext, OsExecutionEnv, Shell, ShellExecOptions};
 use tokio_util::sync::CancellationToken;
+use tools::{create_bash_tool, ExecutionToolContext, OsExecutionEnv, Shell, ShellExecOptions};
 
 type Times = Arc<Mutex<Vec<(String, f64)>>>;
 fn millis(time: Duration) -> f64 {

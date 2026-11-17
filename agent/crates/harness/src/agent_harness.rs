@@ -3706,9 +3706,7 @@ impl AgentHarness {
         // turns via prepare_next_turn). If no provider matches, emit an Error
         // terminal event on a synthetic stream.
         let stream_fn = agent::stream_fn(
-            move |model: &Model,
-                  ctx: &ai::types::Context,
-                  opts: &ai::SimpleStreamOptions| {
+            move |model: &Model, ctx: &ai::types::Context, opts: &ai::SimpleStreamOptions| {
                 let provider = models.iter().find(|p| p.id() == model.provider).cloned();
                 match provider {
                     Some(p) => {
@@ -7085,17 +7083,15 @@ mod session_switch_tests {
                 let mut partial = AssistantMessage::empty(ai::Api::Faux, "faux", "m", 7);
                 if tool_batch {
                     for id in ["call-a", "call-b"] {
-                        partial
-                            .content
-                            .push(Content::ToolCall(ai::types::ToolCall {
-                                kind: ai::types::ToolCallType,
-                                id: id.into(),
-                                name: "unavailable".into(),
-                                arguments: serde_json::json!({}),
-                                thought_signature: None,
-                                namespace: None,
-                                recorded: None,
-                            }));
+                        partial.content.push(Content::ToolCall(ai::types::ToolCall {
+                            kind: ai::types::ToolCallType,
+                            id: id.into(),
+                            name: "unavailable".into(),
+                            arguments: serde_json::json!({}),
+                            thought_signature: None,
+                            namespace: None,
+                            recorded: None,
+                        }));
                     }
                     session
                         .view("main")
@@ -7115,23 +7111,21 @@ mod session_switch_tests {
                         .emit(AgentEvent::MessageUpdate {
                             message_id: None,
                             message: partial.clone(),
-                            assistant_message_event:
-                                ai::types::AssistantMessageEvent::TextStart {
-                                    content_index: 0,
-                                    partial: partial.clone(),
-                                },
+                            assistant_message_event: ai::types::AssistantMessageEvent::TextStart {
+                                content_index: 0,
+                                partial: partial.clone(),
+                            },
                         })
                         .await;
                     recorder
                         .emit(AgentEvent::MessageUpdate {
                             message_id: None,
                             message: partial.clone(),
-                            assistant_message_event:
-                                ai::types::AssistantMessageEvent::TextDelta {
-                                    content_index: 0,
-                                    delta: "kept prefix".into(),
-                                    partial,
-                                },
+                            assistant_message_event: ai::types::AssistantMessageEvent::TextDelta {
+                                content_index: 0,
+                                delta: "kept prefix".into(),
+                                partial,
+                            },
                         })
                         .await;
                 }
@@ -7389,15 +7383,17 @@ mod session_switch_tests {
         let sess1 = Session::new(Arc::new(s1), None);
         let sess2 = Session::new(Arc::new(s2), None);
         sess1
-            .append_message(agent::AgentMessage::User(
-                ai::types::UserMessage::new(String::from("alpha"), 1),
-            ))
+            .append_message(agent::AgentMessage::User(ai::types::UserMessage::new(
+                String::from("alpha"),
+                1,
+            )))
             .await
             .unwrap();
         sess2
-            .append_message(agent::AgentMessage::User(
-                ai::types::UserMessage::new(String::from("beta"), 2),
-            ))
+            .append_message(agent::AgentMessage::User(ai::types::UserMessage::new(
+                String::from("beta"),
+                2,
+            )))
             .await
             .unwrap();
 
@@ -7473,8 +7469,7 @@ mod borrowed_context_tests {
                 context.messages.as_ptr() as usize,
                 context.system_prompt.clone(),
             );
-            let (mut producer, stream) =
-                ai::event_stream::create_assistant_message_event_stream();
+            let (mut producer, stream) = ai::event_stream::create_assistant_message_event_stream();
             producer
                 .push(ai::AssistantMessageEvent::Done {
                     reason: ai::DoneReason::Stop,
@@ -7486,11 +7481,7 @@ mod borrowed_context_tests {
     }
     struct Hook(u8);
     impl ai::ProviderHooks for Hook {
-        fn transform_context(
-            &self,
-            _: &Model,
-            _: &ai::Context,
-        ) -> Option<ai::ContextPatch> {
+        fn transform_context(&self, _: &Model, _: &ai::Context) -> Option<ai::ContextPatch> {
             match self.0 {
                 0 => None,
                 1 => Some(Default::default()),
@@ -7512,9 +7503,7 @@ mod borrowed_context_tests {
             )
             .unwrap();
             let mut context =
-                ai::Context::new(vec![
-                    ai::UserMessage::new("history".repeat(4096), 0).into()
-                ]);
+                ai::Context::new(vec![ai::UserMessage::new("history".repeat(4096), 0).into()]);
             context.system_prompt = Some("original".into());
             let model = Model::new("m", "M", ai::Api::Faux, "probe", "http://localhost");
             stream_fn(&model, &context, &Default::default())

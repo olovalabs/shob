@@ -7,8 +7,8 @@ use harness::session::{
     types::*,
     DefaultIdGenerator, SystemClock,
 };
-use tools::{FileSystem, OsExecutionEnv};
 use std::{collections::HashSet, sync::Arc, time::Instant};
+use tools::{FileSystem, OsExecutionEnv};
 
 fn base(id: String, seq: u64) -> RecordBase {
     RecordBase {

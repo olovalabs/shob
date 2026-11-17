@@ -5,8 +5,6 @@ mod tests {
     use harness::session::memory::{Clock, CounterIdGenerator, FakeClock};
     use harness::session::types::*;
     use harness::session::SqliteSessionRepo;
-    use tools::env::AppendFile;
-    use tools::{FileContent, FileError, FileInfo, FileSystem};
     use std::{
         path::{Path, PathBuf},
         sync::{
@@ -17,6 +15,8 @@ mod tests {
     };
     use tokio::sync::Notify;
     use tokio_util::sync::CancellationToken;
+    use tools::env::AppendFile;
+    use tools::{FileContent, FileError, FileInfo, FileSystem};
 
     fn entry(id: &str) -> ProvisionedEntry {
         ProvisionedEntry {
@@ -523,8 +523,7 @@ mod tests {
             }
             assert_ne!(
                 harness::session::jsonl::codec::parse_mutation(line).unwrap(),
-                harness::session::jsonl::codec::parse_mutation(&conflicting.to_string())
-                    .unwrap()
+                harness::session::jsonl::codec::parse_mutation(&conflicting.to_string()).unwrap()
             );
             let raw = format!("{original}{line}\n{conflicting}\n");
             fs.write_file("/bad.jsonl", FileContent::Text(raw.clone()), None)
@@ -546,8 +545,7 @@ mod tests {
 
     #[tokio::test]
     async fn jsonl_exact_duplicate_is_checked_before_parent_normalization() {
-        let fs: Arc<dyn FileSystem> =
-            Arc::new(tools::InMemoryExecutionEnv::with_cwd("/".into()));
+        let fs: Arc<dyn FileSystem> = Arc::new(tools::InMemoryExecutionEnv::with_cwd("/".into()));
         let clock = Arc::new(FakeClock::new());
         let ids = Arc::new(CounterIdGenerator::new());
         let s = JsonlSessionStorage::create(

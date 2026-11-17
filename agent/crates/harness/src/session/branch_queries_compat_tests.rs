@@ -131,9 +131,7 @@ async fn default_tree_overview_uses_fixed_leaf_and_bounded_batches() {
     message.stop_reason = ai::types::StopReason::Stop;
     message.usage.input = 8;
     tree.session
-        .append_message(agent::message::AgentMessage::Assistant(Box::new(
-            message,
-        )))
+        .append_message(agent::message::AgentMessage::Assistant(Box::new(message)))
         .await
         .unwrap();
     let mut original_leaf = String::new();

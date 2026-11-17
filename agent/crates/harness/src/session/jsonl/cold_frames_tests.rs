@@ -3,12 +3,12 @@ use crate::session::jsonl::encode_mutation;
 use crate::session::state::SessionState;
 use crate::session::types::{OperationIntent, OperationStartedRecord, QueueKind, RecordBase};
 use async_trait::async_trait;
-use tools::{env::ReadFile, FileError};
 use serde_json::json;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Mutex,
 };
+use tools::{env::ReadFile, FileError};
 
 struct MemoryReader {
     bytes: Mutex<Vec<u8>>,
@@ -707,14 +707,12 @@ async fn cold_entry_payload_filters_stop_before_corrupt_unconsumed_rows() {
             } = &mut mutation
             {
                 entry.message = if outbox {
-                    agent::message::AgentMessage::Custom(
-                        agent::message::CustomMessage::new(
-                            "outbox",
-                            Vec::new(),
-                            json!({"__rpiOutbox":{"key":key}}),
-                            1,
-                        ),
-                    )
+                    agent::message::AgentMessage::Custom(agent::message::CustomMessage::new(
+                        "outbox",
+                        Vec::new(),
+                        json!({"__rpiOutbox":{"key":key}}),
+                        1,
+                    ))
                 } else {
                     entry_batch_tool(key)
                 };

@@ -12,12 +12,12 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use common::{assistant_text, assistant_tool_calls, base_config, user_message};
 use agent::{
     AgentContext, AgentMessage, AgentToolResult, ConvertToLlm, GetFollowUpMessages,
     GetSteeringMessages, IncrementalConvertToLlm,
 };
 use ai::types::{Content, Message, StopReason, Tool, ToolResultMessage, ToolResultRole};
+use common::{assistant_text, assistant_tool_calls, base_config, user_message};
 use tokio_util::sync::CancellationToken;
 
 fn repairing_converter(calls: Arc<AtomicUsize>) -> ConvertToLlm {

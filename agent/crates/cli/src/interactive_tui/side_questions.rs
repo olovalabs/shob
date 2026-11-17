@@ -1,10 +1,10 @@
 //! Native side-chat workspace. No messages or drafts are shared with the main lane.
 use super::*;
 use ::extensions::RuntimeActionHost;
-use tui::HStack;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Weak;
+use tui::HStack;
 
 pub(super) fn input_allowed(state: &TuiState) -> bool {
     !state.selector_open()

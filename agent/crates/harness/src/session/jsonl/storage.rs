@@ -1976,8 +1976,7 @@ mod tests {
 
     #[tokio::test]
     async fn context_projection_matches_jsonl_branch_query() {
-        let fs: Arc<dyn FileSystem> =
-            Arc::new(tools::InMemoryExecutionEnv::with_cwd("/".into()));
+        let fs: Arc<dyn FileSystem> = Arc::new(tools::InMemoryExecutionEnv::with_cwd("/".into()));
         let storage = JsonlSessionStorage::create(
             fs,
             "/context.jsonl",
@@ -2024,8 +2023,7 @@ mod tests {
 
     #[tokio::test]
     async fn append_returns_the_owned_payload_but_keeps_storage_defensive() {
-        let fs: Arc<dyn FileSystem> =
-            Arc::new(tools::InMemoryExecutionEnv::with_cwd("/".into()));
+        let fs: Arc<dyn FileSystem> = Arc::new(tools::InMemoryExecutionEnv::with_cwd("/".into()));
         let jsonl = JsonlSessionStorage::create(
             fs,
             "/owned.jsonl",
@@ -2119,8 +2117,7 @@ mod tests {
 
     #[tokio::test]
     async fn append_records_batches_frame_records_with_contiguous_sequences() {
-        let fs: Arc<dyn FileSystem> =
-            Arc::new(tools::InMemoryExecutionEnv::with_cwd("/".into()));
+        let fs: Arc<dyn FileSystem> = Arc::new(tools::InMemoryExecutionEnv::with_cwd("/".into()));
         let storage = JsonlSessionStorage::create(
             fs,
             "/batch.jsonl",
@@ -2177,9 +2174,8 @@ mod tests {
     #[tokio::test]
     async fn reusable_os_append_keeps_each_acknowledged_entry_visible_to_reload() {
         let temp = tempfile::tempdir().unwrap();
-        let fs: Arc<dyn FileSystem> = Arc::new(tools::OsExecutionEnv::with_cwd(
-            temp.path().to_path_buf(),
-        ));
+        let fs: Arc<dyn FileSystem> =
+            Arc::new(tools::OsExecutionEnv::with_cwd(temp.path().to_path_buf()));
         let clock: Arc<dyn Clock> = Arc::new(FakeClock::new());
         let ids: Arc<dyn IdGenerator> = Arc::new(CounterIdGenerator::new());
         let storage = JsonlSessionStorage::create(
@@ -2225,9 +2221,8 @@ mod tests {
     #[tokio::test]
     async fn cached_append_reopens_after_an_atomic_session_replacement() {
         let temp = tempfile::tempdir().unwrap();
-        let fs: Arc<dyn FileSystem> = Arc::new(tools::OsExecutionEnv::with_cwd(
-            temp.path().to_path_buf(),
-        ));
+        let fs: Arc<dyn FileSystem> =
+            Arc::new(tools::OsExecutionEnv::with_cwd(temp.path().to_path_buf()));
         let clock: Arc<dyn Clock> = Arc::new(FakeClock::new());
         let ids: Arc<dyn IdGenerator> = Arc::new(CounterIdGenerator::new());
         let storage = JsonlSessionStorage::create(
@@ -2270,9 +2265,8 @@ mod tests {
     #[tokio::test]
     async fn cached_append_reopens_after_a_native_file_replacement() {
         let temp = tempfile::tempdir().unwrap();
-        let fs: Arc<dyn FileSystem> = Arc::new(tools::OsExecutionEnv::with_cwd(
-            temp.path().to_path_buf(),
-        ));
+        let fs: Arc<dyn FileSystem> =
+            Arc::new(tools::OsExecutionEnv::with_cwd(temp.path().to_path_buf()));
         let clock: Arc<dyn Clock> = Arc::new(FakeClock::new());
         let ids: Arc<dyn IdGenerator> = Arc::new(CounterIdGenerator::new());
         let storage = JsonlSessionStorage::create(
@@ -2333,8 +2327,7 @@ mod tests {
 
     #[tokio::test]
     async fn failed_append_does_not_commit_state_and_discards_the_failed_writer() {
-        let fs: Arc<dyn FileSystem> =
-            Arc::new(tools::InMemoryExecutionEnv::with_cwd("/".into()));
+        let fs: Arc<dyn FileSystem> = Arc::new(tools::InMemoryExecutionEnv::with_cwd("/".into()));
         let storage = JsonlSessionStorage::create(
             fs,
             "/s.jsonl",
@@ -2420,9 +2413,8 @@ mod tests {
         Arc<dyn Clock>,
         Arc<dyn IdGenerator>,
     ) {
-        let fs: Arc<dyn FileSystem> = Arc::new(tools::OsExecutionEnv::with_cwd(
-            temp.path().to_path_buf(),
-        ));
+        let fs: Arc<dyn FileSystem> =
+            Arc::new(tools::OsExecutionEnv::with_cwd(temp.path().to_path_buf()));
         let clock: Arc<dyn Clock> = Arc::new(FakeClock::new());
         let ids: Arc<dyn IdGenerator> = Arc::new(CounterIdGenerator::new());
         let storage = JsonlSessionStorage::create(
@@ -3704,8 +3696,7 @@ mod tests {
 
     #[tokio::test]
     async fn review_cancelled_append_must_not_erase_the_next_acknowledged_entry() {
-        let fs: Arc<dyn FileSystem> =
-            Arc::new(tools::InMemoryExecutionEnv::with_cwd("/".into()));
+        let fs: Arc<dyn FileSystem> = Arc::new(tools::InMemoryExecutionEnv::with_cwd("/".into()));
         let clock: Arc<dyn Clock> = Arc::new(FakeClock::new());
         let ids: Arc<dyn IdGenerator> = Arc::new(CounterIdGenerator::new());
         let storage = Arc::new(
@@ -3760,8 +3751,7 @@ mod tests {
 
     #[tokio::test]
     async fn review_distinct_entries_with_a_sequence_collision_must_not_be_silently_deleted() {
-        let fs: Arc<dyn FileSystem> =
-            Arc::new(tools::InMemoryExecutionEnv::with_cwd("/".into()));
+        let fs: Arc<dyn FileSystem> = Arc::new(tools::InMemoryExecutionEnv::with_cwd("/".into()));
         let clock: Arc<dyn Clock> = Arc::new(FakeClock::new());
         let ids: Arc<dyn IdGenerator> = Arc::new(CounterIdGenerator::new());
         let first = JsonlSessionStorage::create(
@@ -3853,8 +3843,7 @@ mod tests {
     /// because every mutating method holds it across stamp -> persist -> apply.
     #[tokio::test]
     async fn drain_waits_for_an_in_flight_append() {
-        let fs: Arc<dyn FileSystem> =
-            Arc::new(tools::InMemoryExecutionEnv::with_cwd("/".into()));
+        let fs: Arc<dyn FileSystem> = Arc::new(tools::InMemoryExecutionEnv::with_cwd("/".into()));
         let storage = Arc::new(
             JsonlSessionStorage::create(
                 fs.clone(),
@@ -3904,8 +3893,7 @@ mod tests {
     /// the wait stayed dead code before.
     #[tokio::test]
     async fn drain_through_the_trait_object_waits_for_an_in_flight_append() {
-        let fs: Arc<dyn FileSystem> =
-            Arc::new(tools::InMemoryExecutionEnv::with_cwd("/".into()));
+        let fs: Arc<dyn FileSystem> = Arc::new(tools::InMemoryExecutionEnv::with_cwd("/".into()));
         let concrete = Arc::new(
             JsonlSessionStorage::create(
                 fs.clone(),

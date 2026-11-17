@@ -6,18 +6,18 @@ use crate::session::{
     state::SessionState,
     types::*,
 };
-use async_trait::async_trait;
 use ai::types::{ToolResultMessage, ToolResultRole};
-use tools::{
-    env::{FileInfo, ReadFile},
-    FileContent, FileError, FileErrorCode, FileSystem,
-};
+use async_trait::async_trait;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 use tokio_util::sync::CancellationToken;
+use tools::{
+    env::{FileInfo, ReadFile},
+    FileContent, FileError, FileErrorCode, FileSystem,
+};
 
 /// Counts actual source ranges, not query calls. Faults are enabled only after
 /// initial replay, so an unselected damaged payload cannot hide an eager scan.
@@ -327,9 +327,8 @@ async fn fixture(log: Log) -> Fixture {
         fault: Mutex::new(None),
     });
     let temp = tempfile::tempdir().unwrap();
-    let inner: Arc<dyn FileSystem> = Arc::new(tools::OsExecutionEnv::with_cwd(
-        temp.path().to_path_buf(),
-    ));
+    let inner: Arc<dyn FileSystem> =
+        Arc::new(tools::OsExecutionEnv::with_cwd(temp.path().to_path_buf()));
     inner
         .write_file("recovery.jsonl", FileContent::Text(bytes), None)
         .await

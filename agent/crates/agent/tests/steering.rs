@@ -16,11 +16,9 @@ mod common;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use common::{assistant_text, assistant_tool_calls, base_config, run_and_collect, user_message};
-use agent::{
-    AgentContext, AgentEvent, AgentToolResult, GetSteeringMessages, ToolExecutionMode,
-};
+use agent::{AgentContext, AgentEvent, AgentToolResult, GetSteeringMessages, ToolExecutionMode};
 use ai::types::StopReason;
+use common::{assistant_text, assistant_tool_calls, base_config, run_and_collect, user_message};
 use tokio_util::sync::CancellationToken;
 
 /// An echo tool that records every executed `value` into a shared buffer. The

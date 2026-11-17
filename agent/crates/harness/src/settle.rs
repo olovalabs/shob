@@ -41,9 +41,9 @@ use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
-use futures::future::BoxFuture;
 use agent::{AgentEmitter, AgentEvent, AgentMessage};
 use ai::types::{AssistantMessage, StopReason};
+use futures::future::BoxFuture;
 
 use crate::agent_harness::{AgentHarness, QueueReservation};
 use crate::session::types::{

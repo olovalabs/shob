@@ -140,13 +140,9 @@ async fn child_turn_budget_is_per_instance_and_does_not_change_parent_or_environ
     ]);
     let (parent, provider, env) = parent(script).await;
     use tools::FileSystem;
-    env.write_file(
-        "test.txt",
-        tools::FileContent::Text("fixture".into()),
-        None,
-    )
-    .await
-    .unwrap();
+    env.write_file("test.txt", tools::FileContent::Text("fixture".into()), None)
+        .await
+        .unwrap();
     let before = std::env::var_os(crate::run_budget::MAX_TURNS_ENV);
     let child = parent
         .create_child(session("child"), emitter(), 1, None)

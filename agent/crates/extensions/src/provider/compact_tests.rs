@@ -34,10 +34,7 @@ fn factory(_: &Model, _: &SimpleStreamOptions) -> Arc<dyn Provider> {
 }
 extern "C" fn collect(raw: StbString, data: *mut c_void) -> i32 {
     let owned = unsafe {
-        plugin_sdk::callbacks::OwnedString::from_raw(
-            raw,
-            Some(plugin_sdk::callbacks::free_string),
-        )
+        plugin_sdk::callbacks::OwnedString::from_raw(raw, Some(plugin_sdk::callbacks::free_string))
     };
     let frames = unsafe { &mut *data.cast::<Vec<serde_json::Value>>() };
     frames.push(serde_json::from_str(&owned.to_string_lossy()).unwrap());
@@ -131,10 +128,7 @@ fn compact_sdk_frames_match_full_frames_after_every_mapper_prefix() {
         0
     );
     let owned = unsafe {
-        plugin_sdk::callbacks::OwnedString::from_raw(
-            out,
-            Some(plugin_sdk::callbacks::free_string),
-        )
+        plugin_sdk::callbacks::OwnedString::from_raw(out, Some(plugin_sdk::callbacks::free_string))
     };
     assert_eq!(
         serde_json::from_str::<AssistantMessage>(&owned.to_string_lossy()).unwrap(),

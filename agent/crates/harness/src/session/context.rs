@@ -414,12 +414,8 @@ mod tests {
     }
 
     fn assistant(text: &str) -> AgentMessage {
-        let mut a = AssistantMessage::empty(
-            ai::types::Api::Faux,
-            "anthropic",
-            "claude-sonnet-4-5",
-            1,
-        );
+        let mut a =
+            AssistantMessage::empty(ai::types::Api::Faux, "anthropic", "claude-sonnet-4-5", 1);
         a.content = vec![ai::types::Content::text(text)];
         a.stop_reason = ai::types::StopReason::Stop;
         AgentMessage::Assistant(Box::new(a))
@@ -633,8 +629,7 @@ mod tests {
 
     #[test]
     fn owned_default_path_preserves_deferred_tail_summary_and_state() {
-        let mut deferred =
-            AssistantMessage::empty(ai::types::Api::Faux, "anthropic", "claude", 6);
+        let mut deferred = AssistantMessage::empty(ai::types::Api::Faux, "anthropic", "claude", 6);
         deferred.stop_reason = StopReason::Deferred;
         deferred.deferred = Some(ai::types::DeferredHandle {
             provider: "anthropic".into(),

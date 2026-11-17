@@ -156,8 +156,7 @@ async fn compact_maps_error_stop_reason_to_summarization_failed() {
 
     let (provider, model) = faux_provider_model();
     // Faux step carrying an error terminal message.
-    let mut err =
-        ai::types::AssistantMessage::empty(ai::types::Api::Faux, "faux", "faux", 0);
+    let mut err = ai::types::AssistantMessage::empty(ai::types::Api::Faux, "faux", "faux", 0);
     err.stop_reason = StopReason::Error;
     err.error_message = Some("boom".to_string());
     provider

@@ -1,9 +1,9 @@
 //! Normalize tool images before they reach the model or session transcript.
 
-use async_trait::async_trait;
 use agent::types::{AgentToolResult, TextContentOrImage, ToolExecutionMode, ToolResultPartial};
 use agent::{AgentError, AgentTool};
 use ai::types::{Content, Tool};
+use async_trait::async_trait;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 

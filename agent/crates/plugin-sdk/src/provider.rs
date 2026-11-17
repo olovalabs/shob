@@ -29,7 +29,13 @@ pub fn completions(
 ) -> Result<Arc<dyn Provider>, String> {
     let client = ai::http::build_client(&model.base_url, None, None)?;
     if anonymous && options.api_key.is_none() {
-        Ok(Arc::new(ai::providers::openai_completions::OpenAiCompletionsProvider::with_models_without_auth(model.provider.clone(), client, vec![model.clone()])))
+        Ok(Arc::new(
+            ai::providers::openai_completions::OpenAiCompletionsProvider::with_models_without_auth(
+                model.provider.clone(),
+                client,
+                vec![model.clone()],
+            ),
+        ))
     } else {
         Ok(Arc::new(ai::providers::openai_completions::OpenAiCompletionsProvider::with_models_without_env_api_key(model.provider.clone(), options.api_key.clone(), client, vec![model.clone()])))
     }
@@ -483,13 +489,7 @@ mod tests {
         ) -> Result<Arc<dyn Provider>, String> {
             completions(model, options, false)
         }
-        let model = Model::new(
-            "m",
-            "M",
-            ai::Api::OpenaiCompletions,
-            "probe",
-            ":invalid",
-        );
+        let model = Model::new("m", "M", ai::Api::OpenaiCompletions, "probe", ":invalid");
         assert!(completions(&model, &SimpleStreamOptions::default(), false).is_err());
         let request =
             serde_json::json!({"model":model, "context":Context::new(vec![]), "options":{}})

@@ -7,8 +7,8 @@ use agent::{AgentError, AgentTool, AgentToolResult, ToolResultPartial};
 use harness::session::jsonl::{JsonlSessionStorage, JsonlV4Header};
 use harness::session::{DefaultIdGenerator, SystemClock};
 use harness::types::HarnessTool;
-use tools::{FileSystem, OsExecutionEnv};
 use tokio_util::sync::CancellationToken;
+use tools::{FileSystem, OsExecutionEnv};
 
 struct CountingTool {
     schema: ai::types::Tool,

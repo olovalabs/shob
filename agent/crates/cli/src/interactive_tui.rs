@@ -194,10 +194,7 @@ fn transform_markdown_chain(
             );
             // SAFETY: the callback transfers a live output to its producer.
             let out = unsafe {
-                plugin_sdk::callbacks::OwnedString::from_raw(
-                    out,
-                    Some(renderer.plugin_free_string),
-                )
+                plugin_sdk::callbacks::OwnedString::from_raw(out, Some(renderer.plugin_free_string))
             };
             let text = if rc == 0 {
                 let s = out.to_string_lossy();
@@ -533,8 +530,7 @@ fn dispatch_key_event(state: &TuiState, key: &KeyEvent, editor: &Editor) -> bool
     // `CLAIMED` code while its feature is active and `CONTINUE` otherwise, so a
     // registered-but-disabled shortcut (push-to-talk toggled off) still lets the
     // key reach the editor normally.
-    let claimed =
-        ::extensions::dispatch_data_event_claiming(&snapshot, EventTag::Input, &payload);
+    let claimed = ::extensions::dispatch_data_event_claiming(&snapshot, EventTag::Input, &payload);
     if claimed && key.kind == KeyEventKind::Press {
         state
             .extension_claimed_keys
@@ -642,8 +638,7 @@ fn start_user_bash(ctx: &CommandContext, command: &str, exclude_from_context: bo
         let comp_chunk = comp.clone();
         let tui_chunk = tui.clone();
         let on_chunk: Box<
-            dyn FnMut(&str, &dyn Fn() -> Option<tools::shell_output::ShellCaptureProgress>)
-                + Send,
+            dyn FnMut(&str, &dyn Fn() -> Option<tools::shell_output::ShellCaptureProgress>) + Send,
         > = Box::new(move |_chunk, get_progress| {
             // The capture layer reports the complete tail captured so far, not
             // a delta; `append_output` replaces its snapshot accordingly.
@@ -660,8 +655,7 @@ fn start_user_bash(ctx: &CommandContext, command: &str, exclude_from_context: bo
             ..Default::default()
         };
         let result =
-            tools::shell_output::execute_shell_with_capture(&env, &command_owned, options)
-                .await;
+            tools::shell_output::execute_shell_with_capture(&env, &command_owned, options).await;
 
         // `Ok` carries the real exit code/cancellation; `Err` is a transport
         // level failure (spawn failure, invalid env) which we surface inline.
@@ -1334,9 +1328,7 @@ pub async fn interactive_tui(
         search_bar: Arc::new(SearchBar::new()),
         pending_container: Arc::new(Container::new()),
         dequeue_hint: pending_dequeue_hint(&keybindings),
-        pending_snapshot: std::sync::Mutex::new(
-            harness::agent_harness::QueuedMessages::default(),
-        ),
+        pending_snapshot: std::sync::Mutex::new(harness::agent_harness::QueuedMessages::default()),
     });
 
     state.history_page.bind(harness);
@@ -2292,11 +2284,7 @@ pub async fn interactive_tui(
             //    stray Ctrl+C while streaming can no longer kill the turn.
             //    Open selectors and extension dialogs are handled above so
             //    their cancellation callbacks get first chance.
-            if keybinding_matches(
-                &keybindings_for_key,
-                &key,
-                tui::keybindings::keys::CLEAR,
-            ) {
+            if keybinding_matches(&keybindings_for_key, &key, tui::keybindings::keys::CLEAR) {
                 // A held key auto-repeats: only a fresh Press may arm or
                 // consume the window, so holding Ctrl+C cannot turn one tap
                 // into the quit.
@@ -2363,11 +2351,7 @@ pub async fn interactive_tui(
             //     terminal back to the shell and stop ourselves; `SIGTSTP`
             //     returns when the user resumes with `fg`. Windows binds no key
             //     here (native's `defaultKeys` is empty), so this never fires.
-            if keybinding_matches(
-                &keybindings_for_key,
-                &key,
-                tui::keybindings::keys::SUSPEND,
-            ) {
+            if keybinding_matches(&keybindings_for_key, &key, tui::keybindings::keys::SUSPEND) {
                 handle_suspend(&tui_for_key);
                 continue;
             }
@@ -2829,11 +2813,7 @@ pub async fn interactive_tui(
             // restore every queued steering/follow-up message into the editor
             // so it can be edited before resending. Mirrors upstream's
             // `handleDequeue`; the pending-messages display shows the hint.
-            if keybinding_matches(
-                &keybindings_for_key,
-                &key,
-                tui::keybindings::keys::DEQUEUE,
-            ) {
+            if keybinding_matches(&keybindings_for_key, &key, tui::keybindings::keys::DEQUEUE) {
                 // Handled here, on the key worker — NOT via the mailbox. The
                 // async main loop parks inside `run_prompt_streaming(..).await`
                 // for the whole run, and a queue only exists *while* a run is

@@ -28,9 +28,7 @@ use std::sync::Arc;
 use agent::AgentMessage;
 use ai::types::{AssistantMessage, Content, ImageContent, Usage};
 use ai::{Model, ThinkingLevel};
-use harness::agent_harness::{
-    AgentHarness, AgentLane, HarnessRunOutcome, LaneSnapshot, RunResult,
-};
+use harness::agent_harness::{AgentHarness, AgentLane, HarnessRunOutcome, LaneSnapshot, RunResult};
 use harness::result::{HarnessError, HarnessResult};
 use harness::session::types::{Entry, EntryOrder, EntryQuery};
 
@@ -527,8 +525,7 @@ mod tests {
 
     #[test]
     fn assistant_text_joins_text_blocks_only() {
-        let mut msg =
-            ai::types::AssistantMessage::empty(ai::Api::AnthropicMessages, "p", "m", 0);
+        let mut msg = ai::types::AssistantMessage::empty(ai::Api::AnthropicMessages, "p", "m", 0);
         msg.content = vec![
             Content::Thinking(ai::types::ThinkingContent {
                 kind: ai::types::ThinkingContentType,

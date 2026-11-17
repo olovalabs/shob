@@ -31,12 +31,12 @@ use crate::types::{
     ToolExecutionMode,
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use ai::types::{
     AssistantMessage, AssistantMessageEvent, Content, Message, StopReason, ToolCall,
     ToolResultMessage, ToolResultRole,
 };
 use ai::validate_tool_arguments;
+use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};

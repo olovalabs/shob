@@ -16,10 +16,10 @@ mod common;
 
 use std::sync::Arc;
 
-use common::{base_config, run_and_collect, user_message};
 use agent::{AgentContext, AgentEvent, AgentToolResult, ToolResultPartial};
 use ai::event_stream::create_assistant_message_event_stream;
 use ai::types::{AssistantMessage, AssistantMessageEvent, DoneReason, StopReason};
+use common::{base_config, run_and_collect, user_message};
 use tokio_util::sync::CancellationToken;
 
 /// A tool that captures the `on_update` callback it was handed so the test can

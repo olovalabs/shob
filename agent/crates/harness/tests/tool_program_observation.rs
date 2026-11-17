@@ -1,6 +1,5 @@
 //! Native observation through the real harness wrappers/checkpoint barrier.
 //! The mock is host-owned; no tool calls prepared() or fabricates child messages.
-use futures::future::BoxFuture;
 use agent::{
     tool_program::{current, nested_parent, ToolProgram},
     tool_program_observation::{
@@ -13,6 +12,7 @@ use ai::{
     providers::faux::{FauxProvider, FauxScript},
     types::{Content, Tool, Usage},
 };
+use futures::future::BoxFuture;
 use harness::{
     agent_harness::{AgentHarness, AgentLane, HarnessRunOutcome},
     session::{types::*, Session},

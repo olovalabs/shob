@@ -1899,10 +1899,7 @@ pub trait SessionTree: Send + Sync {
 
     /// Writes resolve on durable acceptance; the returned id is the entry's id
     /// (provisioned when the write defers).
-    async fn append_message(
-        &self,
-        message: agent::message::AgentMessage,
-    ) -> SessionResult<String>;
+    async fn append_message(&self, message: agent::message::AgentMessage) -> SessionResult<String>;
     async fn append_custom_entry(
         &self,
         custom_type: &str,

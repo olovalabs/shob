@@ -4,13 +4,13 @@ use super::*;
 use crate::session::jsonl::{JsonlSessionStorage, JsonlV4Header};
 use crate::session::memory::SystemClock;
 use crate::session::session::DefaultIdGenerator;
-use tools::env::AppendFile;
-use tools::{FileContent, FileError, FileSystem};
 use std::future::{poll_fn, Future};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::Poll;
 use std::time::Duration;
 use tokio::sync::Notify;
+use tools::env::AppendFile;
+use tools::{FileContent, FileError, FileSystem};
 
 #[derive(Default)]
 struct Gate {

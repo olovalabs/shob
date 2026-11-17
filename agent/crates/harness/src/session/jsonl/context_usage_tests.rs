@@ -2,11 +2,11 @@
 use super::*;
 use crate::compaction::{estimate_context_tokens, ContextUsageEstimate};
 use crate::session::{jsonl::encode_mutation, state::SessionState};
-use async_trait::async_trait;
 use agent::message::{AgentMessage, CustomMessage};
 use ai::types::{Api, AssistantMessage, StopReason, Usage, UserContent, UserMessage};
-use tools::FileError;
+use async_trait::async_trait;
 use std::sync::Mutex;
+use tools::FileError;
 
 #[derive(Default)]
 struct ObservedReader {

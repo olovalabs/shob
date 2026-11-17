@@ -187,8 +187,7 @@ fn walk_back_picks_valid_cut_near_budget() {
     let role_ok = match &entries[r.first_kept_entry_index] {
         Entry::Message(m) => matches!(
             m.message.role(),
-            agent::message::AgentMessageRole::User
-                | agent::message::AgentMessageRole::Assistant
+            agent::message::AgentMessageRole::User | agent::message::AgentMessageRole::Assistant
         ),
         _ => false,
     };

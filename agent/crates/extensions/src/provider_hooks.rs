@@ -362,12 +362,10 @@ mod tests {
             "anthropic",
             "https://api.anthropic.com",
         );
-        let ctx = ai::Context::new(vec![ai::types::Message::User(
-            ai::types::UserMessage::new(
-                ai::types::UserContent::Text("hello".to_string()),
-                42,
-            ),
-        )]);
+        let ctx = ai::Context::new(vec![ai::types::Message::User(ai::types::UserMessage::new(
+            ai::types::UserContent::Text("hello".to_string()),
+            42,
+        ))]);
         let opts = ai::SimpleStreamOptions::default();
 
         // Two provider calls in the same run (same prompt) → one
@@ -590,10 +588,7 @@ mod tests {
             "https://api.anthropic.com",
         );
         let mut ctx = ai::Context::new(vec![ai::types::Message::User(
-            ai::types::UserMessage::new(
-                ai::types::UserContent::Text("hello".to_string()),
-                1,
-            ),
+            ai::types::UserMessage::new(ai::types::UserContent::Text("hello".to_string()), 1),
         )]);
         ctx.system_prompt = Some("base".to_string());
 
@@ -631,10 +626,7 @@ mod tests {
             "https://api.anthropic.com",
         );
         let mut ctx = ai::Context::new(vec![ai::types::Message::User(
-            ai::types::UserMessage::new(
-                ai::types::UserContent::Text("hello".to_string()),
-                1,
-            ),
+            ai::types::UserMessage::new(ai::types::UserContent::Text("hello".to_string()), 1),
         )]);
         ctx.system_prompt = Some("base".to_string());
 
@@ -663,12 +655,10 @@ mod tests {
             "anthropic",
             "https://api.anthropic.com",
         );
-        let ctx = ai::Context::new(vec![ai::types::Message::User(
-            ai::types::UserMessage::new(
-                ai::types::UserContent::Text("hello".to_string()),
-                1,
-            ),
-        )]);
+        let ctx = ai::Context::new(vec![ai::types::Message::User(ai::types::UserMessage::new(
+            ai::types::UserContent::Text("hello".to_string()),
+            1,
+        ))]);
         assert!(
             hooks.transform_context(&model, &ctx).is_none(),
             "no handler changed the prompt ⇒ no patch ⇒ harness leaves it alone"
@@ -729,10 +719,7 @@ mod tests {
             "https://api.anthropic.com",
         );
         let mut ctx = ai::Context::new(vec![ai::types::Message::User(
-            ai::types::UserMessage::new(
-                ai::types::UserContent::Text("hello".to_string()),
-                1,
-            ),
+            ai::types::UserMessage::new(ai::types::UserContent::Text("hello".to_string()), 1),
         )]);
         ctx.system_prompt = Some("base".to_string());
 

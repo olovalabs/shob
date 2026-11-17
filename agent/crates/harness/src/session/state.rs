@@ -491,9 +491,10 @@ pub(crate) fn matches_entry_payload(entry: &Entry, query: &EntryQuery) -> bool {
     });
     let tool_ok = query.tool_call_id.as_deref().is_none_or(|id| match entry {
         Entry::Message(entry) => match &entry.message {
-            agent::AgentMessage::Assistant(message) => message.content.iter().any(
-                |block| matches!(block, ai::types::Content::ToolCall(call) if call.id == id),
-            ),
+            agent::AgentMessage::Assistant(message) => message
+                .content
+                .iter()
+                .any(|block| matches!(block, ai::types::Content::ToolCall(call) if call.id == id)),
             agent::AgentMessage::ToolResult(result) => result.tool_call_id == id,
             _ => false,
         },

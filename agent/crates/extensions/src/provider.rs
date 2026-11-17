@@ -1143,9 +1143,7 @@ impl StreamMapper {
                 // message so the terminal one reports it. A plugin that sends no
                 // usage keeps the zeroed default.
                 if let Some(usage) = chunk.get("usage") {
-                    if let Ok(parsed) =
-                        serde_json::from_value::<ai::types::Usage>(usage.clone())
-                    {
+                    if let Ok(parsed) = serde_json::from_value::<ai::types::Usage>(usage.clone()) {
                         self.output.usage = parsed;
                     }
                 }
@@ -2259,13 +2257,7 @@ mod tests {
             PluginKeepalive::empty(),
             Handle::current(),
         );
-        let model = Model::new(
-            "m",
-            "M",
-            ai::types::Api::Faux,
-            "pluggy",
-            "https://example",
-        );
+        let model = Model::new("m", "M", ai::types::Api::Faux, "pluggy", "https://example");
         let mut stream = provider
             .stream_simple(
                 &model,
@@ -2391,13 +2383,7 @@ mod tests {
                 PluginKeepalive::empty(),
                 Handle::current(),
             );
-            let model = Model::new(
-                "m",
-                "M",
-                ai::types::Api::Faux,
-                "pluggy",
-                "https://example",
-            );
+            let model = Model::new("m", "M", ai::types::Api::Faux, "pluggy", "https://example");
             let mut stream = provider
                 .stream_simple(
                     &model,

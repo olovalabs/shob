@@ -334,9 +334,7 @@ fn assistant_text(assistant: &ai::types::AssistantMessage) -> String {
         .iter()
         .filter_map(|c| match c {
             ai::types::Content::Text(t) => Some(t.text.clone()),
-            ai::types::Content::Thinking(t) => {
-                Some(format!("<thinking>{}</thinking>", t.thinking))
-            }
+            ai::types::Content::Thinking(t) => Some(format!("<thinking>{}</thinking>", t.thinking)),
             ai::types::Content::ToolCall(tc) => Some(format!("[Tool Call: {}]", tc.name)),
             ai::types::Content::Image(_) => Some("[Image]".to_string()),
         })

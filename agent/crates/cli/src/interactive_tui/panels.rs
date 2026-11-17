@@ -1,11 +1,11 @@
 //! Generic passive plugin panels. No plugin names or domain metrics live here.
 use super::*;
 use ::extensions::{ExtensionPanel, PanelAnchor, PanelHighlightColor, PanelLayout};
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tui::ansi::visible_width;
 use tui::tui::OverlayHandle;
 use tui::{OverlayAnchor, OverlayOptions};
-use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct Panel(Mutex<ExtensionPanel>);
 /// Generic plugin rows below the built-in usage footer, in both terminal modes.

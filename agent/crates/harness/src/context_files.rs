@@ -24,8 +24,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use tools::env::{ExecutionEnv, FileKind};
 use tokio_util::sync::CancellationToken;
+use tools::env::{ExecutionEnv, FileKind};
 
 /// Per-directory candidate filenames, **in priority order**. First existing
 /// match wins. Mirrors `loadContextFileFromDir`'s `candidates` array

@@ -61,10 +61,7 @@ async fn real_btw_command_is_owner_bound_and_never_writes_parent_history() {
         // SAFETY: the command transfers this live string to the host, exactly
         // as the interactive command dispatcher reclaims its callback output.
         let output = unsafe {
-            plugin_sdk::callbacks::OwnedString::from_raw(
-                out,
-                Some(extensions::host_free_string),
-            )
+            plugin_sdk::callbacks::OwnedString::from_raw(out, Some(extensions::host_free_string))
         };
         serde_json::from_str(&output.to_string_lossy()).unwrap()
     };

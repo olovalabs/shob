@@ -144,9 +144,7 @@ fn queued_user_message_keeps_images_and_image_only_messages() {
         let ai::types::UserContent::Blocks(blocks) = user.content else {
             panic!("expected image blocks")
         };
-        assert!(
-            matches!(blocks.last(), Some(ai::types::Content::Image(value)) if value == &image)
-        );
+        assert!(matches!(blocks.last(), Some(ai::types::Content::Image(value)) if value == &image));
         assert_eq!(blocks.len(), if text.is_empty() { 1 } else { 2 });
     }
 }
@@ -500,16 +498,12 @@ pub(super) fn test_tui_state() -> Arc<TuiState> {
         scoped_edit: std::sync::Mutex::new(None),
         markdown_transformer: Arc::new(std::sync::Mutex::new(None)),
         extension_claimed_keys: Mutex::new(Default::default()),
-        extension_session: Arc::new(std::sync::Mutex::new(
-            ::extensions::ExtensionSession::none(),
-        )),
+        extension_session: Arc::new(std::sync::Mutex::new(::extensions::ExtensionSession::none())),
         search: Arc::new(AltScreenSearch::new()),
         search_bar: Arc::new(SearchBar::new()),
         pending_container: Arc::new(Container::new()),
         dequeue_hint: String::new(),
-        pending_snapshot: std::sync::Mutex::new(
-            harness::agent_harness::QueuedMessages::default(),
-        ),
+        pending_snapshot: std::sync::Mutex::new(harness::agent_harness::QueuedMessages::default()),
     })
 }
 
@@ -1847,16 +1841,12 @@ fn test_agent_event_mapping_creates_assistant_and_tool() {
         scoped_edit: std::sync::Mutex::new(None),
         markdown_transformer: Arc::new(std::sync::Mutex::new(None)),
         extension_claimed_keys: Mutex::new(Default::default()),
-        extension_session: Arc::new(std::sync::Mutex::new(
-            ::extensions::ExtensionSession::none(),
-        )),
+        extension_session: Arc::new(std::sync::Mutex::new(::extensions::ExtensionSession::none())),
         search: Arc::new(AltScreenSearch::new()),
         search_bar: Arc::new(SearchBar::new()),
         pending_container: Arc::new(Container::new()),
         dequeue_hint: String::new(),
-        pending_snapshot: std::sync::Mutex::new(
-            harness::agent_harness::QueuedMessages::default(),
-        ),
+        pending_snapshot: std::sync::Mutex::new(harness::agent_harness::QueuedMessages::default()),
     });
 
     // The drain handler takes `Arc<TuiAltScreen>`, which needs a real
@@ -3477,16 +3467,12 @@ fn test_autocomplete_slash_suggestions_render() {
         scoped_edit: std::sync::Mutex::new(None),
         markdown_transformer: Arc::new(std::sync::Mutex::new(None)),
         extension_claimed_keys: Mutex::new(Default::default()),
-        extension_session: Arc::new(std::sync::Mutex::new(
-            ::extensions::ExtensionSession::none(),
-        )),
+        extension_session: Arc::new(std::sync::Mutex::new(::extensions::ExtensionSession::none())),
         search: Arc::new(AltScreenSearch::new()),
         search_bar: Arc::new(SearchBar::new()),
         pending_container: Arc::new(Container::new()),
         dequeue_hint: String::new(),
-        pending_snapshot: std::sync::Mutex::new(
-            harness::agent_harness::QueuedMessages::default(),
-        ),
+        pending_snapshot: std::sync::Mutex::new(harness::agent_harness::QueuedMessages::default()),
     });
     {
         let mut combined = CombinedAutocompleteProvider::new();
@@ -3576,16 +3562,12 @@ fn test_select_list_swap_restores_editor() {
         scoped_edit: std::sync::Mutex::new(None),
         markdown_transformer: Arc::new(std::sync::Mutex::new(None)),
         extension_claimed_keys: Mutex::new(Default::default()),
-        extension_session: Arc::new(std::sync::Mutex::new(
-            ::extensions::ExtensionSession::none(),
-        )),
+        extension_session: Arc::new(std::sync::Mutex::new(::extensions::ExtensionSession::none())),
         search: Arc::new(AltScreenSearch::new()),
         search_bar: Arc::new(SearchBar::new()),
         pending_container: Arc::new(Container::new()),
         dequeue_hint: String::new(),
-        pending_snapshot: std::sync::Mutex::new(
-            harness::agent_harness::QueuedMessages::default(),
-        ),
+        pending_snapshot: std::sync::Mutex::new(harness::agent_harness::QueuedMessages::default()),
     });
     let editor_container = Arc::new(Container::new());
     let editor = Arc::new(Editor::simple());
@@ -3678,16 +3660,12 @@ fn test_message_history_browse_restores_draft() {
         scoped_edit: std::sync::Mutex::new(None),
         markdown_transformer: Arc::new(std::sync::Mutex::new(None)),
         extension_claimed_keys: Mutex::new(Default::default()),
-        extension_session: Arc::new(std::sync::Mutex::new(
-            ::extensions::ExtensionSession::none(),
-        )),
+        extension_session: Arc::new(std::sync::Mutex::new(::extensions::ExtensionSession::none())),
         search: Arc::new(AltScreenSearch::new()),
         search_bar: Arc::new(SearchBar::new()),
         pending_container: Arc::new(Container::new()),
         dequeue_hint: String::new(),
-        pending_snapshot: std::sync::Mutex::new(
-            harness::agent_harness::QueuedMessages::default(),
-        ),
+        pending_snapshot: std::sync::Mutex::new(harness::agent_harness::QueuedMessages::default()),
     });
     let editor = Arc::new(Editor::simple());
 
@@ -3783,16 +3761,12 @@ fn test_accept_top_suggestion_replaces_prefix() {
         scoped_edit: std::sync::Mutex::new(None),
         markdown_transformer: Arc::new(std::sync::Mutex::new(None)),
         extension_claimed_keys: Mutex::new(Default::default()),
-        extension_session: Arc::new(std::sync::Mutex::new(
-            ::extensions::ExtensionSession::none(),
-        )),
+        extension_session: Arc::new(std::sync::Mutex::new(::extensions::ExtensionSession::none())),
         search: Arc::new(AltScreenSearch::new()),
         search_bar: Arc::new(SearchBar::new()),
         pending_container: Arc::new(Container::new()),
         dequeue_hint: String::new(),
-        pending_snapshot: std::sync::Mutex::new(
-            harness::agent_harness::QueuedMessages::default(),
-        ),
+        pending_snapshot: std::sync::Mutex::new(harness::agent_harness::QueuedMessages::default()),
     });
     {
         let mut combined = CombinedAutocompleteProvider::new();
@@ -3874,16 +3848,12 @@ fn autocomplete_test_state(max_visible: usize) -> Arc<TuiState> {
         scoped_edit: std::sync::Mutex::new(None),
         markdown_transformer: Arc::new(std::sync::Mutex::new(None)),
         extension_claimed_keys: Mutex::new(Default::default()),
-        extension_session: Arc::new(std::sync::Mutex::new(
-            ::extensions::ExtensionSession::none(),
-        )),
+        extension_session: Arc::new(std::sync::Mutex::new(::extensions::ExtensionSession::none())),
         search: Arc::new(AltScreenSearch::new()),
         search_bar: Arc::new(SearchBar::new()),
         pending_container: Arc::new(Container::new()),
         dequeue_hint: String::new(),
-        pending_snapshot: std::sync::Mutex::new(
-            harness::agent_harness::QueuedMessages::default(),
-        ),
+        pending_snapshot: std::sync::Mutex::new(harness::agent_harness::QueuedMessages::default()),
     })
 }
 

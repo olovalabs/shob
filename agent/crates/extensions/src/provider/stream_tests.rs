@@ -363,9 +363,7 @@ async fn saturated_pipeline_cancels_uncommitted_content_and_frees_every_frame() 
         let options = SimpleStreamOptions::default();
         let parent = options.signal.clone();
         let (mut prod, mut stream) =
-            ai::event_stream::create_assistant_message_event_stream_with_limits(
-                1, 4096, &parent,
-            );
+            ai::event_stream::create_assistant_message_event_stream_with_limits(1, 4096, &parent);
         let mut driver_options = options;
         driver_options.signal = prod.cancellation_token();
         let task = tokio::spawn(async move {

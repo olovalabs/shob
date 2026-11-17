@@ -9,14 +9,14 @@ use std::{
     sync::Arc,
 };
 
-use async_trait::async_trait;
-use jsonschema::JSONSchema;
 use agent::{
     agent_tool::AgentTool,
     error::AgentError,
     types::{AgentToolResult, ToolResultPartial},
 };
 use ai::types::{Schema, Tool};
+use async_trait::async_trait;
+use jsonschema::JSONSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;

@@ -780,10 +780,7 @@ pub(super) fn invoke_extension_renderer(
             );
             // SAFETY: the callback transfers a live output to its producer.
             let out = unsafe {
-                plugin_sdk::callbacks::OwnedString::from_raw(
-                    out,
-                    Some(renderer.plugin_free_string),
-                )
+                plugin_sdk::callbacks::OwnedString::from_raw(out, Some(renderer.plugin_free_string))
             };
 
             if rc == 0 {

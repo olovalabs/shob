@@ -16,9 +16,7 @@ async fn both_legacy_writers_reject_native_artifact_without_byte_or_sidecar_chan
         assert!(harness::session::SqliteSessionRepo::open(&artifact).is_err());
         assert_eq!(std::fs::read(&artifact).unwrap(), before);
         assert!(!PathBuf::from(format!("{}-wal", artifact.display())).exists());
-        let fs = std::sync::Arc::new(tools::OsExecutionEnv::with_cwd(
-            f.temp.path().to_owned(),
-        ));
+        let fs = std::sync::Arc::new(tools::OsExecutionEnv::with_cwd(f.temp.path().to_owned()));
         let load = harness::session::jsonl::JsonlSessionStorage::load(
             fs,
             &artifact.to_string_lossy(),

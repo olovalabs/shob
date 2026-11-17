@@ -14,9 +14,9 @@ mod common;
 
 use std::sync::Arc;
 
-use common::{assistant_text, base_config, mock_stream_fn, run_and_collect, user_message};
 use agent::{AgentContext, AgentError, AgentTool, AgentToolResult, ToolResultPartial};
 use ai::types::StopReason;
+use common::{assistant_text, base_config, mock_stream_fn, run_and_collect, user_message};
 use tokio_util::sync::CancellationToken;
 
 /// The `edit` tool. Mirrors the TS test tool: `prepare_arguments` folds legacy

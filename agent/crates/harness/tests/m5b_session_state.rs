@@ -38,10 +38,7 @@ fn user_message(text: &str) -> AgentMessage {
     AgentMessage::User(ai::types::UserMessage::new(text, 1))
 }
 
-fn assistant_message(
-    content: Vec<ai::types::Content>,
-    stop_reason: StopReason,
-) -> AgentMessage {
+fn assistant_message(content: Vec<ai::types::Content>, stop_reason: StopReason) -> AgentMessage {
     let mut msg =
         ai::types::AssistantMessage::empty(Api::OpenaiResponses, "openai", "test-model", 1);
     msg.content = content;

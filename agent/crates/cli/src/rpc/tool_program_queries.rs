@@ -333,10 +333,7 @@ mod tests {
         }
     }
 
-    fn native(
-        custom_type: &str,
-        data: Value,
-    ) -> harness::session::session::NativeJournalCommit {
+    fn native(custom_type: &str, data: Value) -> harness::session::session::NativeJournalCommit {
         harness::session::session::NativeJournalCommit {
             schema_version: 1,
             source_session_id: "source".into(),

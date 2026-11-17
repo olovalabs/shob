@@ -5,8 +5,8 @@ mod tests {
         memory::{CounterIdGenerator, FakeClock},
         types::*,
     };
-    use tools::FileSystem;
     use std::sync::Arc;
+    use tools::FileSystem;
 
     fn base(id: &str, lane: &str) -> RecordBase {
         RecordBase {
@@ -56,8 +56,7 @@ mod tests {
         }
     }
     async fn fixture() -> (Arc<dyn FileSystem>, JsonlSessionStorage) {
-        let fs: Arc<dyn FileSystem> =
-            Arc::new(tools::InMemoryExecutionEnv::with_cwd("/".into()));
+        let fs: Arc<dyn FileSystem> = Arc::new(tools::InMemoryExecutionEnv::with_cwd("/".into()));
         let storage = JsonlSessionStorage::create(
             fs.clone(),
             "/triple.jsonl",

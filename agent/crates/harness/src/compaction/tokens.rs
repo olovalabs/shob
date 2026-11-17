@@ -235,9 +235,7 @@ fn estimate_message_chars(message: &AgentMessage) -> usize {
     match message {
         AgentMessage::User(u) => match &u.content {
             ai::types::UserContent::Text(s) => s.len(),
-            ai::types::UserContent::Blocks(blocks) => {
-                estimate_text_and_image_chars_content(blocks)
-            }
+            ai::types::UserContent::Blocks(blocks) => estimate_text_and_image_chars_content(blocks),
         },
         AgentMessage::Assistant(a) => estimate_assistant_chars(a),
         AgentMessage::ToolResult(t) => estimate_text_and_image_chars_content(&t.content),
@@ -392,8 +390,7 @@ mod tests {
     #[test]
     fn extract_file_ops_classifies_read_write_edit() {
         // Build a real assistant with three tool calls.
-        let mut a =
-            ai::types::AssistantMessage::empty(ai::types::Api::Faux, "faux", "faux", 1);
+        let mut a = ai::types::AssistantMessage::empty(ai::types::Api::Faux, "faux", "faux", 1);
         a.content.push(Content::tool_call(
             "c1",
             "read",
@@ -452,8 +449,7 @@ mod tests {
 
     #[test]
     fn estimate_context_tokens_uses_last_assistant_usage_plus_trailing() {
-        let mut a =
-            ai::types::AssistantMessage::empty(ai::types::Api::Faux, "faux", "faux", 1);
+        let mut a = ai::types::AssistantMessage::empty(ai::types::Api::Faux, "faux", "faux", 1);
         a.usage = Usage {
             input: 100,
             output: 10,

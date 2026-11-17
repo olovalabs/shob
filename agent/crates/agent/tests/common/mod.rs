@@ -199,9 +199,7 @@ pub fn base_config() -> agent::AgentLoopConfig {
 }
 
 /// Build a config with a specific converter + mock model.
-pub fn loop_config_with_converter(
-    convert_to_llm: agent::ConvertToLlm,
-) -> agent::AgentLoopConfig {
+pub fn loop_config_with_converter(convert_to_llm: agent::ConvertToLlm) -> agent::AgentLoopConfig {
     agent::AgentLoopConfig {
         model: mock_model(),
         convert_to_llm,
@@ -269,9 +267,7 @@ pub fn tool_execution_end_ids(events: &[agent::AgentEvent]) -> Vec<String> {
     events
         .iter()
         .filter_map(|e| match e {
-            agent::AgentEvent::ToolExecutionEnd { tool_call_id, .. } => {
-                Some(tool_call_id.clone())
-            }
+            agent::AgentEvent::ToolExecutionEnd { tool_call_id, .. } => Some(tool_call_id.clone()),
             _ => None,
         })
         .collect()

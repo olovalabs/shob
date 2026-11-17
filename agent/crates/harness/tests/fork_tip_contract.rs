@@ -2,11 +2,9 @@
 use harness::error::SessionErrorCode;
 use harness::session::jsonl::{JsonlSessionRepo, JsonlSessionRepoOptions};
 use harness::session::types::*;
-use harness::session::{
-    DefaultIdGenerator, InMemorySessionRepo, SqliteSessionRepo, SystemClock,
-};
-use tools::{FileSystem, OsExecutionEnv};
+use harness::session::{DefaultIdGenerator, InMemorySessionRepo, SqliteSessionRepo, SystemClock};
 use std::sync::Arc;
+use tools::{FileSystem, OsExecutionEnv};
 
 fn options(id: &str) -> SessionCreateOptions {
     SessionCreateOptions {

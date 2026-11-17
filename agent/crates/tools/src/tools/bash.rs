@@ -15,11 +15,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use agent::agent_tool::AgentTool;
 use agent::error::AgentError;
 use agent::types::{AgentToolResult, TextContentOrImage, ToolResultPartial};
 use ai::types::{ConstrainedSamplingConfig, ConstrainedStrictness, Tool};
+use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;

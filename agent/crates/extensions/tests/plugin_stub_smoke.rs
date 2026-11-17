@@ -748,12 +748,10 @@ async fn a_real_cdylib_can_replace_the_system_prompt() {
         "stub-provider",
         "https://stub.example",
     );
-    let ctx = Context::new(vec![ai::types::Message::User(
-        ai::types::UserMessage::new(
-            ai::types::UserContent::Text("do the thing".to_string()),
-            1,
-        ),
-    )]);
+    let ctx = Context::new(vec![ai::types::Message::User(ai::types::UserMessage::new(
+        ai::types::UserContent::Text("do the thing".to_string()),
+        1,
+    ))]);
     // The base prompt the plugin will append to.
     let ctx = Context {
         system_prompt: Some("BASE PROMPT".to_string()),

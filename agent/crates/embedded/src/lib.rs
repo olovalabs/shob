@@ -81,12 +81,9 @@ pub fn refresh_auth_methods(cwd: &Path) -> Result<(), String> {
         .canonicalize()
         .map_err(|_| "Could not resolve authentication project directory".to_string())?;
     let _runtime = auth_runtime()?.enter();
-    let prepared = cli::session::prepare_extensions(
-        &Args::default(),
-        &canonical,
-        project_trusted(&canonical),
-    )
-    .map_err(|error| format!("Could not discover extension authentication: {error}"))?;
+    let prepared =
+        cli::session::prepare_extensions(&Args::default(), &canonical, project_trusted(&canonical))
+            .map_err(|error| format!("Could not discover extension authentication: {error}"))?;
     let providers = prepared
         .extension_session
         .snapshot()
@@ -124,12 +121,7 @@ fn model_thinking_levels(model: &ai::Model) -> Vec<String> {
     model
         .supported_thinking_levels()
         .into_iter()
-        .filter(|level| {
-            !matches!(
-                level,
-                ai::ThinkingLevel::Off | ai::ThinkingLevel::Minimal
-            )
-        })
+        .filter(|level| !matches!(level, ai::ThinkingLevel::Off | ai::ThinkingLevel::Minimal))
         .filter_map(|level| {
             serde_json::to_value(level)
                 .ok()?
@@ -1255,14 +1247,9 @@ async fn run_session(
         // screen, so start a fresh durable session and publish its new id.
         let mut fresh = args.clone();
         fresh.session = None;
-        if let Ok(retry) = cli::session::build_with_tool_hook(
-            &resolved,
-            &fresh,
-            &cwd,
-            trusted,
-            before_tool_call,
-        )
-        .await
+        if let Ok(retry) =
+            cli::session::build_with_tool_hook(&resolved, &fresh, &cwd, trusted, before_tool_call)
+                .await
         {
             built = Ok(retry);
         }
@@ -2363,12 +2350,7 @@ mod tests {
     #[tokio::test]
     async fn event_mapping_covers_text_tools_retries_and_completion() {
         let tx = EventQueue::default();
-        let partial = Arc::new(ai::AssistantMessage::empty(
-            ai::Api::Faux,
-            "faux",
-            "m",
-            0,
-        ));
+        let partial = Arc::new(ai::AssistantMessage::empty(ai::Api::Faux, "faux", "m", 0));
         forward_event(
             RpiEvent::MessageUpdate {
                 message_id: None,

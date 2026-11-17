@@ -182,8 +182,7 @@ async fn split_turn_turn_prefix_error_maps_to_summarization_failed() {
     let mut preparation = split_preparation(messages.clone());
     preparation.messages_to_summarize = Vec::new();
 
-    let mut err_msg =
-        ai::types::AssistantMessage::empty(ai::types::Api::Faux, "faux", "faux", 0);
+    let mut err_msg = ai::types::AssistantMessage::empty(ai::types::Api::Faux, "faux", "faux", 0);
     err_msg.stop_reason = StopReason::Error;
     err_msg.error_message = Some("prefix failed".to_string());
     let script = FauxScript::new();

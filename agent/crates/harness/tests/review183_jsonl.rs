@@ -17,13 +17,13 @@ use harness::session::{
     },
 };
 use harness::types::{AgentHarnessOptions, HarnessTool, ToolReplay as HarnessReplay};
-use tools::{FileSystem, OsExecutionEnv};
 use serde_json::{json, Value};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
 use tokio_util::sync::CancellationToken;
+use tools::{FileSystem, OsExecutionEnv};
 
 struct Counter {
     schema: Tool,

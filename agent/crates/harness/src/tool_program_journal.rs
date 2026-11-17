@@ -10,11 +10,11 @@ use std::{
     sync::{Arc, Mutex as SyncMutex},
 };
 
-use futures::future::BoxFuture;
 use agent::{
     tool_program_observation::{ToolProgramChild, ToolProgramObservation, ToolProgramObserver},
     AgentToolResult,
 };
+use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::{

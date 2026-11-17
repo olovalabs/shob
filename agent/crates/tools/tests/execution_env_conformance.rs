@@ -6,11 +6,11 @@
 
 use std::sync::Arc;
 
+use tokio_util::sync::CancellationToken;
 use tools::{
     ExecutionEnv, ExecutionErrorCode, FileContent, FileKind, FileSystem, InMemoryExecutionEnv,
     OsExecutionEnv, Shell, ShellExecOptions,
 };
-use tokio_util::sync::CancellationToken;
 
 /// The conformance suite, generic over any `ExecutionEnv`. Each case seeds a
 /// relative path against the env's cwd and asserts the documented behavior.

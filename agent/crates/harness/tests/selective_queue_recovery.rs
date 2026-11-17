@@ -8,11 +8,11 @@ use harness::{
     session::{types::*, DefaultIdGenerator, Session, SqliteSessionRepo, SystemClock},
     types::AgentHarnessOptions,
 };
-use tools::{FileSystem, OsExecutionEnv};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
+use tools::{FileSystem, OsExecutionEnv};
 
 struct Probe {
     inner: Arc<dyn SessionStorage>,

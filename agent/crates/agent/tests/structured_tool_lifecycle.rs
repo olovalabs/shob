@@ -2,10 +2,10 @@
 #[path = "common/mod.rs"]
 mod common;
 
-use common::{assistant_text, assistant_tool_calls, base_config, mock_stream_fn, user_message};
-use futures::future::BoxFuture;
 use agent::{AgentContext, AgentEmitter, AgentEvent, AgentToolResult, CollectorEmitter};
 use ai::types::StopReason;
+use common::{assistant_text, assistant_tool_calls, base_config, mock_stream_fn, user_message};
+use futures::future::BoxFuture;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,

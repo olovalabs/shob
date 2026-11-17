@@ -3,20 +3,20 @@ use super::{
     client_requests::{ClientRequestBroker, MAX_TIMEOUT_MS},
     writer::RpcWriter,
 };
-use async_trait::async_trait;
 use agent::{
     error::AgentError,
     types::{AgentToolResult, TextContentOrImage},
 };
 use ai::types::Content;
+use async_trait::async_trait;
 use harness::agent_harness::AgentLane;
-use tools::tools::external::ExternalToolBackend;
 use serde_json::{json, Value};
 use std::{
     sync::{Arc, Weak},
     time::Duration,
 };
 use tokio_util::sync::CancellationToken;
+use tools::tools::external::ExternalToolBackend;
 
 pub(crate) struct ExternalTools {
     pub broker: ClientRequestBroker,

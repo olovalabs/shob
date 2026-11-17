@@ -477,14 +477,12 @@ mod tests {
     #[test]
     fn turn_end_projects_pending_messages() {
         let event = AgentEvent::TurnEnd {
-            message: agent::AgentMessage::Assistant(Box::new(
-                ai::types::AssistantMessage::empty(
-                    ai::types::Api::AnthropicMessages,
-                    "p",
-                    "m",
-                    0,
-                ),
-            )),
+            message: agent::AgentMessage::Assistant(Box::new(ai::types::AssistantMessage::empty(
+                ai::types::Api::AnthropicMessages,
+                "p",
+                "m",
+                0,
+            ))),
             tool_results: vec![],
             pending_messages: 3,
         };
@@ -495,14 +493,12 @@ mod tests {
 
         // Zero is a real value, not an absent field.
         let zero = AgentEvent::TurnEnd {
-            message: agent::AgentMessage::Assistant(Box::new(
-                ai::types::AssistantMessage::empty(
-                    ai::types::Api::AnthropicMessages,
-                    "p",
-                    "m",
-                    0,
-                ),
-            )),
+            message: agent::AgentMessage::Assistant(Box::new(ai::types::AssistantMessage::empty(
+                ai::types::Api::AnthropicMessages,
+                "p",
+                "m",
+                0,
+            ))),
             tool_results: vec![],
             pending_messages: 0,
         };

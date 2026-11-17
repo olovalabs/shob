@@ -1,7 +1,6 @@
 //! Native observation only: these tests deliberately create no child AgentMessages.
 #[path = "common/mod.rs"]
 mod common;
-use futures::future::BoxFuture;
 use agent::{
     tool_program::{current, nested_parent, ToolProgram},
     tool_program_observation::{
@@ -11,6 +10,7 @@ use agent::{
     AgentMessage, AgentTool, AgentToolResult, BeforeToolCallResult, ToolExecutionMode,
 };
 use ai::types::{StopReason, Tool, ToolResultMessage, Usage};
+use futures::future::BoxFuture;
 use serde_json::{json, Value};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},

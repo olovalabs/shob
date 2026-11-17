@@ -20,11 +20,7 @@ impl ReadFile for StrictReader {
     async fn byte_len(&self) -> Result<Option<u64>, tools::FileError> {
         self.inner.byte_len().await
     }
-    async fn read_range(
-        &self,
-        offset: u64,
-        length: usize,
-    ) -> Result<Vec<u8>, tools::FileError> {
+    async fn read_range(&self, offset: u64, length: usize) -> Result<Vec<u8>, tools::FileError> {
         self.calls.fetch_add(1, Ordering::Relaxed);
         self.ranges.lock().unwrap().push((offset, length));
         self.inner.read_range(offset, length).await
@@ -84,9 +80,8 @@ async fn strict_load(
 #[tokio::test]
 async fn strict_cold_replay_obeys_scan_budget_and_metadata_never_hydrates_bodies() {
     let temp = tempfile::tempdir().unwrap();
-    let fs: Arc<dyn FileSystem> = Arc::new(tools::OsExecutionEnv::with_cwd(
-        temp.path().to_path_buf(),
-    ));
+    let fs: Arc<dyn FileSystem> =
+        Arc::new(tools::OsExecutionEnv::with_cwd(temp.path().to_path_buf()));
     let mut bytes = encode_header(&header());
     for seq in 1..=12 {
         let parent = (seq > 1).then(|| format!("e{}", seq - 1));
@@ -144,9 +139,8 @@ async fn strict_cold_replay_obeys_scan_budget_and_metadata_never_hydrates_bodies
 #[tokio::test]
 async fn os_ranged_load_large_unicode_rechain_duplicate_and_repair_keep_source_generation() {
     let temp = tempfile::tempdir().unwrap();
-    let fs: Arc<dyn FileSystem> = Arc::new(tools::OsExecutionEnv::with_cwd(
-        temp.path().to_path_buf(),
-    ));
+    let fs: Arc<dyn FileSystem> =
+        Arc::new(tools::OsExecutionEnv::with_cwd(temp.path().to_path_buf()));
     let first = message(
         "e1",
         1,
@@ -216,9 +210,8 @@ async fn os_ranged_load_large_unicode_rechain_duplicate_and_repair_keep_source_g
 #[tokio::test]
 async fn cold_entry_queries_windows_context_log_and_fork_match_eager() {
     let temp = tempfile::tempdir().unwrap();
-    let fs: Arc<dyn FileSystem> = Arc::new(tools::OsExecutionEnv::with_cwd(
-        temp.path().to_path_buf(),
-    ));
+    let fs: Arc<dyn FileSystem> =
+        Arc::new(tools::OsExecutionEnv::with_cwd(temp.path().to_path_buf()));
     let mut eager = SessionState::new();
     let mut bytes = encode_header(&header());
     for seq in 1..=12 {
@@ -334,9 +327,8 @@ async fn cold_entry_queries_windows_context_log_and_fork_match_eager() {
 #[tokio::test]
 async fn scanner_delimiters_preserve_raw_lines_offsets_flags_and_digest() {
     let temp = tempfile::tempdir().unwrap();
-    let fs: Arc<dyn FileSystem> = Arc::new(tools::OsExecutionEnv::with_cwd(
-        temp.path().to_path_buf(),
-    ));
+    let fs: Arc<dyn FileSystem> =
+        Arc::new(tools::OsExecutionEnv::with_cwd(temp.path().to_path_buf()));
     let mut cases = vec![Vec::new(), b"\n\n".to_vec(), b"one\r\ntwo".to_vec()];
     for newline_offset in [CHUNK - 1, CHUNK, CHUNK + 1] {
         let mut bytes = vec![b'a'; newline_offset - 1];
@@ -382,9 +374,8 @@ async fn scanner_delimiters_preserve_raw_lines_offsets_flags_and_digest() {
 #[tokio::test]
 async fn scanner_chunk_boundaries_utf8_crlf_and_final_newline() {
     let temp = tempfile::tempdir().unwrap();
-    let fs: Arc<dyn FileSystem> = Arc::new(tools::OsExecutionEnv::with_cwd(
-        temp.path().to_path_buf(),
-    ));
+    let fs: Arc<dyn FileSystem> =
+        Arc::new(tools::OsExecutionEnv::with_cwd(temp.path().to_path_buf()));
     let mutation = message("large", 1, None, &"🌊".repeat(CHUNK));
     let mut bytes = encode_header(&header());
     bytes.push_str(encode_mutation(&mutation).trim_end());
@@ -407,9 +398,8 @@ async fn scanner_chunk_boundaries_utf8_crlf_and_final_newline() {
 #[tokio::test]
 async fn bounded_header_lookup_does_not_bypass_full_history_utf8_validation() {
     let temp = tempfile::tempdir().unwrap();
-    let fs: Arc<dyn FileSystem> = Arc::new(tools::OsExecutionEnv::with_cwd(
-        temp.path().to_path_buf(),
-    ));
+    let fs: Arc<dyn FileSystem> =
+        Arc::new(tools::OsExecutionEnv::with_cwd(temp.path().to_path_buf()));
     let encoded_header = encode_header(&header());
     let mut bytes = encoded_header.as_bytes().to_vec();
     bytes.extend_from_slice(encode_mutation(&message("valid", 1, None, "synthetic")).as_bytes());
@@ -444,9 +434,8 @@ async fn context_uses_metadata_before_compaction_and_payload_filter_precedes_lim
         ThinkingLevelEntry,
     };
     let temp = tempfile::tempdir().unwrap();
-    let fs: Arc<dyn FileSystem> = Arc::new(tools::OsExecutionEnv::with_cwd(
-        temp.path().to_path_buf(),
-    ));
+    let fs: Arc<dyn FileSystem> =
+        Arc::new(tools::OsExecutionEnv::with_cwd(temp.path().to_path_buf()));
     let base = |seq: u64, kind: &str| EntryBase {
         entry_type: kind.into(),
         id: format!("e{seq}"),
@@ -608,9 +597,8 @@ async fn load_frame_history(
 #[tokio::test]
 async fn cold_frame_duplicate_sequences_compare_semantics_and_reject_conflicts() {
     let temp = tempfile::tempdir().unwrap();
-    let fs: Arc<dyn FileSystem> = Arc::new(tools::OsExecutionEnv::with_cwd(
-        temp.path().to_path_buf(),
-    ));
+    let fs: Arc<dyn FileSystem> =
+        Arc::new(tools::OsExecutionEnv::with_cwd(temp.path().to_path_buf()));
     for op in ["append", "clear_stream", "clear_run"] {
         let first = cold_frame_row(1, op, serde_json::json!({"a": 1, "z": [true, null]}));
         let value: serde_json::Value = serde_json::from_str(&first).unwrap();
@@ -707,9 +695,8 @@ async fn cold_frame_duplicate_sequences_compare_semantics_and_reject_conflicts()
 #[tokio::test]
 async fn cold_frame_reordered_fields_and_duplicate_known_keys_keep_full_codec_authority() {
     let temp = tempfile::tempdir().unwrap();
-    let fs: Arc<dyn FileSystem> = Arc::new(tools::OsExecutionEnv::with_cwd(
-        temp.path().to_path_buf(),
-    ));
+    let fs: Arc<dyn FileSystem> =
+        Arc::new(tools::OsExecutionEnv::with_cwd(temp.path().to_path_buf()));
     // Frame before discriminators; unknown duplicate keys do not require fallback.
     let reordered = r#"{"frame":{"z":"🌊","a":[null,true]},"op":"append","streamIndex":3,"runId":"run","timestamp":-1,"lane":"main","seq":1,"id":"f1","extra":1,"extra":2,"type":"assistant_frame","kind":"record"}"#;
     // Known duplicate keys must fall back to Value's last-key-wins behavior,
@@ -762,9 +749,8 @@ async fn cold_frame_reordered_fields_and_duplicate_known_keys_keep_full_codec_au
 #[tokio::test]
 async fn fresh_fast_frames_cross_chunk_boundaries_and_recover_complete_or_torn_tails() {
     let temp = tempfile::tempdir().unwrap();
-    let fs: Arc<dyn FileSystem> = Arc::new(tools::OsExecutionEnv::with_cwd(
-        temp.path().to_path_buf(),
-    ));
+    let fs: Arc<dyn FileSystem> =
+        Arc::new(tools::OsExecutionEnv::with_cwd(temp.path().to_path_buf()));
     let template = cold_frame_row(1, "append", serde_json::json!({"delta": "BOUNDARY"}));
     let padding = CHUNK - encode_header(&header()).len() - template.find("BOUNDARY").unwrap() - 1;
     let large = cold_frame_row(
@@ -860,9 +846,8 @@ async fn fresh_fast_frames_cross_chunk_boundaries_and_recover_complete_or_torn_t
 #[tokio::test]
 async fn raw_value_clear_rows_keep_canonical_tail_and_policy_semantics() {
     let temp = tempfile::tempdir().unwrap();
-    let fs: Arc<dyn FileSystem> = Arc::new(tools::OsExecutionEnv::with_cwd(
-        temp.path().to_path_buf(),
-    ));
+    let fs: Arc<dyn FileSystem> =
+        Arc::new(tools::OsExecutionEnv::with_cwd(temp.path().to_path_buf()));
     let append = cold_frame_row(1, "append", serde_json::json!({"delta": "kept"}));
     let bad_clear = cold_frame_row(
         2,

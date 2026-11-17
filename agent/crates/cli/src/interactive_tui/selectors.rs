@@ -294,10 +294,7 @@ pub(super) async fn report_model_selection(
 
 /// Cycle after the current provider/API/model identity, wrapping to the first.
 /// An empty catalog returns `None`; a missing anchor returns the first entry.
-pub(super) fn cycle_next_model(
-    catalog: &[ai::Model],
-    current: &ai::Model,
-) -> Option<ai::Model> {
+pub(super) fn cycle_next_model(catalog: &[ai::Model], current: &ai::Model) -> Option<ai::Model> {
     if catalog.is_empty() {
         return None;
     }
@@ -317,10 +314,7 @@ pub(super) fn cycle_next_model(
 
 /// Cycle before the current provider/API/model identity, wrapping to the last —
 /// the mirror of [`cycle_next_model`] for the previous-model hotkey.
-pub(super) fn cycle_prev_model(
-    catalog: &[ai::Model],
-    current: &ai::Model,
-) -> Option<ai::Model> {
+pub(super) fn cycle_prev_model(catalog: &[ai::Model], current: &ai::Model) -> Option<ai::Model> {
     if catalog.is_empty() {
         return None;
     }

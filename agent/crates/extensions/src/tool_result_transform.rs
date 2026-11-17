@@ -22,10 +22,10 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use agent::types::{AgentToolResult, TextContentOrImage, ToolExecutionMode, ToolResultPartial};
 use agent::{AgentError, AgentTool};
 use ai::types::{ImageContent, ImageContentType, Tool};
+use async_trait::async_trait;
 use plugin_sdk::{StbString, StbStringRef};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
@@ -174,9 +174,8 @@ fn call_one_handler(h: ToolResultHandler, event: StbStringRef) -> Result<Option<
     let mut out = StbString::empty();
     let rc = (h.handler)(event, &mut out, h.user_data);
     // SAFETY: the callback transfers its live output to its registered producer.
-    let out = unsafe {
-        plugin_sdk::callbacks::OwnedString::from_raw(out, Some(h.plugin_free_string))
-    };
+    let out =
+        unsafe { plugin_sdk::callbacks::OwnedString::from_raw(out, Some(h.plugin_free_string)) };
     if rc != 0 {
         return Err(rc);
     }

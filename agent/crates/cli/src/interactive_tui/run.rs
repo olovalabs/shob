@@ -756,11 +756,7 @@ pub(super) fn add_image_previews(
     }
 }
 
-pub(super) fn add_user_images(
-    chat: &Arc<Container>,
-    user: &ai::types::UserMessage,
-    show: bool,
-) {
+pub(super) fn add_user_images(chat: &Arc<Container>, user: &ai::types::UserMessage, show: bool) {
     if let ai::types::UserContent::Blocks(blocks) = &user.content {
         for block in blocks {
             if let ai::types::Content::Image(image) = block {

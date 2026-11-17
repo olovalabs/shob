@@ -53,13 +53,7 @@ fn runtime_shutdown_keeps_one_shot_provider_and_child_capacity_until_ffi_returns
             keepalive,
             Handle::current(),
         );
-        let model = Model::new(
-            "m",
-            "M",
-            ai::types::Api::Faux,
-            "paused",
-            "https://example",
-        );
+        let model = Model::new("m", "M", ai::types::Api::Faux, "paused", "https://example");
         let _stream = scope
             .run(provider.stream_simple(
                 &model,

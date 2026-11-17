@@ -1,14 +1,12 @@
 //! Explicit locked native-JSONL upgrade, never implicit artifact migration.
 use ai::providers::faux::{FauxProvider, FauxScript};
 use harness::agent_harness::{AgentHarness, AgentLane, HarnessRunOutcome};
-use harness::session::jsonl::{
-    encode_header, encode_mutation, JsonlSessionStorage, JsonlV4Header,
-};
+use harness::session::jsonl::{encode_header, encode_mutation, JsonlSessionStorage, JsonlV4Header};
 use harness::session::types::*;
 use harness::session::{DefaultIdGenerator, Session, SystemClock};
 use harness::types::AgentHarnessOptions;
-use tools::{FileContent, FileSystem, InMemoryExecutionEnv};
 use std::sync::Arc;
+use tools::{FileContent, FileSystem, InMemoryExecutionEnv};
 
 const PATH: &str = "/legacy.jsonl";
 const SIDE: &str = "/legacy.jsonl.progress.jsonl";
@@ -236,10 +234,10 @@ async fn changed_history_and_shared_handles_are_refused_and_declared_missing_sta
 }
 
 use async_trait::async_trait;
-use tools::env::FileInfo;
-use tools::error::{FileError, FileErrorCode};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio_util::sync::CancellationToken;
+use tools::env::FileInfo;
+use tools::error::{FileError, FileErrorCode};
 struct UpgradeFs {
     inner: Arc<dyn FileSystem>,
     mode: AtomicUsize,

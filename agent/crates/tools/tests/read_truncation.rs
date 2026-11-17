@@ -7,11 +7,11 @@ use std::sync::Arc;
 
 use agent::agent_tool::AgentTool;
 use agent::error::AgentError;
+use tokio_util::sync::CancellationToken;
 use tools::{
     ExecutionToolContext, FileSystem, InMemoryExecutionEnv, ProcessedImage, ReadImageProcessor,
     ReadToolOptions,
 };
-use tokio_util::sync::CancellationToken;
 
 /// Build a fresh in-memory tool context rooted at `/tmp/work`.
 fn fresh_context() -> (Arc<InMemoryExecutionEnv>, tools::ExecutionToolContext) {

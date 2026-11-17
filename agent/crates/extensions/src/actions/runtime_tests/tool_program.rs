@@ -10,9 +10,8 @@ fn invoke(bridge: &Arc<ActionBridge>, action: RuntimeActionId, args: Value) -> (
         &mut out,
         bridge.user_data(),
     );
-    let owned = unsafe {
-        plugin_sdk::callbacks::OwnedString::from_raw(out, Some(crate::host_free_string))
-    };
+    let owned =
+        unsafe { plugin_sdk::callbacks::OwnedString::from_raw(out, Some(crate::host_free_string)) };
     (rc, serde_json::from_str(&owned.to_string_lossy()).unwrap())
 }
 struct Probe {
@@ -771,10 +770,8 @@ async fn content_parts_bridge_without_owning_program_fails_even_when_inline_only
         .unwrap_err()
         .contains("effective ToolProgram"));
     assert!(invocation
-        .resolve_content_parts(vec![
-            agent::tool_program::ToolProgramContentPart::Inline(vec![
-                agent::TextContentOrImage::text("inline")
-            ])
-        ])
+        .resolve_content_parts(vec![agent::tool_program::ToolProgramContentPart::Inline(
+            vec![agent::TextContentOrImage::text("inline")]
+        )])
         .is_err());
 }

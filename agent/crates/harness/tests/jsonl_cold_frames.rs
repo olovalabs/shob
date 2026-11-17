@@ -1,12 +1,10 @@
 //! Real-file cold frame loading must preserve the eager storage contract.
-use harness::session::jsonl::{
-    encode_header, encode_mutation, JsonlSessionStorage, JsonlV4Header,
-};
+use harness::session::jsonl::{encode_header, encode_mutation, JsonlSessionStorage, JsonlV4Header};
 use harness::session::types::*;
 use harness::session::{DefaultIdGenerator, SystemClock};
-use tools::{FileContent, FileSystem, InMemoryExecutionEnv, OsExecutionEnv};
 use serde_json::json;
 use std::sync::Arc;
+use tools::{FileContent, FileSystem, InMemoryExecutionEnv, OsExecutionEnv};
 
 fn record(seq: u64, op: AssistantFrameOp) -> SessionMutation {
     SessionMutation::Record {

@@ -4,12 +4,12 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use base64::{engine::general_purpose::STANDARD, Engine as _};
 use agent::agent_tool::AgentTool;
 use agent::error::AgentError;
 use agent::types::{AgentToolResult, TextContentOrImage, ToolResultPartial};
 use ai::types::Tool;
+use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;

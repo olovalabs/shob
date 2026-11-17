@@ -1,6 +1,6 @@
 use super::*;
-use tui::terminal::{InputEvent, Terminal, TerminalInfo};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tui::terminal::{InputEvent, Terminal, TerminalInfo};
 
 fn state_with_root(root: &std::path::Path) -> Arc<TuiState> {
     let mut state = test_tui_state();
@@ -536,11 +536,7 @@ async fn review_pr98_new_must_not_switch_under_an_unscoped_user_bash_run() {
 
 /// An assistant turn with the given provider/model and usage, shaped like the
 /// entries a real session records (stop `Stop`, usage filled in).
-fn recorded_assistant_turn(
-    provider: &str,
-    model: &str,
-    usage: ai::types::Usage,
-) -> AgentMessage {
+fn recorded_assistant_turn(provider: &str, model: &str, usage: ai::types::Usage) -> AgentMessage {
     let mut a = ai::AssistantMessage::empty(
         ai::Api::Faux,
         provider,
@@ -600,23 +596,10 @@ async fn switching_back_to_a_session_restores_its_model() {
     let state = state_with_root(&root);
     let context = ::extensions::ToolCallContext::new(cwd.to_string_lossy());
     // The authenticated catalog carries the session's recorded model.
-    let catalog: Arc<std::sync::RwLock<Vec<ai::Model>>> =
-        Arc::new(std::sync::RwLock::new(vec![
-            ai::Model::new(
-                "first-model",
-                "first",
-                ai::Api::Faux,
-                "faux",
-                "http://x",
-            ),
-            ai::Model::new(
-                "second-model",
-                "second",
-                ai::Api::Faux,
-                "faux",
-                "http://x",
-            ),
-        ]));
+    let catalog: Arc<std::sync::RwLock<Vec<ai::Model>>> = Arc::new(std::sync::RwLock::new(vec![
+        ai::Model::new("first-model", "first", ai::Api::Faux, "faux", "http://x"),
+        ai::Model::new("second-model", "second", ai::Api::Faux, "faux", "http://x"),
+    ]));
 
     assert!(
         switch_to_session(
@@ -1724,9 +1707,8 @@ async fn review_the_export_advice_recovers_the_unsaved_message() {
         "/export must write the refused message it recommends exporting: {written}"
     );
 
-    let notice = tui_session_storage_notice(&harness::result::HarnessError::session_storage(
-        "disk full",
-    ));
+    let notice =
+        tui_session_storage_notice(&harness::result::HarnessError::session_storage("disk full"));
     assert!(notice.contains("/export"), "{notice}");
 }
 

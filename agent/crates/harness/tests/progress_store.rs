@@ -4,8 +4,8 @@ use harness::session::types::*;
 use harness::session::{
     DefaultIdGenerator, InMemorySessionStorage, SqliteSessionRepo, SystemClock,
 };
-use tools::{FileContent, FileSystem, OsExecutionEnv};
 use std::sync::Arc;
+use tools::{FileContent, FileSystem, OsExecutionEnv};
 
 #[tokio::test]
 async fn jsonl_requires_its_companion_and_forks_only_committed_history() {

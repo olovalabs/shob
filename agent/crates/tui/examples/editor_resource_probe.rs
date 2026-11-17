@@ -7,9 +7,9 @@ use std::io::{self, BufRead, Write};
 use std::process::ExitCode;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use serde_json::{json, Value};
 use tui::component::Component;
 use tui::Editor;
-use serde_json::{json, Value};
 
 const MAX_REQUEST_BYTES: usize = 4096;
 const MAX_PASTE_BYTES: u64 = 4 * 1024 * 1024;

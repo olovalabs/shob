@@ -12,8 +12,8 @@
 //! `accepting_updates: Arc<AtomicBool>` gate so calls made after `execute`
 //! resolves are no-ops — the late-update suppression invariant (plan §5.3).
 
-use async_trait::async_trait;
 use ai::types::Tool;
+use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::AgentError;

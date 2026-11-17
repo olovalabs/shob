@@ -123,9 +123,8 @@ fn call(id: usize, args: Value) -> (i32, Value) {
         id as *mut c_void,
     );
     // SAFETY: the trampoline returned a live host allocation to its caller.
-    let owned = unsafe {
-        plugin_sdk::callbacks::OwnedString::from_raw(out, Some(crate::host_free_string))
-    };
+    let owned =
+        unsafe { plugin_sdk::callbacks::OwnedString::from_raw(out, Some(crate::host_free_string)) };
     (rc, serde_json::from_str(&owned.to_string_lossy()).unwrap())
 }
 
@@ -334,9 +333,8 @@ async fn abort_reaches_the_host_and_is_not_blocked_by_the_action_id_ceiling() {
         plugin.user_data(),
     );
     // SAFETY: the trampoline returned a live host allocation to its caller.
-    let owned = unsafe {
-        plugin_sdk::callbacks::OwnedString::from_raw(out, Some(crate::host_free_string))
-    };
+    let owned =
+        unsafe { plugin_sdk::callbacks::OwnedString::from_raw(out, Some(crate::host_free_string)) };
     let value: Value = serde_json::from_str(&owned.to_string_lossy()).unwrap();
     assert_eq!(rc, 0, "Abort must dispatch, not fail as an unknown id");
     assert_eq!(value, json!({"aborted": false}));

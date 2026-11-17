@@ -1199,10 +1199,7 @@ fn rpc_execute_command(
         // SAFETY: the callback transfers its output using the host allocator,
         // matching the TUI command invocation contract.
         let out = unsafe {
-            plugin_sdk::callbacks::OwnedString::from_raw(
-                out,
-                Some(extensions::host_free_string),
-            )
+            plugin_sdk::callbacks::OwnedString::from_raw(out, Some(extensions::host_free_string))
         };
         if rc != 0 {
             return Err(format!("command failed: {name} (code {rc})"));
@@ -2346,29 +2343,30 @@ fn rpc_get_auth_status(
             .collect()
     });
     let auth_states = crate::credentials::statuses(&models, &store, &manifests);
-    let providers = rpc_auth_provider_ids(model_catalog)
-        .into_iter()
-        .map(|provider| {
-            let credential = store.get(&provider);
-            let state = auth_states.get(&provider).cloned().unwrap_or(
-                runtime::credentials::AuthState {
-                    status: runtime::credentials::AuthStatus::Missing,
-                    source: crate::credentials::CredentialSource::Missing,
-                },
-            );
-            let oauth = matches!(credential, Some(crate::config::Credential::Oauth { .. }));
-            let oauth_available =
-                oauth_snapshot.is_some_and(|snapshot| snapshot.oauth_provider(&provider).is_some());
-            serde_json::json!({
-                "provider": provider,
-                "ready": state.is_ready(),
-                "source": state.source.as_json_str(),
-                "status": state.status,
-                "oauth": oauth,
-                "oauthAvailable": oauth_available,
+    let providers =
+        rpc_auth_provider_ids(model_catalog)
+            .into_iter()
+            .map(|provider| {
+                let credential = store.get(&provider);
+                let state = auth_states.get(&provider).cloned().unwrap_or(
+                    runtime::credentials::AuthState {
+                        status: runtime::credentials::AuthStatus::Missing,
+                        source: crate::credentials::CredentialSource::Missing,
+                    },
+                );
+                let oauth = matches!(credential, Some(crate::config::Credential::Oauth { .. }));
+                let oauth_available = oauth_snapshot
+                    .is_some_and(|snapshot| snapshot.oauth_provider(&provider).is_some());
+                serde_json::json!({
+                    "provider": provider,
+                    "ready": state.is_ready(),
+                    "source": state.source.as_json_str(),
+                    "status": state.status,
+                    "oauth": oauth,
+                    "oauthAvailable": oauth_available,
+                })
             })
-        })
-        .collect::<Vec<_>>();
+            .collect::<Vec<_>>();
     serde_json::json!({"providers": providers})
 }
 
@@ -2759,10 +2757,9 @@ async fn rpc_set_thinking_level(
         .get("level")
         .or_else(|| msg.get("thinkingLevel"))
         .ok_or("set_thinking_level requires `level`")?;
-    let level: ai::types::ThinkingLevel =
-        serde_json::from_value(value.clone()).map_err(|_| {
-            "invalid thinking level (off|minimal|low|medium|high|xhigh|max)".to_string()
-        })?;
+    let level: ai::types::ThinkingLevel = serde_json::from_value(value.clone()).map_err(|_| {
+        "invalid thinking level (off|minimal|low|medium|high|xhigh|max)".to_string()
+    })?;
     lane.set_thinking_level(level)
         .await
         .map_err(|e| e.to_string())?;
@@ -3052,9 +3049,7 @@ mod tests {
     use super::*;
     use agent::events::AgentEvent;
     use agent::types::AgentToolResult;
-    use ai::types::{
-        AssistantMessage, Content, StopReason, TextContent, TextContentType, Usage,
-    };
+    use ai::types::{AssistantMessage, Content, StopReason, TextContent, TextContentType, Usage};
     use harness::session::types::OperationError;
 
     /// Regression: the abort reply must carry the reclaimed queue back instead
@@ -3794,11 +3789,9 @@ mod tests {
         let (harness, _unused_provider) = rpc_test_harness("must not be called", 0.0).await;
         let view = harness.view();
         for index in 0..23 {
-            view.append_message(
-                ai::UserMessage::new(format!("Question {index}"), index).into(),
-            )
-            .await
-            .unwrap();
+            view.append_message(ai::UserMessage::new(format!("Question {index}"), index).into())
+                .await
+                .unwrap();
         }
         let pinned = view.get_leaf_id().await.unwrap();
         let (mut client, output, task) =
@@ -4254,8 +4247,7 @@ mod tests {
             for input in ["", "{\"type\":\"stop\",\"id\":1}\n"] {
                 let harness = AgentHarness::create(Default::default()).await.unwrap();
                 let (tx, rx) = tokio::sync::broadcast::channel(256);
-                let mut message =
-                    ai::AssistantMessage::empty(ai::Api::Faux, "faux", "m", 42);
+                let mut message = ai::AssistantMessage::empty(ai::Api::Faux, "faux", "m", 42);
                 message.content = vec![ai::Content::text("snapshot")];
                 let message = Arc::new(message);
                 for _ in 0..100 {

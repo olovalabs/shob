@@ -22,9 +22,7 @@ impl runtime::ValueSource for CliValues {
         }
     }
 }
-pub(crate) fn declaration(
-    manifest: &extensions::ProviderManifest,
-) -> runtime::ProviderDeclaration {
+pub(crate) fn declaration(manifest: &extensions::ProviderManifest) -> runtime::ProviderDeclaration {
     runtime::ProviderDeclaration {
         id: manifest.id.clone(),
         models: manifest.models.clone(),
@@ -220,10 +218,9 @@ pub fn runtime_factories(session: Option<&extensions::ExtensionSession>) -> Runt
         for manifest in manifests_from_session(session) {
             factories.declare(declaration(&manifest));
         }
-        for provider in extensions::PluggableProvider::from_session(
-            session,
-            tokio::runtime::Handle::current(),
-        ) {
+        for provider in
+            extensions::PluggableProvider::from_session(session, tokio::runtime::Handle::current())
+        {
             if let Some(record) = snapshot
                 .providers()
                 .iter()

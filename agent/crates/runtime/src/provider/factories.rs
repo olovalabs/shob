@@ -501,8 +501,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((model.clone(), options.clone()));
-            let (mut producer, stream) =
-                ai::event_stream::create_assistant_message_event_stream();
+            let (mut producer, stream) = ai::event_stream::create_assistant_message_event_stream();
             producer
                 .push(AssistantMessageEvent::Done {
                     reason: DoneReason::Stop,

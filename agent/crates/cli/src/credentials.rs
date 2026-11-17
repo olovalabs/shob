@@ -5,9 +5,7 @@ use crate::config::{AuthStore, ProviderConfig};
 use extensions::ProviderManifest;
 #[cfg(test)]
 pub(crate) use runtime::credentials::has_header_auth;
-pub(crate) use runtime::credentials::{
-    builtin_api_key_env, CredentialSource, ResolvedCredential,
-};
+pub(crate) use runtime::credentials::{builtin_api_key_env, CredentialSource, ResolvedCredential};
 pub(crate) fn resolve(
     provider: &str,
     config: Option<&ProviderConfig>,

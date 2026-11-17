@@ -66,9 +66,7 @@ async fn real_subagent_plugin_inherits_project_tools_model_and_parent_approval_u
         .collect();
     let env = Arc::new(tools::OsExecutionEnv::with_cwd(temp.path().into()));
     let tool_ctx = tools::ExecutionToolContext::new(env.clone(), Some(env));
-    tools.push(HarnessTool::new(tools::create_read_tool(
-        &tool_ctx, None,
-    )));
+    tools.push(HarnessTool::new(tools::create_read_tool(&tool_ctx, None)));
     tools.push(HarnessTool::new(tools::create_write_tool(&tool_ctx)));
     std::fs::write(temp.path().join("project.txt"), "project cwd fixture").unwrap();
     let script = FauxScript::new();

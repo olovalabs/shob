@@ -6,8 +6,8 @@
 //! Keep failing contracts visible: do not ignore them or assert the broken output.
 
 use super::*;
-use tui::{ansi::CURSOR_MARKER, BashExecutionComponent, Component, ToolExecutionComponent};
 use std::time::{Duration, Instant};
+use tui::{ansi::CURSOR_MARKER, BashExecutionComponent, Component, ToolExecutionComponent};
 
 const WIDTH: usize = 80;
 const HEIGHT: usize = 12;

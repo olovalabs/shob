@@ -5,10 +5,10 @@ use harness::session::jsonl::types::JsonlSessionCreateOptions;
 use harness::session::jsonl::{JsonlSessionRepo, JsonlSessionRepoOptions, JsonlSessionStorage};
 use harness::session::types::*;
 use harness::session::{DefaultIdGenerator, SessionValues, SystemClock};
-use tools::env::FileContent;
-use tools::{FileSystem, OsExecutionEnv};
 use serde_json::{json, Value};
 use std::sync::Arc;
+use tools::env::FileContent;
+use tools::{FileSystem, OsExecutionEnv};
 
 const BINDING: &str = "rpi.resource-selection.v1";
 
@@ -284,11 +284,9 @@ async fn cold_custom_only_without_authority_and_rejected_initialization_do_not_m
             .await;
         assert!(result.is_err());
         assert!(!repo
-            .list_typed(
-                &harness::session::jsonl::types::JsonlSessionListOptions {
-                    cwd: Some(cwd.clone())
-                }
-            )
+            .list_typed(&harness::session::jsonl::types::JsonlSessionListOptions {
+                cwd: Some(cwd.clone())
+            })
             .await
             .unwrap()
             .iter()

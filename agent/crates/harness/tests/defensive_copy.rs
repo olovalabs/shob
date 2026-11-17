@@ -16,11 +16,11 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use agent::agent_tool::AgentTool;
 use agent::error::AgentError;
 use agent::types::{AgentToolResult, ToolResultPartial};
 use ai::types::{Schema, Tool};
+use async_trait::async_trait;
 use harness::agent_harness::{AgentHarness, AgentLane};
 use harness::result::HarnessError;
 use harness::types::{AgentHarnessOptions, HarnessTool, ToolReplay};

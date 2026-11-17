@@ -9,13 +9,13 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use futures::future::BoxFuture;
-use futures::FutureExt;
 use agent::agent_tool::AgentTool;
 use agent::error::AgentError;
 use agent::types::{AgentToolResult, TextContentOrImage, ToolResultPartial};
 use ai::types::{ConstrainedSamplingConfig, ConstrainedStrictness, Tool};
+use async_trait::async_trait;
+use futures::future::BoxFuture;
+use futures::FutureExt;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
@@ -51,9 +51,7 @@ impl WriteTool {
             description: "Write content to a file. Creates the file if it doesn't exist, \
                           overwrites if it does. Automatically creates parent directories."
                 .to_string(),
-            parameters: ai::types::Schema::new(
-                serde_json::to_value(params).unwrap_or_default(),
-            ),
+            parameters: ai::types::Schema::new(serde_json::to_value(params).unwrap_or_default()),
             constrained_sampling: Some(ConstrainedSamplingConfig::JsonSchema {
                 strict: ConstrainedStrictness::Prefer,
             }),

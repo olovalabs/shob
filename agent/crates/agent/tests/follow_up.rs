@@ -22,9 +22,9 @@ mod common;
 
 use std::sync::Arc;
 
-use common::{assistant_text, base_config, user_message};
 use agent::{AgentContext, AgentEvent, GetFollowUpMessages, GetSteeringMessages};
 use ai::types::StopReason;
+use common::{assistant_text, base_config, user_message};
 
 /// Count `turn_start` events — one per LLM call.
 fn turn_start_count(events: &[AgentEvent]) -> usize {

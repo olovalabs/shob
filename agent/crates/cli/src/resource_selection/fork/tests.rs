@@ -2,9 +2,7 @@ use super::*;
 use harness::session::jsonl::{
     JsonlSessionCreateOptions, JsonlSessionListOptions, JsonlSessionRepo, JsonlSessionRepoOptions,
 };
-use harness::session::types::{
-    BranchBounds, EntryOrder, EntryQuery, ForkOptions, ForkPosition,
-};
+use harness::session::types::{BranchBounds, EntryOrder, EntryQuery, ForkOptions, ForkPosition};
 use harness::session::{Session, SessionValues};
 use std::sync::Arc;
 

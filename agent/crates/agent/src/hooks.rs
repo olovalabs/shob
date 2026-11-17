@@ -15,10 +15,10 @@ use crate::types::{
     AfterToolCallContext, AfterToolCallResult, AgentLoopTurnUpdate, BeforeToolCallContext,
     BeforeToolCallResult, ShouldStopAfterTurnContext, ToolExecutionMode,
 };
-use futures::future::BoxFuture;
 use ai::provider::{CacheRetention, SimpleStreamOptions};
 use ai::types::{Message, ThinkingLevel};
 use ai::Model;
+use futures::future::BoxFuture;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;

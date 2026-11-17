@@ -1,16 +1,14 @@
 //! Journal at actual execute entry, after preparation and authorization.
 use super::*;
-use futures::future::BoxFuture;
-use agent::{
-    AgentEmitter, AgentError, AgentEvent, AgentTool, AgentToolResult, ToolResultPartial,
-};
+use agent::{AgentEmitter, AgentError, AgentEvent, AgentTool, AgentToolResult, ToolResultPartial};
 use ai::providers::faux::{faux_tool_call, FauxStep};
+use futures::future::BoxFuture;
 use harness::session::jsonl::{JsonlSessionStorage, JsonlV4Header};
 use harness::session::memory::SystemClock;
 use harness::session::DefaultIdGenerator;
 use harness::types::{HarnessTool, HarnessToolExecution};
-use tools::{FileSystem, OsExecutionEnv};
 use tokio_util::sync::CancellationToken;
+use tools::{FileSystem, OsExecutionEnv};
 
 struct ArgumentTool {
     schema: ai::types::Tool,
@@ -111,9 +109,7 @@ async fn setup_on_storage(
         model: provider.default_model().clone(),
         models: vec![provider],
         session: Session::new(storage.clone(), None),
-        tools: vec![
-            HarnessTool::new(tool.clone()).with_replay(harness::types::ToolReplay::Safe)
-        ],
+        tools: vec![HarnessTool::new(tool.clone()).with_replay(harness::types::ToolReplay::Safe)],
         tool_execution: mode,
         before_tool_call: before,
         agent_emitter: emitter,
@@ -272,8 +268,9 @@ async fn prepared_parameters_are_persisted_and_replayed_without_preparing_again(
             let restored = AgentHarness::create(AgentHarnessOptions {
                 session: Session::new(Arc::new(reopened), None),
                 allow_existing_session: true,
-                tools: vec![HarnessTool::new(tool.clone())
-                    .with_replay(harness::types::ToolReplay::Safe)],
+                tools: vec![
+                    HarnessTool::new(tool.clone()).with_replay(harness::types::ToolReplay::Safe)
+                ],
                 ..Default::default()
             })
             .await

@@ -12,8 +12,8 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
-use futures::future::BoxFuture;
 use agent::events::{AgentEmitter, AgentEvent};
+use futures::future::BoxFuture;
 use plugin_sdk::{EventTag, StablePluginEvent, StbString};
 
 use crate::host_free_string;
@@ -1207,14 +1207,12 @@ mod tests {
         let snapshot = reg.snapshot();
 
         let event = AgentEvent::TurnEnd {
-            message: agent::AgentMessage::Assistant(Box::new(
-                ai::types::AssistantMessage::empty(
-                    ai::types::Api::AnthropicMessages,
-                    "p",
-                    "m",
-                    0,
-                ),
-            )),
+            message: agent::AgentMessage::Assistant(Box::new(ai::types::AssistantMessage::empty(
+                ai::types::Api::AnthropicMessages,
+                "p",
+                "m",
+                0,
+            ))),
             tool_results: vec![],
             pending_messages: 0,
         };

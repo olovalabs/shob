@@ -1,9 +1,9 @@
 //! Final entry ACK refusal must not invalidate an already-bound native ID or
 //! publish AgentEnd before that entry is queryable.
 use super::*;
-use futures::future::BoxFuture;
 use agent::{AgentEmitter, AgentEvent};
 use ai::providers::faux::FauxStep;
+use futures::future::BoxFuture;
 use harness::session::jsonl::{JsonlSessionStorage, JsonlV4Header};
 use harness::session::{DefaultIdGenerator, SystemClock};
 use harness::types::{CompactionSettings, HarnessTool, RetryPolicy};

@@ -4,9 +4,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use futures::FutureExt;
 use agent::{AgentEmitter, AgentEvent};
 use ai::types::AssistantMessageEvent;
+use futures::FutureExt;
 use harness::agent_harness::{AgentHarness, ChildHarness};
 use harness::session::memory::{InMemorySessionStorage, SystemClock};
 use harness::session::session::DefaultIdGenerator;

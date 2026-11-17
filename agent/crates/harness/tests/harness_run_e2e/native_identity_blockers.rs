@@ -1,9 +1,9 @@
 //! Real harness → SettlingEmitter → FrameRecordingEmitter regression cases.
 //! Gates hold a live stream/tool invocation open without token-rate timing races.
 use super::*;
-use futures::future::BoxFuture;
 use ai::providers::faux::DeferredPoll;
 use ai::{AssistantMessageEvent, DeferredHandle, StopReason};
+use futures::future::BoxFuture;
 use harness::session::jsonl::{JsonlSessionStorage, JsonlV4Header};
 use harness::session::types::{AssistantFrameOp, Entry};
 use harness::session::{validate_record_log, RecordLogSlice};
@@ -232,9 +232,10 @@ async fn crash_stream(volatile: bool, injected: bool) {
                 .await
                 .unwrap();
             if partial.iter().any(|message| {
-                message.content.iter().any(
-                    |block| matches!(block, ai::Content::Text(text) if !text.text.is_empty()),
-                )
+                message
+                    .content
+                    .iter()
+                    .any(|block| matches!(block, ai::Content::Text(text) if !text.text.is_empty()))
             }) {
                 break;
             }

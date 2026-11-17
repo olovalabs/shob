@@ -12,13 +12,13 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use futures::future::BoxFuture;
-use futures::FutureExt;
 use agent::agent_tool::AgentTool;
 use agent::error::AgentError;
 use agent::types::{AgentToolResult, TextContentOrImage, ToolResultPartial};
 use ai::types::{ConstrainedSamplingConfig, ConstrainedStrictness, Tool};
+use async_trait::async_trait;
+use futures::future::BoxFuture;
+use futures::FutureExt;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;

@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use ai::providers::antigravity::{self, Account, AntigravityProvider, ENDPOINT, ID};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use ai::providers::antigravity::{self, Account, AntigravityProvider, ENDPOINT, ID};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};

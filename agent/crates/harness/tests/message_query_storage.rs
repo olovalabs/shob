@@ -10,8 +10,8 @@ use harness::session::types::{
 use harness::session::{
     CounterIdGenerator, InMemorySessionRepo, Session, SqliteSessionRepo, SystemClock,
 };
-use tools::{FileSystem, OsExecutionEnv};
 use std::sync::Arc;
+use tools::{FileSystem, OsExecutionEnv};
 async fn fill(storage: Arc<dyn SessionStorage>) {
     let session = Session::new(storage.clone(), None);
     for index in 0..23 {

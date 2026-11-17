@@ -45,10 +45,7 @@ async fn dropping_a_plugin_bound_harness_releases_its_provider_and_tool_keepaliv
         })
         .await
         .unwrap();
-        cli::extensions_actions::HarnessActionHost::set_harness(
-            &cell,
-            Arc::new(parent.clone()),
-        );
+        cli::extensions_actions::HarnessActionHost::set_harness(&cell, Arc::new(parent.clone()));
         drop(provider);
         drop(extensions);
         drop(keepalive);

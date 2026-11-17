@@ -475,16 +475,11 @@ fn register_tool(
     // `plugin_free_string` right after, so no retention past the call.
     let (name, description, parameters_value) = unsafe {
         let s = &*schema;
-        let name =
-            plugin_sdk::callbacks::OwnedString::from_raw(s.name, Some(plugin_free_string));
-        let description = plugin_sdk::callbacks::OwnedString::from_raw(
-            s.description,
-            Some(plugin_free_string),
-        );
-        let parameters = plugin_sdk::callbacks::OwnedString::from_raw(
-            s.parameters,
-            Some(plugin_free_string),
-        );
+        let name = plugin_sdk::callbacks::OwnedString::from_raw(s.name, Some(plugin_free_string));
+        let description =
+            plugin_sdk::callbacks::OwnedString::from_raw(s.description, Some(plugin_free_string));
+        let parameters =
+            plugin_sdk::callbacks::OwnedString::from_raw(s.parameters, Some(plugin_free_string));
         (
             name.to_string_lossy(),
             description.to_string_lossy(),

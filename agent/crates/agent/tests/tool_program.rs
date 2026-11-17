@@ -1,13 +1,13 @@
 //! Offline action-30 runtime safety and normal transcript isolation.
 #[path = "common/mod.rs"]
 mod common;
-use futures::future::BoxFuture;
 use agent::{
     tool_program::{current, ToolProgram},
     AfterToolCallResult, AgentContext, AgentError, AgentTool, AgentToolResult,
     BeforeToolCallResult, ToolExecutionMode, ToolResultPartial,
 };
 use ai::types::{StopReason, Tool};
+use futures::future::BoxFuture;
 use serde_json::{json, Value};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -1888,9 +1888,9 @@ async fn reference_large_finalized_unicode_receipt_reads_losslessly_and_dispose_
     let saved = Arc::new(Mutex::new(None));
     let retained = saved.clone();
     let mut native = business_result(business_json());
-    native.content.push(agent::TextContentOrImage::text(
-        "界😀\"\\n".repeat(150_000),
-    ));
+    native
+        .content
+        .push(agent::TextContentOrImage::text("界😀\"\\n".repeat(150_000)));
     native.details["large"] = json!("é😀\"\\n".repeat(150_000));
     let encoded = serde_json::to_string(&native).unwrap();
     assert!(encoded.len() > 1024 * 1024);

@@ -25,10 +25,10 @@ mod common;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use common::{assistant_tool_calls, base_config};
 use agent::{AbortHandle, AgentContext, AgentEvent, AgentToolResult};
 use ai::event_stream::create_assistant_message_event_stream;
 use ai::types::{AssistantMessage, AssistantMessageEvent, ErrorReason, StopReason};
+use common::{assistant_tool_calls, base_config};
 use tokio_util::sync::CancellationToken;
 
 /// True once an `AgentEnd` event has appeared.

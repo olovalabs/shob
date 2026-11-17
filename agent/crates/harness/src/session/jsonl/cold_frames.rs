@@ -8,13 +8,13 @@ use crate::{
         types::*,
     },
 };
-use tools::env::{AppendReceipt, ReadFile};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
+use tools::env::{AppendReceipt, ReadFile};
 
 /// A single JSONL row may exceed the scanner's 1 MiB I/O window. Keep
 /// hydration bounded at the reader boundary too, without splitting JSON values

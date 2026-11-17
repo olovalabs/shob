@@ -1,15 +1,13 @@
-use async_trait::async_trait;
 use agent::AgentMessage;
 use ai::providers::faux::{faux_assistant_message, FauxProvider, FauxScript};
 use ai::types::{Content, StopReason, ToolResultMessage, ToolResultRole};
+use async_trait::async_trait;
 use harness::agent_harness::{AgentHarness, AgentLane, HarnessRunOutcome};
 use harness::session::{
     jsonl::{JsonlSessionStorage, JsonlV4Header},
     DefaultIdGenerator, Session, SystemClock,
 };
 use harness::types::AgentHarnessOptions;
-use tools::env::AppendFile;
-use tools::{FileContent, FileError, FileInfo, FileSystem};
 use std::{
     path::{Path, PathBuf},
     sync::{
@@ -19,6 +17,8 @@ use std::{
 };
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
+use tools::env::AppendFile;
+use tools::{FileContent, FileError, FileInfo, FileSystem};
 
 async fn harness(session: Option<Session>) -> AgentHarness {
     let p = FauxProvider::new(
@@ -37,9 +37,7 @@ async fn harness(session: Option<Session>) -> AgentHarness {
     }
     AgentHarness::create(opts).await.unwrap()
 }
-fn completed(
-    r: &harness::agent_harness::RunResult,
-) -> (&str, &str, &ai::types::AssistantMessage) {
+fn completed(r: &harness::agent_harness::RunResult) -> (&str, &str, &ai::types::AssistantMessage) {
     match &r.outcome {
         HarnessRunOutcome::Completed {
             leaf_id,

@@ -1,6 +1,5 @@
 use harness::session::jsonl::{encode_header, JsonlSessionStorage, JsonlV4Header};
 use harness::session::{DefaultIdGenerator, SystemClock};
-use tools::{FileSystem, OsExecutionEnv};
 use std::{
     env, fs,
     path::Path,
@@ -9,6 +8,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use tools::{FileSystem, OsExecutionEnv};
 
 const CHILD_ENV: &str = "RPI_DIAGNOSTICS_BROKEN_PIPE_CHILD";
 const HISTORY_ENV: &str = "RPI_DIAGNOSTICS_BROKEN_PIPE_HISTORY";

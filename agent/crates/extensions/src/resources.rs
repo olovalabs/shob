@@ -121,9 +121,8 @@ fn call_one_handler(
     let mut out = StbString::empty();
     let rc = (h.handler)(cwd_ref, reason_ref, &mut out, h.user_data);
     // SAFETY: the callback transfers its live output to its registered producer.
-    let out = unsafe {
-        plugin_sdk::callbacks::OwnedString::from_raw(out, Some(h.plugin_free_string))
-    };
+    let out =
+        unsafe { plugin_sdk::callbacks::OwnedString::from_raw(out, Some(h.plugin_free_string)) };
     if rc != 0 {
         // The owner also reclaims output a handler wrote before returning error.
         return Err(rc);

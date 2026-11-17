@@ -511,10 +511,7 @@ pub(super) async fn handle_agent_event(
 /// and errored turns are skipped (their usage is not a real context
 /// measurement, mirroring pi's `lastAssistantUsageInfo`) so the last valid
 /// count stays on screen instead of flickering to `?`.
-pub(super) fn record_context_usage(
-    footer: &tui::FooterComponent,
-    message: &ai::AssistantMessage,
-) {
+pub(super) fn record_context_usage(footer: &tui::FooterComponent, message: &ai::AssistantMessage) {
     if message.stop_reason == ai::StopReason::Aborted
         || message.stop_reason == ai::StopReason::Error
     {

@@ -6,13 +6,11 @@ use std::sync::{
     Arc, Mutex, Weak,
 };
 
-use futures::future::BoxFuture;
 use agent::{AgentEmitter, AgentEvent, AgentMessage};
-use ai::providers::faux::{
-    faux_assistant_message, FauxBlock, FauxProvider, FauxScript, FauxStep,
-};
+use ai::providers::faux::{faux_assistant_message, FauxBlock, FauxProvider, FauxScript, FauxStep};
 use ai::types::{Content, Message, StopReason, UserContent};
 use ai::Provider;
+use futures::future::BoxFuture;
 use harness::agent_harness::{AgentHarness, AgentLane, HarnessRunOutcome, SendMessageResult};
 use harness::messages::create_custom_message;
 use harness::session::memory::{InMemorySessionStorage, SystemClock};
@@ -1606,19 +1604,17 @@ async fn usage_from_run_end_is_a_lane_fact_and_keeps_the_log_valid() {
     )
     .await;
     let weak = Arc::downgrade(&h);
-    let _listener = h
-        .events()
-        .on::<harness::events::RunEndEvent, _>(move |_| {
-            let h = weak.upgrade().unwrap();
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(h.record_usage(
-                    ai::types::Usage::zero(),
-                    None,
-                    Some(serde_json::json!({"phase": "end"})),
-                ))
-            })
-            .unwrap();
-        });
+    let _listener = h.events().on::<harness::events::RunEndEvent, _>(move |_| {
+        let h = weak.upgrade().unwrap();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(h.record_usage(
+                ai::types::Usage::zero(),
+                None,
+                Some(serde_json::json!({"phase": "end"})),
+            ))
+        })
+        .unwrap();
+    });
     h.prompt_text("answer", vec![]).await.unwrap();
     let records = h
         .session()

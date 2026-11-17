@@ -24,13 +24,8 @@ pub(super) extern "C" fn consume_execute(
     std::ptr::NonNull::dangling().as_ptr()
 }
 pub(super) extern "C" fn noop(_: StepHandle) {}
-extern "C" fn noop_set_waker(_: StepHandle, _: Option<plugin_sdk::ToolWakeCb>, _: *mut c_void) {
-}
-extern "C" fn slow_set_waker(
-    _: StepHandle,
-    cb: Option<plugin_sdk::ToolWakeCb>,
-    _: *mut c_void,
-) {
+extern "C" fn noop_set_waker(_: StepHandle, _: Option<plugin_sdk::ToolWakeCb>, _: *mut c_void) {}
+extern "C" fn slow_set_waker(_: StepHandle, cb: Option<plugin_sdk::ToolWakeCb>, _: *mut c_void) {
     gate(if cb.is_some() { 3 } else { 4 });
 }
 

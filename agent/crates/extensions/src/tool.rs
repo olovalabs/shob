@@ -19,11 +19,11 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
-use async_trait::async_trait;
 use agent::agent_tool::AgentTool;
 use agent::error::AgentError;
 use agent::types::{AgentToolResult, TextContentOrImage, ToolExecutionMode, ToolResultPartial};
 use ai::types::Tool;
+use async_trait::async_trait;
 use plugin_sdk::callbacks::{take_step_result_with, OwnedString, Step};
 use plugin_sdk::{
     FreeStringFn, StbString, StbStringRef, StepHandle, ToolCancelFn, ToolDestroyFn, ToolExecuteFn,
@@ -135,13 +135,13 @@ fn json_to_result(text: &str) -> AgentToolResult {
                             .and_then(|v| v.as_str())
                             .unwrap_or("image/png")
                             .to_string();
-                        result.content.push(TextContentOrImage::Image(
-                            ai::types::ImageContent {
+                        result
+                            .content
+                            .push(TextContentOrImage::Image(ai::types::ImageContent {
                                 kind: ai::types::ImageContentType,
                                 data: data.into(),
                                 mime_type: mime,
-                            },
-                        ));
+                            }));
                     }
                     _ => {
                         let t = block
@@ -1434,8 +1434,7 @@ mod tests {
             }
             // A registration opting in must not silently accept a legacy payload.
             let mut adapter = echo_adapter();
-            adapter.schema.parameters =
-                ai::types::Schema::new(json!({"x-rpi-result-envelope":1}));
+            adapter.schema.parameters = ai::types::Schema::new(json!({"x-rpi-result-envelope":1}));
             adapter.handle.poll_fn = envelope_poll;
             if wake {
                 adapter.handle.set_waker_fn = Some(no_wake);

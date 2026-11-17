@@ -15,11 +15,11 @@ use std::time::Duration;
 
 use agent::agent_tool::AgentTool;
 use agent::error::AgentError;
+use tokio_util::sync::CancellationToken;
 use tools::{
     BashToolOptions, ExecutionToolContext, FileSystem, InMemoryExecutionEnv, ShellScript,
     DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES,
 };
-use tokio_util::sync::CancellationToken;
 
 fn fresh_context() -> (Arc<InMemoryExecutionEnv>, ExecutionToolContext) {
     let env = Arc::new(InMemoryExecutionEnv::with_cwd("/tmp/work".into()));
@@ -239,9 +239,8 @@ async fn complete_log_outlives_the_bounded_display_tail() {
 #[tokio::test]
 async fn sanitizes_ansi_sequences_split_across_pipe_reads() {
     let dir = tempfile::tempdir().unwrap();
-    let env: Arc<dyn tools::ExecutionEnv> = Arc::new(tools::OsExecutionEnv::with_cwd(
-        dir.path().to_path_buf(),
-    ));
+    let env: Arc<dyn tools::ExecutionEnv> =
+        Arc::new(tools::OsExecutionEnv::with_cwd(dir.path().to_path_buf()));
     let capture = tools::shell_output::execute_shell_with_capture(
         &env,
         "printf '\\033['; printf 'visible\\n' >&2; sleep 0.02; printf '31mred\\033]title'; sleep 0.02; printf '\\007plain\\033[0m'",
@@ -258,9 +257,8 @@ async fn sanitizes_ansi_sequences_split_across_pipe_reads() {
 #[tokio::test]
 async fn native_capture_persists_more_than_its_rolling_tail() {
     let dir = tempfile::tempdir().unwrap();
-    let env: Arc<dyn tools::ExecutionEnv> = Arc::new(tools::OsExecutionEnv::with_cwd(
-        dir.path().to_path_buf(),
-    ));
+    let env: Arc<dyn tools::ExecutionEnv> =
+        Arc::new(tools::OsExecutionEnv::with_cwd(dir.path().to_path_buf()));
     let capture = tools::shell_output::execute_shell_with_capture(
         &env,
         "printf BEGIN; head -c 2000000 /dev/zero | tr '\\0' a; printf END",

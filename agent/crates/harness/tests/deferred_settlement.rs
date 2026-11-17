@@ -69,12 +69,7 @@ async fn park(h: &AgentHarness, p: &FauxProvider, with_operation: bool) -> Defer
         .unwrap();
     handle
 }
-fn watch(
-    h: &AgentHarness,
-) -> (
-    Arc<Mutex<Vec<RunEndEvent>>>,
-    harness::events::OnUnsubscribe,
-) {
+fn watch(h: &AgentHarness) -> (Arc<Mutex<Vec<RunEndEvent>>>, harness::events::OnUnsubscribe) {
     let events = Arc::new(Mutex::new(Vec::new()));
     let out = events.clone();
     let subscription = h
@@ -312,12 +307,12 @@ async fn deferred_run_end_has_terminal_proof_and_holds_admission_until_observers
 mod refusal {
     use super::*;
     use async_trait::async_trait;
-    use tools::env::AppendFile;
-    use tools::{FileContent, FileError, FileInfo, FileSystem};
     use std::path::{Path, PathBuf};
     use std::sync::atomic::AtomicBool;
     use tokio::sync::Notify;
     use tokio_util::sync::CancellationToken;
+    use tools::env::AppendFile;
+    use tools::{FileContent, FileError, FileInfo, FileSystem};
     #[derive(Default)]
     struct Gate {
         armed: AtomicBool,

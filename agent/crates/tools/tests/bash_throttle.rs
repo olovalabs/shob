@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent::types::{AgentToolResult, TextContentOrImage};
-use tools::{ExecutionEnv, ExecutionToolContext, OsExecutionEnv};
 use tokio_util::sync::CancellationToken;
+use tools::{ExecutionEnv, ExecutionToolContext, OsExecutionEnv};
 
 fn text(result: &AgentToolResult) -> String {
     result

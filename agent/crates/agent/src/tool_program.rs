@@ -5,8 +5,8 @@ use crate::tool_program_observation::{
 use crate::{
     AgentContext, AgentEmitter, AgentEvent, AgentLoopConfig, TextContentOrImage, ToolExecutionMode,
 };
-use futures::{future::BoxFuture, FutureExt};
 use ai::types::{AssistantMessage, ToolCall, ToolCallType};
+use futures::{future::BoxFuture, FutureExt};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,

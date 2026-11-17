@@ -1,8 +1,8 @@
 //! Native facts, real reducer oracle, isolated versioned store only.
 #[path = "support/native_recovery_store.rs"]
 mod native;
-use native::{Fault, Identity, Meta, Result, Store, TAIL};
 use harness::session::{types::*, SessionState};
+use native::{Fault, Identity, Meta, Result, Store, TAIL};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 

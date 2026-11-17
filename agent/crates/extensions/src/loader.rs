@@ -1168,10 +1168,8 @@ pub extern "C" fn rpi_plugin_register(api: *const u8) -> i32 {{
     /// A current plugin on the `register_oauth_provider_cancellable` slot. Each
     /// call marks "C", blocks until the host cancels it, then marks "K".
     fn cancellable_oauth_fixture(name: &str, marker: &Path) -> CdylibFixture {
-        let offset = std::mem::offset_of!(
-            plugin_sdk::PluginApi,
-            register_oauth_provider_cancellable
-        );
+        let offset =
+            std::mem::offset_of!(plugin_sdk::PluginApi, register_oauth_provider_cancellable);
         build_cdylib_fixture(
             name,
             &format!(

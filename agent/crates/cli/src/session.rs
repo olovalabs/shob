@@ -106,9 +106,7 @@ pub(crate) fn register_file_io_router(
     });
     attachments.push((Arc::downgrade(&storage), Arc::downgrade(router)));
 }
-pub(crate) fn file_io_router(
-    harness: &AgentHarness,
-) -> Option<Arc<tools::file_io::FileIORouter>> {
+pub(crate) fn file_io_router(harness: &AgentHarness) -> Option<Arc<tools::file_io::FileIORouter>> {
     let storage = harness.session().storage();
     let mut attachments = file_io_attachments()
         .lock()
@@ -1807,10 +1805,7 @@ async fn shutdown_extensions_for_reload(
     if let Some(snapshot) = snapshot {
         tokio::task::spawn_blocking(move || {
             let _keepalive = keepalive;
-            extensions::dispatch_empty_event(
-                &snapshot,
-                plugin_sdk::EventTag::SessionShutdown,
-            );
+            extensions::dispatch_empty_event(&snapshot, plugin_sdk::EventTag::SessionShutdown);
         })
         .await
         .map_err(|error| error.to_string())?;
@@ -2950,9 +2945,7 @@ fn build_tools(ctx: &ExecutionToolContext, args: &Args) -> Vec<HarnessTool> {
             HarnessTool::new(create_read_tool(
                 ctx,
                 Some(tools::tools::read::ReadToolOptions {
-                    image_processor: Some(Arc::new(
-                        tools::image_processing::InlineImageProcessor,
-                    )),
+                    image_processor: Some(Arc::new(tools::image_processing::InlineImageProcessor)),
                     ..Default::default()
                 }),
             ))
@@ -4494,10 +4487,8 @@ mod tests {
     async fn invoke_test_tool_hook(
         hook: &agent::BeforeToolCall,
     ) -> Option<agent::BeforeToolCallResult> {
-        let message = ai::providers::faux::faux_assistant_message(
-            "approval",
-            ai::types::StopReason::ToolUse,
-        );
+        let message =
+            ai::providers::faux::faux_assistant_message("approval", ai::types::StopReason::ToolUse);
         let ai::types::Content::ToolCall(call) =
             ai::types::Content::tool_call("call", "read", serde_json::json!({"path":"x"}))
         else {
@@ -4518,8 +4509,7 @@ mod tests {
     #[tokio::test]
     async fn tool_call_hook_uses_reloaded_session_and_newly_discovered_gate() {
         let sessions = Arc::new(Mutex::new(ExtensionSession::none()));
-        let hook =
-            extension_tool_call_hook(sessions.clone(), extensions::UiDialogMailbox::new());
+        let hook = extension_tool_call_hook(sessions.clone(), extensions::UiDialogMailbox::new());
         assert!(invoke_test_tool_hook(&hook).await.is_none());
         for name in ["first-gate", "reloaded-gate"] {
             let mut registry = extensions::ExtensionRegistry::new();
@@ -4664,8 +4654,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let source = tmp.path().join("source.jsonl");
         let progress = tmp.path().join("source.jsonl.progress.jsonl");
-        let fs: Arc<dyn tools::FileSystem> =
-            Arc::new(OsExecutionEnv::with_cwd(tmp.path().into()));
+        let fs: Arc<dyn tools::FileSystem> = Arc::new(OsExecutionEnv::with_cwd(tmp.path().into()));
         let storage = JsonlSessionStorage::create(
             fs,
             &source.to_string_lossy(),

@@ -1,9 +1,9 @@
 use super::*;
 use ai::providers::faux::{FauxProvider, FauxScript};
 use harness::types::AgentHarnessOptions;
-use tui::terminal::{InputEvent, Terminal, TerminalInfo};
 use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
+use tui::terminal::{InputEvent, Terminal, TerminalInfo};
 
 struct TestTerminal(Arc<AtomicUsize>);
 impl Terminal for TestTerminal {

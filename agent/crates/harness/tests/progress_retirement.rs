@@ -6,8 +6,8 @@ use harness::session::{
     DefaultIdGenerator, InMemorySessionStorage, Session, SqliteSessionRepo, SystemClock,
 };
 use harness::types::AgentHarnessOptions;
-use tools::{FileSystem, OsExecutionEnv};
 use std::sync::Arc;
+use tools::{FileSystem, OsExecutionEnv};
 
 fn base(id: &str) -> RecordBase {
     RecordBase {

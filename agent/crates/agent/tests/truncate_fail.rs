@@ -16,9 +16,9 @@ mod common;
 
 use std::sync::Arc;
 
-use common::{base_config, run_and_collect, user_message};
 use agent::{AgentContext, AgentEvent, AgentToolResult};
 use ai::types::StopReason;
+use common::{base_config, run_and_collect, user_message};
 
 /// An echo tool that records every executed `value` — must stay empty on a
 /// truncated turn.

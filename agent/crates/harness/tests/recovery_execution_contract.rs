@@ -14,9 +14,9 @@ use harness::session::jsonl::{JsonlSessionStorage, JsonlV4Header};
 use harness::session::types::*;
 use harness::session::{DefaultIdGenerator, Session, SqliteSessionRepo, SystemClock};
 use harness::types::{AgentHarnessOptions, HarnessTool};
-use tools::{FileSystem, OsExecutionEnv};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
+use tools::{FileSystem, OsExecutionEnv};
 
 fn base(id: &str) -> RecordBase {
     RecordBase {

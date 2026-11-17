@@ -69,8 +69,7 @@ async fn turn_end_emitter_preserves_both_tags_without_unobserved_allocations() {
             crate::PluginKeepalive::empty(),
         );
         let event = AgentEvent::TurnEnd {
-            message: ai::AssistantMessage::empty(ai::Api::AnthropicMessages, "p", "m", 0)
-                .into(),
+            message: ai::AssistantMessage::empty(ai::Api::AnthropicMessages, "p", "m", 0).into(),
             tool_results: vec![],
             pending_messages: 2,
         };

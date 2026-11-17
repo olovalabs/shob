@@ -289,8 +289,7 @@ pub(crate) fn resolve_with_factories(
     // Apply the CLI override after selection so other providers keep their
     // own endpoints and credentials when switched to via `/model`.
     for model in &mut catalog {
-        if matches!(model.api, ai::Api::AnthropicMessages)
-            && model.provider == DEFAULT_PROVIDER_ID
+        if matches!(model.api, ai::Api::AnthropicMessages) && model.provider == DEFAULT_PROVIDER_ID
         {
             if let Some(base) = &anthropic_base_url_override {
                 model.base_url = base.clone();
@@ -556,9 +555,7 @@ pub(crate) fn resolve_with_factories(
         || model_has_header_auth(&model)
         || match selected_api {
             ai::Api::AnthropicMessages => selected_anthropic_credential.is_some(),
-            ai::Api::OpenaiCompletions | ai::Api::OpenaiResponses => {
-                selected_openai_key.is_some()
-            }
+            ai::Api::OpenaiCompletions | ai::Api::OpenaiResponses => selected_openai_key.is_some(),
             _ => false,
         };
     if !selected_is_authed {
@@ -627,9 +624,7 @@ pub(crate) fn resolve_with_factories(
                 || model_has_header_auth(candidate)
                 || match candidate.api {
                     ai::Api::AnthropicMessages => anth.is_some(),
-                    ai::Api::OpenaiCompletions | ai::Api::OpenaiResponses => {
-                        openai_key.is_some()
-                    }
+                    ai::Api::OpenaiCompletions | ai::Api::OpenaiResponses => openai_key.is_some(),
                     _ => false,
                 };
             if !authed {

@@ -57,10 +57,7 @@ pub(super) fn invoke_extension_command(
         );
         // SAFETY: the callback transfers a live output to its producer.
         let out = unsafe {
-            plugin_sdk::callbacks::OwnedString::from_raw(
-                out,
-                Some(::extensions::host_free_string),
-            )
+            plugin_sdk::callbacks::OwnedString::from_raw(out, Some(::extensions::host_free_string))
         };
 
         if rc == 0 {

@@ -3,11 +3,11 @@
 //! are awaited even when one reports an error. The journal owns the public ID.
 use std::sync::Arc;
 
-use futures::{future::BoxFuture, FutureExt};
 use agent::{
     tool_program_observation::{ToolProgramChild, ToolProgramObservation, ToolProgramObserver},
     AgentToolResult,
 };
+use futures::{future::BoxFuture, FutureExt};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 

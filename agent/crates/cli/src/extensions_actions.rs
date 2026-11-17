@@ -300,9 +300,7 @@ impl HarnessActionHost {
 /// pairing as soon as two queued messages carry different pictures: a restore
 /// would attach image B next to text A, or attach the picture to whichever
 /// entry happened to be first.
-pub(crate) fn queued_message_payloads(
-    messages: &[agent::AgentMessage],
-) -> Vec<serde_json::Value> {
+pub(crate) fn queued_message_payloads(messages: &[agent::AgentMessage]) -> Vec<serde_json::Value> {
     messages
         .iter()
         .map(|message| {
@@ -505,9 +503,9 @@ fn send_message_input(args: &serde_json::Value) -> Result<agent::AgentMessage, S
     }
     let text =
         arg_str(args, "text").map_err(|_| "missing `message` or `text` field".to_string())?;
-    Ok(agent::AgentMessage::User(
-        ai::types::UserMessage::new(text, timestamp),
-    ))
+    Ok(agent::AgentMessage::User(ai::types::UserMessage::new(
+        text, timestamp,
+    )))
 }
 
 fn send_message_result(result: SendMessageResult) -> serde_json::Value {
@@ -625,10 +623,7 @@ impl RuntimeActionHost for HarnessActionHost {
         self.publish_registry_impl(Some(snapshot));
     }
 
-    fn publish_registry_opt(
-        &self,
-        snapshot: Option<std::sync::Arc<extensions::RegistrySnapshot>>,
-    ) {
+    fn publish_registry_opt(&self, snapshot: Option<std::sync::Arc<extensions::RegistrySnapshot>>) {
         self.publish_registry_impl(snapshot);
     }
 
@@ -1077,10 +1072,7 @@ mod send_message_tests {
         let agent::AgentMessage::Custom(custom) = &message else {
             panic!("custom")
         };
-        assert_eq!(
-            custom.content,
-            vec![ai::types::Content::text("goal state")]
-        );
+        assert_eq!(custom.content, vec![ai::types::Content::text("goal state")]);
         let data = harness::messages::custom_data(&message).unwrap();
         assert_eq!(data.custom_type, "goal");
         assert!(data.display);

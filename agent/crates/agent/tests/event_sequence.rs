@@ -13,12 +13,12 @@ mod common;
 
 use std::sync::Arc;
 
+use agent::{AgentContext, AgentEvent};
+use ai::types::StopReason;
 use common::{
     assistant_text, assistant_tool_calls, base_config, mock_stream_fn, run_and_collect, type_tags,
     user_message,
 };
-use agent::{AgentContext, AgentEvent};
-use ai::types::StopReason;
 
 #[tokio::test]
 async fn loop_keeps_the_owned_history_payload_instead_of_copying_it() {

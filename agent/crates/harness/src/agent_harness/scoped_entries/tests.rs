@@ -68,9 +68,7 @@ async fn durable_jsonl_outbox_reopens_without_reaccepting_a_delivered_notice() {
     use crate::session::session::DefaultIdGenerator;
     let temporary = tempfile::tempdir().unwrap();
     let repo = JsonlSessionRepo::with_env_cwd(JsonlSessionRepoOptions {
-        fs: Arc::new(tools::OsExecutionEnv::with_cwd(
-            temporary.path().to_owned(),
-        )),
+        fs: Arc::new(tools::OsExecutionEnv::with_cwd(temporary.path().to_owned())),
         sessions_root: temporary.path().to_string_lossy().into_owned(),
         clock: Arc::new(SystemClock),
         ids: Arc::new(DefaultIdGenerator::new()),
@@ -359,11 +357,11 @@ mod scoped_drop_probe {
     use crate::session::jsonl::{JsonlSessionStorage, JsonlV4Header};
     use crate::session::memory::SystemClock;
     use crate::session::session::DefaultIdGenerator;
-    use tools::env::AppendFile;
-    use tools::{FileContent, FileError, FileSystem};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
     use tokio::sync::Notify;
+    use tools::env::AppendFile;
+    use tools::{FileContent, FileError, FileSystem};
 
     #[derive(Default)]
     struct AppendGate {

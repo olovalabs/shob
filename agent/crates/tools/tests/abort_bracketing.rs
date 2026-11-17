@@ -14,14 +14,14 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use agent::agent_tool::AgentTool;
+use async_trait::async_trait;
+use tokio::sync::{Mutex, Notify};
+use tokio_util::sync::CancellationToken;
 use tools::{
     ExecutionEnv, ExecutionToolContext, FileContent, FileError, FileInfo, FileSystem,
     InMemoryExecutionEnv, MutatingEnv, MutationQueueRegistry, Shell, ShellExecOptions, ShellOutput,
 };
-use tokio::sync::{Mutex, Notify};
-use tokio_util::sync::CancellationToken;
 
 /// A delegating wrapper that parks the write of "first\n" until released and
 /// tracks whether a second write began while the first was still parked.

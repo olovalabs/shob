@@ -1,9 +1,6 @@
 //! Restricted native-owner filesystem: exactly two pinned regular inputs, no
 //! writer, creation, directory enumeration, settings, environment or shell.
 use async_trait::async_trait;
-use tools::{
-    env::ReadFile, FileContent, FileError, FileErrorCode, FileInfo, FileKind, FileSystem,
-};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
@@ -13,6 +10,7 @@ use std::{
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
+use tools::{env::ReadFile, FileContent, FileError, FileErrorCode, FileInfo, FileKind, FileSystem};
 const READ_LIMIT: usize = 64 * 1024 * 1024;
 const RANGE_LIMIT: usize = 1024 * 1024;
 const READ_CHUNK: usize = 64 * 1024;

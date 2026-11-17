@@ -20,9 +20,7 @@
 //! `convertToLlm`).
 
 use agent::message::{AgentMessage, CustomMessage};
-use ai::types::{
-    Content, Message, ToolResultMessage, ToolResultRole, UserContent, UserMessage,
-};
+use ai::types::{Content, Message, ToolResultMessage, ToolResultRole, UserContent, UserMessage};
 use serde::{Deserialize, Serialize};
 
 /// Wraps `summary` in the compaction-summary text envelope. Mirrors

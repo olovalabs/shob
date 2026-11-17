@@ -66,10 +66,7 @@ pub async fn run_with_extensions(
 }
 
 /// `rpi auth login [--provider <id>]` — prompt for a key and persist it.
-async fn run_login(
-    args: &[String],
-    snapshot: Option<&Arc<extensions::RegistrySnapshot>>,
-) -> i32 {
+async fn run_login(args: &[String], snapshot: Option<&Arc<extensions::RegistrySnapshot>>) -> i32 {
     let provider = parse_provider(args).unwrap_or(DEFAULT_PROVIDER_ID);
     if let Some(snapshot) = snapshot {
         if snapshot.oauth_provider(provider).is_some() {
@@ -114,10 +111,7 @@ async fn run_login(
 }
 
 /// `rpi auth check [--provider <id>] [--json]` — local readiness probe.
-async fn run_check(
-    args: &[String],
-    snapshot: Option<&Arc<extensions::RegistrySnapshot>>,
-) -> i32 {
+async fn run_check(args: &[String], snapshot: Option<&Arc<extensions::RegistrySnapshot>>) -> i32 {
     let provider = parse_provider(args).unwrap_or(DEFAULT_PROVIDER_ID);
     let want_json = args.iter().any(|a| a == "--json");
 
@@ -158,10 +152,7 @@ async fn run_check(
 }
 
 /// `rpi auth refresh [--provider <id>]` — refresh a stored OAuth credential.
-async fn run_refresh(
-    args: &[String],
-    snapshot: Option<&Arc<extensions::RegistrySnapshot>>,
-) -> i32 {
+async fn run_refresh(args: &[String], snapshot: Option<&Arc<extensions::RegistrySnapshot>>) -> i32 {
     let provider = parse_provider(args).unwrap_or(DEFAULT_PROVIDER_ID);
     let Some(snapshot) = snapshot else {
         eprintln!("error: no OAuth extensions are loaded");
@@ -341,10 +332,7 @@ impl OAuthRefresher for PackageOAuthRefresher {
     }
 }
 
-async fn run_logout(
-    args: &[String],
-    snapshot: Option<&Arc<extensions::RegistrySnapshot>>,
-) -> i32 {
+async fn run_logout(args: &[String], snapshot: Option<&Arc<extensions::RegistrySnapshot>>) -> i32 {
     let provider = parse_provider(args).unwrap_or(DEFAULT_PROVIDER_ID);
     if let Ok(Some(Credential::Oauth {
         access, refresh, ..

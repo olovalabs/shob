@@ -2,9 +2,7 @@
 mod sqlite_race {
     use harness::agent_harness::{AgentHarness, BranchWriteGuard, ScopedEntry};
     use harness::session::memory::Clock;
-    use harness::session::types::{
-        EntryQuery, SessionCreateOptions, SessionRepo, SessionStorage,
-    };
+    use harness::session::types::{EntryQuery, SessionCreateOptions, SessionRepo, SessionStorage};
     use harness::session::{DefaultIdGenerator, Session, SqliteSessionRepo};
     use harness::types::AgentHarnessOptions;
     use std::sync::{
@@ -120,8 +118,8 @@ mod sqlite_race {
     }
 }
 mod jsonl_race {
-    use async_trait::async_trait;
     use ai::providers::faux::{FauxProvider, FauxScript};
+    use async_trait::async_trait;
     use harness::agent_harness::{AgentHarness, AgentLane, BranchWriteGuard, ScopedEntry};
     use harness::session::{
         jsonl::{JsonlSessionStorage, JsonlV4Header},
@@ -129,8 +127,6 @@ mod jsonl_race {
         Session,
     };
     use harness::types::AgentHarnessOptions;
-    use tools::env::AppendFile;
-    use tools::{FileContent, FileError, FileInfo, FileSystem};
     use std::{
         future::{poll_fn, Future},
         path::{Path, PathBuf},
@@ -142,6 +138,8 @@ mod jsonl_race {
     };
     use tokio::sync::Notify;
     use tokio_util::sync::CancellationToken;
+    use tools::env::AppendFile;
+    use tools::{FileContent, FileError, FileInfo, FileSystem};
     #[derive(Default)]
     struct Gate {
         armed: AtomicBool,

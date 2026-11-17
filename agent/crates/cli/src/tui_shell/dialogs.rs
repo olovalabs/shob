@@ -3,9 +3,9 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crossterm::event::KeyEvent;
-use tui::{Container, Editor, Focusable, Input, SelectItem, SelectList, TuiAltScreen, TUI};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
+use tui::{Container, Editor, Focusable, Input, SelectItem, SelectList, TuiAltScreen, TUI};
 
 use crate::interactive_tui::{ask_user_frame, parse_ask_user_prompt, AskUserPrompt};
 use crate::session_driver::DriverCommand;

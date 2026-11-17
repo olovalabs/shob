@@ -1,8 +1,8 @@
 //! Production dispatcher fixtures: real JSONL reader/writer, harness and tools.
 use super::tests::{rpc_test_harness, start_test_rpc};
 use super::*;
-use base64::{engine::general_purpose::STANDARD, Engine};
 use ai::providers::faux::{faux_assistant_message, FauxProvider, FauxScript, FauxStep};
+use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
 use tokio::io::AsyncWriteExt;
 
@@ -50,8 +50,7 @@ async fn production_prompt_pixels_and_model_are_checked_before_acceptance_or_per
     .await
     .unwrap();
     let retained = harness.clone();
-    let (mut client, output, task) =
-        start_test_rpc(harness, extensions::UiDialogMailbox::new());
+    let (mut client, output, task) = start_test_rpc(harness, extensions::UiDialogMailbox::new());
     for (id, image, expected) in [
         (
             1,
@@ -122,8 +121,7 @@ async fn production_ordered_blocks_reach_model_and_native_history_unchanged() {
     })
     .await
     .unwrap();
-    let (mut client, output, task) =
-        start_test_rpc(harness, extensions::UiDialogMailbox::new());
+    let (mut client, output, task) = start_test_rpc(harness, extensions::UiDialogMailbox::new());
     send(
         &mut client,
         json!({"type":"prompt","id":1,"contentBlocks":blocks}),
@@ -151,8 +149,7 @@ async fn production_ordered_blocks_reach_model_and_native_history_unchanged() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn production_prompt_alias_precedence_and_bad_block_shape_never_fall_back() {
     let (harness, provider) = rpc_test_harness("done", 0.0).await;
-    let (mut client, output, task) =
-        start_test_rpc(harness, extensions::UiDialogMailbox::new());
+    let (mut client, output, task) = start_test_rpc(harness, extensions::UiDialogMailbox::new());
     for (id, payload) in [
         (1, json!({"message":null,"content":"fallback"})),
         (2, json!({"message":"fallback","contentBlocks":null})),
@@ -195,16 +192,15 @@ async fn production_file_io_dispatch_reads_unsaved_client_text_and_rejects_activ
     let harness = AgentHarness::create(harness::types::AgentHarnessOptions {
         model: provider.default_model().clone(),
         models: vec![provider],
-        tools: vec![harness::types::HarnessTool::new(
-            tools::create_read_tool(&context, None),
-        )],
+        tools: vec![harness::types::HarnessTool::new(tools::create_read_tool(
+            &context, None,
+        ))],
         ..Default::default()
     })
     .await
     .unwrap();
     crate::session::register_file_io_router(&harness, &router);
-    let (mut client, output, task) =
-        start_test_rpc(harness, extensions::UiDialogMailbox::new());
+    let (mut client, output, task) = start_test_rpc(harness, extensions::UiDialogMailbox::new());
     let ready = output.wait_for(|m| m["type"] == "ready").await;
     assert_eq!(ready["fileIO"], crate::rpc::file_io::capabilities());
     assert_eq!(
@@ -287,8 +283,7 @@ async fn production_file_io_write_and_edit_use_the_same_client_backend() {
     .await
     .unwrap();
     crate::session::register_file_io_router(&harness, &router);
-    let (mut client, output, task) =
-        start_test_rpc(harness, extensions::UiDialogMailbox::new());
+    let (mut client, output, task) = start_test_rpc(harness, extensions::UiDialogMailbox::new());
     send(
         &mut client,
         json!({"type":"configure_file_io","id":1,"readText":true,"writeText":true}),
@@ -352,8 +347,8 @@ async fn production_file_io_write_and_edit_use_the_same_client_backend() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn production_validation_is_responsive_and_root_abort_retains_worker_cleanup() {
     use crate::rpc::prompt_content::validation_test_hook::{Gate, ReleaseOnDrop};
-    use tools::file_io::{FileIOErrorCode, FileIOOperation, FileIOReadRange};
     use std::time::Duration;
+    use tools::file_io::{FileIOErrorCode, FileIOOperation, FileIOReadRange};
     for abort_root in [false, true] {
         let id = if abort_root {
             "validation-root-abort"
@@ -500,16 +495,15 @@ async fn production_correlated_file_io_reply_preserves_unknown_field_rejection()
     let harness = AgentHarness::create(harness::types::AgentHarnessOptions {
         model: provider.default_model().clone(),
         models: vec![provider],
-        tools: vec![harness::types::HarnessTool::new(
-            tools::create_read_tool(&context, None),
-        )],
+        tools: vec![harness::types::HarnessTool::new(tools::create_read_tool(
+            &context, None,
+        ))],
         ..Default::default()
     })
     .await
     .unwrap();
     crate::session::register_file_io_router(&harness, &router);
-    let (mut client, output, task) =
-        start_test_rpc(harness, extensions::UiDialogMailbox::new());
+    let (mut client, output, task) = start_test_rpc(harness, extensions::UiDialogMailbox::new());
     send(
         &mut client,
         json!({"type":"configure_file_io","id":1,"readText":true,"writeText":false}),
@@ -548,8 +542,7 @@ async fn production_correlated_file_io_reply_preserves_unknown_field_rejection()
 #[tokio::test]
 async fn production_parallel_admission_and_abort_before_validation_are_atomic() {
     let (harness, provider) = rpc_test_harness("unused", 0.0).await;
-    let (mut client, output, task) =
-        start_test_rpc(harness, extensions::UiDialogMailbox::new());
+    let (mut client, output, task) = start_test_rpc(harness, extensions::UiDialogMailbox::new());
     // One buffered read on a current-thread runtime: the run task cannot
     // validate/persist until the dispatcher yields after these control frames.
     client.write_all(b"{\"type\":\"prompt\",\"id\":1,\"contentBlocks\":[{\"type\":\"text\",\"text\":\"first\"}]}\n{\"type\":\"prompt\",\"id\":2,\"message\":\"second\"}\n{\"type\":\"abort\",\"id\":3}\n").await.unwrap();

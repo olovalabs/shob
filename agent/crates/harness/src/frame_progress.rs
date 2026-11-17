@@ -37,10 +37,10 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use futures::future::BoxFuture;
 use agent::{AgentEmitter, AgentEvent, AgentMessage};
 use ai::frames::{reduce_frames, AssistantMessageFrame, AssistantMessageFrameEncoder};
 use ai::types::{AssistantMessage, AssistantMessageEvent, StopReason, Usage};
+use futures::future::BoxFuture;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::result::{HarnessError, HarnessResult};

@@ -360,8 +360,7 @@ impl FileSystem for FaultyFs {
 
 /// Attach a `FaultyFs` to a fresh in-memory env + repo, returning both.
 fn faulty_repo(target: FaultTarget) -> (Arc<FaultyFs>, JsonlSessionRepo) {
-    let base: Arc<dyn FileSystem> =
-        Arc::new(tools::InMemoryExecutionEnv::with_cwd("/proj".into()));
+    let base: Arc<dyn FileSystem> = Arc::new(tools::InMemoryExecutionEnv::with_cwd("/proj".into()));
     let faulty = FaultyFs::new(base, target);
     let fs: Arc<dyn FileSystem> = faulty.clone();
     (faulty, repo(fs))
@@ -377,8 +376,7 @@ fn faulty_repo(target: FaultTarget) -> (Arc<FaultyFs>, JsonlSessionRepo) {
 #[tokio::test]
 async fn fork_staging_failure_leaves_no_destination_and_no_tmp() {
     // Use a non-faulty repo to build the source (we only fault the fork path).
-    let base: Arc<dyn FileSystem> =
-        Arc::new(tools::InMemoryExecutionEnv::with_cwd("/proj".into()));
+    let base: Arc<dyn FileSystem> = Arc::new(tools::InMemoryExecutionEnv::with_cwd("/proj".into()));
     let r = repo(base.clone());
 
     let source = r.create_typed(&create_options("source")).await.unwrap();
@@ -444,8 +442,7 @@ async fn fork_staging_failure_leaves_no_destination_and_no_tmp() {
 /// destination must remain unpublished and no `.tmp` left behind.
 #[tokio::test]
 async fn fork_rename_failure_leaves_no_destination_and_no_tmp() {
-    let base: Arc<dyn FileSystem> =
-        Arc::new(tools::InMemoryExecutionEnv::with_cwd("/proj".into()));
+    let base: Arc<dyn FileSystem> = Arc::new(tools::InMemoryExecutionEnv::with_cwd("/proj".into()));
     let r = repo(base.clone());
 
     let source = r.create_typed(&create_options("source")).await.unwrap();
@@ -647,8 +644,7 @@ async fn torn_tail_repair_rename_failure_preserves_original() {
 /// `[1..N]` consecutive with no interleaving.
 #[tokio::test]
 async fn concurrent_cross_lane_writes_serialize_in_shared_sequence_order() {
-    let fs: Arc<dyn FileSystem> =
-        Arc::new(tools::InMemoryExecutionEnv::with_cwd("/proj".into()));
+    let fs: Arc<dyn FileSystem> = Arc::new(tools::InMemoryExecutionEnv::with_cwd("/proj".into()));
     let r = repo(fs.clone());
     let storage = r.create_typed(&create_options("concurrent")).await.unwrap();
     let root_entry = storage
@@ -732,8 +728,7 @@ async fn concurrent_cross_lane_writes_serialize_in_shared_sequence_order() {
 /// the same destination".
 #[tokio::test]
 async fn concurrent_duplicate_create_one_wins_one_already_exists() {
-    let fs: Arc<dyn FileSystem> =
-        Arc::new(tools::InMemoryExecutionEnv::with_cwd("/proj".into()));
+    let fs: Arc<dyn FileSystem> = Arc::new(tools::InMemoryExecutionEnv::with_cwd("/proj".into()));
     let r = repo(fs.clone());
     let opts = create_options("same");
 
@@ -765,8 +760,7 @@ async fn concurrent_duplicate_create_one_wins_one_already_exists() {
 /// atomic-publish + torn-tail interplay end-to-end at the repo level.
 #[tokio::test]
 async fn repo_round_trip_preserves_order_and_is_appendable() {
-    let fs: Arc<dyn FileSystem> =
-        Arc::new(tools::InMemoryExecutionEnv::with_cwd("/proj".into()));
+    let fs: Arc<dyn FileSystem> = Arc::new(tools::InMemoryExecutionEnv::with_cwd("/proj".into()));
     let r = repo(fs);
     let storage = r.create_typed(&create_options("rt")).await.unwrap();
     storage
@@ -827,8 +821,7 @@ async fn repo_round_trip_preserves_order_and_is_appendable() {
 /// copy is exercised in the harness defensive-copy test.)
 #[tokio::test]
 async fn find_entries_returns_independent_clones() {
-    let fs: Arc<dyn FileSystem> =
-        Arc::new(tools::InMemoryExecutionEnv::with_cwd("/proj".into()));
+    let fs: Arc<dyn FileSystem> = Arc::new(tools::InMemoryExecutionEnv::with_cwd("/proj".into()));
     let r = repo(fs);
     let storage = r.create_typed(&create_options("dc")).await.unwrap();
     storage

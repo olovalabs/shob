@@ -18,12 +18,12 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use base64::Engine;
+use serde_json::Value;
 use tui::{
     render_diff, AssistantBlock, AssistantMessageComponent, AssistantMessageOptions,
     BashExecutionComponent, BashTruncation, Container, Spacer, ToolExecutionComponent, ToolStatus,
     UserMessageComponent,
 };
-use serde_json::Value;
 
 /// A tool call visible in an assistant message snapshot, normalized to plain
 /// data so both the local (`ai::Content::ToolCall`) and the wire
@@ -729,11 +729,8 @@ pub fn assistant_blocks_from_value(message: &Value) -> Vec<AssistantBlock> {
                             let png = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
                                 Some(bytes)
                             } else {
-                                tools::image_processing::process_image(
-                                    &bytes,
-                                    Default::default(),
-                                )
-                                .ok()
+                                tools::image_processing::process_image(&bytes, Default::default())
+                                    .ok()
                             };
                             if let Some(png) = png {
                                 blocks.push(AssistantBlock::Image(png));
@@ -1002,8 +999,8 @@ fn finalize_bash(comp: &Arc<BashExecutionComponent>, result: &Value, is_error: b
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tui::{strip_ansi, Component};
     use serde_json::json;
+    use tui::{strip_ansi, Component};
 
     fn view() -> TranscriptView {
         TranscriptView::new(Arc::new(Container::new()))

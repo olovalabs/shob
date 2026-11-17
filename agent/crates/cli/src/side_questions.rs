@@ -4,10 +4,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use futures::FutureExt;
 use agent::{AgentEmitter, AgentEvent};
 use ai::types::{AssistantMessage, AssistantMessageEvent, UserMessage, UserRole};
 use extensions::SideQuestionSink;
+use futures::FutureExt;
 use harness::agent_harness::{AgentHarness, ChildHarness, HarnessRunOutcome};
 use harness::session::memory::{InMemorySessionStorage, SystemClock};
 use harness::session::session::DefaultIdGenerator;

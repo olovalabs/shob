@@ -6,11 +6,11 @@ use crate::session::{
     progress::ProgressState,
     types::{AssistantFrameOp, AssistantFrameRecord},
 };
-use tools::env::{FileContent, FileSystem};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tools::env::{FileContent, FileSystem};
 
 pub(super) const FORMAT: &str = "assistant-progress-v1";
 

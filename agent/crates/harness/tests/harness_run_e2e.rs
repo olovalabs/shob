@@ -33,9 +33,7 @@
 use std::sync::{Arc, Mutex};
 
 use agent::{AgentEmitter, AgentEvent, AgentMessage, CollectorEmitter};
-use ai::providers::faux::{
-    faux_assistant_message, FauxBlock, FauxProvider, FauxScript, FauxStep,
-};
+use ai::providers::faux::{faux_assistant_message, FauxBlock, FauxProvider, FauxScript, FauxStep};
 use ai::types::{UserContent, UserMessage};
 use ai::Provider;
 use harness::agent_harness::{AgentHarness, AgentLane, HarnessRunOutcome};
@@ -366,10 +364,7 @@ async fn full_run_with_write_tool_call_completes_and_persists() {
     ));
     // And the leaf entry (last) is the final assistant text turn.
     let last = path.last().unwrap();
-    assert!(matches!(
-        last,
-        harness::session::types::Entry::Message(_)
-    ));
+    assert!(matches!(last, harness::session::types::Entry::Message(_)));
 
     // ---- persisted tool-result timestamps are real wall-clock -------------
     //
@@ -864,11 +859,7 @@ async fn provider_hooks_can_replace_the_system_prompt_the_model_sees() {
     /// pi requires (read the event's prompt, return the concatenation).
     struct AppendHooks;
     impl ProviderHooks for AppendHooks {
-        fn transform_context(
-            &self,
-            _model: &ai::Model,
-            ctx: &AiContext,
-        ) -> Option<ContextPatch> {
+        fn transform_context(&self, _model: &ai::Model, ctx: &AiContext) -> Option<ContextPatch> {
             Some(ContextPatch {
                 system_prompt: Some(format!(
                     "HOOK-FIRST\n{}",
@@ -1378,10 +1369,9 @@ async fn a_completed_run_leaves_no_frames_to_salvage() {
         "frames were recorded while the run was in flight"
     );
 
-    let salvaged =
-        harness::frame_progress::salvage_run_frames(harness.session(), &result.run_id)
-            .await
-            .expect("salvage runs");
+    let salvaged = harness::frame_progress::salvage_run_frames(harness.session(), &result.run_id)
+        .await
+        .expect("salvage runs");
     assert!(
         salvaged.is_empty(),
         "a committed run must not be salvaged: {salvaged:?}"
@@ -2380,8 +2370,7 @@ async fn a_recorded_safe_call_is_not_replayed_into_a_now_unsafe_tool() {
 
 /// Local helpers: an assistant message carrying one tool call, and its result.
 fn assistant_with_one_tool_call(call_id: &str, name: &str) -> ai::types::AssistantMessage {
-    let mut message =
-        ai::types::AssistantMessage::empty(ai::types::Api::Faux, "faux", "faux", 0);
+    let mut message = ai::types::AssistantMessage::empty(ai::types::Api::Faux, "faux", "faux", 0);
     message
         .content
         .push(ai::types::Content::ToolCall(ai::types::ToolCall {
@@ -4420,8 +4409,7 @@ async fn native_explicit_delivery_ids_do_not_match_identical_contents() {
         harness.clone(),
         Default::default(),
     );
-    let message: AgentMessage =
-        faux_assistant_message("identical", ai::StopReason::Stop).into();
+    let message: AgentMessage = faux_assistant_message("identical", ai::StopReason::Stop).into();
     // A generated assistant with identical bytes must NOT consume queued IDs.
     state.push_injected("queued-1", message.clone());
     state.push_injected("queued-2", message.clone());

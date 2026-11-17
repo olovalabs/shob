@@ -421,8 +421,7 @@ pub(super) fn handle_key(
         && !state.history_page.is_latest()
     {
         Some(Direction::Latest)
-    } else if bindings.matches(key, tui::keybindings::keys::PAGE_UP) && scroll.scroll_top() == 0
-    {
+    } else if bindings.matches(key, tui::keybindings::keys::PAGE_UP) && scroll.scroll_top() == 0 {
         state
             .history_page
             .resident

@@ -4,8 +4,6 @@ mod tests {
     use harness::session::jsonl::{JsonlSessionStorage, JsonlV4Header};
     use harness::session::memory::{CounterIdGenerator, FakeClock};
     use harness::session::types::*;
-    use tools::env::AppendFile;
-    use tools::{FileContent, FileError, FileInfo, FileSystem};
     use std::{
         path::{Path, PathBuf},
         sync::{
@@ -15,6 +13,8 @@ mod tests {
     };
     use tokio::sync::Notify;
     use tokio_util::sync::CancellationToken;
+    use tools::env::AppendFile;
+    use tools::{FileContent, FileError, FileInfo, FileSystem};
 
     fn entry(id: &str) -> ProvisionedEntry {
         ProvisionedEntry {

@@ -324,8 +324,7 @@ fn config_expansion_uses_only_host_environment_and_disables_commands_by_default(
         Some("host-secret")
     );
     assert!(
-        runtime::values::resolve_config_value("!echo unsafe", None, &environment, true)
-            .is_none()
+        runtime::values::resolve_config_value("!echo unsafe", None, &environment, true).is_none()
     );
     assert!(RuntimeConfig {
         credentials: AuthStore::new(),

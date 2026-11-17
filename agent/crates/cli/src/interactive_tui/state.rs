@@ -469,10 +469,7 @@ pub(crate) fn configured_keybindings() -> Arc<tui::Keybindings> {
             "app.editor.external",
             tui::keybindings::keys::EXTERNAL_EDITOR,
         ),
-        (
-            "app.thinking.cycle",
-            tui::keybindings::keys::THINKING_CYCLE,
-        ),
+        ("app.thinking.cycle", tui::keybindings::keys::THINKING_CYCLE),
         (
             "app.clipboard.pasteImage",
             tui::keybindings::keys::PASTE_IMAGE,
@@ -481,10 +478,7 @@ pub(crate) fn configured_keybindings() -> Arc<tui::Keybindings> {
         ("tui.altScreen.bottom", tui::keybindings::keys::BOTTOM),
         ("tui.altScreen.top", tui::keybindings::keys::TOP),
         ("tui.altScreen.pageUp", tui::keybindings::keys::PAGE_UP),
-        (
-            "tui.altScreen.pageDown",
-            tui::keybindings::keys::PAGE_DOWN,
-        ),
+        ("tui.altScreen.pageDown", tui::keybindings::keys::PAGE_DOWN),
     ];
     for (name, id) in known {
         let Some(value) = overrides.get(*name) else {
@@ -1884,11 +1878,7 @@ impl TuiState {
         if snapshot.handlers_for(EventTag::EditorChange).is_empty() {
             return;
         }
-        ::extensions::dispatch_data_event(
-            &snapshot,
-            EventTag::EditorChange,
-            &payload.to_string(),
-        );
+        ::extensions::dispatch_data_event(&snapshot, EventTag::EditorChange, &payload.to_string());
     }
 
     /// Build the `EditorChange` payload when the draft changed since the last

@@ -1,8 +1,8 @@
 //! Alternate transcript presentation driven by voice's session status mailbox.
 use super::*;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use tui::ansi::visible_width;
 use tui::utils::{truncate_to_width, wrap_text_with_ansi};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 pub(super) const PET_KEY: &str = "rpi.pet";
 

@@ -18,10 +18,10 @@ mod common;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use common::{base_config, run_and_collect, user_message};
 use agent::{AgentContext, AgentEvent, ToolExecutionMode};
 use ai::event_stream::create_assistant_message_event_stream;
 use ai::types::{AssistantMessage, AssistantMessageEvent, DoneReason, StopReason};
+use common::{base_config, run_and_collect, user_message};
 use tokio::sync::Notify;
 
 /// Shared coordination state for the two-call parallel batch.

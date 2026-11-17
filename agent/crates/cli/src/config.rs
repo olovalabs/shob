@@ -695,12 +695,7 @@ pub fn resolve_config_value(
     config: &str,
     env_overlay: Option<&BTreeMap<String, String>>,
 ) -> Option<String> {
-    runtime::values::resolve_config_value(
-        config,
-        env_overlay,
-        &crate::provider::CliValues,
-        true,
-    )
+    runtime::values::resolve_config_value(config, env_overlay, &crate::provider::CliValues, true)
 }
 
 /// Like [`resolve_config_value`] but **uncached** — mirrors pi's
@@ -710,12 +705,7 @@ pub fn resolve_config_value_uncached(
     config: &str,
     env_overlay: Option<&BTreeMap<String, String>>,
 ) -> Option<String> {
-    runtime::values::resolve_config_value(
-        config,
-        env_overlay,
-        &crate::provider::CliValues,
-        false,
-    )
+    runtime::values::resolve_config_value(config, env_overlay, &crate::provider::CliValues, false)
 }
 
 /// Resolve every header value via [`resolve_config_value_uncached`]; drop

@@ -10,9 +10,9 @@ mod common;
 
 use std::sync::{Arc, Mutex};
 
-use common::{base_config, mock_stream_fn, run_and_collect, user_message};
 use agent::{AgentContext, AgentError, AgentTool, AgentToolResult, ToolResultPartial};
 use ai::types::{Api, AssistantMessage, Content, StopReason, Tool, Usage};
+use common::{base_config, mock_stream_fn, run_and_collect, user_message};
 use tokio_util::sync::CancellationToken;
 
 /// A `shell`-like tool whose `execute` is observable: every real run bumps

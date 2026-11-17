@@ -36,9 +36,8 @@ fn user(id: &str) -> ProvisionedEntry {
 impl Fixture {
     async fn new(messages: usize) -> Self {
         let temp = tempfile::tempdir().unwrap();
-        let fs: Arc<dyn tools::env::FileSystem> = Arc::new(
-            tools::OsExecutionEnv::with_cwd(temp.path().to_path_buf()),
-        );
+        let fs: Arc<dyn tools::env::FileSystem> =
+            Arc::new(tools::OsExecutionEnv::with_cwd(temp.path().to_path_buf()));
         let clock: Arc<dyn Clock> = Arc::new(FixedClock);
         let ids = Arc::new(CounterIdGenerator::new());
         let storage = JsonlSessionStorage::create(

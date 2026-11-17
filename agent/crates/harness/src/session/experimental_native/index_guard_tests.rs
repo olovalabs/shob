@@ -45,8 +45,7 @@ async fn canonical_tool_duplicates_are_deduplicated_but_missing_and_oversized_mi
     let (_dir, s) = fixture().await;
     let mut assistant =
         ai::AssistantMessage::empty(ai::Api::AnthropicMessages, "fixture", "fixture", 42);
-    assistant.content =
-        vec![ai::Content::tool_call("tool", "fixture", serde_json::json!({})); 2];
+    assistant.content = vec![ai::Content::tool_call("tool", "fixture", serde_json::json!({})); 2];
     let item = ProvisionedEntry {
         id: "assistant".into(),
         kind: ProvisionedKind::Message {

@@ -13,9 +13,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use agent::{
-    AfterToolCall, AgentTool, BeforeToolCall, ConvertToLlm, QueueMode, TransformContext,
-};
+use agent::{AfterToolCall, AgentTool, BeforeToolCall, ConvertToLlm, QueueMode, TransformContext};
 use ai::{CacheRetention, Model, Provider, ProviderHooks, SimpleStreamOptions, ThinkingLevel};
 use serde::{Deserialize, Serialize};
 

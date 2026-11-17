@@ -2,10 +2,7 @@
 
 use super::*;
 
-pub(super) fn scoped_catalog(
-    catalog: &[ai::Model],
-    current: &ai::Model,
-) -> Vec<ai::Model> {
+pub(super) fn scoped_catalog(catalog: &[ai::Model], current: &ai::Model) -> Vec<ai::Model> {
     let scoped = crate::settings::load_settings()
         .ok()
         .and_then(|s| s.scoped_models)
@@ -515,10 +512,7 @@ pub(super) fn open_settings_model_selector(
 /// model id as the value so `/model <id>` and the selection callback share one
 /// lookup path, while making the provider visible for OpenAI-compatible
 /// gateways where the same model id may exist at multiple endpoints.
-pub(super) fn model_selector_items(
-    catalog: &[ai::Model],
-    lane_model_id: &str,
-) -> Vec<SelectItem> {
+pub(super) fn model_selector_items(catalog: &[ai::Model], lane_model_id: &str) -> Vec<SelectItem> {
     let mut seen = std::collections::HashSet::new();
     catalog
         .iter()
@@ -567,10 +561,7 @@ pub(super) fn model_selector_items(
 /// `/model ...` input consistent with the rows rendered by the selector.
 /// A bare id that matches more than one provider is ambiguous and resolves to
 /// `None` (never silently the first match).
-pub(super) fn find_model_selector_match(
-    catalog: &[ai::Model],
-    input: &str,
-) -> Option<ai::Model> {
+pub(super) fn find_model_selector_match(catalog: &[ai::Model], input: &str) -> Option<ai::Model> {
     let (provider, id) = input
         .split_once('/')
         .filter(|(provider, id)| !provider.is_empty() && !id.is_empty())
