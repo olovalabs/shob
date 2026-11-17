@@ -1603,6 +1603,9 @@ impl agent::AgentTool for HangingTool {
     fn label(&self) -> &str {
         "slow_tool"
     }
+    fn execution_mode(&self) -> agent::ToolExecutionMode {
+        agent::ToolExecutionMode::Parallel
+    }
     async fn execute(
         &self,
         _tool_call_id: &str,
@@ -2048,6 +2051,9 @@ impl agent::AgentTool for ReplayableTool {
     }
     fn label(&self) -> &str {
         "flaky_read"
+    }
+    fn execution_mode(&self) -> agent::ToolExecutionMode {
+        agent::ToolExecutionMode::Parallel
     }
     async fn execute(
         &self,

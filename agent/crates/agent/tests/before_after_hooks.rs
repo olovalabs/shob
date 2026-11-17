@@ -77,6 +77,9 @@ impl agent::AgentTool for EchoTool {
     fn label(&self) -> &str {
         "Echo"
     }
+    fn execution_mode(&self) -> ToolExecutionMode {
+        ToolExecutionMode::Parallel
+    }
     async fn execute(
         &self,
         _tool_call_id: &str,
@@ -548,4 +551,90 @@ async fn before_tool_call_mixed_batch_continues() {
         2,
         "mixed batch with not-all-terminate must continue for a second LLM turn"
     );
+}
+
+struct ReverseCompletionTool {
+    schema: ai::types::Tool,
+    second_finished: tokio::sync::Notify,
+    bodies: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+#[async_trait::async_trait]
+impl agent::AgentTool for ReverseCompletionTool {
+    fn schema(&self) -> &ai::types::Tool {
+        &self.schema
+    }
+    fn label(&self) -> &str {
+        "reverse"
+    }
+    fn execution_mode(&self) -> ToolExecutionMode {
+        ToolExecutionMode::Parallel
+    }
+    async fn execute(
+        &self,
+        id: &str,
+        _: serde_json::Value,
+        _: CancellationToken,
+        _: Arc<dyn Fn(agent::ToolResultPartial) + Send + Sync>,
+    ) -> Result<AgentToolResult, agent::AgentError> {
+        if id == "first" {
+            self.second_finished.notified().await;
+        }
+        self.bodies.lock().unwrap().push(id.to_owned());
+        if id == "second" {
+            self.second_finished.notify_one();
+        }
+        Ok(AgentToolResult::text(id))
+    }
+}
+
+#[tokio::test]
+async fn result_hooks_are_ordered_while_tool_bodies_overlap() {
+    let bodies = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let hooks = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let tool = ReverseCompletionTool {
+        schema: ai::types::Tool {
+            name: "reverse".into(),
+            description: String::new(),
+            parameters: ai::types::Schema::new(serde_json::json!({"type":"object"})),
+            constrained_sampling: None,
+        },
+        second_finished: tokio::sync::Notify::new(),
+        bodies: bodies.clone(),
+    };
+    let mut config = base_config();
+    let observed = hooks.clone();
+    config.after_tool_call = Some(Arc::new(move |ctx, _| {
+        observed.lock().unwrap().push(ctx.tool_call.id.clone());
+        Box::pin(async {
+            Some(AfterToolCallResult {
+                details: Some(serde_json::json!({"ordered": true})),
+                ..Default::default()
+            })
+        })
+    }));
+    let stream = common::mock_stream_fn(vec![
+        assistant_tool_calls(
+            vec![
+                ("first", "reverse", serde_json::json!({})),
+                ("second", "reverse", serde_json::json!({})),
+            ],
+            StopReason::ToolUse,
+        ),
+        assistant_text("done", StopReason::Stop),
+    ]);
+    let (_, messages) = run_and_collect(
+        vec![user_message("run")],
+        context_with_tools(vec![Arc::new(tool)]),
+        config,
+        stream,
+    )
+    .await;
+    assert_eq!(*bodies.lock().unwrap(), ["second", "first"]);
+    assert_eq!(*hooks.lock().unwrap(), ["first", "second"]);
+    for message in messages {
+        if let agent::AgentMessage::ToolResult(result) = message {
+            assert_eq!(result.details, Some(serde_json::json!({"ordered": true})));
+        }
+    }
 }

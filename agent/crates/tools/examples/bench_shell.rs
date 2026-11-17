@@ -187,10 +187,7 @@ async fn main() {
             .as_str()
             .expect("truncated log path");
         let log_bytes = std::fs::metadata(path).unwrap().len();
-        assert!(
-            log_bytes >= 102400,
-            "capture log missing even its bounded tail"
-        );
+        assert_eq!(log_bytes, 1048576, "capture log must include every byte");
         std::fs::remove_file(path).unwrap();
         record(&times, "tool_1mib", start.elapsed());
     }

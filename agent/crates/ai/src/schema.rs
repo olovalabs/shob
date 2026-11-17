@@ -14,7 +14,8 @@ use crate::types::{Tool, ToolCall};
 use jsonschema::paths::PathChunk;
 use jsonschema::JSONSchema;
 use serde_json::{Map, Value};
-use std::collections::HashSet;
+use std::collections::{hash_map::DefaultHasher, HashSet, VecDeque};
+use std::hash::Hasher;
 use std::sync::{Arc, Mutex};
 
 // ----------------------------------------------------------------------------
@@ -49,33 +50,86 @@ fn matches_json_type(value: &Value, ty: &str) -> bool {
 }
 
 // ----------------------------------------------------------------------------
-// Validator cache — one compiled `JSONSchema` per schema, keyed by the
-// serialized schema content. Mirrors the TS `WeakMap<object, Compile>` cache.
+// Validator cache — bounded FIFO keyed by a streamed fingerprint and full
+// content equality. Hits never allocate serialized strings or trust addresses.
 // ----------------------------------------------------------------------------
 
-static VALIDATOR_CACHE: Mutex<Option<std::collections::HashMap<String, Arc<JSONSchema>>>> =
-    Mutex::new(None);
+const VALIDATOR_CACHE_CAPACITY: usize = 64;
+
+struct SchemaFingerprint(DefaultHasher);
+
+impl std::io::Write for SchemaFingerprint {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.write(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn schema_fingerprint(schema: &Value) -> u64 {
+    let mut fingerprint = SchemaFingerprint(DefaultHasher::new());
+    serde_json::to_writer(&mut fingerprint, schema).expect("JSON values are serializable");
+    fingerprint.0.finish()
+}
+
+#[derive(Default)]
+struct ValidatorCache {
+    validators: VecDeque<(u64, Value, Arc<JSONSchema>)>,
+}
+
+impl ValidatorCache {
+    fn get(&self, schema: &Value, fingerprint: u64) -> Option<Arc<JSONSchema>> {
+        self.validators
+            .iter()
+            .find_map(|(key, content, validator)| {
+                (*key == fingerprint && content == schema).then(|| Arc::clone(validator))
+            })
+    }
+
+    fn insert(
+        &mut self,
+        schema: &Value,
+        fingerprint: u64,
+        validator: Arc<JSONSchema>,
+    ) -> Arc<JSONSchema> {
+        if let Some(existing) = self.get(schema, fingerprint) {
+            return existing;
+        }
+        if self.validators.len() == VALIDATOR_CACHE_CAPACITY {
+            self.validators.pop_front();
+        }
+        self.validators
+            .push_back((fingerprint, schema.clone(), validator.clone()));
+        validator
+    }
+}
+
+static VALIDATOR_CACHE: Mutex<Option<ValidatorCache>> = Mutex::new(None);
 
 /// Compile-or-fetch a validator for a schema; `None` if compilation fails
 /// (mirrors TS `getSubSchemaValidator` returning `undefined` on throw).
 fn get_sub_schema_validator(schema: &Value) -> Option<Arc<JSONSchema>> {
-    let key = schema.to_string();
-    let mut guard = VALIDATOR_CACHE.lock().unwrap();
-    let map = guard.get_or_insert_with(std::collections::HashMap::new);
-    if let Some(v) = map.get(&key) {
-        return Some(v.clone());
-    }
-    // jsonschema's default resolver handles `$ref` inside self-contained
-    // schemas; compilation can fail on malformed input — in that case we cache
-    // nothing and return None, matching the TS try/catch → undefined.
-    match JSONSchema::compile(schema) {
-        Ok(v) => {
-            let arc = Arc::new(v);
-            map.insert(key, arc.clone());
-            Some(arc)
+    let fingerprint = schema_fingerprint(schema);
+    {
+        let guard = VALIDATOR_CACHE.lock().unwrap();
+        if let Some(validator) = guard
+            .as_ref()
+            .and_then(|cache| cache.get(schema, fingerprint))
+        {
+            return Some(validator);
         }
-        Err(_) => None,
     }
+    // Compilation (including reference resolution) must not hold the cache lock.
+    // Invalid schemas are not retained, matching TS's try/catch → undefined.
+    let validator = Arc::new(JSONSchema::compile(schema).ok()?);
+    let mut guard = VALIDATOR_CACHE.lock().unwrap();
+    Some(
+        guard
+            .get_or_insert_with(ValidatorCache::default)
+            .insert(schema, fingerprint, validator),
+    )
 }
 
 // ----------------------------------------------------------------------------
@@ -378,6 +432,26 @@ fn sub_schema_accepts_null(schema: &Value) -> bool {
 /// Returns the coerced arguments on success, or `AiError::Schema` with a
 /// formatted message (path + message per error + the received JSON) on failure.
 pub fn validate_tool_arguments(tool: &Tool, tool_call: &ToolCall) -> Result<Value, AiError> {
+    // Terminal parsing preserves malformed wire JSON as a string. Reject it
+    // before coercion when the tool requires an object; string-valued tools
+    // (including object|string unions) keep their normal validation path.
+    if let Value::String(raw) = &tool_call.arguments {
+        let types = schema_types(tool.parameters.as_value());
+        if types.iter().any(|ty| ty == "object") && !types.iter().any(|ty| ty == "string") {
+            let problem = if raw.trim().is_empty() {
+                "Missing"
+            } else {
+                "Malformed"
+            };
+            return Err(AiError::Schema {
+                message: format!(
+                    "{problem} tool arguments for {:?}: expected a JSON object.\n\nReceived raw arguments:\n{raw:?}",
+                    tool.name,
+                ),
+            });
+        }
+    }
+
     let mut args = tool_call.arguments.clone();
 
     // Step 1: normalize optional nulls.
@@ -386,28 +460,27 @@ pub fn validate_tool_arguments(tool: &Tool, tool_call: &ToolCall) -> Result<Valu
     // Step 2: coerce. TS only skips the custom coerce pass when the schema
     // carries the TypeBox Kind symbol; schemars produces plain JSON Schemas, so
     // the Rust port always runs it.
-    let coerced = coerce_with_json_schema(args.clone(), tool.parameters.as_value());
+    let coerced = coerce_with_json_schema(args, tool.parameters.as_value());
 
     // Step 3: authoritative validate.
     let validator = match get_sub_schema_validator(tool.parameters.as_value()) {
         Some(v) => v,
-        None => match JSONSchema::compile(&Value::Bool(true)) {
-            Ok(v) => Arc::new(v),
-            // Truly unreachable: `true` is a valid boolean schema.
-            Err(e) => {
-                return Err(AiError::Schema {
-                    message: format!("could not compile tool schema for {:?}: {e}", tool.name),
-                })
-            }
-        },
+        None => {
+            let error = JSONSchema::compile(tool.parameters.as_value())
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_else(|| "validator unavailable".to_string());
+            return Err(AiError::Schema {
+                message: format!("could not compile tool schema for {:?}: {error}", tool.name),
+            });
+        }
     };
 
-    let check_value = if coerced != args { &coerced } else { &args };
-    if validator.is_valid(check_value) {
-        return Ok(check_value.clone());
+    if validator.is_valid(&coerced) {
+        return Ok(coerced);
     }
 
-    let errors: Vec<String> = collect_validation_errors(&validator, check_value);
+    let errors: Vec<String> = collect_validation_errors(&validator, &coerced);
     let errors_block = if errors.is_empty() {
         "Unknown validation error".to_string()
     } else {
@@ -495,6 +568,119 @@ mod tests {
             thought_signature: None,
             namespace: None,
             recorded: None,
+        }
+    }
+
+    #[test]
+    fn invalid_tool_schema_rejects_arguments() {
+        let t = tool("t", json!({"type": "not-a-json-schema-type"}));
+        let error = validate_tool_arguments(&t, &call(json!({}))).unwrap_err();
+        assert!(error.to_string().contains("could not compile tool schema"));
+    }
+
+    #[test]
+    fn validator_cache_uses_content_after_schema_changes() {
+        let mut cache = ValidatorCache::default();
+        let mut schema = json!({"type": "integer", "minimum": 1});
+        let original = cache.insert(
+            &schema,
+            schema_fingerprint(&schema),
+            Arc::new(JSONSchema::compile(&schema).unwrap()),
+        );
+        let same_content = cache
+            .get(&schema.clone(), schema_fingerprint(&schema))
+            .unwrap();
+        assert!(Arc::ptr_eq(&original, &same_content));
+        assert!(original.is_valid(&json!(2)));
+
+        schema["minimum"] = json!(3);
+        assert!(cache.get(&schema, schema_fingerprint(&schema)).is_none());
+        let changed = cache.insert(
+            &schema,
+            schema_fingerprint(&schema),
+            Arc::new(JSONSchema::compile(&schema).unwrap()),
+        );
+        assert!(!Arc::ptr_eq(&original, &changed));
+        assert!(!changed.is_valid(&json!(2)));
+        assert!(changed.is_valid(&json!(3)));
+    }
+
+    #[test]
+    fn validator_fingerprint_collisions_do_not_reuse_wrong_schema() {
+        let mut cache = ValidatorCache::default();
+        let integer = json!({"type": "integer"});
+        let string = json!({"type": "string"});
+        cache.insert(
+            &integer,
+            7,
+            Arc::new(JSONSchema::compile(&integer).unwrap()),
+        );
+        assert!(cache.get(&string, 7).is_none());
+        cache.insert(&string, 7, Arc::new(JSONSchema::compile(&string).unwrap()));
+        assert!(!cache.get(&integer, 7).unwrap().is_valid(&json!("text")));
+        assert!(!cache.get(&string, 7).unwrap().is_valid(&json!(42)));
+    }
+
+    #[test]
+    fn validation_observes_replaced_tool_schema() {
+        let mut t = tool("t", json!({"type": "integer", "minimum": 1}));
+        let tc = call(json!(2));
+        assert_eq!(validate_tool_arguments(&t, &tc).unwrap(), json!(2));
+        t.parameters = crate::types::Schema::new(json!({"type": "integer", "minimum": 3}));
+        assert!(validate_tool_arguments(&t, &tc).is_err());
+    }
+
+    #[test]
+    fn validator_cache_evicts_oldest_content_at_capacity() {
+        let mut cache = ValidatorCache::default();
+        let validator = Arc::new(JSONSchema::compile(&json!({"type": "integer"})).unwrap());
+        for minimum in 0..=VALIDATOR_CACHE_CAPACITY {
+            let schema = json!({"minimum": minimum});
+            cache.insert(&schema, schema_fingerprint(&schema), validator.clone());
+        }
+        assert_eq!(cache.validators.len(), VALIDATOR_CACHE_CAPACITY);
+        let evicted = json!({"minimum": 0});
+        let retained = json!({"minimum": 1});
+        assert!(cache.get(&evicted, schema_fingerprint(&evicted)).is_none());
+        assert!(cache
+            .get(&retained, schema_fingerprint(&retained))
+            .is_some());
+    }
+
+    #[test]
+    fn object_tool_rejects_malformed_and_missing_raw_arguments() {
+        let t = tool("t", json!({"type": "object"}));
+        for raw in ["", " \n", "{\"payload\":", "undefined", "{\"payload\": 1}"] {
+            let error = validate_tool_arguments(&t, &call(json!(raw))).unwrap_err();
+            let message = error.to_string();
+            assert!(message.contains(if raw.trim().is_empty() {
+                "Missing tool arguments"
+            } else {
+                "Malformed tool arguments"
+            }));
+            assert!(message.contains("expected a JSON object"));
+            assert!(message.contains(&format!("{raw:?}")));
+        }
+        assert_eq!(
+            validate_tool_arguments(&t, &call(json!({}))).unwrap(),
+            json!({})
+        );
+    }
+
+    #[test]
+    fn string_tool_arguments_are_not_mistaken_for_malformed_json() {
+        for schema in [
+            json!({"type": "string"}),
+            json!({"type": ["object", "string"]}),
+            json!({"anyOf": [{"type": "object"}, {"type": "string"}]}),
+        ] {
+            let t = tool("t", schema);
+            for raw in ["", "{\"payload\":", "ordinary raw text"] {
+                assert_eq!(
+                    validate_tool_arguments(&t, &call(json!(raw))).unwrap(),
+                    json!(raw)
+                );
+            }
         }
     }
 

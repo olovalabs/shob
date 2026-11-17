@@ -149,6 +149,10 @@ To use Shob's native AI chat, switch a terminal pane to **Agent** mode and run `
 
 For an OpenAI-compatible Chat Completions service, choose **OpenAI-compatible API** in `/auth`. Enter a unique provider ID, display name, base URL (including `/v1` if required), API key, and comma-separated model IDs. The provider and models are saved for future sessions; keys use the same credential store as other providers.
 
+The editor shortcut opens the last editor you chose. If you haven’t chosen one, Shob uses the first supported editor it finds on your PATH.
+
+Project scripts are saved per project in `settings.json` and run in a new terminal tab using the project directory.
+
 ### Agent Permissions
 
 Shob remembers the approval mode selected in native agent chat across restarts.

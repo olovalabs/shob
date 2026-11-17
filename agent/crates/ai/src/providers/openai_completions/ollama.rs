@@ -298,6 +298,7 @@ mod behavior_tests {
         let (mut producer, _stream) = crate::event_stream::create_assistant_message_event_stream();
         let done = apply(&json!({"message":{"thinking":"checking","tool_calls":[{"function":{"name":"lookup","arguments":{"q":"rust"}}}]},"done":true,"done_reason":"stop","prompt_eval_count":20,"prompt_eval_cached_count":5,"eval_count":7}), &mut state, &mut producer).await.unwrap();
         assert!(done);
+        state.flush_pending(&mut producer).await;
         assert_eq!(state.finish_reason, Some(DoneReason::ToolUse));
         assert_eq!(state.output.usage.input, 15);
         assert_eq!(state.output.usage.cache_read, 5);

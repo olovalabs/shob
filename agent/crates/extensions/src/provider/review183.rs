@@ -87,6 +87,9 @@ impl AgentTool for Counter {
     fn label(&self) -> &str {
         "Counter"
     }
+    fn execution_mode(&self) -> ToolExecutionMode {
+        ToolExecutionMode::Parallel
+    }
     async fn execute(
         &self,
         _: &str,

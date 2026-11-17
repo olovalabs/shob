@@ -2100,7 +2100,7 @@ async fn reference_count_limit_release_and_cancel_cleanup_keep_accounting() {
     assert_eq!(result.usage.unwrap().total_tokens, 18 * 3);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn reference_shared_tree_quota_and_foreign_programs_are_enforced() {
     let outer = Arc::new(Mutex::new(None));
     let saved = outer.clone();

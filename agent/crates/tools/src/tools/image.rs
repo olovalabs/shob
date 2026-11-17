@@ -264,6 +264,10 @@ impl AgentTool for ImageTool {
         "image"
     }
 
+    fn execution_mode(&self) -> agent::ToolExecutionMode {
+        agent::ToolExecutionMode::Parallel
+    }
+
     async fn execute(
         &self,
         _tool_call_id: &str,

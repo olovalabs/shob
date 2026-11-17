@@ -57,6 +57,9 @@ jobs:
       - name: Check
         run: cargo check --workspace --all-targets --locked
 
+      - name: Check standalone terminal lockfile
+        run: cargo metadata --locked --manifest-path terminal/Cargo.toml --format-version 1 > /dev/null
+
   clippy:
     name: clippy
     runs-on: ubuntu-22.04

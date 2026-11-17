@@ -125,8 +125,10 @@ RPI_AGENT_DIAGNOSTICS=1 RPI_FRAME_DIAGNOSTICS=1 \
 
 `RPI_AGENT_DIAGNOSTICS` reports context, request, tool, and session append
 latencies. `RPI_FRAME_DIAGNOSTICS` reports durable frame batching, flush barriers,
-and writer failures. Diagnostics are disabled when the variables are unset or
-set to `0`; they do not change the JSONL format. See
+and writer failures. Those diagnostics are disabled when the variables are unset
+or set to `0`; they do not change the JSONL format. `RPI_TOOL_PARALLELISM` caps
+how many tool bodies may overlap in one parallel batch (default 8, maximum 64).
+A non-zero host `tool_parallelism` wins over the variable. See
 [`docs/debugging/rust-debugging.md`](docs/debugging/rust-debugging.md) for the
 field reference. The built-in read-only `docs` tool can retrieve it with
 `{"topic":"debugging","query":"RPI_FRAME_DIAGNOSTICS"}`.

@@ -16,7 +16,9 @@ use crate::event_stream::{
 use crate::model::{MaxTokensField, Model, StreamingProtocolCompat};
 use crate::provider::{Provider, SimpleStreamOptions};
 use crate::providers::anthropic::cost::calculate_cost;
-use crate::providers::anthropic::json_parse::parse_streaming_json;
+use crate::providers::anthropic::json_parse::{
+    parse_streaming_json, parse_terminal_tool_arguments,
+};
 use crate::providers::anthropic::retry::retry_provider_request;
 use crate::providers::anthropic::sse::SseEventStream;
 use crate::providers::{DELTA_FLUSH_BYTES, DELTA_FLUSH_INTERVAL};
@@ -812,6 +814,12 @@ struct StreamState {
     /// Text/thinking deltas accumulated but not yet emitted as one event.
     pending_text: String,
     pending_thinking: String,
+    /// Tool-call argument fragments batched but not yet emitted. Parsing the
+    /// accumulated JSON and cloning the message once per wire fragment is
+    /// quadratic for large `write`/`edit` arguments. The final parse in
+    /// `finish` stays authoritative.
+    pending_tool: String,
+    pending_tool_index: Option<usize>,
     /// When a batched delta was last emitted, for [`DELTA_FLUSH_INTERVAL`].
     last_flush: Option<tokio::time::Instant>,
 }
@@ -833,6 +841,8 @@ impl StreamState {
             started: false,
             pending_text: String::new(),
             pending_thinking: String::new(),
+            pending_tool: String::new(),
+            pending_tool_index: None,
             last_flush: None,
         }
     }
@@ -847,18 +857,22 @@ impl StreamState {
     }
 
     fn flush_deadline(&self) -> Option<tokio::time::Instant> {
-        if !self.pending_text.is_empty() || !self.pending_thinking.is_empty() {
+        if !self.pending_text.is_empty()
+            || !self.pending_thinking.is_empty()
+            || !self.pending_tool.is_empty()
+        {
             self.last_flush.map(|last| last + DELTA_FLUSH_INTERVAL)
         } else {
             None
         }
     }
 
-    /// Emit whatever text/thinking is batched. Called at every channel boundary
-    /// so no delta is ever dropped or reordered.
+    /// Emit whatever text/thinking/tool-args are batched. Called at every
+    /// channel boundary so no delta is dropped or reordered.
     async fn flush_pending(&mut self, producer: &mut AssistantMessageEventStreamProducer) {
         self.flush_text(producer).await;
         self.flush_thinking(producer).await;
+        self.flush_tool(producer).await;
     }
 
     async fn flush_text(&mut self, producer: &mut AssistantMessageEventStreamProducer) {
@@ -893,6 +907,34 @@ impl StreamState {
         producer
             .push(AssistantMessageEvent::ThinkingDelta {
                 content_index: index,
+                delta,
+                partial: Arc::new(self.output.clone()),
+            })
+            .await;
+    }
+    async fn flush_tool(&mut self, producer: &mut AssistantMessageEventStreamProducer) {
+        if self.pending_tool.is_empty() {
+            return;
+        }
+        let Some(content_index) = self.pending_tool_index else {
+            self.pending_tool.clear();
+            return;
+        };
+        let delta = std::mem::take(&mut self.pending_tool);
+        // One parse per emitted checkpoint, not per wire fragment.
+        let arguments = self
+            .tools
+            .values()
+            .find(|tool| tool.content_index == content_index)
+            .map(|tool| parse_streaming_json(Some(&tool.arguments)))
+            .unwrap_or_else(|| json!({}));
+        if let Some(Content::ToolCall(call)) = self.output.content.get_mut(content_index) {
+            call.arguments = arguments;
+        }
+        self.last_flush = Some(tokio::time::Instant::now());
+        producer
+            .push(AssistantMessageEvent::ToolCallDelta {
+                content_index,
                 delta,
                 partial: Arc::new(self.output.clone()),
             })
@@ -989,8 +1031,10 @@ impl StreamState {
     }
 
     async fn push_text(&mut self, producer: &mut AssistantMessageEventStreamProducer, delta: &str) {
-        // Flush before even the start snapshot can expose buffered thinking.
+        // Flush before even the start snapshot can expose buffered thinking
+        // or a tool-call tail from the previous channel.
         self.flush_thinking(producer).await;
+        self.flush_tool(producer).await;
         let first_text = self.text_index.is_none();
         let index = match self.text_index {
             Some(index) => index,
@@ -1026,6 +1070,7 @@ impl StreamState {
         // Keep channel order strict: text already streamed must be emitted before
         // the first thinking delta of a new block.
         self.flush_text(producer).await;
+        self.flush_tool(producer).await;
         let first_thinking = self.thinking_index.is_none();
         let index = match self.thinking_index {
             Some(index) => index,
@@ -1062,9 +1107,11 @@ impl StreamState {
         value: &Value,
         position: usize,
     ) {
-        // A tool-call block starts a new channel; flush what is batched so the
+        // A tool-call block is a new channel; flush text/thinking so the
         // consumer never sees tool events before the text that preceded them.
-        self.flush_pending(producer).await;
+        // Do not flush this tool's own pending arguments — that is the batch.
+        self.flush_text(producer).await;
+        self.flush_thinking(producer).await;
         let wire_index = value
             .get("index")
             .and_then(Value::as_u64)
@@ -1081,6 +1128,10 @@ impl StreamState {
                         .unwrap_or(position)
                 })
             });
+        let existing = self.tools.get(&wire_index).map(|tool| tool.content_index);
+        if self.pending_tool_index.is_some() && self.pending_tool_index != existing {
+            self.flush_tool(producer).await;
+        }
         if !self.tools.contains_key(&wire_index) {
             let content_index = self.output.content.len();
             self.output
@@ -1104,60 +1155,68 @@ impl StreamState {
                 .await;
         }
 
-        let tool = self
-            .tools
-            .get_mut(&wire_index)
-            .expect("tool state inserted");
-        if let Some(id) = value
-            .get("id")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-        {
-            if self.output.provider != "google" || tool.id != id {
-                tool.id.push_str(id);
-            }
-        }
-        if let Some(name) = value
-            .get("function")
-            .and_then(|v| v.get("name"))
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-        {
-            if self.output.provider != "google" || tool.name != name {
-                tool.name.push_str(name);
-            }
-        }
         let arguments = value
             .get("function")
             .and_then(|v| v.get("arguments"))
             .and_then(Value::as_str)
             .unwrap_or_default();
-        tool.arguments.push_str(arguments);
-        if matches!(
-            self.output.provider.as_str(),
-            "google" | super::antigravity::ID
-        ) {
-            if let Some(signature) = value
-                .pointer("/extra_content/google/thought_signature")
+        let (content_index, id, name, thought_signature) = {
+            let tool = self
+                .tools
+                .get_mut(&wire_index)
+                .expect("tool state inserted");
+            if let Some(id) = value
+                .get("id")
                 .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
             {
-                tool.thought_signature = Some(signature.to_owned());
+                if self.output.provider != "google" || tool.id != id {
+                    tool.id.push_str(id);
+                }
             }
+            if let Some(name) = value
+                .get("function")
+                .and_then(|v| v.get("name"))
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+            {
+                if self.output.provider != "google" || tool.name != name {
+                    tool.name.push_str(name);
+                }
+            }
+            if !arguments.is_empty() {
+                tool.arguments.push_str(arguments);
+            }
+            if matches!(
+                self.output.provider.as_str(),
+                "google" | super::antigravity::ID
+            ) {
+                if let Some(signature) = value
+                    .pointer("/extra_content/google/thought_signature")
+                    .and_then(Value::as_str)
+                {
+                    tool.thought_signature = Some(signature.to_owned());
+                }
+            }
+            (
+                tool.content_index,
+                tool.id.clone(),
+                tool.name.clone(),
+                tool.thought_signature.clone(),
+            )
+        };
+        if let Some(Content::ToolCall(call)) = self.output.content.get_mut(content_index) {
+            call.id = id;
+            call.name = name;
+            call.thought_signature = thought_signature;
         }
-        if let Some(Content::ToolCall(call)) = self.output.content.get_mut(tool.content_index) {
-            call.id = tool.id.clone();
-            call.name = tool.name.clone();
-            call.arguments = parse_streaming_json(Some(&tool.arguments));
-            call.thought_signature = tool.thought_signature.clone();
+        if arguments.is_empty() {
+            return;
         }
-        if !arguments.is_empty() {
-            producer
-                .push(AssistantMessageEvent::ToolCallDelta {
-                    content_index: tool.content_index,
-                    delta: arguments.to_string(),
-                    partial: Arc::new(self.output.clone()),
-                })
-                .await;
+        self.pending_tool_index = Some(content_index);
+        self.pending_tool.push_str(arguments);
+        if self.should_flush(&self.pending_tool) {
+            self.flush_tool(producer).await;
         }
     }
 
@@ -1197,7 +1256,7 @@ impl StreamState {
                 kind: ToolCallType,
                 id: tool.id.clone(),
                 name: tool.name.clone(),
-                arguments: parse_streaming_json(Some(&tool.arguments)),
+                arguments: parse_terminal_tool_arguments(&tool.arguments),
                 thought_signature: tool.thought_signature.clone(),
                 namespace: None,
                 recorded: None,
@@ -2205,5 +2264,184 @@ mod tests {
         assert_eq!(result.response_id.as_deref(), Some("accepted-id"));
         assert_eq!(result.usage.input, 42);
         assert_eq!(result.stop_reason, StopReason::Aborted);
+    }
+
+    fn tool_arg_chunk(index: u64, id: &str, name: &str, arguments: &str) -> Value {
+        json!({
+            "choices": [{
+                "delta": {"tool_calls": [{
+                    "index": index,
+                    "id": id,
+                    "function": {"name": name, "arguments": arguments}
+                }]},
+                "finish_reason": null
+            }]
+        })
+    }
+
+    fn tool_deltas(events: &[AssistantMessageEvent]) -> Vec<(usize, String)> {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                AssistantMessageEvent::ToolCallDelta {
+                    content_index,
+                    delta,
+                    ..
+                } => Some((*content_index, delta.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn tool_argument_events_are_bounded_and_lossless() {
+        let model = model();
+        let (mut producer, mut stream) = create_assistant_message_event_stream();
+        let mut state = StreamState::new(&model);
+        let body = "x".repeat(4000);
+        let raw = format!("{{\"text\":\"{body}\"}}");
+        let produce = async {
+            state.start(&mut producer).await;
+            for (index, ch) in raw.chars().enumerate() {
+                let fragment = ch.to_string();
+                state
+                    .apply_chunk(
+                        &mut producer,
+                        &tool_arg_chunk(
+                            0,
+                            if index == 0 { "call-1" } else { "" },
+                            if index == 0 { "write" } else { "" },
+                            &fragment,
+                        ),
+                    )
+                    .await;
+            }
+            state
+                .apply_chunk(
+                    &mut producer,
+                    &json!({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}),
+                )
+                .await;
+            state.finish(&mut producer, &model).await;
+            state
+        };
+        let (state, events) = tokio::join!(produce, drain(&mut stream));
+        let deltas = tool_deltas(&events);
+        let joined: String = deltas.iter().map(|(_, delta)| delta.as_str()).collect();
+        assert_eq!(
+            joined, raw,
+            "concatenated deltas must equal the wire fragments"
+        );
+        assert!(
+            deltas.len() <= raw.len() / DELTA_FLUSH_BYTES + 5,
+            "{} fragments must coalesce, got {} events",
+            raw.len(),
+            deltas.len()
+        );
+        assert!(matches!(
+            &state.output.content[0],
+            Content::ToolCall(call) if call.arguments["text"] == body
+        ));
+        let end_at = events
+            .iter()
+            .position(|event| matches!(event, AssistantMessageEvent::ToolCallEnd { .. }))
+            .expect("tool call end");
+        let last_delta = events
+            .iter()
+            .rposition(|event| matches!(event, AssistantMessageEvent::ToolCallDelta { .. }))
+            .expect("tool delta");
+        assert!(last_delta < end_at, "tail must flush before ToolCallEnd");
+    }
+
+    #[tokio::test]
+    async fn tool_switch_cancellation_and_escapes_keep_exact_bytes() {
+        let model = model();
+        let (mut producer, mut stream) = create_assistant_message_event_stream();
+        let mut state = StreamState::new(&model);
+        state.start(&mut producer).await;
+        let escaped = r#"{"path":"a\"b\\c"}"#;
+        state
+            .apply_chunk(&mut producer, &tool_arg_chunk(0, "c0", "read", "{"))
+            .await;
+        state
+            .apply_chunk(&mut producer, &tool_arg_chunk(0, "", "", &escaped[1..]))
+            .await;
+        state
+            .apply_chunk(&mut producer, &tool_arg_chunk(1, "c1", "read", "{\"n\":1}"))
+            .await;
+        state.error(&mut producer, "cancelled".into(), true).await;
+        let events = drain(&mut stream).await;
+        let deltas = tool_deltas(&events);
+        let first: String = deltas
+            .iter()
+            .filter(|(index, _)| *index == 0)
+            .map(|(_, delta)| delta.as_str())
+            .collect();
+        let second: String = deltas
+            .iter()
+            .filter(|(index, _)| *index == 1)
+            .map(|(_, delta)| delta.as_str())
+            .collect();
+        assert_eq!(first, escaped);
+        assert_eq!(second, "{\"n\":1}");
+        let start1 = events
+            .iter()
+            .rposition(|event| matches!(event, AssistantMessageEvent::ToolCallStart { .. }))
+            .expect("second start");
+        let first_tail = events
+            .iter()
+            .position(|event| {
+                matches!(event, AssistantMessageEvent::ToolCallDelta { content_index: 0, delta, .. } if delta.contains("path"))
+            })
+            .expect("first tool tail");
+        assert!(
+            first_tail < start1,
+            "switching tools must flush the previous batch"
+        );
+        assert!(matches!(
+            events.last(),
+            Some(AssistantMessageEvent::Error {
+                reason: crate::types::ErrorReason::Aborted,
+                ..
+            })
+        ));
+        assert!(matches!(
+            &state.output.content[0],
+            Content::ToolCall(call) if call.arguments["path"] == "a\"b\\c"
+        ));
+    }
+
+    #[tokio::test]
+    async fn malformed_tool_arguments_keep_raw_bytes_until_finish() {
+        let model = model();
+        let (mut producer, mut stream) = create_assistant_message_event_stream();
+        let mut state = StreamState::new(&model);
+        state.start(&mut producer).await;
+        let raw = "not json {";
+        for ch in raw.chars() {
+            state
+                .apply_chunk(
+                    &mut producer,
+                    &tool_arg_chunk(0, "bad", "read", &ch.to_string()),
+                )
+                .await;
+        }
+        state
+            .apply_chunk(
+                &mut producer,
+                &json!({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}),
+            )
+            .await;
+        state.finish(&mut producer, &model).await;
+        let events = drain(&mut stream).await;
+        let joined: String = tool_deltas(&events)
+            .into_iter()
+            .map(|(_, delta)| delta)
+            .collect();
+        assert_eq!(joined, raw);
+        assert!(matches!(
+            &state.output.content[0],
+            Content::ToolCall(call) if call.arguments == serde_json::Value::String(raw.to_string())
+        ));
     }
 }

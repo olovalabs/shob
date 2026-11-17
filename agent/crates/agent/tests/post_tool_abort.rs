@@ -23,6 +23,9 @@ impl AgentTool for PendingTool {
     fn label(&self) -> &str {
         "pending"
     }
+    fn execution_mode(&self) -> agent::ToolExecutionMode {
+        agent::ToolExecutionMode::Parallel
+    }
     async fn execute(
         &self,
         _: &str,
@@ -221,4 +224,62 @@ async fn post_tool_late_cancel_does_not_relabel_normal_completed_assistant() {
             .count(),
         1
     );
+}
+
+#[tokio::test]
+async fn cancelled_batch_records_unstarted_calls_in_order() {
+    let signal = CancellationToken::new();
+    let started = Arc::new(tokio::sync::Notify::new());
+    let assistant = common::assistant_tool_calls(
+        vec![
+            ("first", "pending", serde_json::json!({})),
+            ("second", "pending", serde_json::json!({})),
+            ("third", "pending", serde_json::json!({})),
+        ],
+        StopReason::ToolUse,
+    );
+    let context = AgentContext {
+        tools: vec![Arc::new(PendingTool {
+            schema: Tool {
+                name: "pending".into(),
+                description: "pending".into(),
+                parameters: ai::types::Schema::new(serde_json::json!({"type":"object"})),
+                constrained_sampling: None,
+            },
+            started: started.clone(),
+        })],
+        ..Default::default()
+    };
+    let mut config = common::base_config();
+    config.signal = signal.clone();
+    config.tool_parallelism = 1;
+    let (collector, _) = agent::CollectorEmitter::new();
+    let run = tokio::spawn(agent::run_agent_loop(
+        vec![common::user_message("run")],
+        context,
+        config,
+        Arc::new(collector),
+        common::mock_stream_fn(vec![assistant]),
+    ));
+    started.notified().await;
+    signal.cancel();
+    let messages = run.await.unwrap().unwrap();
+    let results: Vec<_> = messages
+        .iter()
+        .filter_map(|message| match message {
+            AgentMessage::ToolResult(result) => Some(result),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        results
+            .iter()
+            .map(|result| result.tool_call_id.as_str())
+            .collect::<Vec<_>>(),
+        ["first", "second", "third"]
+    );
+    for result in &results[1..] {
+        assert!(result.is_error);
+        assert!(common::tool_result_text(result).contains("not executed"));
+    }
 }

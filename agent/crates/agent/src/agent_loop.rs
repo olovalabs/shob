@@ -7,11 +7,9 @@
 //! [`AgentMessage`].
 //!
 //! Critical invariants enforced here (plan §5):
-//! - **Tool-execution ordering**: in a parallel batch, `ToolExecutionEnd` fires
-//!   in *completion* order; tool-result `MessageStart`/`MessageEnd` fire later
-//!   in *source/ordinal* order. Implemented by collecting completion signals
-//!   into a queue, then walking the finalized vec by index for the result
-//!   messages.
+//! - **Tool-execution ordering**: result hooks run in source order. Without
+//!   hooks, parallel `ToolExecutionEnd` follows completion order. Tool-result
+//!   `MessageStart`/`MessageEnd` always follow source order.
 //! - **Truncate-fail**: `stop_reason == Length` → every tool call in the
 //!   message fails-in-place with `is_error:true` and is *not* executed.
 //! - **Late-update suppression**: `on_update` after `execute` resolves is a
@@ -960,9 +958,7 @@ async fn fail_tool_calls_from_truncated_message(
 // Tool-call execution
 // ----------------------------------------------------------------------------
 
-/// Execute a batch of tool calls. Sequential if `config.tool_execution ==
-/// Sequential` or any matched tool's `execution_mode()` is `Sequential`;
-/// otherwise parallel. Mirrors TS `executeToolCalls`.
+/// Execute parallel groups separated by exclusive tool-call barriers.
 async fn execute_tool_calls(
     current_context: &AgentContext,
     assistant_message: &AssistantMessage,
@@ -973,37 +969,92 @@ async fn execute_tool_calls(
     if let Some(rejected) = reject_ambiguous_tool_batch(tool_calls, emit).await {
         return Ok(rejected);
     }
-    let has_sequential = tool_calls.iter().any(|tc| {
+    let current_context = &Arc::new(current_context.clone());
+    let assistant_message = &Arc::new(assistant_message.clone());
+    let config = &Arc::new(config.clone());
+    if config.tool_execution == ToolExecutionMode::Sequential {
+        return execute_tool_calls_sequential(
+            current_context,
+            assistant_message,
+            tool_calls,
+            &[],
+            config,
+            emit,
+        )
+        .await;
+    }
+    let is_sequential = |call: &ToolCall| {
         current_context
             .tools
             .iter()
-            .find(|t| t.schema().name == tc.name)
-            .map(|t| t.execution_mode() == ToolExecutionMode::Sequential)
-            .unwrap_or(false)
-    });
-    if config.tool_execution == ToolExecutionMode::Sequential || has_sequential {
-        execute_tool_calls_sequential(current_context, assistant_message, tool_calls, config, emit)
-            .await
-    } else {
-        execute_tool_calls_parallel(current_context, assistant_message, tool_calls, config, emit)
-            .await
+            .find(|tool| tool.schema().name == call.name)
+            .is_none_or(|tool| tool.execution_mode() == ToolExecutionMode::Sequential)
+    };
+    let mut messages = Vec::with_capacity(tool_calls.len());
+    let mut terminate = !tool_calls.is_empty();
+    let mut start = 0;
+    while start < tool_calls.len() {
+        let sequential = is_sequential(&tool_calls[start]);
+        let mut end = start + 1;
+        if !sequential {
+            while end < tool_calls.len() && !is_sequential(&tool_calls[end]) {
+                end += 1;
+            }
+        }
+        let group = &tool_calls[start..end];
+        let batch = if sequential {
+            execute_tool_calls_sequential(
+                current_context,
+                assistant_message,
+                group,
+                &tool_calls[..start],
+                config,
+                emit,
+            )
+            .await?
+        } else {
+            execute_tool_calls_parallel(
+                current_context,
+                assistant_message,
+                group,
+                &tool_calls[..start],
+                config,
+                emit,
+            )
+            .await?
+        };
+        terminate &= batch.terminate;
+        messages.extend(batch.messages);
+        start = end;
     }
+    Ok(ExecutedToolBatch {
+        messages,
+        terminate,
+    })
 }
 
 async fn execute_tool_calls_sequential(
-    current_context: &AgentContext,
-    assistant_message: &AssistantMessage,
+    current_context: &Arc<AgentContext>,
+    assistant_message: &Arc<AssistantMessage>,
     tool_calls: &[ToolCall],
-    config: &AgentLoopConfig,
+    previous_calls: &[ToolCall],
+    config: &Arc<AgentLoopConfig>,
     emit: &Arc<dyn AgentEmitter>,
 ) -> Result<ExecutedToolBatch, AgentError> {
-    // One immutable snapshot per batch, shared by every capability/descendant.
-    let current_context = &Arc::new(current_context.clone());
-    let assistant_message = &Arc::new(assistant_message.clone());
     let mut finalized_calls: Vec<FinalizedToolCall> = Vec::new();
     let mut messages: Vec<ToolResultMessage> = Vec::new();
 
-    for tool_call in tool_calls {
+    for (index, tool_call) in tool_calls.iter().enumerate() {
+        if config.signal.is_cancelled() {
+            settle_unstarted_tool_calls(
+                &tool_calls[index..],
+                emit,
+                &mut finalized_calls,
+                &mut messages,
+            )
+            .await;
+            break;
+        }
         if let Some(reason) = invalid_tool_call_reason(tool_call) {
             let finalized = FinalizedToolCall {
                 tool_call: tool_call.clone(),
@@ -1031,13 +1082,27 @@ async fn execute_tool_calls_sequential(
             run_one_tool_call(current_context, assistant_message, tool_call, config, emit).await?;
 
         emit_tool_execution_end(emit, &finalized).await;
-        let trm =
+        let mut trm =
             create_tool_result_message(&finalized.tool_call, &finalized.result, finalized.is_error);
+        note_repeated_tool_call(
+            &mut trm,
+            current_context,
+            previous_calls,
+            &tool_calls[..index],
+            tool_call,
+        );
         emit_tool_result_message(emit, &trm).await;
         finalized_calls.push(finalized);
         messages.push(trm);
 
         if config.signal.is_cancelled() {
+            settle_unstarted_tool_calls(
+                &tool_calls[index + 1..],
+                emit,
+                &mut finalized_calls,
+                &mut messages,
+            )
+            .await;
             break;
         }
     }
@@ -1053,16 +1118,16 @@ async fn execute_tool_calls_sequential(
 ///    (prepare may mutate args / block).
 /// 2. Immediate outcomes (not-found / blocked / aborted / validation error)
 ///    emit `tool_execution_end` immediately.
-/// 3. Ready calls run concurrently. **`tool_execution_end` is emitted in
-///    COMPLETION order** — we drive all prepared futures with `join_set`-style
-///    polling and emit as each resolves.
+/// 3. Ready bodies run concurrently. Result hooks serialize in model order;
+///    without hooks, `tool_execution_end` follows completion order.
 /// 4. After all settle, **tool-result `MessageStart`/`MessageEnd` are emitted in
 ///    SOURCE/ordinal order** — we walk the finalized vec by index.
 async fn execute_tool_calls_parallel(
-    current_context: &AgentContext,
-    assistant_message: &AssistantMessage,
+    current_context: &Arc<AgentContext>,
+    assistant_message: &Arc<AssistantMessage>,
     tool_calls: &[ToolCall],
-    config: &AgentLoopConfig,
+    previous_calls: &[ToolCall],
+    config: &Arc<AgentLoopConfig>,
     emit: &Arc<dyn AgentEmitter>,
 ) -> Result<ExecutedToolBatch, AgentError> {
     // The loop owns these futures: dropping it drops execute/finalize too,
@@ -1070,12 +1135,21 @@ async fn execute_tool_calls_parallel(
     let mut running = RunningToolCalls::new();
     let mut completed = VecDeque::new();
     let mut finalized_by_index = Vec::with_capacity(tool_calls.len());
-    let execution_context = (
-        Arc::new(current_context.clone()),
-        Arc::new(assistant_message.clone()),
-    );
+    let execution_context = (Arc::clone(current_context), Arc::clone(assistant_message));
+    let permits = Arc::new(tokio::sync::Semaphore::new(
+        crate::hooks::effective_tool_parallelism(config.tool_parallelism),
+    ));
+    let hook_order = config.after_tool_call.as_ref().map(|_| {
+        Arc::new(ToolHookOrder {
+            state: std::sync::Mutex::new((0, vec![false; tool_calls.len()])),
+            changed: tokio::sync::Notify::new(),
+        })
+    });
 
     for tool_call in tool_calls {
+        if config.signal.is_cancelled() {
+            break;
+        }
         let index = finalized_by_index.len();
         finalized_by_index.push(None);
         let preparation = async {
@@ -1105,6 +1179,9 @@ async fn execute_tool_calls_parallel(
                     result,
                     is_error,
                 };
+                if let Some(order) = &hook_order {
+                    order.finish(index);
+                }
                 drive_tool_calls_while(
                     emit_tool_execution_end(emit, &finalized),
                     &mut running,
@@ -1114,21 +1191,55 @@ async fn execute_tool_calls_parallel(
                 finalized_by_index[index] = Some(finalized);
             }
             Prepared::Ready { tool, args } => {
+                let acquire = {
+                    let permits = Arc::clone(&permits);
+                    let signal = config.signal.clone();
+                    async move {
+                        tokio::select! {
+                            biased;
+                            _ = signal.cancelled() => None,
+                            permit = permits.acquire_owned() => permit.ok(),
+                        }
+                    }
+                };
+                let Some(permit) =
+                    drive_tool_calls_while(acquire, &mut running, &mut completed).await
+                else {
+                    let finalized = unstarted_tool_call(tool_call);
+                    drive_tool_calls_while(
+                        emit_tool_execution_end(emit, &finalized),
+                        &mut running,
+                        &mut completed,
+                    )
+                    .await;
+                    finalized_by_index[index] = Some(finalized);
+                    break;
+                };
                 let tc = tool_call.clone();
                 let panic_call = tc.clone();
                 let (ctx, am) = (
                     Arc::clone(&execution_context.0),
                     Arc::clone(&execution_context.1),
                 );
-                let cfg = config.clone();
+                let cfg = Arc::clone(config);
                 let emit = Arc::clone(emit);
-                let execute = std::panic::AssertUnwindSafe(async move {
-                    let executed =
-                        execute_prepared_tool_call(&tc, &tool, &args, &cfg, &emit, &ctx, &am).await;
-                    finalize_executed_tool_call(&ctx, &am, &tc, &args, executed, &cfg).await
-                })
-                .catch_unwind();
+                let order = hook_order.clone();
                 running.push(Box::pin(async move {
+                    let _ordered = ToolHookGuard {
+                        order: order.clone(),
+                        index,
+                    };
+                    let execute = std::panic::AssertUnwindSafe(async move {
+                        let executed =
+                            execute_prepared_tool_call(&tc, &tool, &args, &cfg, &emit, &ctx, &am)
+                                .await;
+                        drop(permit);
+                        if let Some(order) = &order {
+                            order.wait(index).await;
+                        }
+                        finalize_executed_tool_call(&ctx, &am, &tc, &args, executed, &cfg).await
+                    })
+                    .catch_unwind();
                     let finalized = execute.await.unwrap_or_else(|_| FinalizedToolCall {
                         tool_call: panic_call,
                         result: create_error_tool_result("tool task panicked"),
@@ -1141,6 +1252,12 @@ async fn execute_tool_calls_parallel(
         if config.signal.is_cancelled() {
             break;
         }
+    }
+    while finalized_by_index.len() < tool_calls.len() {
+        let tool_call = &tool_calls[finalized_by_index.len()];
+        let finalized = unstarted_tool_call(tool_call);
+        emit_tool_execution_end(emit, &finalized).await;
+        finalized_by_index.push(Some(finalized));
     }
 
     // Completion events retain completion order, including peers that finished
@@ -1165,10 +1282,19 @@ async fn execute_tool_calls_parallel(
     // Tool-result messages still settle in source/ordinal order.
     let mut messages = Vec::new();
     let mut finalized_calls = Vec::new();
+    let mut earlier = Vec::new();
     for slot in finalized_by_index {
         let finalized = slot.expect("every tool call finalized");
-        let trm =
+        let mut trm =
             create_tool_result_message(&finalized.tool_call, &finalized.result, finalized.is_error);
+        note_repeated_tool_call(
+            &mut trm,
+            current_context,
+            previous_calls,
+            &earlier,
+            &finalized.tool_call,
+        );
+        earlier.push(finalized.tool_call.clone());
         emit_tool_result_message(emit, &trm).await;
         messages.push(trm);
         finalized_calls.push(finalized);
@@ -1180,6 +1306,46 @@ async fn execute_tool_calls_parallel(
 }
 
 type RunningToolCalls = FuturesUnordered<BoxFuture<'static, (usize, FinalizedToolCall)>>;
+
+struct ToolHookOrder {
+    state: std::sync::Mutex<(usize, Vec<bool>)>,
+    changed: tokio::sync::Notify,
+}
+
+impl ToolHookOrder {
+    async fn wait(&self, index: usize) {
+        loop {
+            let changed = self.changed.notified();
+            if self.state.lock().unwrap().0 == index {
+                return;
+            }
+            changed.await;
+        }
+    }
+
+    fn finish(&self, index: usize) {
+        let mut state = self.state.lock().unwrap();
+        state.1[index] = true;
+        while state.0 < state.1.len() && state.1[state.0] {
+            state.0 += 1;
+        }
+        drop(state);
+        self.changed.notify_waiters();
+    }
+}
+
+struct ToolHookGuard {
+    order: Option<Arc<ToolHookOrder>>,
+    index: usize,
+}
+
+impl Drop for ToolHookGuard {
+    fn drop(&mut self) {
+        if let Some(order) = &self.order {
+            order.finish(self.index);
+        }
+    }
+}
 
 /// Drive owned execute futures even while preparation/event delivery waits.
 /// Completed calls queue up for ordered event delivery; no tool task detaches.
@@ -1204,7 +1370,7 @@ pub(crate) async fn run_one_tool_call(
     current_context: &Arc<AgentContext>,
     assistant_message: &Arc<AssistantMessage>,
     tool_call: &ToolCall,
-    config: &AgentLoopConfig,
+    config: &Arc<AgentLoopConfig>,
     emit: &Arc<dyn AgentEmitter>,
 ) -> Result<FinalizedToolCall, AgentError> {
     match prepare_tool_call(current_context, assistant_message, tool_call, config).await {
@@ -1296,6 +1462,16 @@ async fn prepare_tool_call(
             };
         }
     };
+    // A malformed wire argument is preserved as text, not an empty object.
+    // Do not let a compatibility hook erase it before validation.
+    if tool_call.arguments.is_string() {
+        if let Err(error) = validate_tool_arguments(tool.schema(), tool_call) {
+            return Prepared::Immediate {
+                result: create_error_tool_result(&error.to_string()),
+                is_error: true,
+            };
+        }
+    }
 
     // prepareArguments + schema validation.
     let prepared_args = match tool.prepare_arguments(tool_call.arguments.clone()) {
@@ -1476,6 +1652,28 @@ mod invalid_tool_call_tests {
         assert!(invalid_tool_call_reason(&call("call-1", "")).is_some());
         assert!(invalid_tool_call_reason(&call("call-1", "bash")).is_none());
     }
+
+    #[test]
+    fn repeated_calls_receive_reminders_only_at_thresholds() {
+        let tool_call = call("current", "read");
+        let context = super::AgentContext::default();
+        let earlier = vec![tool_call.clone(); 8];
+        for count in 1..=9 {
+            let mut message = super::create_tool_result_message(
+                &tool_call,
+                &super::AgentToolResult::text("result"),
+                false,
+            );
+            super::note_repeated_tool_call(
+                &mut message,
+                &context,
+                &[],
+                &earlier[..count - 1],
+                &tool_call,
+            );
+            assert_eq!(message.content.len() == 2, [3, 5, 8].contains(&count));
+        }
+    }
 }
 
 /// Close the update gate even if execute unwinds or its owner is dropped.
@@ -1493,7 +1691,7 @@ async fn execute_prepared_tool_call(
     tool_call: &ToolCall,
     tool: &Arc<dyn AgentTool>,
     args: &serde_json::Value,
-    config: &AgentLoopConfig,
+    config: &Arc<AgentLoopConfig>,
     emit: &Arc<dyn AgentEmitter>,
     current_context: &Arc<AgentContext>,
     assistant_message: &Arc<AssistantMessage>,
@@ -1685,6 +1883,84 @@ fn create_tool_result_message(
         is_error,
         timestamp: crate::clock::now_ms(),
     }
+}
+
+fn unstarted_tool_call(tool_call: &ToolCall) -> FinalizedToolCall {
+    FinalizedToolCall {
+        tool_call: tool_call.clone(),
+        result: create_error_tool_result(
+            "Tool call was not started because the turn was cancelled. It was not executed.",
+        ),
+        is_error: true,
+    }
+}
+
+async fn settle_unstarted_tool_calls(
+    skipped: &[ToolCall],
+    emit: &Arc<dyn AgentEmitter>,
+    finalized_calls: &mut Vec<FinalizedToolCall>,
+    messages: &mut Vec<ToolResultMessage>,
+) {
+    for tool_call in skipped {
+        let finalized = unstarted_tool_call(tool_call);
+        emit_tool_execution_end(emit, &finalized).await;
+        let trm = create_tool_result_message(&finalized.tool_call, &finalized.result, true);
+        emit_tool_result_message(emit, &trm).await;
+        messages.push(trm);
+        finalized_calls.push(finalized);
+    }
+}
+
+/// Remind a weak model when the same name and arguments have already been
+/// issued. Thresholds are 3, 5, and 8. The call is not retried and is not
+/// turned into an error: the reminder is appended to the result it already has.
+fn note_repeated_tool_call(
+    message: &mut ToolResultMessage,
+    context: &AgentContext,
+    previous_groups: &[ToolCall],
+    earlier_in_batch: &[ToolCall],
+    call: &ToolCall,
+) {
+    let mut count = 1usize;
+    let mut settled_ids = std::collections::HashSet::new();
+    for message in &context.messages {
+        if let AgentMessage::ToolResult(result) = message {
+            settled_ids.insert(result.tool_call_id.as_str());
+        }
+    }
+    for assistant in context.messages.iter().filter_map(|message| match message {
+        AgentMessage::Assistant(assistant) => Some(assistant),
+        _ => None,
+    }) {
+        for block in &assistant.content {
+            if let Content::ToolCall(previous) = block {
+                if settled_ids.contains(previous.id.as_str())
+                    && previous.name == call.name
+                    && previous.arguments == call.arguments
+                {
+                    count += 1;
+                }
+            }
+        }
+    }
+    for previous in previous_groups.iter().chain(earlier_in_batch) {
+        if previous.name == call.name && previous.arguments == call.arguments {
+            count += 1;
+        }
+    }
+    let note = match count {
+        3 => {
+            "Reminder: this is the 3rd identical tool call with the same arguments. Do not repeat it. If the previous result failed, change the arguments or use a different tool. If it succeeded, use that result."
+        }
+        5 => {
+            "Reminder: this is the 5th identical tool call. Repeating it will not change the outcome. Stop and change strategy."
+        }
+        8 => {
+            "Reminder: this is the 8th identical tool call. Further repeats are a loop. Stop calling this tool with these arguments."
+        }
+        _ => return,
+    };
+    message.content.push(Content::text(format!("\n\n{note}")));
 }
 
 /// Emit `tool_execution_end` for a finalized call.

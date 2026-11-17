@@ -13,9 +13,9 @@
 //! Tool-call arg parsing invariant (plan §5.15): batch `input_json_delta`
 //! snapshots on the same byte/interval cadence as text (the snapshot carries a
 //! full message clone and re-parses the accumulated JSON), and do the final
-//! authoritative parse on `content_block_stop`. The streaming arm uses
-//! [`parse_streaming_json`] so a truncated delta never produces unparseable args
-//! — `ToolCallEnd` always carries a real object.
+//! authoritative parse on `content_block_stop`. Streaming checkpoints use
+//! [`parse_streaming_json`]; invalid final input remains text for validation
+//! instead of becoming executable empty arguments.
 
 use crate::error::AiError;
 use crate::event_stream::AssistantMessageEventStreamProducer;
@@ -619,9 +619,8 @@ impl MapperState {
                 .await;
             }
             BlockKind::ToolCall => {
-                // Final authoritative parse. Mirrors the TS
-                // `block.arguments = parseStreamingJson(block.partialJson)`.
-                let final_args = parse_streaming_json(Some(&scratch.partial_json));
+                let final_args =
+                    crate::json_parse::parse_terminal_tool_arguments(&scratch.partial_json);
                 let tool_call = match &self.output.content[content_index] {
                     Content::ToolCall(tc) => ToolCall {
                         kind: ToolCallType,

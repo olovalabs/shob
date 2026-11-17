@@ -93,9 +93,7 @@ impl GrepTool {
                  {GREP_MAX_LINE_LENGTH} chars.",
                 kb = DEFAULT_MAX_BYTES / 1024
             ),
-            parameters: ai::types::Schema::new(
-                serde_json::to_value(params).unwrap_or_default(),
-            ),
+            parameters: ai::types::Schema::new(serde_json::to_value(params).unwrap_or_default()),
             constrained_sampling: None,
         }
     }
@@ -120,6 +118,9 @@ impl AgentTool for GrepTool {
     }
     fn label(&self) -> &str {
         "grep"
+    }
+    fn execution_mode(&self) -> agent::ToolExecutionMode {
+        agent::ToolExecutionMode::Parallel
     }
 
     async fn execute(

@@ -253,11 +253,14 @@ impl ControlIcon {
             _ => None,
         };
         let svg_icon = self.linux_icon();
+        let id = self.id();
 
         div()
             .id(self.id())
             .flex()
-            .w(px(34.))
+            .w(px(42.))
+            .occlude()
+            .debug_selector(move || id.to_owned())
             .h_full()
             .flex_shrink_0()
             .justify_center()
@@ -266,10 +269,6 @@ impl ControlIcon {
             .text_color(cx.theme().foreground)
             .hover(|style| style.bg(hover_bg).text_color(hover_fg))
             .active(|style| style.bg(active_bg).text_color(hover_fg))
-            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                window.prevent_default();
-                cx.stop_propagation();
-            })
             .on_click(move |_, window, cx| {
                 cx.stop_propagation();
                 match icon {

@@ -214,6 +214,9 @@ impl agent::AgentTool for BlockingTool {
     fn label(&self) -> &str {
         "Slow Tool"
     }
+    fn execution_mode(&self) -> agent::ToolExecutionMode {
+        agent::ToolExecutionMode::Parallel
+    }
     async fn execute(
         &self,
         _tool_call_id: &str,
@@ -245,6 +248,9 @@ impl agent::AgentTool for SettledTool {
     }
     fn label(&self) -> &str {
         "Settled Tool"
+    }
+    fn execution_mode(&self) -> agent::ToolExecutionMode {
+        agent::ToolExecutionMode::Parallel
     }
     async fn execute(
         &self,

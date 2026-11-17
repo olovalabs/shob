@@ -110,6 +110,9 @@ impl AgentTool for FindTool {
     fn label(&self) -> &str {
         "find"
     }
+    fn execution_mode(&self) -> agent::ToolExecutionMode {
+        agent::ToolExecutionMode::Parallel
+    }
 
     async fn execute(
         &self,

@@ -31,6 +31,9 @@ The invariants that the loop guarantees:
 
 - Tools may finish in any order, but tool results are emitted in the order the
   calls appeared, so the transcript stays valid for the next request.
+- Tool bodies are exclusive by default. Audited tools opt into `Parallel`;
+  exclusive calls form barriers between bounded parallel groups. Result hooks
+  run in call order even when tool bodies finish out of order.
 - A `MessageEnd` is emitted exactly once per assistant message, including when a
   late streaming update arrives after the run already settled.
 - Truncated or failed tool calls never leave a dangling call without a result.

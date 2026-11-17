@@ -59,6 +59,9 @@ impl AgentTool for PowerShellTool {
     fn label(&self) -> &str {
         "powershell"
     }
+    fn execution_mode(&self) -> agent::types::ToolExecutionMode {
+        agent::types::ToolExecutionMode::Sequential
+    }
 
     async fn execute(
         &self,
