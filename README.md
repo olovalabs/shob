@@ -147,6 +147,8 @@ shob integration doctor
 
 To use Shob's native AI chat, switch a terminal pane to **Agent** mode and run `/auth` to connect your model provider.
 
+For an OpenAI-compatible Chat Completions service, choose **OpenAI-compatible API** in `/auth`. Enter a unique provider ID, display name, base URL (including `/v1` if required), API key, and comma-separated model IDs. The provider and models are saved for future sessions; keys use the same credential store as other providers.
+
 ### Agent Permissions
 
 Shob remembers the approval mode selected in native agent chat across restarts.

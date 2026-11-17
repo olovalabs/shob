@@ -12,6 +12,8 @@ static THINKING_LEVELS: LazyLock<RwLock<HashMap<(String, String), Vec<String>>>>
 #[derive(Clone, Debug)]
 pub struct Provider {
     pub id: String,
+    pub name: Option<String>,
+    pub custom: bool,
     pub ready: bool,
     pub source: Option<String>,
 }
@@ -108,11 +110,15 @@ pub fn providers(cwd: &Path) -> Result<Vec<Provider>, String> {
         .into_iter()
         .map(|state| Provider {
             id: state.id,
+            name: state.name,
+            custom: state.custom,
             ready: state.ready,
             source: state.source,
         })
         .collect())
 }
+
+pub use embedded::{add_openai_compatible_provider, remove_custom_provider};
 
 pub use embedded::{Login, LoginEvent, cached_auth_methods as auth_methods};
 

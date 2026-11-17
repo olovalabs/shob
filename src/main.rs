@@ -2099,6 +2099,8 @@ struct AuthModal {
     models: Vec<agent_auth::AgentModel>,
     model_discovery: Option<std::sync::mpsc::Receiver<Result<Vec<agent_auth::AgentModel>, String>>>,
     model_error: Option<String>,
+    custom_provider: Option<[Entity<InputState>; 5]>,
+    provider_operation: Option<std::sync::mpsc::Receiver<Result<Option<String>, String>>>,
     provider_input: Entity<InputState>,
     filter: Entity<InputState>,
     input: Entity<InputState>,
@@ -2109,6 +2111,14 @@ struct AuthModal {
 }
 
 impl AuthModal {
+    fn provider_name(&self, id: &str) -> String {
+        self.providers
+            .iter()
+            .find(|p| p.id == id)
+            .and_then(|p| p.name.clone())
+            .unwrap_or_else(|| provider_display_name(id))
+    }
+
     fn filter_models(&mut self, filter: ModelPickerFilter) {
         self.model_filter = if self.model_filter == filter {
             ModelPickerFilter::All
@@ -2176,6 +2186,7 @@ enum ChatRow {
         index: usize,
         message: Arc<ChatMessage>,
         live: bool,
+        copy_range: Option<(usize, usize)>,
     },
     Running {
         label: String,
@@ -8301,6 +8312,8 @@ impl AppState {
             models: Vec::new(),
             model_discovery: None,
             model_error: None,
+            custom_provider: None,
+            provider_operation: None,
             provider_input,
             filter,
             input,
@@ -8362,6 +8375,7 @@ impl AppState {
             return;
         };
         if page == AgentDialogPage::Models && auth.page != page {
+            auth.custom_provider = None;
             if let Some(mut login) = auth.login.take() {
                 login.cancel();
             }
@@ -8546,6 +8560,72 @@ impl AppState {
         }
     }
 
+    fn open_custom_provider(
+        &mut self,
+        pane_id: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let fields = [
+            "Provider ID (e.g. my-provider)",
+            "Provider name",
+            "https://example.com/v1",
+            "API key",
+            "Model IDs, separated by commas",
+        ]
+        .map(|placeholder| cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
+        fields[3].update(cx, |state, cx| state.set_masked(true, window, cx));
+        fields[0].update(cx, |state, cx| state.focus(window, cx));
+        if let Some(auth) = self.pane_mut(pane_id).and_then(|p| p.chat.auth.as_mut()) {
+            if let Some(mut login) = auth.login.take() {
+                login.cancel();
+            }
+            auth.selected = None;
+            auth.error = None;
+            auth.filter
+                .update(cx, |state, cx| state.set_value("", window, cx));
+            auth.custom_provider = Some(fields);
+        }
+        cx.notify();
+    }
+
+    fn save_custom_provider(&mut self, pane_id: usize, cx: &mut Context<Self>) {
+        let Some(auth) = self.pane_mut(pane_id).and_then(|p| p.chat.auth.as_mut()) else {
+            return;
+        };
+        if auth.provider_operation.is_some() {
+            return;
+        }
+        let Some(fields) = &auth.custom_provider else {
+            return;
+        };
+        let [id, name, endpoint, key, models] = fields
+            .each_ref()
+            .map(|field| field.read(cx).value().trim().to_string());
+        if !agent_auth::provider_visible_in_chat_ui(&id) {
+            auth.error = Some("That provider ID is reserved. Choose a different ID.".into());
+            cx.notify();
+            return;
+        }
+        let models = models
+            .split([',', '\n'])
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .take(129)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        auth.provider_operation = Some(receiver);
+        auth.error = None;
+        std::thread::spawn(move || {
+            let result =
+                agent_auth::add_openai_compatible_provider(&id, &name, &endpoint, &key, &models)
+                    .map(|()| None);
+            let _ = sender.send(result);
+        });
+        cx.notify();
+    }
+
     fn submit_agent_auth(&mut self, pane_id: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(pane) = self.pane_mut(pane_id) else {
             return;
@@ -8554,6 +8634,10 @@ impl AppState {
             return;
         };
         if auth.page != AgentDialogPage::Auth {
+            return;
+        }
+        if auth.custom_provider.is_some() {
+            self.save_custom_provider(pane_id, cx);
             return;
         }
         // Enter while searching filters the list; it must not submit a key.
@@ -8602,6 +8686,8 @@ impl AppState {
                     }
                     if !found {
                         auth.providers.push(agent_auth::Provider {
+                            name: None,
+                            custom: false,
                             id: provider.clone(),
                             ready: true,
                             source: Some("Stored API key".to_string()),
@@ -8630,6 +8716,22 @@ impl AppState {
             return;
         }
         self.start_agent_auth(pane_id, provider, window, cx);
+    }
+
+    fn remove_custom_provider(&mut self, pane_id: usize, provider: String, cx: &mut Context<Self>) {
+        let Some(auth) = self.pane_mut(pane_id).and_then(|p| p.chat.auth.as_mut()) else {
+            return;
+        };
+        if auth.provider_operation.is_some() {
+            return;
+        }
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        auth.provider_operation = Some(receiver);
+        std::thread::spawn(move || {
+            let _ =
+                sender.send(agent_auth::remove_custom_provider(&provider).map(|()| Some(provider)));
+        });
+        cx.notify();
     }
 
     fn disconnect_agent_provider(
@@ -8698,6 +8800,7 @@ impl AppState {
         let mut streaming = false;
         let mut titled_panes: Vec<usize> = Vec::new();
         let mut ready_follow_ups = Vec::new();
+        let mut removed_providers = Vec::new();
         let save_history = self.settings.restore.agent_history;
         for project in &mut self.projects {
             for session in &mut project.sessions {
@@ -8709,6 +8812,31 @@ impl AppState {
                         ));
                     }
                     if let Some(auth) = pane.chat.auth.as_mut() {
+                        if let Some(receiver) = &auth.provider_operation {
+                            let result = match receiver.try_recv() {
+                                Ok(result) => Some(result),
+                                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                                    Some(Err("Provider operation stopped unexpectedly.".into()))
+                                }
+                                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                            };
+                            if let Some(result) = result {
+                                auth.provider_operation = None;
+                                match result {
+                                    Ok(removed) => {
+                                        auth.custom_provider = None;
+                                        auth.selected = None;
+                                        if let Some(provider) = removed {
+                                            removed_providers.push(provider);
+                                        }
+                                        pane.chat.auth_refresh_pending = pane.chat.bridge.is_some();
+                                        auth.discover();
+                                    }
+                                    Err(error) => auth.error = Some(error),
+                                }
+                                changed = true;
+                            }
+                        }
                         if let Some(receiver) = &auth.discovery {
                             match receiver.try_recv() {
                                 Ok(result) => {
@@ -8988,6 +9116,30 @@ impl AppState {
                     }
                 }
             }
+        }
+        if !removed_providers.is_empty() {
+            if self
+                .default_agent_model
+                .as_ref()
+                .is_some_and(|model| removed_providers.contains(&model.provider))
+            {
+                self.default_agent_model = None;
+            }
+            for project in &mut self.projects {
+                for session in &mut project.sessions {
+                    for pane in &mut session.panes {
+                        if pane
+                            .chat
+                            .selected_model
+                            .as_ref()
+                            .is_some_and(|model| removed_providers.contains(&model.provider))
+                        {
+                            pane.chat.selected_model = None;
+                        }
+                    }
+                }
+            }
+            self.schedule_workspace_save(cx);
         }
         for pane_id in ready_follow_ups {
             self.send_queued_follow_up(pane_id, cx);
@@ -11875,6 +12027,13 @@ impl AppState {
             .flex()
             .flex_col()
             .children(pane.chat.active.then(|| self.render_agent_follow_ups(pane, &tokens, cx)).flatten())
+            .children(pane.chat.active.then(|| self.render_agent_activity(pane, &tokens, cx)).flatten())
+            .children(pane.chat.active.then(|| self.render_agent_recovery(pane, &tokens, cx)).flatten())
+            .children(
+                self.render_agent_task_list(pane, &tokens, cx)
+                    .map(|list| div().pb(px(8.0)).child(list)),
+            )
+            .children(pane.chat.active.then(|| self.render_agent_request(pane, &tokens, window, cx)).flatten())
             .child(
         div()
             .id(("shob-input-bar", pane_id))
@@ -11942,12 +12101,6 @@ impl AppState {
                 }),
             )
             .children(plus_menu)
-            .children(pane.chat.active.then(|| self.render_agent_activity(pane, &tokens, cx)).flatten())
-            .children(pane.chat.active.then(|| self.render_agent_recovery(pane, &tokens, cx)).flatten())
-            .children(
-                self.render_agent_task_list(pane, &tokens, cx)
-                    .map(|list| div().pb(px(8.0)).child(list)),
-            )
             .child(
                 div().relative().w_full().h(px(0.0)).children(completion_menu.map(|menu| {
                     deferred(
@@ -11963,7 +12116,6 @@ impl AppState {
                     )
                 })),
             )
-            .children(pane.chat.active.then(|| self.render_agent_request(pane, &tokens, window, cx)).flatten())
             // Keep the same controls in both layouts, with the prompt first in agent layout.
             .child(
                 div().flex().flex_col()
@@ -12773,7 +12925,8 @@ impl AppState {
                     && (query.is_empty()
                         || model.id.to_lowercase().contains(&query)
                         || model.provider.to_lowercase().contains(&query)
-                        || provider_display_name(&model.provider)
+                        || auth
+                            .provider_name(&model.provider)
                             .to_lowercase()
                             .contains(&query))
             })
@@ -12944,8 +13097,7 @@ impl AppState {
         let default = (!levels.is_empty()).then(|| {
             PaneChat::resolve_thinking_level(if chat.fast_mode { "low" } else { "high" }, &levels)
         });
-        let reasoning_provider =
-            reasoning_model.map(|model| provider_display_name(&model.provider));
+        let reasoning_provider = reasoning_model.map(|model| auth.provider_name(&model.provider));
         let reasoning_tooltip = reasoning_model
             .zip(reasoning_provider.as_ref())
             .map(|(model, provider)| format!("{provider} · {}", model.id));
@@ -13003,7 +13155,7 @@ impl AppState {
         for provider in &providers {
             let active = matches!(filter, ModelPickerFilter::Provider(id) if id == provider);
             let choice = provider.clone();
-            let name = provider_display_name(provider);
+            let name = auth.provider_name(provider);
             let selector = format!("model-provider-filter-{provider}");
             rail = rail.child(
                 div()
@@ -13516,7 +13668,11 @@ impl AppState {
                     return true;
                 }
                 let (name, desc) = provider_metadata(&provider.id);
-                provider.id.to_lowercase().contains(&filter_query)
+                provider
+                    .name
+                    .as_ref()
+                    .is_some_and(|name| name.to_lowercase().contains(&filter_query))
+                    || provider.id.to_lowercase().contains(&filter_query)
                     || (!name.is_empty() && name.to_lowercase().contains(&filter_query))
                     || (!desc.is_empty() && desc.to_lowercase().contains(&filter_query))
             })
@@ -13568,7 +13724,9 @@ impl AppState {
             .map(|(index, provider)| {
                 let id = provider.id.clone();
                 let (meta_name, meta_desc) = provider_metadata(&id);
-                let name = if !meta_name.is_empty() {
+                let name = if let Some(name) = &provider.name {
+                    name.clone()
+                } else if !meta_name.is_empty() {
                     meta_name.to_string()
                 } else {
                     id.clone()
@@ -13856,7 +14014,40 @@ impl AppState {
                                 .flex()
                                 .flex_col()
                                 .gap(px(4.0))
-                                .when(auth.page == AgentDialogPage::Auth, |view| {
+                                .when_some(auth.custom_provider.as_ref(), |view, fields| {
+                                    let labels = ["ID", "Name", "Endpoint URL", "API key", "Models"];
+                                    let mut form = div().flex().flex_col().gap(px(8.0))
+                                        .child(div().text_size(px(14.0)).child("OpenAI-compatible API"))
+                                        .child(div().text_size(px(11.0)).text_color(tokens.text_muted)
+                                            .child("Use a Chat Completions base URL, including /v1 when required. Enter exact model IDs separated by commas."));
+                                    for (label, field) in labels.into_iter().zip(fields) {
+                                        let focused = field.read(cx).focus_handle().is_focused(window);
+                                        form = form.child(div().flex().flex_col().gap(px(3.0))
+                                            .child(div().text_size(px(11.5)).text_color(tokens.text_secondary).child(label))
+                                            .child(Input::new(field).appearance(true).bordered(true)
+                                                .when(themed_input, |input| style_auth_input(input, tokens, focused))));
+                                    }
+                                    view.child(form
+                                        .when_some(auth.error.as_ref(), |view, error| view.child(div().text_color(tokens.block_failure).child(error.clone())))
+                                        .child(div().flex().justify_end().gap(px(12.0))
+                                            .child(div().id(("cancel-compatible-provider", pane_id)).debug_selector(|| "cancel-compatible-provider".into()).py(px(8.0)).cursor(CursorStyle::PointingHand).child("Cancel")
+                                                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                                    cx.stop_propagation();
+                                                    if let Some(auth) = this.pane_mut(pane_id).and_then(|p| p.chat.auth.as_mut())
+                                                        && auth.provider_operation.is_none() {
+                                                        auth.custom_provider = None;
+                                                        auth.error = None;
+                                                    }
+                                                    cx.notify();
+                                                })))
+                                            .child(div().id(("save-compatible-provider", pane_id)).px(px(12.0)).py(px(8.0)).rounded(px(5.0)).bg(btn_contrast_bg)
+                                                .cursor(CursorStyle::PointingHand)
+                                                .child(if auth.provider_operation.is_some() { "Saving…" } else { "Save & Connect" })
+                                                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                                    cx.stop_propagation(); this.save_custom_provider(pane_id, cx);
+                                                })))))
+                                })
+                                .when(auth.page == AgentDialogPage::Auth && auth.custom_provider.is_none(), |view| {
                                     view.when(auth.discovery.is_some() && auth.providers.is_empty(), |view| {
                                         view.child(
                                             div()
@@ -13930,7 +14121,7 @@ impl AppState {
                                         )
                                     })
                                     .when_some(auth.selected.as_ref(), |view, selected| {
-                                        let provider_name = provider_display_name(selected);
+                                        let provider_name = auth.provider_name(selected);
                                         let methods = agent_auth::auth_methods(selected, &auth.cwd);
                                         let supports_oauth = methods.oauth;
                                         let supports_api_key = methods.api_key;
@@ -14037,6 +14228,15 @@ impl AppState {
                                                                 ),
                                                         ),
                                                 )
+                                                .when(auth.providers.iter().any(|p| p.id == *selected && p.custom), |panel| {
+                                                    let provider = selected.clone();
+                                                    panel.child(div().id(("remove-custom-provider", pane_id))
+                                                        .text_size(px(11.5)).text_color(tokens.block_failure)
+                                                        .cursor(CursorStyle::PointingHand).child("Remove provider and models")
+                                                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                                            cx.stop_propagation(); this.remove_custom_provider(pane_id, provider.clone(), cx);
+                                                        })))
+                                                })
                                                 .when(supports_oauth && auth.login.is_none(), |panel| {
                                                     let login_id = selected.clone();
                                                     panel.child(
@@ -14170,7 +14370,7 @@ impl AppState {
                                                 }),
                                         )
                                     })
-                                    .when(auth.selected.is_none(), |view| {
+                                    .when(auth.selected.is_none() && auth.custom_provider.is_none(), |view| {
                                         view.child(
                                             div()
                                                 .mt(px(8.0))
@@ -14180,6 +14380,16 @@ impl AppState {
                                                 .flex()
                                                 .flex_col()
                                                 .gap(px(4.0))
+                                                .child(
+                                                    div().id(("add-compatible-provider", pane_id)).debug_selector(|| "add-compatible-provider".into())
+                                                        .py(px(8.0)).text_color(tokens.text_primary)
+                                                        .cursor(CursorStyle::PointingHand)
+                                                        .child("+ OpenAI-compatible API")
+                                                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
+                                                            cx.stop_propagation();
+                                                            this.open_custom_provider(pane_id, window, cx);
+                                                        })),
+                                                )
                                                 .child(
                                                     div().debug_selector(|| "auth-provider-id-input".into())
                                                         .child(Input::new(&auth.provider_input)
@@ -14208,6 +14418,7 @@ impl AppState {
         index: usize,
         message: &ChatMessage,
         running: bool,
+        copy_range: Option<(usize, usize)>,
         tokens: ThemeTokens,
         ui_state: Option<&HashMap<String, agent_ui::UiStateValue>>,
         host: &UiHost,
@@ -14401,13 +14612,53 @@ impl AppState {
                     ));
                 }
 
-                if !message.streaming && !message.text.is_empty() {
-                    body = body.child(chat_copy_button(
-                        format!("chat-copy-assistant-{pane_id}-{index}").into(),
-                        message.text.clone().into(),
-                        "Copy full response".into(),
-                        tokens,
-                    ));
+                if let Some((start, end)) = copy_range {
+                    body = body.child(
+                        div()
+                            .id(SharedString::from(format!(
+                                "chat-copy-assistant-{pane_id}-{index}"
+                            )))
+                            .size(px(22.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(5.0))
+                            .cursor(CursorStyle::PointingHand)
+                            .text_color(tokens.text_muted)
+                            .hover(move |style| {
+                                style
+                                    .bg(tokens.sidebar_item_hover)
+                                    .text_color(tokens.text_primary)
+                            })
+                            .tooltip(|window, cx| {
+                                gpui_component::tooltip::Tooltip::new("Copy full response")
+                                    .build(window, cx)
+                            })
+                            .on_click(host.listener(move |this, _, _, cx| {
+                                if let Some(pane) = this.pane_ref(pane_id) {
+                                    let text = pane
+                                        .chat
+                                        .visible_messages()
+                                        .get(start..=end)
+                                        .unwrap_or_default()
+                                        .iter()
+                                        .filter(|message| {
+                                            message.role == ChatRole::Assistant
+                                                && !message.text.is_empty()
+                                        })
+                                        .map(|message| message.text.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join("\n\n");
+                                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                                }
+                            }))
+                            .child(
+                                svg()
+                                    .path("icons/copy.svg")
+                                    .size(px(12.0))
+                                    .text_color(tokens.text_muted),
+                            ),
+                    );
                 }
                 body.into_any_element()
             }
@@ -14749,6 +15000,7 @@ impl AppState {
                 index,
                 message,
                 message.streaming,
+                None,
                 tokens,
                 ui_state,
                 &host,
@@ -15077,6 +15329,8 @@ impl AppState {
         let mut active_row = None;
         let mut cursor = 0usize;
         let mut worker_index = 0usize;
+        let mut turn_start = 0usize;
+        let mut last_assistant_row = None;
         while cursor < visible.len() {
             let message = &visible[cursor];
             if message
@@ -15143,6 +15397,21 @@ impl AppState {
                 });
                 continue;
             }
+            if message.role == ChatRole::User {
+                turn_start = cursor + 1;
+                last_assistant_row = None;
+            }
+            let copy_range = if message.role == ChatRole::Assistant && !message.text.is_empty() {
+                if let Some(previous) = last_assistant_row
+                    && let ChatRow::Message { copy_range, .. } = &mut rows[previous]
+                {
+                    *copy_range = None;
+                }
+                last_assistant_row = Some(rows.len());
+                Some((turn_start, cursor))
+            } else {
+                None
+            };
             let live = running && cursor + 1 == visible.len();
             if message.streaming {
                 active_row = Some(rows.len());
@@ -15151,10 +15420,16 @@ impl AppState {
                 index: cursor,
                 message: Arc::clone(message),
                 live,
+                copy_range,
             });
             cursor += 1;
         }
         if running {
+            if let Some(previous) = last_assistant_row
+                && let ChatRow::Message { copy_range, .. } = &mut rows[previous]
+            {
+                *copy_range = None;
+            }
             rows.push(ChatRow::Running {
                 label: chat_activity(visible),
                 tooltip: chat_activity_tooltip(visible),
@@ -15274,6 +15549,7 @@ impl AppState {
                             start + offset,
                             message,
                             *live,
+                            None,
                             tokens,
                             Some(&snapshot.ui_state),
                             &snapshot.host,
@@ -15288,12 +15564,14 @@ impl AppState {
                 index,
                 message,
                 live,
+                copy_range,
             } => Self::render_chat_message(
                 snapshot.pane_id,
                 snapshot.conversation.as_ref(),
                 *index,
                 message,
                 *live,
+                *copy_range,
                 tokens,
                 Some(&snapshot.ui_state),
                 &snapshot.host,
@@ -20940,6 +21218,8 @@ mod resize_tests {
                 auth.discovery = None;
                 auth.model_discovery = None;
                 auth.providers = vec![agent_auth::Provider {
+                    name: None,
+                    custom: false,
                     id: "google-antigravity".into(),
                     ready: true,
                     source: None,
@@ -20986,6 +21266,8 @@ mod resize_tests {
             auth.model_discovery = None;
             let selected = pane.chat.selected_model.clone().unwrap();
             auth.providers = vec![agent_auth::Provider {
+                name: None,
+                custom: false,
                 id: selected.provider.clone(),
                 ready: true,
                 source: None,
@@ -25162,6 +25444,8 @@ First report
             auth.discovery = None;
             auth.model_discovery = None;
             auth.providers = vec![agent_auth::Provider {
+                name: None,
+                custom: false,
                 id: "google-antigravity".into(),
                 ready: true,
                 source: Some("Shob credential".into()),
@@ -25229,6 +25513,43 @@ First report
     }
 
     #[test]
+    fn custom_provider_form_can_be_opened_and_cancelled_without_saving() {
+        let mut app = TestAppContext::new();
+        let (mut cx, state) = open_app(&mut app);
+        let id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
+        cx.update_window_entity(&state, |s, window, cx| {
+            s.open_agent_auth(id, AgentDialogPage::Auth, window, cx);
+            let auth = s.pane_mut(id).unwrap().chat.auth.as_mut().unwrap();
+            auth.discovery = None;
+            auth.model_discovery = None;
+            auth.selected = None;
+            cx.notify();
+        });
+        cx.draw_frame().unwrap();
+        let button = cx.debug_bounds("add-compatible-provider").unwrap();
+        cx.simulate_click(button.center(), Modifiers::default());
+        cx.draw_frame().unwrap();
+        cx.simulate_input("my-gateway");
+        state.read_with(&cx, |s, cx| {
+            let auth = s.pane_ref(id).unwrap().chat.auth.as_ref().unwrap();
+            let fields = auth.custom_provider.as_ref().unwrap();
+            assert_eq!(fields[0].read(cx).value().as_str(), "my-gateway");
+            assert!(auth.selected.is_none());
+            assert!(auth.provider_operation.is_none());
+        });
+        cx.draw_frame().unwrap();
+        let cancel = cx.debug_bounds("cancel-compatible-provider").unwrap();
+        cx.simulate_click(cancel.center(), Modifiers::default());
+        cx.draw_frame().unwrap();
+        state.read_with(&cx, |s, _| {
+            let auth = s.pane_ref(id).unwrap().chat.auth.as_ref().unwrap();
+            assert!(auth.custom_provider.is_none());
+            assert!(auth.provider_operation.is_none());
+        });
+        assert!(cx.debug_bounds("add-compatible-provider").is_some());
+    }
+
+    #[test]
     fn test_api_key_input_typing() {
         let mut app = TestAppContext::new();
         let (mut cx, state) = open_app(&mut app);
@@ -25290,6 +25611,8 @@ First report
             auth.discovery = None;
             auth.model_discovery = None;
             auth.providers = vec![agent_auth::Provider {
+                name: None,
+                custom: false,
                 id: "openai".into(),
                 ready: true,
                 source: None,
@@ -25363,26 +25686,36 @@ First report
             auth.model_discovery = None;
             auth.providers = vec![
                 agent_auth::Provider {
+                    name: None,
+                    custom: false,
                     id: "anthropic".into(),
                     ready: false,
                     source: None,
                 },
                 agent_auth::Provider {
+                    name: None,
+                    custom: false,
                     id: "ollama-cloud".into(),
                     ready: true,
                     source: Some("environment".into()),
                 },
                 agent_auth::Provider {
+                    name: None,
+                    custom: false,
                     id: "google-antigravity".into(),
                     ready: true,
                     source: Some("Shob credential".into()),
                 },
                 agent_auth::Provider {
+                    name: None,
+                    custom: false,
                     id: "ollama".into(),
                     ready: true,
                     source: Some("Stored API key".into()),
                 },
                 agent_auth::Provider {
+                    name: None,
+                    custom: false,
                     id: "web".into(),
                     ready: true,
                     source: Some("anonymous".into()),
@@ -25471,21 +25804,29 @@ First report
             auth.model_discovery = None;
             auth.providers = vec![
                 agent_auth::Provider {
+                    name: None,
+                    custom: false,
                     id: "openai".into(),
                     ready: false,
                     source: None,
                 },
                 agent_auth::Provider {
+                    name: None,
+                    custom: false,
                     id: "anthropic".into(),
                     ready: false,
                     source: None,
                 },
                 agent_auth::Provider {
+                    name: None,
+                    custom: false,
                     id: "google".into(),
                     ready: false,
                     source: None,
                 },
                 agent_auth::Provider {
+                    name: None,
+                    custom: false,
                     id: "github-copilot".into(),
                     ready: false,
                     source: None,
@@ -25517,6 +25858,8 @@ First report
             auth.discovery = None;
             auth.model_discovery = None;
             auth.providers = vec![agent_auth::Provider {
+                name: None,
+                custom: false,
                 id: "commandcode".into(),
                 ready: true,
                 source: Some("Stored API key".into()),
@@ -25614,11 +25957,15 @@ First report
             auth.model_discovery = None;
             auth.providers = vec![
                 agent_auth::Provider {
+                    name: None,
+                    custom: false,
                     id: "anthropic".into(),
                     ready: false,
                     source: None,
                 },
                 agent_auth::Provider {
+                    name: None,
+                    custom: false,
                     id: "google-antigravity".into(),
                     ready: true,
                     source: Some("Shob credential".into()),
