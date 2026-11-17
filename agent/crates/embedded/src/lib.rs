@@ -135,6 +135,8 @@ fn model_thinking_levels(model: &ai::Model) -> Vec<String> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProviderState {
     pub id: String,
+    pub name: Option<String>,
+    pub custom: bool,
     pub ready: bool,
     pub source: Option<String>,
 }
@@ -198,6 +200,12 @@ pub fn providers() -> Result<Vec<ProviderState>, String> {
     let mut rows: Vec<_> = states
         .into_iter()
         .map(|(id, state)| ProviderState {
+            name: config
+                .models
+                .providers
+                .get(&id)
+                .and_then(|p| p.name.clone()),
+            custom: config.models.providers.contains_key(&id),
             id,
             ready: state.is_ready(),
             source: Some(state.source.as_json_str().to_string()),
@@ -207,6 +215,8 @@ pub fn providers() -> Result<Vec<ProviderState>, String> {
     let ready = antigravity::ready();
     rows.push(ProviderState {
         id: ANTIGRAVITY.into(),
+        name: None,
+        custom: false,
         ready,
         source: ready.then(|| "Google OAuth".into()),
     });
@@ -1817,6 +1827,111 @@ pub fn save_api_key(provider: &str, key: &str) -> Result<(), String> {
         .map_err(|error| format!("Could not save credentials: {error}"))
 }
 
+static CUSTOM_PROVIDER_WRITES: Mutex<()> = Mutex::new(());
+
+pub fn add_openai_compatible_provider(
+    id: &str,
+    name: &str,
+    endpoint: &str,
+    key: &str,
+    models: &[String],
+) -> Result<(), String> {
+    let provider = openai_compatible_config(id, name, endpoint, key, models)?;
+    let _guard = CUSTOM_PROVIDER_WRITES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut config = cli::config::load_models_config().map_err(|e| e.to_string())?;
+    if runtime::catalog::builtin_provider(id).is_some()
+        || id == ANTIGRAVITY
+        || config.providers.contains_key(id)
+        || cli::config::read_auth()
+            .map_err(|e| e.to_string())?
+            .contains_key(id)
+    {
+        return Err("Provider ID already exists. Choose a unique ID.".into());
+    }
+    // Credentials use the same store as built-in providers so disconnect revokes readiness.
+    save_api_key(id, key)?;
+    config.providers.insert(id.to_owned(), provider);
+    if let Err(error) = cli::config::save_models_config(&config) {
+        let _ = disconnect_provider(id);
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
+fn openai_compatible_config(
+    id: &str,
+    name: &str,
+    endpoint: &str,
+    key: &str,
+    models: &[String],
+) -> Result<runtime::config::ProviderConfig, String> {
+    if id.is_empty()
+        || id.len() > 128
+        || !id
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
+    {
+        return Err(
+            "Use a provider ID with 1–128 letters, numbers, hyphens, or underscores.".into(),
+        );
+    }
+    if name.trim().is_empty() || name.len() > 256 {
+        return Err("Enter a provider name (up to 256 characters).".into());
+    }
+    let url = reqwest::Url::parse(endpoint)
+        .map_err(|_| "Enter a valid HTTP or HTTPS endpoint URL.".to_string())?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || endpoint.len() > 4096
+    {
+        return Err(
+            "Use an HTTP or HTTPS base URL without credentials, a query, or a fragment.".into(),
+        );
+    }
+    if key.trim().is_empty() || key.len() > 4096 || key.contains(['\r', '\n', '\0']) {
+        return Err("Enter a nonempty API key on one line (up to 4096 characters).".into());
+    }
+    if models.is_empty()
+        || models.len() > 128
+        || models.iter().any(|m| {
+            m.trim().is_empty()
+                || m.len() > 256
+                || m.chars().any(char::is_whitespace)
+                || m.contains('\0')
+        })
+    {
+        return Err(
+            "Enter 1–128 model IDs, separated by commas or newlines (up to 256 characters each)."
+                .into(),
+        );
+    }
+    let mut unique = std::collections::HashSet::new();
+    let models: Vec<_> = models
+        .iter()
+        .filter(|m| unique.insert(m.as_str()))
+        .map(|id| serde_json::json!({"id": id}))
+        .collect();
+    serde_json::from_value(serde_json::json!({
+        "name": name.trim(), "baseUrl": endpoint.trim_end_matches('/'),
+        "api": "openai-completions", "authHeader": true, "models": models
+    }))
+    .map_err(|e| e.to_string())
+}
+
+pub fn remove_custom_provider(id: &str) -> Result<(), String> {
+    let _guard = CUSTOM_PROVIDER_WRITES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    cli::config::delete_provider(id)?;
+    disconnect_provider(id)
+}
+
 pub fn disconnect_provider(provider: &str) -> Result<(), String> {
     if provider == ANTIGRAVITY {
         return antigravity::disconnect();
@@ -1934,6 +2049,151 @@ fn run_oauth(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compatible_provider_round_trip_routes_models_and_disconnects() {
+        let provider = openai_compatible_config(
+            "my-gateway",
+            "My Gateway",
+            "http://localhost:8000/v1/",
+            "test-key",
+            &["org/model-a".into(), "model-b".into(), "org/model-a".into()],
+        )
+        .unwrap();
+        let mut config = RuntimeConfig::default();
+        config
+            .models
+            .providers
+            .insert("my-gateway".into(), provider);
+        let serialized = serde_json::to_string(&config.models).unwrap();
+        assert!(!serialized.contains("test-key"));
+        config.models = serde_json::from_str(&serialized).unwrap();
+        let saved = &config.models.providers["my-gateway"];
+        assert_eq!(saved.name.as_deref(), Some("My Gateway"));
+        let models =
+            runtime::config::provider_to_models("my-gateway", saved, &EnvironmentValues).unwrap();
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].id, "org/model-a");
+        assert_eq!(models[1].id, "model-b");
+        assert_eq!(models[0].base_url, "http://localhost:8000/v1");
+        assert_eq!(models[0].api, ai::Api::OpenaiCompletions);
+        assert!(models.iter().all(runtime::catalog::is_chat_model));
+        config.credentials.insert(
+            "my-gateway".into(),
+            Credential::ApiKey {
+                key: Some("test-key".into()),
+                env: None,
+            },
+        );
+        let registry = cli::provider::runtime_factories(None);
+        assert!(config
+            .auth_status("my-gateway", &registry, &EnvironmentValues)
+            .is_ready());
+        let resolved = config
+            .resolve(
+                &runtime::ModelRequest {
+                    provider: Some("my-gateway"),
+                    model: Some("model-b"),
+                    ..Default::default()
+                },
+                &registry,
+                &EnvironmentValues,
+            )
+            .unwrap();
+        assert_eq!(resolved.model.provider, "my-gateway");
+        assert_eq!(resolved.model.id, "model-b");
+        assert_eq!(resolved.model.base_url, "http://localhost:8000/v1");
+        config.credentials.remove("my-gateway");
+        assert!(!config
+            .auth_status("my-gateway", &registry, &EnvironmentValues)
+            .is_ready());
+    }
+
+    #[test]
+    fn compatible_provider_rejects_invalid_configuration() {
+        let models = vec!["model-a".into()];
+        for (id, name, endpoint, key, models) in [
+            (
+                "",
+                "Gateway",
+                "https://example.com/v1",
+                "key",
+                models.clone(),
+            ),
+            (
+                "invalid/id",
+                "Gateway",
+                "https://example.com/v1",
+                "key",
+                models.clone(),
+            ),
+            (
+                "gateway",
+                " ",
+                "https://example.com/v1",
+                "key",
+                models.clone(),
+            ),
+            (
+                "gateway",
+                "Gateway",
+                "file:///tmp/model",
+                "key",
+                models.clone(),
+            ),
+            (
+                "gateway",
+                "Gateway",
+                "https://example.com/v1?key=secret",
+                "key",
+                models.clone(),
+            ),
+            (
+                "gateway",
+                "Gateway",
+                "https://user:secret@example.com/v1",
+                "key",
+                models.clone(),
+            ),
+            (
+                "gateway",
+                "Gateway",
+                "https://example.com/v1",
+                "",
+                models.clone(),
+            ),
+            (
+                "gateway",
+                "Gateway",
+                "https://example.com/v1",
+                "key\nvalue",
+                models.clone(),
+            ),
+            (
+                "gateway",
+                "Gateway",
+                "https://example.com/v1",
+                "key",
+                vec![],
+            ),
+            (
+                "gateway",
+                "Gateway",
+                "https://example.com/v1",
+                "key",
+                vec!["has spaces".into()],
+            ),
+            (
+                "gateway",
+                "Gateway",
+                "https://example.com/v1",
+                "key",
+                vec!["m".into(); 129],
+            ),
+        ] {
+            assert!(openai_compatible_config(id, name, endpoint, key, &models).is_err());
+        }
+    }
 
     #[tokio::test]
     async fn finalized_usage_is_emitted_once_with_partial_failures_and_unknown_prices() {
