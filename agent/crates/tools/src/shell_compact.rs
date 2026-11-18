@@ -3,7 +3,7 @@
 
 use std::sync::LazyLock;
 
-use regex::Regex;
+use regex::RegexSet;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -34,8 +34,8 @@ fn progress_line(line: &str) -> bool {
     // Anchored grammars deliberately exclude failure, skipped and arbitrary
     // runner output. Final summaries remain verbatim; only passing/progress
     // records disappear. Compile these once, not once per tool invocation.
-    static PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
-        [
+    static PATTERNS: LazyLock<RegexSet> = LazyLock::new(|| {
+        RegexSet::new([
             r"^test [A-Za-z0-9_:<>]+ \.\.\. ok$",
             r"^(?:   Compiling|    Checking) [A-Za-z0-9_-]+ v[0-9][^\s]*(?: \([^\r\n]+\))?$",
             r"^    (?:Updating crates\.io index|Downloading crates \.\.\.)$",
@@ -43,12 +43,10 @@ fn progress_line(line: &str) -> bool {
             r"^--- PASS: [A-Za-z0-9_/]+ \([0-9]+\.[0-9]+s\)$",
             r"^ok\s+[^\s]+\s+[0-9]+\.[0-9]+s(?:\s+coverage: [0-9]+\.[0-9]+% of statements)?$",
             r"^PASS [^\s]+\.(?:test|spec)\.[cm]?[jt]sx?(?: \([0-9]+\.[0-9]+ s\))?$",
-        ]
-        .into_iter()
-        .map(|pattern| Regex::new(pattern).expect("static progress grammar"))
-        .collect()
+        ])
+        .expect("static progress grammar")
     });
-    PATTERNS.iter().any(|pattern| pattern.is_match(line))
+    PATTERNS.is_match(line)
 }
 
 fn summary_or_header(line: &str) -> bool {

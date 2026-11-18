@@ -82,6 +82,7 @@ impl AgentTool for PowerShellTool {
         }
         let input: PowerShellInput = serde_json::from_value(params)
             .map_err(|e| AgentError::Validation(format!("powershell input invalid: {e}")))?;
+        let timeout = input.timeout.map(super::bash::validate_timeout).transpose()?;
         let utf16: Vec<u8> = input
             .command
             .encode_utf16()
@@ -115,7 +116,7 @@ impl AgentTool for PowerShellTool {
                 cwd: Some(self.env.cwd().to_path_buf()),
                 env: None,
                 inherit_env: true,
-                timeout: input.timeout,
+                timeout,
                 cancel: Some(&signal),
                 on_chunk: Some(Box::new(move |_, progress| {
                     if let Some(progress) = progress() {
@@ -136,7 +137,7 @@ impl AgentTool for PowerShellTool {
         )
         .await
         .map_err(|e| AgentError::Tool(e.to_string()))?;
-        finish_shell_capture(&capture, input.output_mode, input.timeout, true)
+        finish_shell_capture(&capture, input.output_mode, timeout, true)
     }
 }
 

@@ -16398,7 +16398,7 @@ impl AppState {
             .debug_selector(|| "agent-chat-row".to_string())
             .w_full()
             .min_w_0()
-            .when(snapshot.focused_layout, |row| row.max_w(px(784.0)))
+            .max_w(px(784.0))
             .px(px(16.0))
             .when(
                 snapshot.focused_layout && matches!(row, ChatRow::Message { message, .. } if message.role == ChatRole::User),
@@ -16409,16 +16409,12 @@ impl AppState {
                 |row| row.pb(px(if live_tools { 0.0 } else { 8.0 })),
             )
             .child(inner);
-        if snapshot.focused_layout {
-            div()
-                .w_full()
-                .flex()
-                .justify_center()
-                .child(content)
-                .into_any_element()
-        } else {
-            content.into_any_element()
-        }
+        div()
+            .w_full()
+            .flex()
+            .justify_center()
+            .child(content)
+            .into_any_element()
     }
     fn open_project_script_form(
         &mut self,

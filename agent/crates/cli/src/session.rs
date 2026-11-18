@@ -172,7 +172,7 @@ pub fn default_system_prompt_with_tool_prompts(
                 .cloned()
                 .unwrap_or_else(|| ToolPromptMetadata {
                     prompt_snippet: builtin_tool_snippet(name).map(str::to_owned),
-                    prompt_guidelines: Vec::new(),
+                    prompt_guidelines: builtin_tool_guideline(name).map(str::to_owned).into_iter().collect(),
                 })
                 .normalized();
             (name.as_str(), prompt)
@@ -219,6 +219,7 @@ pub fn default_system_prompt_with_tool_prompts(
         "- Reply in the same language as the user's latest message (the conversation's language when
   that message is too short to tell), unless the user asks for another.",
         "- Be concise in your responses",
+        "- Use Markdown when it improves readability: short headings for distinct sections, lists for steps, inline code for identifiers and paths, and language-tagged fenced blocks for multiline code. Keep simple answers plain.",
         "- Show file paths clearly when working with files",
         "- Prefer the smallest change that solves the problem",
         "- Treat requests to change or fix something as instructions to do the work. Inspect relevant
@@ -234,9 +235,7 @@ pub fn default_system_prompt_with_tool_prompts(
         "- Give brief progress updates during substantial work. In the final response, state the
   outcome, relevant verification, and any remaining limitations or blockers clearly.",
         working_state_rule,
-        "- Request independent reads and searches together when their inputs are known. Split them
-  across batches if they exceed the batch tool’s call limit.
-  Wait for results before requesting dependent calls or making edits.",
+        "- Wait for prerequisites before requesting dependent calls or making edits.",
         "- Read only what you need. If a file or search result was already shown earlier in this
   conversation, use it instead of fetching it again.",
     ];
@@ -295,6 +294,16 @@ pub use tools::tools::batch::{
     MAX_CALLS as MAX_BATCH_CALLS, MAX_OUTPUT_BYTES as MAX_BATCH_OUTPUT_BYTES,
 };
 pub use tools::tools::{task_list, user_input};
+
+/// Keep tool-specific advice out of restricted sessions and extension overrides.
+fn builtin_tool_guideline(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "batch" => "Group independent reads and searches in batch. Use codemode to return matching lines when full results are unnecessary.",
+        "bash" | "powershell" => "For noisy builds and tests, request output_mode=compact. Keep raw output when exact text matters.",
+        "output" => "Inspect the saved log with output before rerunning a command for missing details.",
+        _ => return None,
+    })
+}
 
 /// One-line prompt descriptions of the tools rpi itself registers.
 fn builtin_tool_snippet(name: &str) -> Option<&'static str> {
@@ -4846,6 +4855,10 @@ mod tests {
         assert!(p.contains("Re-stating the same plan without acting on it is a bug"));
         let none = default_system_prompt_with_tools("/tmp/proj", false, &[]);
         assert!(none.contains("Available tools:\n(none)"));
+        for rule in ["Use codemode", "output_mode=compact", "Inspect the saved log"] {
+            assert!(!p.contains(rule));
+            assert!(default_system_prompt("/tmp/proj", true).contains(rule));
+        }
     }
 
     #[test]
@@ -4857,9 +4870,9 @@ mod tests {
         assert!(p.contains("edit"));
         assert!(p.contains("write"));
         assert!(p.contains("docs"));
-        assert!(!p.contains("- grep"));
-        assert!(!p.contains("- find"));
-        assert!(!p.contains("- ls"));
+        assert!(p.contains("- grep"));
+        assert!(p.contains("- find"));
+        assert!(p.contains("- ls"));
         assert!(!p.contains("- powershell"));
         assert!(p.contains("Bash/POSIX syntax, also on Windows"));
     }

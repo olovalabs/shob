@@ -51,6 +51,41 @@ fn parse_table_cell(row: &mut node::TableRow, node: &mdast::TableCell, cx: &mut 
     row.children.push(table_cell);
 }
 
+// Decorate parsed leaves rather than flattening their text: nested code, links,
+// and images must survive an enclosing emphasis or reference link.
+fn marked_children(
+    paragraph: &mut Paragraph,
+    children: &[Node],
+    mark: TextMark,
+    cx: &mut NodeContext,
+) -> String {
+    let mut inner = Paragraph::default();
+    let mut text = String::new();
+    for child in children {
+        text.push_str(&parse_paragraph(&mut inner, child, cx));
+    }
+    for leaf in &mut inner.children {
+        if let (Some(image), Some(link)) = (&mut leaf.image, &mark.link) {
+            image.link = Some(link.clone());
+        }
+        if !leaf.text.is_empty() {
+            if leaf.marks.is_empty() {
+                leaf.marks.push((0..leaf.text.len(), TextMark::default()));
+            }
+            for (_, style) in &mut leaf.marks {
+                style.bold |= mark.bold;
+                style.italic |= mark.italic;
+                style.strikethrough |= mark.strikethrough;
+                if mark.link.is_some() {
+                    style.link = mark.link.clone();
+                }
+            }
+        }
+    }
+    paragraph.merge(inner);
+    text
+}
+
 fn parse_paragraph(paragraph: &mut Paragraph, node: &mdast::Node, cx: &mut NodeContext) -> String {
     let span = node.position().map(|pos| Span {
         start: pos.start.offset,
@@ -72,34 +107,13 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &mdast::Node, cx: &mut NodeC
             text = val.value.clone();
             paragraph.push_str(&val.value)
         }
-        Node::Emphasis(val) => {
-            let mut child_paragraph = Paragraph::default();
-            for child in val.children.iter() {
-                text.push_str(&parse_paragraph(&mut child_paragraph, &child, cx));
-            }
-            paragraph.push(
-                InlineNode::new(&text).marks(vec![(0..text.len(), TextMark::default().italic())]),
-            );
+        Node::Break(_) => {
+            paragraph.push_str("\n");
+            text.push('\n');
         }
-        Node::Strong(val) => {
-            let mut child_paragraph = Paragraph::default();
-            for child in val.children.iter() {
-                text.push_str(&parse_paragraph(&mut child_paragraph, &child, cx));
-            }
-            paragraph.push(
-                InlineNode::new(&text).marks(vec![(0..text.len(), TextMark::default().bold())]),
-            );
-        }
-        Node::Delete(val) => {
-            let mut child_paragraph = Paragraph::default();
-            for child in val.children.iter() {
-                text.push_str(&parse_paragraph(&mut child_paragraph, &child, cx));
-            }
-            paragraph.push(
-                InlineNode::new(&text)
-                    .marks(vec![(0..text.len(), TextMark::default().strikethrough())]),
-            );
-        }
+        Node::Emphasis(val) => return marked_children(paragraph, &val.children, TextMark::default().italic(), cx),
+        Node::Strong(val) => return marked_children(paragraph, &val.children, TextMark::default().bold(), cx),
+        Node::Delete(val) => return marked_children(paragraph, &val.children, TextMark::default().strikethrough(), cx),
         Node::InlineCode(val) => {
             text = val.value.clone();
             paragraph.push(
@@ -113,26 +127,7 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &mdast::Node, cx: &mut NodeC
                 ..Default::default()
             });
 
-            let mut child_paragraph = Paragraph::default();
-            for child in val.children.iter() {
-                text.push_str(&parse_paragraph(&mut child_paragraph, &child, cx));
-            }
-
-            for child in child_paragraph.children.iter_mut() {
-                if let Some(image) = child.image.as_mut() {
-                    image.link = link_mark.clone();
-                }
-
-                child.marks.push((
-                    0..child.text.len(),
-                    TextMark {
-                        link: link_mark.clone(),
-                        ..Default::default()
-                    },
-                ));
-            }
-
-            paragraph.merge(child_paragraph);
+            return marked_children(paragraph, &val.children, TextMark { link: link_mark, ..Default::default() }, cx);
         }
         Node::Image(raw) => {
             paragraph.push_image(ImageNode {
@@ -183,25 +178,13 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &mdast::Node, cx: &mut NodeC
             )]));
         }
         Node::LinkReference(link) => {
-            let mut child_paragraph = Paragraph::default();
-            let mut child_text = String::new();
-            for child in link.children.iter() {
-                child_text.push_str(&parse_paragraph(&mut child_paragraph, child, cx));
-            }
-
             let link_mark = LinkMark {
                 url: "".into(),
                 title: link.label.clone().map(Into::into),
                 identifier: Some(link.identifier.clone().into()),
             };
 
-            paragraph.push(InlineNode::new(&child_text).marks(vec![(
-                0..child_text.len(),
-                TextMark {
-                    link: Some(link_mark),
-                    ..Default::default()
-                },
-            )]));
+            return marked_children(paragraph, &link.children, TextMark { link: Some(link_mark), ..Default::default() }, cx);
         }
         _ => {
             if cfg!(debug_assertions) {
@@ -389,5 +372,20 @@ fn ast_to_node(
             }
             node::Node::Unknown
         }
+    }
+}
+
+#[cfg(test)]
+mod inline_mark_tests {
+    use super::*;
+
+    #[test]
+    fn nested_link_styles_and_hard_break_survive() {
+        let Node::Root(root) = markdown::to_mdast("**[a `β`](https://example.org)**  \nnext", &ParseOptions::gfm()).unwrap() else { panic!() };
+        let mut paragraph = Paragraph::default();
+        let text = parse_paragraph(&mut paragraph, &root.children[0], &mut NodeContext::default());
+        assert_eq!(text, "a β\nnext");
+        let code = paragraph.children.iter().find(|child| child.text.as_ref() == "β").unwrap();
+        assert!(code.marks.iter().any(|(_, mark)| mark.bold && mark.code && mark.link.is_some()));
     }
 }
