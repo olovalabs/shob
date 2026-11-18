@@ -143,10 +143,11 @@ impl CaptureState {
                 }
                 // Snap down to the last complete line so the head never ends
                 // mid-line; a single line longer than the cap keeps nothing.
-                let keep = self.head_output[..cut]
-                    .rfind('\n')
-                    .map(|newline| newline + 1)
-                    .unwrap_or(0);
+                let head_prefix = &self.head_output[..cut];
+                let keep = match head_prefix.rfind('\n') {
+                    Some(newline) => newline + 1,
+                    None => 0,
+                };
                 self.head_output.truncate(keep);
                 self.head_output.shrink_to_fit();
                 self.head_full = true;
@@ -615,9 +616,7 @@ mod tests {
         // 4 KiB chunks of numbered lines; the prefix must stop at MAX_HEAD_BYTES
         // and stop mid-line only by snapping down to the last complete line.
         for chunk in 0..64 {
-            let text: String = (0..128)
-                .map(|i| format!("C{chunk:03}L{i:03}\n"))
-                .collect();
+            let text: String = (0..128).map(|i| format!("C{chunk:03}L{i:03}\n")).collect();
             s.ingest_chunk(&text);
         }
         assert!(s.head_full);

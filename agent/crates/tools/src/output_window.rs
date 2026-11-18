@@ -57,6 +57,12 @@ pub struct OutputTotals {
     pub bytes: usize,
 }
 
+impl OutputTotals {
+    pub fn new(lines: usize, bytes: usize) -> Self {
+        Self { lines, bytes }
+    }
+}
+
 /// One rendered head+tail window.
 #[derive(Debug, Clone)]
 pub struct OutputWindow {
@@ -125,9 +131,8 @@ pub fn build_window(
         return None;
     }
     let elided_lines = totals.lines - head_lines - tail_lines;
-    let elided_bytes = totals
-        .bytes
-        .saturating_sub(head.output_bytes + tail.output_bytes);
+    let kept_bytes = head.output_bytes + tail.output_bytes;
+    let elided_bytes = totals.bytes.saturating_sub(kept_bytes);
     let hint = full_output_hint.unwrap_or("?");
     // The line count is exact. The byte figure would only be an upper bound here
     // (the retained windows are far smaller than the elided middle), and an
@@ -266,10 +271,8 @@ mod tests {
             window.elided_lines,
             total - window.head_lines - window.tail_lines
         );
-        assert!(window.content.contains(&format!(
-            "[... {} lines elided, at least (",
-            window.elided_lines
-        )));
+        let marker_prefix = format!("[... {} lines elided, at least (", window.elided_lines);
+        assert!(window.content.contains(&marker_prefix));
         assert!(window.content.contains("[Full output: /tmp/o.log]"));
         assert!(window.head_lines > 0 && window.tail_lines > 0);
         assert!(window.head_lines < window.tail_lines);
@@ -285,18 +288,16 @@ mod tests {
     fn elided_line_count_is_recoverable_from_the_totals() {
         let s = numbered(5_000);
         let window = build_output_window(&s, TruncationOptions::default(), 4, None).unwrap();
-        assert_eq!(
-            window.head_lines + window.elided_lines + window.tail_lines,
-            5_000
-        );
+        let accounted = window.head_lines + window.elided_lines + window.tail_lines;
+        assert_eq!(accounted, 5_000);
         // The head window's last line and the tail window's first line really are
         // `head_lines` and `total - tail_lines` respectively.
         let mut lines = window.content.lines();
         let last_head = lines.nth(window.head_lines - 1).unwrap();
-        assert_eq!(last_head, format!("L{:06}", window.head_lines - 1));
-        assert!(window
-            .content
-            .contains(&format!("L{:06}", 5_000 - window.tail_lines)));
+        let last_head_expected = format!("L{:06}", window.head_lines - 1);
+        assert_eq!(last_head, last_head_expected);
+        let first_tail = format!("L{:06}", 5_000 - window.tail_lines);
+        assert!(window.content.contains(&first_tail));
     }
 
     #[test]
@@ -313,10 +314,8 @@ mod tests {
             );
             // Never worse also means bounded: the tail budget plus the head share
             // plus the marker/notice it has to carry.
-            assert!(
-                window.content.len()
-                    <= DEFAULT_MAX_BYTES + DEFAULT_MAX_BYTES / DEFAULT_HEAD_SHARE + 512
-            );
+            let ceiling = DEFAULT_MAX_BYTES + DEFAULT_MAX_BYTES / DEFAULT_HEAD_SHARE + 512;
+            assert!(window.content.len() <= ceiling);
         }
     }
 

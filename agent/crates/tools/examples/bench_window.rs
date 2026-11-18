@@ -15,7 +15,7 @@
 
 use std::time::{Duration, Instant};
 
-use tools::output_window::{build_window, DEFAULT_HEAD_SHARE};
+use tools::output_window::{build_window, OutputTotals, DEFAULT_HEAD_SHARE};
 use tools::truncate::{TruncationOptions, DEFAULT_MAX_BYTES};
 
 const MAX_HEAD_BYTES: usize = DEFAULT_MAX_BYTES / DEFAULT_HEAD_SHARE;
@@ -50,10 +50,10 @@ fn ingest(state: (&mut String, &mut bool), text: &str) {
         while cut > 0 && !head.is_char_boundary(cut) {
             cut -= 1;
         }
-        let keep = head[..cut]
-            .rfind('\n')
-            .map(|newline| newline + 1)
-            .unwrap_or(0);
+        let keep = match head[..cut].rfind('\n') {
+            Some(newline) => newline + 1,
+            None => 0,
+        };
         head.truncate(keep);
         head.shrink_to_fit();
         *full = true;
@@ -98,10 +98,7 @@ fn main() {
     };
     let tail_src = &tail_owned[tail_start..];
     let head_src = head.as_str();
-    let totals = tools::output_window::OutputTotals {
-        lines: total_lines,
-        bytes: full_bytes,
-    };
+    let totals = OutputTotals::new(total_lines, full_bytes);
     let mut window_samples = Vec::with_capacity(samples);
     let mut rendered = 0usize;
     for _ in 0..samples {
