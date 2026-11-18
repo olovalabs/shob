@@ -153,7 +153,7 @@ The editor shortcut opens the last editor you chose. If you haven’t chosen one
 
 Project scripts are saved per project in `settings.json` and run in a new terminal tab using the project directory.
 
-Native agent tools support opt-in compact shell results (`output_mode: "compact"`), saved-log inspection with `output`, compact/paged `grep`, and up to four independent read-only operations in `batch`. Compact results retain diagnostics and link to the complete sanitized log; raw output remains the default. These tools run in the embedded and legacy RPC backends, not in terminal-based agents, whose own tool behavior is unchanged.
+Native agent tools support opt-in compact shell results (`output_mode: "compact"`), saved-log inspection with `output`, compact/paged `grep`, and up to eight independent read-only operations in `batch`, with up to four running at a time. Compact shell results retain diagnostics and link to the complete sanitized log. Raw shell output is the default. Native agent chat uses these tools through the embedded and legacy RPC backends.
 
 Tool-result details include observed duration and displayed bytes, not estimated token savings. Aggregate counters are transient and reset on session start or tool reload; they do not change workspace persistence.
 

@@ -38,12 +38,12 @@ mod agent_bridge;
 mod agent_composer;
 mod agent_interaction;
 mod agent_rules;
-mod agent_ui;
 mod agent_writer;
 mod ascii_glow;
 mod assets;
 mod attachments;
 mod attention;
+mod chat_batch;
 mod cli;
 mod completion;
 mod conversations;
@@ -234,6 +234,7 @@ struct ChatTool {
     /// never scans or copies the full result unless the reader expands it.
     preview: SharedString,
     preview_truncated: bool,
+    batch_result: Option<Arc<chat_batch::BatchResult>>,
     state: ToolState,
     expanded: bool,
     /// Argument and output derivatives computed once when the tool starts.
@@ -591,6 +592,7 @@ struct ToolView {
 #[derive(Clone)]
 struct ToolDisplay {
     view: ToolView,
+    batch_calls: chat_batch::BatchCalls,
     activity_detail: Option<String>,
     shell_command: Option<SharedString>,
     content_body: Option<SharedString>,
@@ -618,6 +620,11 @@ impl ToolDisplay {
         };
         Self {
             view: tool_view(name, input, parsed.as_ref()),
+            batch_calls: if chat_batch::is_batch(name) {
+                chat_batch::calls(parsed.as_ref())
+            } else {
+                chat_batch::BatchCalls::default()
+            },
             activity_detail: parsed.as_ref().and_then(|value| {
                 ["path", "file_path", "filePath"]
                     .into_iter()
@@ -686,7 +693,7 @@ fn tool_view(name: &str, input: &str, parsed: Option<&serde_json::Value>) -> Too
             "list" | "ls" | "list_dir" => {
                 subtitle = field("path").unwrap_or(".").to_string();
             }
-            "glob" | "grep" | "ast_grep" | "search" | "rg" => {
+            "find" | "glob" | "grep" | "ast_grep" | "search" | "rg" => {
                 let path = field("path").unwrap_or(".");
                 subtitle = match field("pattern")
                     .map(first_line)
@@ -720,6 +727,7 @@ fn tool_view(name: &str, input: &str, parsed: Option<&serde_json::Value>) -> Too
                     subtitle = file_name(path).to_string();
                 }
             }
+            "batch" => {}
             _ => {
                 subtitle = format_tool_summary(name, input);
             }
@@ -1085,6 +1093,10 @@ fn chat_tool_content(
         body = body.relative().child(marker);
     }
 
+    if chat_batch::is_batch(&tool.name) && (tool.batch_result.is_some() || tool.output.is_empty()) {
+        return chat_batch::details(body, pane_id, index, tool, tokens, on_show_more);
+    }
+
     if !tool.display.view.args.is_empty() {
         body = body.child(
             div()
@@ -1257,6 +1269,7 @@ fn chat_tool_header(
     let running = tool.state == ToolState::Running;
     let failed = tool.state == ToolState::Failed;
     let (icon, title) = match view.title.as_str() {
+        "Batch" => (IconName::GalleryVerticalEnd, "Batch"),
         "Shell" => (
             IconName::SquareTerminal,
             if running { "Running" } else { "Ran" },
@@ -1295,6 +1308,12 @@ fn chat_tool_header(
         _ => (IconName::File, view.title.as_str()),
     };
 
+    let batch = chat_batch::is_batch(&tool.name);
+    let batch_count = chat_batch::known_count(tool);
+    let partial_failures = tool
+        .batch_result
+        .as_ref()
+        .map_or(0, |result| result.failed_count());
     let color = if failed {
         tokens.block_failure
     } else {
@@ -1332,6 +1351,31 @@ fn chat_tool_header(
         } else {
             title.to_owned()
         }))
+        .when_some(batch_count, |row, count| {
+            row.child(
+                div()
+                    .flex_shrink_0()
+                    .child(format!("· {}", chat_batch::call_count_label(count))),
+            )
+        })
+        .when(batch && running, |row| {
+            row.child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_color(tokens.text_muted)
+                    .child("· Running…"),
+            )
+        })
+        .when(!failed && partial_failures > 0, |row| {
+            row.child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_color(tokens.block_failure)
+                    .child(format!("· {partial_failures} failed")),
+            )
+        })
         .when(!view.subtitle.is_empty(), |row| {
             row.child(
                 div()
@@ -1419,7 +1463,7 @@ fn chat_tool_header(
                 .text_color(tokens.text_muted),
         );
 
-    if running {
+    if running && !batch {
         row.with_animation(
             SharedString::from(format!("tool-row-pulse-{pane_id}-{index}")),
             Animation::new(std::time::Duration::from_millis(1100)).repeat(),
@@ -1634,11 +1678,25 @@ fn update_chat_tool(
     } else {
         Vec::new()
     };
+    let batch_result = (state == ToolState::Completed && chat_batch::is_batch(&name))
+        .then(|| chat_batch::BatchResult::parse(&output).map(Arc::new))
+        .flatten();
+    let failure_preview = (state == ToolState::Failed && chat_batch::is_batch(&name))
+        .then(|| chat_batch::failure_preview(&output))
+        .flatten();
+    let (full, preview, truncated) = if let Some(preview) = failure_preview {
+        (
+            SharedString::from(output),
+            SharedString::from(preview),
+            true,
+        )
+    } else {
+        tool_output_fields(output)
+    };
     if let Some(index) = existing {
         let message = Arc::make_mut(&mut messages[index]);
         let tool = message.tool.as_mut().expect("matched a tool message");
         subagent_chat::update_workers(&mut tool.workers, workers);
-        let (full, preview, truncated) = tool_output_fields(output);
         if state == ToolState::Completed {
             match tool.display.view.title.as_str() {
                 "Webfetch" => tool.web_sources = web_sources(&name, &tool.display.view.subtitle),
@@ -1649,9 +1707,9 @@ fn update_chat_tool(
         tool.output = full;
         tool.preview = preview;
         tool.preview_truncated = truncated;
+        tool.batch_result = batch_result;
         tool.state = state;
     } else {
-        let (full, preview, truncated) = tool_output_fields(output);
         let display = ToolDisplay::new(&name, "");
         messages.push(Arc::new(ChatMessage {
             role: ChatRole::Tool,
@@ -1668,6 +1726,7 @@ fn update_chat_tool(
                 output: full,
                 preview,
                 preview_truncated: truncated,
+                batch_result,
                 state,
                 expanded: false,
                 display,
@@ -1977,6 +2036,7 @@ fn push_chat_event(messages: &mut Vec<Arc<ChatMessage>>, event: agent_bridge::Ag
                     output: SharedString::from(""),
                     preview: SharedString::from(""),
                     preview_truncated: false,
+                    batch_result: None,
                     state: ToolState::Running,
                     expanded: false,
                     display,
@@ -2205,7 +2265,6 @@ struct ChatSnapshot {
     conversation: SharedString,
     tokens: ThemeTokens,
     rows: Vec<ChatRow>,
-    ui_state: HashMap<String, agent_ui::UiStateValue>,
     host: UiHost,
 }
 
@@ -2270,7 +2329,10 @@ fn chat_activity(messages: &[Arc<ChatMessage>]) -> String {
         let detail = clip_tool_text(detail, 80).0;
         let extra = active.count();
         let mut activity = label.trim_end_matches('…').to_owned();
-        if !detail.is_empty() {
+        if let Some(count) = chat_batch::known_count(tool) {
+            activity.push_str(" · ");
+            activity.push_str(&chat_batch::call_count_label(count));
+        } else if !detail.is_empty() {
             activity.push_str(" · ");
             activity.push_str(&detail);
         } else if label == "Running a tool…" {
@@ -2312,6 +2374,12 @@ fn chat_activity_tooltip(messages: &[Arc<ChatMessage>]) -> String {
         .iter()
         .take(10)
         .map(|tool| {
+            if chat_batch::is_batch(&tool.name) {
+                return chat_batch::known_count(tool).map_or_else(
+                    || "Running batch".to_string(),
+                    |count| format!("Running batch · {}", chat_batch::call_count_label(count)),
+                );
+            }
             let detail = tool
                 .display
                 .activity_detail
@@ -2345,6 +2413,7 @@ fn chat_activity_tooltip(messages: &[Arc<ChatMessage>]) -> String {
 
 fn tool_activity(name: &str) -> &'static str {
     match name.to_ascii_lowercase().as_str() {
+        "batch" => "Running batch…",
         "read" | "read_file" | "cat" => "Reading files…",
         "edit" | "write" | "write_file" | "create_file" | "str_replace" | "str_replace_editor"
         | "patch" | "apply_patch" => "Editing files…",
@@ -2499,8 +2568,6 @@ struct PaneChat {
     rpi_session_id: Option<String>,
     conversation: Option<conversations::Log>,
     startup_error: Option<String>,
-    /// Values of controls inside AI-rendered cards, keyed by card element id.
-    ui_state: HashMap<String, agent_ui::UiStateValue>,
 }
 
 impl Default for PaneChat {
@@ -2561,7 +2628,6 @@ impl Default for PaneChat {
             rpi_session_id: None,
             conversation: None,
             startup_error: None,
-            ui_state: HashMap::new(),
         }
     }
 }
@@ -3954,10 +4020,6 @@ impl AppState {
             .palette(self.palette_scheme, mode.is_dark());
         theme::apply_component_theme(mode, None, cx);
         sync_component_fonts(cx);
-        agent_ui::sync_theme(
-            self.settings.theme_colors.tokens(mode, self.palette_scheme),
-            cx,
-        );
 
         let RestoreData {
             workspace,
@@ -4363,10 +4425,6 @@ impl AppState {
             .palette(self.palette_scheme, is_dark);
         theme::apply_component_theme(mode, window, cx);
         sync_component_fonts(cx);
-        agent_ui::sync_theme(
-            self.settings.theme_colors.tokens(mode, self.palette_scheme),
-            cx,
-        );
 
         for project in &mut self.projects {
             for session in &mut project.sessions {
@@ -9218,50 +9276,6 @@ impl AppState {
         session.title = SharedString::from(title);
         session.display_title = truncate_title(&session.title);
         self.mark_dirty(cx);
-    }
-
-    /// Store the new value of an interactive control inside an AI card.
-    fn set_ui_state(
-        &mut self,
-        pane_id: usize,
-        key: String,
-        value: agent_ui::UiStateValue,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(pane) = self.pane_mut(pane_id) {
-            pane.chat.ui_state.insert(key, value);
-            // Card controls can change a row's height. Reset measurements but
-            // restore the reader's anchor (or tail-follow) afterwards; this is
-            // a click-rate path.
-            let rows = pane.chat.list_rows.get();
-            let following = pane.chat.list_state.is_following_tail();
-            let anchor = pane.chat.list_state.logical_scroll_top();
-            pane.chat.list_state.reset(rows);
-            if following {
-                pane.chat.list_state.set_follow_mode(FollowMode::Tail);
-            } else {
-                pane.chat.list_state.scroll_to(anchor);
-            }
-            cx.notify();
-        }
-    }
-
-    /// Send a prompt from an AI-rendered UI action button.
-    fn submit_ui_action(
-        &mut self,
-        pane_id: usize,
-        action: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(input) = self
-            .pane_ref(pane_id)
-            .and_then(|pane| pane.input_state.clone())
-        else {
-            return;
-        };
-        input.update(cx, |state, cx| state.set_value(action, window, cx));
-        self.submit_agent_prompt(pane_id, window, cx);
     }
 
     fn submit_agent_prompt(&mut self, pane_id: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -14450,7 +14464,6 @@ impl AppState {
         running: bool,
         copy_range: Option<(usize, usize)>,
         tokens: ThemeTokens,
-        ui_state: Option<&HashMap<String, agent_ui::UiStateValue>>,
         host: &UiHost,
         window: &mut Window,
         cx: &mut App,
@@ -14588,29 +14601,24 @@ impl AppState {
                     .text_color(tokens.text_primary);
 
                 if message.streaming {
-                    let (settled, tail) = message
-                        .stream
-                        .as_ref()
-                        .map_or(("", message.text.as_str()), |view| {
-                            (view.settled.as_ref(), view.tail.as_ref())
-                        });
+                    let (settled, tail) = message.stream.as_ref().map_or_else(
+                        || (SharedString::from(""), message.text.clone().into()),
+                        |view| (view.settled.clone(), view.tail.clone()),
+                    );
                     if !settled.is_empty() {
-                        body = body.child(agent_ui::render_assistant_body(
+                        body = body.child(chat_markdown(
                             id.clone(),
                             settled,
                             px(14.0),
                             rems(0.6),
                             tokens.text_primary,
                             tokens,
-                            pane_id,
-                            ui_state,
-                            host,
                             window,
                             cx,
                         ));
                     }
                     if !tail.is_empty() {
-                        body = body.child(agent_ui::render_assistant_body(
+                        body = body.child(chat_markdown(
                             SharedString::from(format!(
                                 "agent-markdown-{pane_id}-{conversation}-{index}-live"
                             )),
@@ -14619,24 +14627,18 @@ impl AppState {
                             rems(0.6),
                             tokens.text_primary,
                             tokens,
-                            pane_id,
-                            ui_state,
-                            host,
                             window,
                             cx,
                         ));
                     }
                 } else {
-                    body = body.child(agent_ui::render_assistant_body(
+                    body = body.child(chat_markdown(
                         id,
-                        &message.text,
+                        message.text.clone(),
                         px(14.0),
                         rems(0.6),
                         tokens.text_primary,
                         tokens,
-                        pane_id,
-                        ui_state,
-                        host,
                         window,
                         cx,
                     ));
@@ -15005,7 +15007,6 @@ impl AppState {
         let conversation = format!("worker-{}-{}", view.index, view.id);
         let messages = view.messages.iter();
         let host = UiHost::new(cx.weak_entity());
-        let ui_state = Some(&pane.chat.ui_state);
         let mut has_reply = false;
         for (index, message) in messages.enumerate() {
             has_reply |= matches!(
@@ -15032,7 +15033,6 @@ impl AppState {
                 message.streaming,
                 None,
                 tokens,
-                ui_state,
                 &host,
                 window,
                 cx,
@@ -15160,7 +15160,8 @@ impl AppState {
                         break;
                     }
                     // A section can fold or receive more output after the reply starts.
-                    if matches!(row, ChatRow::ToolGroup { .. } | ChatRow::Subagents { .. })
+                    if (matches!(row, ChatRow::ToolGroup { .. } | ChatRow::Subagents { .. })
+                        || matches!(row, ChatRow::Message { message, .. } if message.tool.as_ref().is_some_and(|tool| tool.expanded)))
                         && Some(index) != latest_content
                     {
                         pane.chat.remeasure_row(index);
@@ -15232,7 +15233,6 @@ impl AppState {
             conversation: conversation.into(),
             tokens,
             rows,
-            ui_state: pane.chat.ui_state.clone(),
             host: host.clone(),
         });
         let row_snapshot = Arc::clone(&snapshot);
@@ -15395,15 +15395,20 @@ impl AppState {
                 }
                 continue;
             }
-            if message.role == ChatRole::Tool && message.tool.is_some() {
+            if message.role == ChatRole::Tool
+                && message
+                    .tool
+                    .as_ref()
+                    .is_some_and(|tool| !chat_batch::is_batch(&tool.name))
+            {
                 let start = cursor;
                 let mut has_running_call = false;
                 while let Some(message) = visible.get(cursor) {
-                    let Some(tool) = message
-                        .tool
-                        .as_ref()
-                        .filter(|tool| message.role == ChatRole::Tool && tool.workers.is_empty())
-                    else {
+                    let Some(tool) = message.tool.as_ref().filter(|tool| {
+                        message.role == ChatRole::Tool
+                            && tool.workers.is_empty()
+                            && !chat_batch::is_batch(&tool.name)
+                    }) else {
                         break;
                     };
                     has_running_call |= tool.state == ToolState::Running;
@@ -15443,7 +15448,12 @@ impl AppState {
                 None
             };
             let live = running && cursor + 1 == visible.len();
-            if message.streaming {
+            if message.streaming
+                || message
+                    .tool
+                    .as_ref()
+                    .is_some_and(|tool| tool.state == ToolState::Running)
+            {
                 active_row = Some(rows.len());
             }
             rows.push(ChatRow::Message {
@@ -15581,7 +15591,6 @@ impl AppState {
                             *live,
                             None,
                             tokens,
-                            Some(&snapshot.ui_state),
                             &snapshot.host,
                             window,
                             cx,
@@ -15603,7 +15612,6 @@ impl AppState {
                 *live,
                 *copy_range,
                 tokens,
-                Some(&snapshot.ui_state),
                 &snapshot.host,
                 window,
                 cx,
@@ -20856,7 +20864,6 @@ fn main() -> Result<()> {
             theme::apply_component_theme(initial_mode, None, cx);
             load_embedded_fonts(cx);
             sync_component_fonts(cx);
-            agent_ui::sync_theme(app_settings.theme_colors.tokens(initial_mode, app_settings.palette_scheme), cx);
 
             std::thread::spawn(|| {
                 completion::prewarm();
@@ -22903,161 +22910,6 @@ mod resize_tests {
             let pane = s.pane_ref(pane_id).unwrap();
             assert_eq!(pane.chat.selected_model.as_ref(), Some(&model));
             assert!(pane.chat.visible_messages().is_empty());
-        });
-    }
-
-    #[test]
-    fn ai_ui_fence_renders_gpui_kit_components() {
-        let mut cx = TestAppContext::new();
-        let (mut cx, state) = open_app(&mut cx);
-        let pane_id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
-        cx.update_window_entity(&state, |s, window, cx| {
-            s.set_chat_mode(pane_id, true, window, cx);
-            s.pane_mut(pane_id).unwrap().chat.messages.push(Arc::new(ChatMessage::new(
-                ChatRole::Assistant,
-                r#"Here is the generated card:
-
-```ui
-{"root":"card","elements":{
- "card":{"type":"Card","props":{"title":"Weekly report","footer":"generated"},"children":["heading","intro","code","divider","tags","alert","progress","check","switch","radio","rating","spinner","skeleton","avatar","icon","kbd","desc","table","list","steps","tabs","crumb","toggle","marker","pagination","bubble","diff","accordion","collapsible","grid","chart","metrics","heatmap","stacked","actions"]},
- "heading":{"type":"Heading","props":{"text":"Weekly report","level":2}},
- "intro":{"type":"Text","props":{"text":"A **markdown** intro."}},
- "code":{"type":"Code","props":{"text":"let x = 1;","lang":"rust"}},
- "divider":{"type":"Divider","props":{"label":"Details"}},
- "tags":{"type":"Row","props":{"gap":8},"children":["ok","warn"]},
- "ok":{"type":"Tag","props":{"text":"healthy","tone":"success"}},
- "warn":{"type":"Tag","props":{"text":"2 warnings","tone":"warning"}},
- "alert":{"type":"Alert","props":{"tone":"info","title":"Note","message":"Rendered by the model."}},
- "progress":{"type":"Progress","props":{"value":72,"label":"Coverage"}},
- "check":{"type":"Checkbox","props":{"label":"Include archived","checked":true}},
- "switch":{"type":"Switch","props":{"label":"Live updates","checked":false}},
- "radio":{"type":"RadioGroup","props":{"options":["Daily","Weekly"],"selected":1}},
- "rating":{"type":"Rating","props":{"value":4,"max":5}},
- "spinner":{"type":"Spinner","props":{"size":"sm"}},
- "skeleton":{"type":"Skeleton","props":{"height":12}},
- "avatar":{"type":"Avatar","props":{"name":"Shob"}},
- "icon":{"type":"Icon","props":{"name":"sparkles","size":"sm"}},
- "kbd":{"type":"Kbd","props":{"keys":"cmd-k"}},
- "desc":{"type":"DescriptionList","props":{"items":[{"label":"Owner","value":"platform"},{"label":"Window","value":"7 days"}]}},
- "table":{"type":"Table","props":{"columns":["Metric","Value"],"rows":[["Users","1204"],["MRR","8200"]]}},
- "list":{"type":"List","props":{"items":["first","second"],"ordered":true}},
- "steps":{"type":"Stepper","props":{"steps":["Plan","Build","Ship"],"selected":1}},
- "tabs":{"type":"Tabs","props":{"tabs":["Overview","Runs","Logs"],"selected":0}},
- "crumb":{"type":"Breadcrumb","props":{"items":["Project","Reports","Weekly"]}},
- "toggle":{"type":"Toggle","props":{"label":"Live updates","checked":true}},
- "marker":{"type":"Marker","props":{"text":"Generated 5 minutes ago"}},
- "pagination":{"type":"Pagination","props":{"page":2,"total":5}},
- "bubble":{"type":"Bubble","props":{"text":"A chat bubble.","role":"assistant"}},
- "diff":{"type":"Diff","props":{"patch":"+ added line\n- removed line"}},
- "accordion":{"type":"Accordion","props":{"items":[{"title":"Details","content":"Inside the accordion.","open":true}]}},
- "collapsible":{"type":"Collapsible","props":{"title":"More","content":"Collapsed content."}},
- "grid":{"type":"Grid","props":{"cols":2,"gap":8},"children":["ok","warn"]},
- "chart":{"type":"Chart","props":{"kind":"bar","height":120,"data":[{"label":"Mon","value":3},{"label":"Tue","value":5}]}},
- "metrics":{"type":"Metrics","props":{"items":[{"label":"Turns","value":"24M"}]}},
- "heatmap":{"type":"Heatmap","props":{"columns":["9am","10am"],"rows":[{"label":"Mon","values":[1,4]},{"label":"Tue","values":[3,2]}]}},
- "stacked":{"type":"StackedBar","props":{"series":["Low","High"],"rows":[{"label":"Codex","values":[30,70]}]}},
- "actions":{"type":"Row","props":{"gap":8},"children":["refresh"]},
- "refresh":{"type":"Button","props":{"label":"Refresh","tone":"primary","action":"Refresh the report"}}
-}}
-```
-
-Done."#
-                    .into(),
-            )));
-        });
-        cx.draw_frame().expect("draw an AI-generated UI card");
-        for (preference, is_dark) in [
-            (ThemePreference::Light, false),
-            (ThemePreference::Dark, true),
-        ] {
-            cx.update_window_entity(&state, |s, window, cx| {
-                s.set_theme_preference(preference, Some(window), cx);
-                assert_eq!(s.tokens(cx).is_dark, is_dark);
-                assert_eq!(gpui_kit::component::Theme::global(cx).is_dark(), is_dark);
-                let colors = &gpui_kit::component::Theme::global(cx).colors;
-                let tokens = s.tokens(cx);
-                let mut card_bg = tokens.card_bg;
-                card_bg.s = 0.0;
-                let mut text_primary = tokens.text_primary;
-                text_primary.s = 0.0;
-                assert_eq!(colors.group_box, card_bg);
-                assert_eq!(colors.primary, text_primary);
-            });
-            cx.draw_frame()
-                .expect("redraw the card after a theme change");
-        }
-    }
-
-    #[test]
-    fn ai_ui_renders_native_inputs_and_new_primitives() {
-        let mut cx = TestAppContext::new();
-        let (mut cx, state) = open_app(&mut cx);
-        let pane_id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
-        cx.update_window_entity(&state, |s, window, cx| {
-            s.set_chat_mode(pane_id, true, window, cx);
-            s.pane_mut(pane_id).unwrap().chat.messages.push(Arc::new(ChatMessage::new(
-                ChatRole::Assistant,
-                r#"```ui
-{"root":"root","elements":{
-"root":{"type":"Column","children":["field","password","number","slider","select","meter","segments","toolbar","carousel","timeline"]},
-"field":{"type":"Field","props":{"label":"Name"},"children":["input"]},
-"input":{"type":"Input","props":{"placeholder":"Your name"}},
-"password":{"type":"PasswordInput","props":{"label":"Password"}},
-"number":{"type":"NumberInput","props":{"label":"Count","value":4,"min":0,"max":10}},
-"slider":{"type":"Slider","props":{"label":"Volume","value":5,"max":10}},
-"select":{"type":"Select","props":{"label":"Choice","options":["One","Two"],"selected":0,"searchable":true}},
-"meter":{"type":"Meter","props":{"min":0,"max":10,"value":4}},
-"segments":{"type":"SegmentedControl","props":{"options":["One","Two"]},"children":["first","second"]},
-"first":{"type":"Label","props":{"text":"First"}},
-"second":{"type":"Label","props":{"text":"Second"}},
-"toolbar":{"type":"Toolbar","children":["button"]},
-"carousel":{"type":"Carousel","children":["first","second"]},
-"timeline":{"type":"Timeline","props":{"items":[{"title":"Started","description":"Created"}]}},
-"button":{"type":"Button","props":{"label":"Action"}}
-}}
-```"#.into(),
-            )));
-        });
-        cx.draw_frame().expect("draw native agent UI primitives");
-    }
-
-    #[test]
-    fn ai_ui_checkbox_toggles_on_click() {
-        let mut cx = TestAppContext::new();
-        let (mut cx, state) = open_app(&mut cx);
-        let pane_id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
-        cx.update_window_entity(&state, |s, window, cx| {
-            s.set_chat_mode(pane_id, true, window, cx);
-            s.pane_mut(pane_id)
-                .unwrap()
-                .chat
-                .messages
-                .push(Arc::new(ChatMessage::new(
-                    ChatRole::Assistant,
-                    "```ui\n{\"root\":\"check\",\"elements\":{\"check\":{\"type\":\"Checkbox\",\"props\":{\"label\":\"Toggle me\",\"checked\":false}}}}\n```".into(),
-                )));
-        });
-        cx.draw_frame().expect("draw checkbox card");
-        let conversation = state.read_with(&cx, |s, _| {
-            s.pane_ref(pane_id).unwrap().chat.conversation_key.clone()
-        });
-        let card = format!("agent-markdown-{pane_id}-{conversation}-0-ui-0");
-        let selector: &'static str = Box::leak(format!("ai-ui-block-{card}").into_boxed_str());
-        let bounds = cx.debug_bounds(selector).expect("card bounds");
-        let click = point(
-            bounds.origin.x + px(20.0),
-            bounds.origin.y + bounds.size.height / 2.0,
-        );
-        cx.simulate_mouse_move(click, None, Modifiers::default());
-        cx.simulate_click(click, Modifiers::default());
-        cx.draw_frame().expect("draw toggled card");
-        state.read_with(&cx, |s, _| {
-            let pane = s.pane_ref(pane_id).unwrap();
-            assert_eq!(
-                pane.chat.ui_state.get(&format!("{card}-check")),
-                Some(&agent_ui::UiStateValue::Bool(true)),
-                "clicking an AI-rendered checkbox must update pane UI state"
-            );
         });
     }
 
@@ -27686,9 +27538,7 @@ First report
         let pane_id = state.read_with(&cx, |state, _| state.projects[0].sessions[0].panes[0].id);
         let mut reply =
             "A settled paragraph with **formatting** and a code snippet.\n\n".repeat(paragraphs);
-        reply.push_str(
-            "```ui\n{\"root\":\"label\",\"elements\":{\"label\":{\"type\":\"Text\",\"props\":{\"text\":\"Ready\"}}}}\n```",
-        );
+        reply.push_str("```rust\nlet ready = true;\n```");
         let mut turn_trace = None;
         cx.update_window_entity(&state, |state, window, cx| {
             state.set_chat_mode(pane_id, true, window, cx);
@@ -27836,6 +27686,54 @@ First report
             frames.last().unwrap()
         );
         println!("{}", sampler.report());
+    }
+
+    #[test]
+    fn batch_tool_row_stays_visible_after_completion() {
+        use agent_bridge::AgentEvent;
+
+        let mut test_app = TestAppContext::new();
+        let (mut cx, state) = open_app(&mut test_app);
+        let pane_id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
+        cx.update_window_entity(&state, |s, window, cx| {
+            s.set_chat_mode(pane_id, true, window, cx);
+            let messages = s.pane_mut(pane_id).unwrap().chat.visible_messages_mut();
+            push_chat_event(
+                messages,
+                AgentEvent::ToolStart {
+                    id: Some("batch-1".into()),
+                    name: "batch".into(),
+                    input: r#"{"calls":[{"tool":"read","path":"README.md"}]}"#.into(),
+                },
+            );
+            assert_eq!(chat_activity(messages), "Running batch · 1 call…");
+            push_chat_event(
+                messages,
+                AgentEvent::ToolEnd {
+                    id: Some("batch-1".into()),
+                    name: "batch".into(),
+                    output: r#"[{"index":0,"tool":"read","is_error":false,"result":{"content":[{"type":"text","text":"Shob"}]}}]"#.into(),
+                    failed: false,
+                },
+            );
+            push_chat_event(messages, AgentEvent::Text("I read the README.".into()));
+            push_chat_event(messages, AgentEvent::Done);
+            cx.notify();
+        });
+        cx.draw_frame().unwrap();
+        let row = cx
+            .debug_bounds("tool-row-0")
+            .expect("batch summary is always visible");
+        assert!(cx.debug_bounds("tool-group-0").is_none());
+        cx.simulate_click(row.center(), Modifiers::none());
+        cx.draw_frame().unwrap();
+        assert!(state.read_with(&cx, |s, _| {
+            s.projects[0].sessions[0].panes[0].chat.visible_messages()[0]
+                .tool
+                .as_ref()
+                .unwrap()
+                .expanded
+        }));
     }
 
     #[test]

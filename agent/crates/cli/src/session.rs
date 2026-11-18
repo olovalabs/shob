@@ -234,7 +234,8 @@ pub fn default_system_prompt_with_tool_prompts(
         "- Give brief progress updates during substantial work. In the final response, state the
   outcome, relevant verification, and any remaining limitations or blockers clearly.",
         working_state_rule,
-        "- Request independent reads and searches together in one batch when their inputs are known.
+        "- Request independent reads and searches together when their inputs are known. Split them
+  across batches if they exceed the batch tool’s call limit.
   Wait for results before requesting dependent calls or making edits.",
         "- Read only what you need. If a file or search result was already shown earlier in this
   conversation, use it instead of fetching it again.",
@@ -290,6 +291,9 @@ fn extension_tool_prompt_metadata(
         .unwrap_or_default()
 }
 
+pub use tools::tools::batch::{
+    MAX_CALLS as MAX_BATCH_CALLS, MAX_OUTPUT_BYTES as MAX_BATCH_OUTPUT_BYTES,
+};
 pub use tools::tools::{task_list, user_input};
 
 /// One-line prompt descriptions of the tools rpi itself registers.
@@ -306,7 +310,7 @@ fn builtin_tool_snippet(name: &str) -> Option<&'static str> {
         "ls" => "List directory contents",
         "powershell" => "Execute PowerShell commands on Windows",
         "output" => "Read or search saved command output without rerunning the command",
-        "batch" => "Run up to four independent enabled read-only tools concurrently",
+        "batch" => "Run independent enabled read-only tools with bounded concurrency",
         _ => return None,
     })
 }

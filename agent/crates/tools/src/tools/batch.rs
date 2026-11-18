@@ -6,13 +6,15 @@ use agent::error::AgentError;
 use agent::types::{AgentToolResult, TextContentOrImage, ToolExecutionMode, ToolResultPartial};
 use ai::types::Tool;
 use async_trait::async_trait;
-use futures::future::join_all;
+use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-const MAX_CALLS: usize = 4;
+pub const MAX_CALLS: usize = 8;
+const MAX_CONCURRENCY: usize = 4;
 const MAX_ITEM_BYTES: usize = 128 * 1024;
+pub const MAX_OUTPUT_BYTES: usize = MAX_CALLS * (MAX_ITEM_BYTES + 1) + 1;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -90,7 +92,9 @@ pub fn create_batch_tool(tools: Vec<Arc<dyn AgentTool>>) -> Arc<dyn AgentTool> {
     Arc::new(BatchTool {
         schema: Tool {
             name: "batch".into(),
-            description: "Run 1–4 independent read-only calls concurrently in one round trip. Each call uses the standalone tool's fields directly, plus tool: for example {\"calls\":[{\"tool\":\"read\",\"path\":\"package.json\"},{\"tool\":\"ls\",\"path\":\"app\"}]}. No arguments wrapper. Only enabled read, grep, find, ls and output tools are allowed. Results stay in input order; each failure is explicit. No shell, mutations or nested batches. Each result is capped at 128 KiB; use the standalone tool for larger results.".into(),
+            description: format!(
+                "Run 1–{MAX_CALLS} independent read-only calls in one round trip, with at most {MAX_CONCURRENCY} running at once. Split larger sets across batches. Each call uses the standalone tool's fields directly, plus tool: for example {{\"calls\":[{{\"tool\":\"read\",\"path\":\"package.json\"}},{{\"tool\":\"ls\",\"path\":\"app\"}}]}}. No arguments wrapper. Only enabled read, grep, find, ls and output tools are allowed. Results stay in input order; each failure is explicit. No shell, mutations or nested batches. Each result is capped at 128 KiB; use the standalone tool for larger results."
+            ),
             parameters: ai::types::Schema::new(parameters),
             constrained_sampling: None,
         },
@@ -206,7 +210,9 @@ impl AgentTool for BatchTool {
         let input: BatchInput = serde_json::from_value(params)
             .map_err(|error| AgentError::Validation(format!("batch input invalid: {error}")))?;
         if input.calls.is_empty() || input.calls.len() > MAX_CALLS {
-            return Err(AgentError::Validation("batch requires 1–4 calls".into()));
+            return Err(AgentError::Validation(format!(
+                "batch requires 1–{MAX_CALLS} calls"
+            )));
         }
         let mut calls = Vec::with_capacity(input.calls.len());
         // Validate the entire batch before any operation starts.
@@ -239,12 +245,16 @@ impl AgentTool for BatchTool {
         if signal.is_cancelled() {
             return Err(AgentError::Abort);
         }
-        let results = join_all(calls.into_iter().map(|(entry, arguments, index)| {
+        let pending: Vec<_> = calls.into_iter().map(|(entry, arguments, index)| {
             let signal = signal.clone();
             async move {
                 let name = &entry.tool.schema().name;
                 let id = format!("{tool_call_id}:{index}");
-                let result = entry.tool.execute(&id, arguments, signal, Arc::new(|_| {})).await;
+                let result = if signal.is_cancelled() {
+                    Err(AgentError::Abort)
+                } else {
+                    entry.tool.execute(&id, arguments, signal, Arc::new(|_| {})).await
+                };
                 let (result, is_error, error) = match result {
                     Ok(result) => (Some(result), false, None),
                     Err(AgentError::StructuredTool(result)) => (Some(*result), true, None),
@@ -259,14 +269,17 @@ impl AgentTool for BatchTool {
                     String::from_utf8(writer.0).expect("JSON is UTF-8")
                 }
             }
-        }))
-        .await;
+        }).collect();
+        let results = stream::iter(pending)
+            .buffered(MAX_CONCURRENCY)
+            .collect::<Vec<_>>()
+            .await;
         if signal.is_cancelled() {
             return Err(AgentError::Abort);
         }
         Ok(AgentToolResult {
             content: vec![TextContentOrImage::text(format!("[{}]", results.join(",")))],
-            details: json!({"calls": results.len(), "max_concurrency": MAX_CALLS}),
+            details: json!({"calls": results.len(), "max_concurrency": MAX_CONCURRENCY}),
             ..Default::default()
         })
     }

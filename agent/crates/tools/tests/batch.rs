@@ -7,12 +7,12 @@ use agent::types::{AgentToolResult, TextContentOrImage, ToolExecutionMode, ToolR
 use ai::types::{Schema, Tool};
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use tokio::sync::Barrier;
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 struct ConcurrentRead {
     schema: Tool,
-    barrier: Barrier,
+    release: Notify,
     started: AtomicUsize,
 }
 
@@ -27,7 +27,7 @@ impl ConcurrentRead {
                 ),
                 constrained_sampling: None,
             },
-            barrier: Barrier::new(4),
+            release: Notify::new(),
             started: AtomicUsize::new(0),
         })
     }
@@ -52,8 +52,10 @@ impl AgentTool for ConcurrentRead {
         _: Arc<dyn Fn(ToolResultPartial) + Send + Sync>,
     ) -> Result<AgentToolResult, AgentError> {
         self.started.fetch_add(1, Ordering::Relaxed);
-        self.barrier.wait().await;
         let index = arguments["index"].as_u64().unwrap();
+        if index < 4 {
+            self.release.notified().await;
+        }
         let result = AgentToolResult {
             content: vec![TextContentOrImage::text(format!("file-{index}"))],
             details: json!({"source": index}),
@@ -73,23 +75,26 @@ async fn overlaps_independent_reads_preserving_order_and_structured_failures() {
     let metrics = Arc::new(tools::metrics::ToolMetrics::default());
     let measured = tools::metrics::measure_tool(read.clone(), metrics.clone());
     let batch = tools::metrics::measure_tool(tools::create_batch_tool(vec![measured]), metrics);
-    let calls: Vec<Value> = (0..4)
+    let calls: Vec<Value> = (0..5)
         .map(|index| json!({"tool":"read", "index":index}))
         .collect();
-    let result = batch
-        .execute(
-            "batch-1",
-            json!({"calls":calls}),
-            CancellationToken::new(),
-            Arc::new(|_| {}),
-        )
-        .await
-        .unwrap();
+    let execution = batch.execute(
+        "batch-1",
+        json!({"calls":calls}),
+        CancellationToken::new(),
+        Arc::new(|_| {}),
+    );
+    tokio::pin!(execution);
+    assert!(futures::poll!(&mut execution).is_pending());
+    assert_eq!(read.started.load(Ordering::Relaxed), 4);
+    read.release.notify_waiters();
+    let result = execution.await.unwrap();
     let TextContentOrImage::Text(text) = &result.content[0] else {
         panic!("text result")
     };
     let items: Vec<Value> = serde_json::from_str(&text.text).unwrap();
-    assert_eq!(read.started.load(Ordering::Relaxed), 4);
+    assert_eq!(read.started.load(Ordering::Relaxed), 5);
+    assert_eq!(items.len(), 5);
     for (index, item) in items.iter().enumerate() {
         assert_eq!(
             item["result"]["content"][0]["text"],
@@ -102,7 +107,7 @@ async fn overlaps_independent_reads_preserving_order_and_structured_failures() {
             6
         );
     }
-    assert_eq!(result.details["performance"]["session_executions"], 5);
+    assert_eq!(result.details["performance"]["session_executions"], 6);
 }
 
 #[tokio::test]
@@ -114,7 +119,7 @@ async fn validates_every_child_before_starting_and_rejects_disabled_or_mutating_
         json!([{"tool":"grep","pattern":"error"}]),
         json!([{"tool":"bash","command":"touch unexpected"}]),
         json!([]),
-        json!((0..5)
+        json!((0..=tools::tools::batch::MAX_CALLS)
             .map(|index| json!({"tool":"read","index":index}))
             .collect::<Vec<_>>()),
     ] {
@@ -171,6 +176,7 @@ async fn flat_calls_pass_provider_validation_and_read_the_requested_files() {
         ("/package.json", "{\"name\":\"batch-fixture\"}"),
         ("/nuxt.config.ts", "export default defineNuxtConfig({})"),
         ("/README.md", "# Fixture project"),
+        ("/app/about.vue", "<template>About</template>"),
         ("/app/page.vue", "<template>fixture page</template>"),
     ] {
         env.seed_file(path, contents.as_bytes().to_vec()).await;
@@ -189,12 +195,16 @@ async fn flat_calls_pass_provider_validation_and_read_the_requested_files() {
                 {"tool":"read","path":"package.json"},
                 {"tool":"read","path":"nuxt.config.ts"},
                 {"path":"README.md","tool":"read"},
+                {"tool":"read","path":"app/page.vue"},
+                {"tool":"read","path":"app/about.vue"},
                 {"path":"app","tool":"ls"}
             ]}),
             vec![
                 "batch-fixture",
                 "defineNuxtConfig",
                 "# Fixture project",
+                "<template>fixture page</template>",
+                "<template>About</template>",
                 "page.vue",
             ],
         ),
@@ -212,6 +222,7 @@ async fn flat_calls_pass_provider_validation_and_read_the_requested_files() {
             panic!("batch text");
         };
         let items: Vec<Value> = serde_json::from_str(&text.text).unwrap();
+        assert_eq!(items.len(), expected.len());
         for (item, expected) in items.iter().zip(expected) {
             assert_eq!(item["is_error"], false, "{item}");
             assert!(item["result"]["content"][0]["text"]
