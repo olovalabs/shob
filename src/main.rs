@@ -1530,20 +1530,10 @@ fn chat_thinking_row(
         .font_weight(gpui::FontWeight::MEDIUM)
         .text_color(tokens.text_primary)
         .child(label);
-    let title = if running {
-        title
-            .with_animation(
-                SharedString::from(format!("thinking-title-pulse-{pane_id}-{index}")),
-                Animation::new(std::time::Duration::from_millis(1100)).repeat(),
-                |element, delta| {
-                    let pulse = (delta * std::f32::consts::PI).sin().abs();
-                    element.opacity(0.55 + 0.45 * pulse)
-                },
-            )
-            .into_any_element()
-    } else {
-        title.into_any_element()
-    };
+    // The label already reads "Thinking" while streaming and "Thought" after.
+    // A repeating pulse here would repaint the window for the whole reasoning
+    // phase (AGENTS.md: no continuously repainting animations).
+    let title = title.into_any_element();
 
     let mut header = div()
         .id(SharedString::from(format!(
@@ -15633,11 +15623,14 @@ impl AppState {
                         .into()
                     }
                 })
-                .child(div().size(px(16.0)).flex_shrink_0().with_animation(
-                    ("agent-waiting-spinner", snapshot.pane_id),
-                    Animation::new(std::time::Duration::from_millis(650)).repeat(),
-                    move |element, phase| element.child(sidebar_loader(phase, tokens.text_muted)),
-                ))
+                // A fixed frame, not a repeating animation: a running turn can last
+                // hours, and a 650 ms repeat would repaint the window the whole time.
+                .child(
+                    div()
+                        .size(px(16.0))
+                        .flex_shrink_0()
+                        .child(sidebar_loader(0.0, tokens.text_muted)),
+                )
                 .child(
                     div()
                         .text_color(tokens.text_muted)
