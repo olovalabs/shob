@@ -296,7 +296,7 @@ impl AgentTool for BatchTool {
         }
         let child = signal.child_token();
         let _cancel = child.clone().drop_guard();
-        let pending = calls.into_iter().map(|(entry, arguments, index)| {
+        let pending = calls.into_iter().map(|(entry, arguments, index): (&Entry, Value, usize)| {
             let signal = child.clone();
             async move {
                 let name = &entry.tool.schema().name;
@@ -320,7 +320,7 @@ impl AgentTool for BatchTool {
                     String::from_utf8(writer.0).expect("JSON is UTF-8")
                 }
             }
-        });
+        }).collect::<Vec<_>>();
         let collect = stream::iter(pending)
             .buffered(MAX_CONCURRENCY)
             .collect::<Vec<_>>();
