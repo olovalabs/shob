@@ -49,13 +49,12 @@ impl LogoRegistry {
             if let Ok(entries) = std::fs::read_dir(Path::new("assets/logos")) {
                 for entry in entries.flatten() {
                     let p = entry.path();
-                    if p.is_file() {
-                        if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-                            if let Some(file_name) = p.file_name().and_then(|s| s.to_str()) {
-                                let rel = format!("logos/{file_name}");
-                                stems.insert(stem.to_ascii_lowercase(), rel);
-                            }
-                        }
+                    if p.is_file()
+                        && let Some(stem) = p.file_stem().and_then(|s| s.to_str())
+                        && let Some(file_name) = p.file_name().and_then(|s| s.to_str())
+                    {
+                        let rel = format!("logos/{file_name}");
+                        stems.insert(stem.to_ascii_lowercase(), rel);
                     }
                 }
             }
@@ -111,10 +110,10 @@ impl LogoRegistry {
         // 2. Match via agent detection manifests / aliases
         // (e.g. "antigravity" -> "agy", "claude-code" -> "claude", "cursor-agent" -> "cursor",
         //       "kilo-code" -> "kilo", "grok-build" -> "grok", "open-code" -> "opencode")
-        if let Some(agent_id) = agent_rules::identify_normalized(key) {
-            if let Some(path) = self.stems.get(agent_id) {
-                return Some(path.as_str());
-            }
+        if let Some(agent_id) = agent_rules::identify_normalized(key)
+            && let Some(path) = self.stems.get(agent_id)
+        {
+            return Some(path.as_str());
         }
 
         // 3. Suffix-stripped name (e.g. "herdr-cli" -> "herdr", "pi-code" -> "pi")
@@ -123,10 +122,10 @@ impl LogoRegistry {
                 if let Some(path) = self.stems.get(stripped) {
                     return Some(path.as_str());
                 }
-                if let Some(agent_id) = agent_rules::identify_normalized(stripped) {
-                    if let Some(path) = self.stems.get(agent_id) {
-                        return Some(path.as_str());
-                    }
+                if let Some(agent_id) = agent_rules::identify_normalized(stripped)
+                    && let Some(path) = self.stems.get(agent_id)
+                {
+                    return Some(path.as_str());
                 }
             }
         }

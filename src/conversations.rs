@@ -165,10 +165,11 @@ fn write_line(
     max_bytes: u64,
     line: &[u8],
 ) -> io::Result<()> {
-    if !files.contains_key(path) && files.len() >= MAX_OPEN_FILES {
-        if let Some(oldest) = files.keys().next().cloned() {
-            files.remove(&oldest);
-        }
+    if !files.contains_key(path)
+        && files.len() >= MAX_OPEN_FILES
+        && let Some(oldest) = files.keys().next().cloned()
+    {
+        files.remove(&oldest);
     }
     let open = files.entry(path.to_path_buf()).or_insert_with(|| OpenFile {
         file: None,

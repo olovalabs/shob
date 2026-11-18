@@ -176,11 +176,15 @@ fn parse_diff_markers(patch: &str, line_count: usize) -> Vec<LineChange> {
             continue;
         };
         let first = start.saturating_sub(1);
-        for row in first..first.saturating_add(new_count).min(line_count) {
+        for change in changes
+            .iter_mut()
+            .take(first.saturating_add(new_count).min(line_count))
+            .skip(first)
+        {
             if old_count == 0 {
-                changes[row].added = true;
+                change.added = true;
             } else {
-                changes[row].modified = true;
+                change.modified = true;
             }
         }
         if old_count > new_count && line_count > 0 {

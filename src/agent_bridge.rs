@@ -91,10 +91,12 @@ fn browser_prompt(prompt: &str) -> String {
     }
 }
 
+type WakeCallback = Arc<dyn Fn() + Send + Sync>;
+
 /// Host wakeup installed once by the UI. Bridges signal it as soon as they
 /// queue an event so the UI can drain immediately instead of waiting for a
 /// fixed polling tick.
-static WAKE: OnceLock<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>> = OnceLock::new();
+static WAKE: OnceLock<Mutex<Option<WakeCallback>>> = OnceLock::new();
 
 pub fn set_wake(callback: Arc<dyn Fn() + Send + Sync>) {
     let slot = WAKE.get_or_init(|| Mutex::new(None));
@@ -568,7 +570,7 @@ fn composer_tool_hook(
         if !asks_user
             && (permission.load(Ordering::Relaxed) == PermissionMode::Full.value()
                 || (permission.load(Ordering::Relaxed) == PermissionMode::Auto.value()
-                    && workspace_edit(name, &call.args, &cwd))
+                    && workspace_edit(name, call.args, &cwd))
                 || matches!(
                     name,
                     "read"
@@ -742,19 +744,19 @@ pub(crate) fn decode_tool_event(record: &Value) -> Option<AgentEvent> {
         }
         "tool_execution_update" => {
             let output = tool_output(&record["partialResult"]);
-            if !output.is_empty() {
-                if let Some(id) = id.as_deref() {
-                    crate::stream_timing::tool_output_arrived(id);
-                }
+            if !output.is_empty()
+                && let Some(id) = id.as_deref()
+            {
+                crate::stream_timing::tool_output_arrived(id);
             }
             Some(AgentEvent::ToolUpdate { id, name, output })
         }
         "tool_execution_end" => {
             let output = tool_output(&record["result"]);
-            if !output.is_empty() {
-                if let Some(id) = id.as_deref() {
-                    crate::stream_timing::tool_output_arrived(id);
-                }
+            if !output.is_empty()
+                && let Some(id) = id.as_deref()
+            {
+                crate::stream_timing::tool_output_arrived(id);
             }
             if let Some(id) = id.as_deref() {
                 crate::stream_timing::tool_finished(id);

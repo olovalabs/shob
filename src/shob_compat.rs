@@ -210,12 +210,12 @@ pub fn request(input: Value) -> (Vec<StatusEvent>, Value) {
             parent: None,
         }
     };
-    if let Some(session) = session {
-        if current.session.as_ref() != Some(&session) {
-            current.session = Some(session.clone());
-            current.state.clear();
-            events.push(make("register", Some(session)));
-        }
+    if let Some(session) = session
+        && current.session.as_ref() != Some(&session)
+    {
+        current.session = Some(session.clone());
+        current.state.clear();
+        events.push(make("register", Some(session)));
     }
     if state != "register" {
         // Initial idle means ready; only a native busy -> idle transition

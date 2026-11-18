@@ -353,12 +353,12 @@ fn split_streaming_markdown(text: &str) -> (&str, &str) {
             continue;
         }
 
-        if indent <= 3 {
-            if let Some(opened) = fence_open(trimmed) {
-                boundary = last_blank.or(boundary);
-                fence = Some(opened);
-                continue;
-            }
+        if indent <= 3
+            && let Some(opened) = fence_open(trimmed)
+        {
+            boundary = last_blank.or(boundary);
+            fence = Some(opened);
+            continue;
         }
 
         if line.trim().is_empty() {
@@ -398,40 +398,40 @@ fn format_tool_summary(_name: &str, input: &str) -> String {
         return String::new();
     }
     let clip = |text: &str| clip_tool_text(text, 60).0;
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(input) {
-        if let Some(map) = value.as_object() {
-            if let Some(cmd) = map.get("command").and_then(|v| v.as_str()) {
-                let first_line = cmd.lines().next().unwrap_or("").trim();
-                return format!("$ {}", clip(first_line));
-            }
-            if let Some(path) = map.get("path").and_then(|v| v.as_str()) {
-                if let Some(pattern) = map.get("pattern").and_then(|v| v.as_str()) {
-                    return format!("{path} · {pattern}");
-                }
-                return path.to_string();
-            }
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(input)
+        && let Some(map) = value.as_object()
+    {
+        if let Some(cmd) = map.get("command").and_then(|v| v.as_str()) {
+            let first_line = cmd.lines().next().unwrap_or("").trim();
+            return format!("$ {}", clip(first_line));
+        }
+        if let Some(path) = map.get("path").and_then(|v| v.as_str()) {
             if let Some(pattern) = map.get("pattern").and_then(|v| v.as_str()) {
-                return format!("/{pattern}/");
+                return format!("{path} · {pattern}");
             }
-            if let Some(query) = map.get("query").and_then(|v| v.as_str()) {
-                return format!("\"{query}\"");
-            }
-            if let Some(url) = map.get("url").and_then(|v| v.as_str()) {
-                return url.to_string();
-            }
-            let mut parts = Vec::new();
-            for (k, v) in map.iter().take(2) {
-                let val_str = match v {
-                    serde_json::Value::String(s) => s.clone(),
-                    serde_json::Value::Number(n) => n.to_string(),
-                    serde_json::Value::Bool(b) => b.to_string(),
-                    _ => serde_json::to_string(v).unwrap_or_default(),
-                };
-                parts.push(format!("{k}: {val_str}"));
-            }
-            if !parts.is_empty() {
-                return clip(&parts.join(", "));
-            }
+            return path.to_string();
+        }
+        if let Some(pattern) = map.get("pattern").and_then(|v| v.as_str()) {
+            return format!("/{pattern}/");
+        }
+        if let Some(query) = map.get("query").and_then(|v| v.as_str()) {
+            return format!("\"{query}\"");
+        }
+        if let Some(url) = map.get("url").and_then(|v| v.as_str()) {
+            return url.to_string();
+        }
+        let mut parts = Vec::new();
+        for (k, v) in map.iter().take(2) {
+            let val_str = match v {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::Bool(b) => b.to_string(),
+                _ => serde_json::to_string(v).unwrap_or_default(),
+            };
+            parts.push(format!("{k}: {val_str}"));
+        }
+        if !parts.is_empty() {
+            return clip(&parts.join(", "));
         }
     }
     clip(input.lines().next().unwrap_or("").trim())
@@ -459,16 +459,29 @@ impl From<MarkdownBlocks> for ChatMarkdown {
     }
 }
 
+struct ChatRenderContext<'a> {
+    tokens: ThemeTokens,
+    window: &'a mut Window,
+    cx: &'a mut App,
+}
+
+struct ChatMessageOptions<'a> {
+    pane_id: usize,
+    conversation: &'a str,
+    index: usize,
+    running: bool,
+    copy_range: Option<(usize, usize)>,
+}
+
 fn chat_markdown(
     id: SharedString,
     text: impl Into<ChatMarkdown>,
     base: Pixels,
     paragraph_gap: Rems,
     color: Hsla,
-    tokens: ThemeTokens,
-    window: &mut Window,
-    cx: &mut App,
+    render: ChatRenderContext<'_>,
 ) -> TextView {
+    let ChatRenderContext { tokens, window, cx } = render;
     let dark = cx.theme().is_dark();
     let themed_id: SharedString = format!("{id}-{}", if dark { "dark" } else { "light" }).into();
 
@@ -548,10 +561,9 @@ fn chat_stream_tail(
     base: Pixels,
     paragraph_gap: Rems,
     color: Hsla,
-    tokens: ThemeTokens,
-    window: &mut Window,
-    cx: &mut App,
+    render: ChatRenderContext<'_>,
 ) -> AnyElement {
+    let ChatRenderContext { tokens, window, cx } = render;
     if !view.plain_tail {
         return chat_markdown(
             id,
@@ -559,9 +571,7 @@ fn chat_stream_tail(
             base,
             paragraph_gap,
             color,
-            tokens,
-            window,
-            cx,
+            ChatRenderContext { tokens, window, cx },
         )
         .into_any_element();
     }
@@ -1821,11 +1831,10 @@ fn chat_thinking_row(
     index: usize,
     message: &ChatMessage,
     running: bool,
-    tokens: ThemeTokens,
-    window: &mut Window,
-    cx: &mut App,
+    render: ChatRenderContext<'_>,
     on_toggle: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
 ) -> Div {
+    let ChatRenderContext { tokens, window, cx } = render;
     let expanded = message.expanded;
     let running = running && message.streaming;
     let heading_end = message
@@ -1903,9 +1912,7 @@ fn chat_thinking_row(
                     px(12.5),
                     rems(0.4),
                     tokens.text_muted,
-                    tokens,
-                    window,
-                    cx,
+                    ChatRenderContext { tokens, window, cx },
                 ));
             }
             if !view.tail.is_empty() {
@@ -1915,9 +1922,7 @@ fn chat_thinking_row(
                     px(12.5),
                     rems(0.4),
                     tokens.text_muted,
-                    tokens,
-                    window,
-                    cx,
+                    ChatRenderContext { tokens, window, cx },
                 ));
             }
         } else {
@@ -1927,9 +1932,7 @@ fn chat_thinking_row(
                 px(12.5),
                 rems(0.4),
                 tokens.text_muted,
-                tokens,
-                window,
-                cx,
+                ChatRenderContext { tokens, window, cx },
             ));
         }
         row = row.child(
@@ -2064,10 +2067,10 @@ fn provider_icon_stems() -> &'static std::collections::HashSet<String> {
             if let Ok(entries) = std::fs::read_dir("assets/icons/provider") {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if path.extension().is_some_and(|ext| ext == "svg") {
-                        if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
-                            stems.insert(stem.to_string());
-                        }
+                    if path.extension().is_some_and(|ext| ext == "svg")
+                        && let Some(stem) = path.file_stem().and_then(|stem| stem.to_str())
+                    {
+                        stems.insert(stem.to_string());
                     }
                 }
             }
@@ -2271,12 +2274,11 @@ fn finish_chat_tools(messages: &mut [Arc<ChatMessage>]) {
             .tool
             .as_ref()
             .is_some_and(|tool| tool.state == ToolState::Running)
+            && let Some(tool) = Arc::make_mut(message).tool.as_mut()
         {
-            if let Some(tool) = Arc::make_mut(message).tool.as_mut() {
-                tool.state = ToolState::Unknown;
-                if chat_batch::is_batch(&tool.name) {
-                    tool.expanded = false;
-                }
+            tool.state = ToolState::Unknown;
+            if chat_batch::is_batch(&tool.name) {
+                tool.expanded = false;
             }
         }
     }
@@ -2704,8 +2706,10 @@ mod chat_row_cache_tests {
 
     #[test]
     fn parallel_tools_folding_and_running_transitions_refresh_cached_rows() {
-        let mut chat = PaneChat::default();
-        chat.running = true;
+        let mut chat = PaneChat {
+            running: true,
+            ..Default::default()
+        };
         chat.messages
             .push(Arc::new(ChatMessage::new(ChatRole::User, "prompt".into())));
         apply(&mut chat, AgentEvent::Text("first".into()));
@@ -3415,10 +3419,10 @@ impl PaneChat {
                 return level;
             }
         }
-        if self.thinking_by_model.is_empty() {
-            if let Some(level) = self.thinking_override.as_deref() {
-                return level;
-            }
+        if self.thinking_by_model.is_empty()
+            && let Some(level) = self.thinking_override.as_deref()
+        {
+            return level;
         }
         if self.fast_mode { "low" } else { "high" }
     }
@@ -3731,6 +3735,8 @@ impl PaneChat {
         self.conversation.as_mut()
     }
 }
+
+type PaneInputContext = (String, usize, PathBuf, Vec<String>, Entity<InputState>);
 
 struct DiffPreview {
     directory: PathBuf,
@@ -4792,10 +4798,10 @@ impl AppState {
 
         let workspace = self.saved_workspace(cx);
         let settings = self.saved_settings();
-        if let Some(path) = self.persistence_path.clone() {
-            if let Err(error) = workspace_state::save_atomic(&path, &workspace) {
-                eprintln!("failed to save workspace state: {error}");
-            }
+        if let Some(path) = self.persistence_path.clone()
+            && let Err(error) = workspace_state::save_atomic(&path, &workspace)
+        {
+            eprintln!("failed to save workspace state: {error}");
         }
         if let Err(error) = settings::save_preserving_theme(&settings) {
             eprintln!("failed to save settings: {error}");
@@ -4806,14 +4812,11 @@ impl AppState {
             for project in &self.projects {
                 for session in &project.sessions {
                     for pane in &session.panes {
-                        if written.insert(pane.uid.clone()) {
-                            if let Some(text) = self.pane_scrollback(pane, cx) {
-                                if let Err(error) =
-                                    workspace_state::write_scrollback(&pane.uid, &text)
-                                {
-                                    eprintln!("failed to save scrollback: {error}");
-                                }
-                            }
+                        if written.insert(pane.uid.clone())
+                            && let Some(text) = self.pane_scrollback(pane, cx)
+                            && let Err(error) = workspace_state::write_scrollback(&pane.uid, &text)
+                        {
+                            eprintln!("failed to save scrollback: {error}");
                         }
                     }
                 }
@@ -5336,7 +5339,7 @@ impl AppState {
                 session
                     .panes
                     .iter()
-                    .filter(|pane| max.map_or(true, |m| m == pane.id))
+                    .filter(|pane| max.is_none_or(|m| m == pane.id))
                     .map(|pane| pane.id)
                     .collect()
             })
@@ -6450,13 +6453,12 @@ impl AppState {
                         primary_status,
                         &session.logo,
                     );
-                    if next_logo == logos::default_logo() {
-                        if let Some(path) = reported_app
+                    if next_logo == logos::default_logo()
+                        && let Some(path) = reported_app
                             .as_deref()
                             .and_then(|app| logos::registry().find_logo(app))
-                        {
-                            next_logo = SharedString::from(path.to_string());
-                        }
+                    {
+                        next_logo = SharedString::from(path.to_string());
                     }
                     if let Some(provider) = first_provider.as_deref() {
                         next_logo = provider_icon_path(provider);
@@ -6977,11 +6979,11 @@ impl AppState {
         cx: &mut Context<Self>,
     ) {
         let trimmed = new_name.trim();
-        if !trimmed.is_empty() {
-            if let Some(project) = self.projects.iter_mut().find(|p| p.id == project_id) {
-                project.name = SharedString::from(trimmed.to_string());
-                self.schedule_workspace_save(cx);
-            }
+        if !trimmed.is_empty()
+            && let Some(project) = self.projects.iter_mut().find(|p| p.id == project_id)
+        {
+            project.name = SharedString::from(trimmed.to_string());
+            self.schedule_workspace_save(cx);
         }
         self.renaming_project = None;
         cx.notify();
@@ -7145,18 +7147,18 @@ impl AppState {
             pane.input_state = Some(input_state);
             pane.input_subscription = Some(input_subscription);
 
-            if let Some(project) = self.projects.get_mut(p_idx) {
-                if let Some(session) = project.sessions.get_mut(s_idx) {
-                    let one_mode = pane.one_mode;
-                    session.panes.push(pane);
-                    if !one_mode {
-                        session.maximized_pane_id = None;
-                    }
-                    if let Some(tree) = &mut session.pane_tree {
-                        tree.split(target_pane_id, next_id, split_id, axis);
-                    } else {
-                        session.pane_tree = Some(PaneNode::Leaf(next_id));
-                    }
+            if let Some(project) = self.projects.get_mut(p_idx)
+                && let Some(session) = project.sessions.get_mut(s_idx)
+            {
+                let one_mode = pane.one_mode;
+                session.panes.push(pane);
+                if !one_mode {
+                    session.maximized_pane_id = None;
+                }
+                if let Some(tree) = &mut session.pane_tree {
+                    tree.split(target_pane_id, next_id, split_id, axis);
+                } else {
+                    session.pane_tree = Some(PaneNode::Leaf(next_id));
                 }
             }
             self.focused_pane_id = Some(next_id);
@@ -7201,10 +7203,10 @@ impl AppState {
             self.split_pane(source, gpui::Axis::Horizontal, window, cx);
             let pane = self.pane_mut(id)?;
             pane.preview_owner = Some(source);
-            if source_on_right {
-                if let Some(tree) = self.projects[project].sessions[session].pane_tree.as_mut() {
-                    tree.swap_split_children(source, id);
-                }
+            if source_on_right
+                && let Some(tree) = self.projects[project].sessions[session].pane_tree.as_mut()
+            {
+                tree.swap_split_children(source, id);
             }
             id
         };
@@ -8236,46 +8238,39 @@ impl AppState {
         } else {
             pane_id
         };
-        if self.focused_pane_id.is_some_and(|old| old != pane_id) {}
         self.active_view = ActiveView::Workspace;
         self.focused_pane_id = Some(pane_id);
         if let Some(&(p_idx, s_idx, _)) = self.pane_index.get(&pane_id) {
             self.active_project_idx = p_idx;
             if let Some(p) = self.projects.get_mut(p_idx) {
                 p.active_session_idx = s_idx;
-                if let Some(session) = p.sessions.get_mut(s_idx) {
-                    if let Some(pane) = session.panes.iter_mut().find(|p| p.id == pane_id) {
-                        if pane.chat.auth.is_some() || pane.files_active {
-                            return;
-                        }
-                        if let Some(ReadOnlyFile {
-                            state: ReadOnlyFileState::Ready { input, .. },
-                            ..
-                        }) = pane
-                            .diff_preview
-                            .as_ref()
-                            .and_then(|view| view.file_view.as_ref())
-                        {
-                            input.update(cx, |input, cx| input.focus(window, cx));
-                            cx.notify();
-                            return;
-                        }
-                        let should_show = pane.should_show_bottom_input(cx);
-                        pane.terminal.update(cx, |term, _| {
-                            term.set_read_only(should_show);
-                        });
-                        if should_show {
-                            if let Some(input_state) = &pane.input_state {
-                                input_state.update(cx, |state, cx| {
-                                    state.focus(window, cx);
-                                });
-                            } else {
-                                pane.terminal
-                                    .read(cx)
-                                    .focus_handle()
-                                    .clone()
-                                    .focus(window, cx);
-                            }
+                if let Some(session) = p.sessions.get_mut(s_idx)
+                    && let Some(pane) = session.panes.iter_mut().find(|p| p.id == pane_id)
+                {
+                    if pane.chat.auth.is_some() || pane.files_active {
+                        return;
+                    }
+                    if let Some(ReadOnlyFile {
+                        state: ReadOnlyFileState::Ready { input, .. },
+                        ..
+                    }) = pane
+                        .diff_preview
+                        .as_ref()
+                        .and_then(|view| view.file_view.as_ref())
+                    {
+                        input.update(cx, |input, cx| input.focus(window, cx));
+                        cx.notify();
+                        return;
+                    }
+                    let should_show = pane.should_show_bottom_input(cx);
+                    pane.terminal.update(cx, |term, _| {
+                        term.set_read_only(should_show);
+                    });
+                    if should_show {
+                        if let Some(input_state) = &pane.input_state {
+                            input_state.update(cx, |state, cx| {
+                                state.focus(window, cx);
+                            });
                         } else {
                             pane.terminal
                                 .read(cx)
@@ -8283,6 +8278,12 @@ impl AppState {
                                 .clone()
                                 .focus(window, cx);
                         }
+                    } else {
+                        pane.terminal
+                            .read(cx)
+                            .focus_handle()
+                            .clone()
+                            .focus(window, cx);
                     }
                 }
             }
@@ -8292,7 +8293,6 @@ impl AppState {
     }
 
     fn focus_pane_input(&mut self, pane_id: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if self.focused_pane_id.is_some_and(|old| old != pane_id) {}
         if self
             .pane_ref(pane_id)
             .is_some_and(|p| p.chat.auth.is_some())
@@ -8308,12 +8308,11 @@ impl AppState {
                 .get_mut(p_idx)
                 .and_then(|p| p.sessions.get_mut(s_idx))
                 .and_then(|s| s.panes.get_mut(pane_idx))
+                && let Some(input_state) = pane.input_state.as_ref()
             {
-                if let Some(input_state) = pane.input_state.as_ref() {
-                    input_state.update(cx, |state, cx| {
-                        state.focus(window, cx);
-                    });
-                }
+                input_state.update(cx, |state, cx| {
+                    state.focus(window, cx);
+                });
             }
         }
         cx.notify();
@@ -8350,11 +8349,7 @@ impl AppState {
     }
 
     /// Snapshot of everything suggestion code needs from a pane's input.
-    fn input_context(
-        &self,
-        pane_id: usize,
-        cx: &App,
-    ) -> Option<(String, usize, PathBuf, Vec<String>, Entity<InputState>)> {
+    fn input_context(&self, pane_id: usize, cx: &App) -> Option<PaneInputContext> {
         let pane = self.pane_ref(pane_id)?;
         let input = pane.input_state.clone()?;
         let value = input.read(cx).value().to_string();
@@ -8493,13 +8488,12 @@ impl AppState {
     }
 
     fn move_completion_selection(&mut self, pane_id: usize, delta: isize, cx: &mut Context<Self>) {
-        if let Some(pane) = self.pane_mut(pane_id) {
-            if let Some(menu) = pane.completion_menu.as_mut() {
-                if !menu.items.is_empty() {
-                    let len = menu.items.len() as isize;
-                    menu.selected = (menu.selected as isize + delta).rem_euclid(len) as usize;
-                }
-            }
+        if let Some(pane) = self.pane_mut(pane_id)
+            && let Some(menu) = pane.completion_menu.as_mut()
+            && !menu.items.is_empty()
+        {
+            let len = menu.items.len() as isize;
+            menu.selected = (menu.selected as isize + delta).rem_euclid(len) as usize;
         }
         cx.notify();
     }
@@ -8638,20 +8632,20 @@ impl AppState {
                     pane.completion_menu = None;
                 }
                 self.refresh_completion_menu(pane_id, &value, cursor, &cwd, &entries);
-                if let Some(pane) = self.pane_mut(pane_id) {
-                    if let Some(menu) = pane.completion_menu.as_mut() {
-                        menu.selected = 0;
-                    }
+                if let Some(pane) = self.pane_mut(pane_id)
+                    && let Some(menu) = pane.completion_menu.as_mut()
+                {
+                    menu.selected = 0;
                 }
             }
         } else if let Some(pane) = self.pane_mut(pane_id) {
             pane.completion_menu = None;
         }
 
-        if let Some(pane) = self.pane_ref(pane_id) {
-            if let Some(input_state) = pane.input_state.clone() {
-                input_state.update(cx, |state, cx| state.focus(window, cx));
-            }
+        if let Some(pane) = self.pane_ref(pane_id)
+            && let Some(input_state) = pane.input_state.clone()
+        {
+            input_state.update(cx, |state, cx| state.focus(window, cx));
         }
         cx.notify();
     }
@@ -8742,11 +8736,11 @@ impl AppState {
     }
 
     fn move_history_search_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
-        if let Some(search) = self.history_search.as_mut() {
-            if !search.matches.is_empty() {
-                let len = search.matches.len() as isize;
-                search.selected = (search.selected as isize + delta).rem_euclid(len) as usize;
-            }
+        if let Some(search) = self.history_search.as_mut()
+            && !search.matches.is_empty()
+        {
+            let len = search.matches.len() as isize;
+            search.selected = (search.selected as isize + delta).rem_euclid(len) as usize;
         }
         cx.notify();
     }
@@ -8754,13 +8748,12 @@ impl AppState {
     fn close_history_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let pane_id = self.history_search.as_ref().map(|search| search.pane_id);
         self.history_search = None;
-        if let Some(pane_id) = pane_id {
-            if let Some(input) = self
+        if let Some(pane_id) = pane_id
+            && let Some(input) = self
                 .pane_ref(pane_id)
                 .and_then(|pane| pane.input_state.clone())
-            {
-                input.update(cx, |state, cx| state.focus(window, cx));
-            }
+        {
+            input.update(cx, |state, cx| state.focus(window, cx));
         }
         cx.notify();
     }
@@ -8909,17 +8902,17 @@ impl AppState {
                 return;
             }
             let messages = pane.chat.visible_messages_mut();
-            if let Some(msg) = messages.get_mut(index) {
-                if msg.tool.is_some() || msg.role == ChatRole::Thinking {
-                    let msg = Arc::make_mut(msg);
-                    if let Some(tool) = &mut msg.tool {
-                        tool.expanded = !tool.expanded;
-                    } else {
-                        msg.expanded = !msg.expanded;
-                    }
-                    pane.chat.invalidate_message_row(index);
-                    cx.notify();
+            if let Some(msg) = messages.get_mut(index)
+                && (msg.tool.is_some() || msg.role == ChatRole::Thinking)
+            {
+                let msg = Arc::make_mut(msg);
+                if let Some(tool) = &mut msg.tool {
+                    tool.expanded = !tool.expanded;
+                } else {
+                    msg.expanded = !msg.expanded;
                 }
+                pane.chat.invalidate_message_row(index);
+                cx.notify();
             }
         }
     }
@@ -9067,12 +9060,12 @@ impl AppState {
                 .remove(&agent_model_selector(model));
         }
         let level = pane.chat.mode_thinking_level().to_owned();
-        if let Some(bridge) = pane.chat.bridge.as_mut() {
-            if let Err(error) = bridge.set_thinking_level(&level) {
-                pane.chat
-                    .messages
-                    .push(Arc::new(ChatMessage::new(ChatRole::Error, error)));
-            }
+        if let Some(bridge) = pane.chat.bridge.as_mut()
+            && let Err(error) = bridge.set_thinking_level(&level)
+        {
+            pane.chat
+                .messages
+                .push(Arc::new(ChatMessage::new(ChatRole::Error, error)));
         }
         self.schedule_workspace_save(cx);
         cx.notify();
@@ -9277,21 +9270,21 @@ impl AppState {
             error: None,
         };
         auth.discover();
-        if page == AgentDialogPage::Auth {
-            if let Some(first) = auth.providers.first() {
-                let id = first.id.clone();
-                let primary_var = agent_auth::key_label(&id);
-                let input_clone = auth.input.clone();
-                auth.input.update(cx, |state, cx| {
-                    state.set_placeholder(format!("Paste {primary_var} here..."), window, cx);
+        if page == AgentDialogPage::Auth
+            && let Some(first) = auth.providers.first()
+        {
+            let id = first.id.clone();
+            let primary_var = agent_auth::key_label(&id);
+            let input_clone = auth.input.clone();
+            auth.input.update(cx, |state, cx| {
+                state.set_placeholder(format!("Paste {primary_var} here..."), window, cx);
+            });
+            auth.selected = Some(id);
+            window.defer(cx, move |window, cx| {
+                input_clone.update(cx, |state, cx| {
+                    state.focus(window, cx);
                 });
-                auth.selected = Some(id);
-                window.defer(cx, move |window, cx| {
-                    input_clone.update(cx, |state, cx| {
-                        state.focus(window, cx);
-                    });
-                });
-            }
+            });
         }
         if let Some(pane) = self.pane_mut(pane_id) {
             pane.permission_menu_open = false;
@@ -9949,17 +9942,17 @@ impl AppState {
                                 _ => {}
                             }
                             pane.chat.observe_status(&event);
-                            if save_history && !startup_error {
-                                if let Some(log) = pane.chat.conversation.as_mut() {
-                                    if !matches!(
-                                        &event,
-                                        agent_bridge::AgentEvent::Title(_)
-                                            | agent_bridge::AgentEvent::Done
-                                            | agent_bridge::AgentEvent::Closed
-                                    ) {
-                                        log.append_event(&event);
-                                    }
-                                }
+                            if save_history
+                                && !startup_error
+                                && let Some(log) = pane.chat.conversation.as_mut()
+                                && !matches!(
+                                    &event,
+                                    agent_bridge::AgentEvent::Title(_)
+                                        | agent_bridge::AgentEvent::Done
+                                        | agent_bridge::AgentEvent::Closed
+                                )
+                            {
+                                log.append_event(&event);
                             }
                             match event {
                                 agent_bridge::AgentEvent::Done => {
@@ -10657,12 +10650,12 @@ impl AppState {
                 pane.chat.follow_ups_paused = true;
                 pane.chat.requests.clear();
                 let trace = pane.chat.bridge.as_ref().map(|bridge| bridge.trace_id());
-                if let Some(bridge) = pane.chat.bridge.as_mut() {
-                    if let Err(error) = bridge.cancel() {
-                        pane.chat
-                            .messages
-                            .push(Arc::new(ChatMessage::new(ChatRole::Error, error)));
-                    }
+                if let Some(bridge) = pane.chat.bridge.as_mut()
+                    && let Err(error) = bridge.cancel()
+                {
+                    pane.chat
+                        .messages
+                        .push(Arc::new(ChatMessage::new(ChatRole::Error, error)));
                 }
                 if let Some(trace) = trace {
                     crate::stream_timing::turn_cancelled(trace);
@@ -10697,11 +10690,12 @@ impl AppState {
         #[cfg(unix)]
         if let Some(pid) = pane.pid {
             smol::spawn(smol::unblock(move || {
-                if let Some(tpgid) = status::read_proc_tpgid(pid) {
-                    if tpgid > 0 && tpgid != pid as i64 {
-                        unsafe {
-                            libc::kill(-(tpgid as libc::pid_t), libc::SIGINT);
-                        }
+                if let Some(tpgid) = status::read_proc_tpgid(pid)
+                    && tpgid > 0
+                    && tpgid != pid as i64
+                {
+                    unsafe {
+                        libc::kill(-(tpgid as libc::pid_t), libc::SIGINT);
                     }
                 }
             }))
@@ -10856,17 +10850,19 @@ impl AppState {
         }
 
         // Right at the end of the line accepts a ghost suggestion.
-        if key == "right" && !modifiers.control && !modifiers.shift && !modifiers.alt {
-            if cursor_utf16 >= completion::utf16_len(&value)
-                && input_state.read(cx).has_inline_completion()
-            {
-                input_state.update(cx, |state, cx| {
-                    state.accept_inline_completion(window, cx);
-                });
-                cx.stop_propagation();
-                cx.notify();
-                return;
-            }
+        if key == "right"
+            && !modifiers.control
+            && !modifiers.shift
+            && !modifiers.alt
+            && cursor_utf16 >= completion::utf16_len(&value)
+            && input_state.read(cx).has_inline_completion()
+        {
+            input_state.update(cx, |state, cx| {
+                state.accept_inline_completion(window, cx);
+            });
+            cx.stop_propagation();
+            cx.notify();
+            return;
         }
 
         // Ctrl+A / Ctrl+E: readline start/end of line.
@@ -10992,14 +10988,13 @@ impl AppState {
         // prompt's line editor is what the user is typing into here.
 
         // Ctrl+D: EOF on an empty line.
-        if key == "d" && modifiers.control && !modifiers.shift && !modifiers.alt {
-            if value.is_empty() {
-                terminal.update(cx, |term, cx| {
-                    term.send_bytes(b"\x04", cx);
-                });
-                cx.stop_propagation();
-                return;
-            }
+        if key == "d" && modifiers.control && !modifiers.shift && !modifiers.alt && value.is_empty()
+        {
+            terminal.update(cx, |term, cx| {
+                term.send_bytes(b"\x04", cx);
+            });
+            cx.stop_propagation();
+            return;
         }
 
         // Ctrl+\: quit the foreground job (SIGQUIT).
@@ -11068,10 +11063,9 @@ impl AppState {
         // Ordinary typing leaves history navigation mode.
         if (!modifiers.control && !modifiers.alt)
             && (keystroke.key_char.is_some() || key == "backspace" || key == "delete")
+            && let Some(pane) = self.pane_mut(pane_id)
         {
-            if let Some(pane) = self.pane_mut(pane_id) {
-                pane.history_index = None;
-            }
+            pane.history_index = None;
         }
     }
 
@@ -11120,51 +11114,42 @@ impl AppState {
         }
 
         // Workspace input must not steal focus from a transient modal.
-        if self.active_view == ActiveView::Workspace && self.history_search.is_none() {
-            if let Some(pane_id) = self.focused_pane_id {
-                if let Some(&(p_idx, s_idx, pane_idx)) = self.pane_index.get(&pane_id) {
-                    if let Some(project) = self.projects.get(p_idx) {
-                        if let Some(session) = project.sessions.get(s_idx) {
-                            if let Some(pane) = session.panes.get(pane_idx) {
-                                if pane.files_active
-                                    || pane.chat.auth.is_some()
-                                    || pane.chat.active && !pane.chat.requests.is_empty()
-                                {
-                                    return;
-                                }
-                                let should_show = pane.should_show_bottom_input(cx);
-                                pane.terminal.update(cx, |term, _| {
-                                    term.set_read_only(should_show);
-                                });
-                                if should_show {
-                                    if let Some(input_state) = &pane.input_state {
-                                        let is_input_focused =
-                                            input_state.read(cx).focus_handle().is_focused(window);
-                                        let is_term_focused = pane
-                                            .terminal
-                                            .read(cx)
-                                            .focus_handle()
-                                            .is_focused(window);
-                                        if is_term_focused || !is_input_focused {
-                                            input_state.update(cx, |state, cx| {
-                                                state.focus(window, cx);
-                                            });
-                                        }
-                                    }
-                                } else {
-                                    let is_term_focused =
-                                        pane.terminal.read(cx).focus_handle().is_focused(window);
-                                    if !is_term_focused {
-                                        pane.terminal
-                                            .read(cx)
-                                            .focus_handle()
-                                            .clone()
-                                            .focus(window, cx);
-                                    }
-                                }
-                            }
-                        }
+        if self.active_view == ActiveView::Workspace
+            && self.history_search.is_none()
+            && let Some(pane_id) = self.focused_pane_id
+            && let Some(&(p_idx, s_idx, pane_idx)) = self.pane_index.get(&pane_id)
+            && let Some(project) = self.projects.get(p_idx)
+            && let Some(session) = project.sessions.get(s_idx)
+            && let Some(pane) = session.panes.get(pane_idx)
+        {
+            if pane.files_active
+                || pane.chat.auth.is_some()
+                || pane.chat.active && !pane.chat.requests.is_empty()
+            {
+                return;
+            }
+            let should_show = pane.should_show_bottom_input(cx);
+            pane.terminal.update(cx, |term, _| {
+                term.set_read_only(should_show);
+            });
+            if should_show {
+                if let Some(input_state) = &pane.input_state {
+                    let is_input_focused = input_state.read(cx).focus_handle().is_focused(window);
+                    let is_term_focused = pane.terminal.read(cx).focus_handle().is_focused(window);
+                    if is_term_focused || !is_input_focused {
+                        input_state.update(cx, |state, cx| {
+                            state.focus(window, cx);
+                        });
                     }
+                }
+            } else {
+                let is_term_focused = pane.terminal.read(cx).focus_handle().is_focused(window);
+                if !is_term_focused {
+                    pane.terminal
+                        .read(cx)
+                        .focus_handle()
+                        .clone()
+                        .focus(window, cx);
                 }
             }
         }
@@ -11195,22 +11180,19 @@ impl AppState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(&(p_idx, s_idx, pane_idx)) = self.pane_index.get(&pane_id) {
-            if let Some(pane) = self
+        if let Some(&(p_idx, s_idx, pane_idx)) = self.pane_index.get(&pane_id)
+            && let Some(pane) = self
                 .projects
                 .get(p_idx)
                 .and_then(|p| p.sessions.get(s_idx))
                 .and_then(|s| s.panes.get(pane_idx))
-            {
-                if let Some(text) = pane.terminal.read(cx).selected_text() {
-                    if !text.is_empty() {
-                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
-                        pane.terminal.update(cx, |term, cx| {
-                            term.clear_selection(cx);
-                        });
-                    }
-                }
-            }
+            && let Some(text) = pane.terminal.read(cx).selected_text()
+            && !text.is_empty()
+        {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+            pane.terminal.update(cx, |term, cx| {
+                term.clear_selection(cx);
+            });
         }
         self.close_terminal_context_menu(cx);
         self.focus_pane(pane_id, window, cx);
@@ -11244,7 +11226,7 @@ impl AppState {
                         if let Some(input_state) = &pane.input_state {
                             input_state.update(cx, |state, cx| {
                                 let cur = state.value().to_string();
-                                state.set_value(&format!("{cur}{clean}"), window, cx);
+                                state.set_value(format!("{cur}{clean}"), window, cx);
                                 state.focus(window, cx);
                             });
                         }
@@ -11340,10 +11322,9 @@ impl AppState {
         if let Some(image) = item.entries().iter().find_map(|entry| match entry {
             ClipboardEntry::Image(image) => Some(image),
             ClipboardEntry::String(_) | ClipboardEntry::ExternalPaths(_) => None,
-        }) {
-            if let Some(attachment) = attachments::from_clipboard_image(image) {
-                return self.attach_image(pane_id, attachment, window, cx);
-            }
+        }) && let Some(attachment) = attachments::from_clipboard_image(image)
+        {
+            return self.attach_image(pane_id, attachment, window, cx);
         }
 
         let Some(text) = item.text() else {
@@ -11436,17 +11417,16 @@ impl AppState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(&(p_idx, s_idx, pane_idx)) = self.pane_index.get(&pane_id) {
-            if let Some(pane) = self
+        if let Some(&(p_idx, s_idx, pane_idx)) = self.pane_index.get(&pane_id)
+            && let Some(pane) = self
                 .projects
                 .get(p_idx)
                 .and_then(|p| p.sessions.get(s_idx))
                 .and_then(|s| s.panes.get(pane_idx))
-            {
-                pane.terminal.update(cx, |term, cx| {
-                    term.select_all(cx);
-                });
-            }
+        {
+            pane.terminal.update(cx, |term, cx| {
+                term.select_all(cx);
+            });
         }
         self.close_terminal_context_menu(cx);
         self.focus_pane(pane_id, window, cx);
@@ -11458,17 +11438,16 @@ impl AppState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(&(p_idx, s_idx, pane_idx)) = self.pane_index.get(&pane_id) {
-            if let Some(pane) = self
+        if let Some(&(p_idx, s_idx, pane_idx)) = self.pane_index.get(&pane_id)
+            && let Some(pane) = self
                 .projects
                 .get(p_idx)
                 .and_then(|p| p.sessions.get(s_idx))
                 .and_then(|s| s.panes.get(pane_idx))
-            {
-                pane.terminal.update(cx, |term, cx| {
-                    term.send_bytes(b"\x0c", cx);
-                });
-            }
+        {
+            pane.terminal.update(cx, |term, cx| {
+                term.send_bytes(b"\x0c", cx);
+            });
         }
         self.close_terminal_context_menu(cx);
         self.focus_pane(pane_id, window, cx);
@@ -12001,7 +11980,7 @@ impl AppState {
         if !accepted {
             return;
         }
-        if pane.command_history.last().map(|s| s.as_str()) != Some(&cmd) {
+        if pane.command_history.last().map(|s| s.as_str()) != Some(cmd) {
             pane.command_history.push(cmd.to_string());
         }
         if let Some(input_state) = &pane.input_state {
@@ -12073,9 +12052,9 @@ impl AppState {
             // The input bar asks for this every frame. `/proc/<pid>/cwd` and the
             // git lookup below only change when the shell/user moves, so a short
             // TTL removes the syscalls from the render path.
-            static PROC_CWD_CACHE: std::sync::LazyLock<
-                Mutex<HashMap<u32, (std::time::Instant, Option<PathBuf>)>>,
-            > = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+            type ProcCwdCache = HashMap<u32, (std::time::Instant, Option<PathBuf>)>;
+            static PROC_CWD_CACHE: std::sync::LazyLock<Mutex<ProcCwdCache>> =
+                std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
             let now = std::time::Instant::now();
             let cached = PROC_CWD_CACHE.lock().get(&pid).and_then(|(at, path)| {
                 (now.duration_since(*at) < std::time::Duration::from_secs(1)).then(|| path.clone())
@@ -12113,9 +12092,9 @@ impl AppState {
     }
 
     fn detect_git_branch(dir: &std::path::Path) -> Option<String> {
-        static BRANCH_CACHE: std::sync::LazyLock<
-            Mutex<HashMap<PathBuf, (std::time::Instant, Option<String>)>>,
-        > = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+        type BranchCache = HashMap<PathBuf, (std::time::Instant, Option<String>)>;
+        static BRANCH_CACHE: std::sync::LazyLock<Mutex<BranchCache>> =
+            std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
         let now = std::time::Instant::now();
         if let Some((at, branch)) = BRANCH_CACHE.lock().get(dir)
             && now.duration_since(*at) < std::time::Duration::from_secs(1)
@@ -13021,17 +13000,18 @@ impl AppState {
             .children(plus_menu)
             .child(
                 div().relative().w_full().h(px(0.0)).children(completion_menu.map(|menu| {
-                    deferred(
-                        gpui::anchored()
-                            .anchor(gpui::Anchor::BottomLeft)
-                            .offset(gpui::point(
-                                if self.settings.agent_layout && pane.chat.active
-                                    && window.viewport_size().width - if Self::sidebar_docked(self.sidebar_visible, window.viewport_size().width) { self.sidebar_width } else { px(0.0) } < px(784.0)
-                                { px(-4.0) } else { px(0.0) },
-                                px(-6.0),
-                            ))
-                            .child(menu),
-                    )
+                    div().absolute().top_0().w_full().h(px(0.0))
+                        .left(relative(if focused_composer { 0.5 } else { 0.0 }))
+                        .child(deferred(
+                            gpui::anchored()
+                                .anchor(if focused_composer {
+                                    gpui::Anchor::BottomCenter
+                                } else {
+                                    gpui::Anchor::BottomLeft
+                                })
+                                .offset(gpui::point(px(0.0), px(-6.0)))
+                                .child(menu),
+                        ))
                 })),
             )
             // Keep the same controls in both layouts, with the prompt first in agent layout.
@@ -15331,17 +15311,19 @@ impl AppState {
     }
 
     fn render_chat_message(
-        pane_id: usize,
-        conversation: &str,
-        index: usize,
         message: &ChatMessage,
-        running: bool,
-        copy_range: Option<(usize, usize)>,
-        tokens: ThemeTokens,
+        options: ChatMessageOptions<'_>,
         host: &UiHost,
-        window: &mut Window,
-        cx: &mut App,
+        render: ChatRenderContext<'_>,
     ) -> AnyElement {
+        let ChatMessageOptions {
+            pane_id,
+            conversation,
+            index,
+            running,
+            copy_range,
+        } = options;
+        let ChatRenderContext { tokens, window, cx } = render;
         let mut paint_marker = None;
         if !message.text.is_empty()
             && let Some((turn, started)) = message.turn
@@ -15491,9 +15473,7 @@ impl AppState {
                             px(14.0),
                             rems(0.75),
                             tokens.text_primary,
-                            tokens,
-                            window,
-                            cx,
+                            ChatRenderContext { tokens, window, cx },
                         ));
                     }
                     if !view.tail.is_empty() {
@@ -15505,9 +15485,7 @@ impl AppState {
                             px(14.0),
                             rems(0.75),
                             tokens.text_primary,
-                            tokens,
-                            window,
-                            cx,
+                            ChatRenderContext { tokens, window, cx },
                         ));
                     }
                     if view.plain_tail {
@@ -15520,9 +15498,7 @@ impl AppState {
                         px(14.0),
                         rems(0.75),
                         tokens.text_primary,
-                        tokens,
-                        window,
-                        cx,
+                        ChatRenderContext { tokens, window, cx },
                     ));
                 }
 
@@ -15582,7 +15558,12 @@ impl AppState {
                     this.toggle_chat_tool_expanded(pane_id, index, cx);
                 });
                 let mut row = chat_thinking_row(
-                    pane_id, index, message, running, tokens, window, cx, on_toggle,
+                    pane_id,
+                    index,
+                    message,
+                    running,
+                    ChatRenderContext { tokens, window, cx },
+                    on_toggle,
                 );
                 if message.expanded && message.stream.as_ref().is_some_and(|view| view.plain_tail) {
                     row = row.child(chat_stream_copy(host, pane_id, index, tokens));
@@ -15911,16 +15892,16 @@ impl AppState {
             }
             let message = adjusted.as_ref().unwrap_or(message);
             body = body.child(Self::render_chat_message(
-                pane_id,
-                &conversation,
-                index,
                 message,
-                message.streaming,
-                None,
-                tokens,
+                ChatMessageOptions {
+                    pane_id,
+                    conversation: &conversation,
+                    index,
+                    running: message.streaming,
+                    copy_range: None,
+                },
                 &host,
-                window,
-                cx,
+                ChatRenderContext { tokens, window, cx },
             ));
         }
         if !has_reply {
@@ -15931,9 +15912,7 @@ impl AppState {
                     px(13.0),
                     rems(0.6),
                     tokens.text_primary,
-                    tokens,
-                    window,
-                    cx,
+                    ChatRenderContext { tokens, window, cx },
                 ));
             } else if view.messages.is_empty() {
                 let text = match worker.status_label() {
@@ -16605,16 +16584,16 @@ impl AppState {
                 if *open {
                     group = group.children(messages.iter().enumerate().map(|(offset, message)| {
                         Self::render_chat_message(
-                            snapshot.pane_id,
-                            snapshot.conversation.as_ref(),
-                            start + offset,
                             message,
-                            *live,
-                            None,
-                            tokens,
+                            ChatMessageOptions {
+                                pane_id: snapshot.pane_id,
+                                conversation: snapshot.conversation.as_ref(),
+                                index: start + offset,
+                                running: *live,
+                                copy_range: None,
+                            },
                             &snapshot.host,
-                            window,
-                            cx,
+                            ChatRenderContext { tokens, window, cx },
                         )
                     }));
                 }
@@ -16626,16 +16605,16 @@ impl AppState {
                 live,
                 copy_range,
             } => Self::render_chat_message(
-                snapshot.pane_id,
-                snapshot.conversation.as_ref(),
-                *index,
                 message,
-                *live,
-                *copy_range,
-                tokens,
+                ChatMessageOptions {
+                    pane_id: snapshot.pane_id,
+                    conversation: snapshot.conversation.as_ref(),
+                    index: *index,
+                    running: *live,
+                    copy_range: *copy_range,
+                },
                 &snapshot.host,
-                window,
-                cx,
+                ChatRenderContext { tokens, window, cx },
             ),
             ChatRow::Running { label, tooltip } => div()
                 .flex()
@@ -19615,12 +19594,12 @@ impl AppState {
             pane.chat.bridge_resume = None;
             pane.chat.rpi_session_id = None;
         }
-        if let Err(error) = std::fs::remove_file(paths::workspace_path()) {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                eprintln!("failed to remove saved workspace: {error}");
-                cx.notify();
-                return;
-            }
+        if let Err(error) = std::fs::remove_file(paths::workspace_path())
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            eprintln!("failed to remove saved workspace: {error}");
+            cx.notify();
+            return;
         }
         let _ = std::fs::remove_dir_all(paths::sessions_dir());
         let _ = std::fs::create_dir_all(paths::sessions_dir());
@@ -21835,13 +21814,13 @@ fn main() -> Result<()> {
             #[cfg(target_os = "linux")]
             if let Some(home) = directories::BaseDirs::new().map(|d| d.home_dir().to_path_buf()) {
                 let local_bin = home.join(".local/bin");
-                if local_bin.exists() {
-                    if let Ok(current_path) = std::env::var("PATH") {
-                        let local_bin_str = local_bin.to_string_lossy();
-                        if !current_path.split(':').any(|p| p == local_bin_str) {
-                            unsafe {
-                                std::env::set_var("PATH", format!("{local_bin_str}:{current_path}"));
-                            }
+                if local_bin.exists()
+                    && let Ok(current_path) = std::env::var("PATH")
+                {
+                    let local_bin_str = local_bin.to_string_lossy();
+                    if !current_path.split(':').any(|p| p == local_bin_str) {
+                        unsafe {
+                            std::env::set_var("PATH", format!("{local_bin_str}:{current_path}"));
                         }
                     }
                 }
@@ -21949,7 +21928,7 @@ fn main() -> Result<()> {
                     let close_state = app_state.downgrade();
                     window.on_window_should_close(cx, move |window, cx| {
                         if let Some(state) = close_state.upgrade() {
-                            let _ = state.update(cx, |state, cx| {
+                            state.update(cx, |state, cx| {
                                 state.save_all_sync(Some(window), cx);
                             });
                         }
@@ -22265,7 +22244,7 @@ fn main() -> Result<()> {
                                 }
                             }
                             eprintln!("[probe] {rounds} drag rounds finished without a panic");
-                            let _ = cx.update(|cx| cx.quit());
+                            cx.update(|cx| cx.quit());
                         })
                         .detach();
                     }
@@ -22946,7 +22925,7 @@ mod resize_tests {
             for index in 0..50 {
                 chat.messages.push(Arc::new(ChatMessage::new(
                     ChatRole::User,
-                    format!("Message {index}").into(),
+                    format!("Message {index}"),
                 )));
             }
             cx.notify();
@@ -23235,12 +23214,25 @@ mod resize_tests {
         let mut app = TestAppContext::new();
         let (mut cx, state) = open_app(&mut app);
         cx.update_window_entity(&state, |s, window, cx| {
-            s.settings.agent_layout = true;
+            s.switch_agent_layout(window, cx);
             s.create_new_session_in_project(0, window, cx);
-            assert!(s.projects[0].sessions.last().unwrap().panes[0].chat.active);
-            s.settings.agent_layout = false;
+            let session = s.projects[0].sessions.last().unwrap();
+            let chat = session.panes.iter().find(|pane| pane.one_mode).unwrap();
+            assert!(chat.chat.active);
+            assert_eq!(s.focused_pane_id, Some(chat.id));
+            assert!(
+                session
+                    .panes
+                    .iter()
+                    .filter(|pane| !pane.one_mode)
+                    .all(|pane| !pane.chat.active)
+            );
+            s.switch_agent_layout(window, cx);
             s.create_new_session_in_project(0, window, cx);
-            assert!(!s.projects[0].sessions.last().unwrap().panes[0].chat.active);
+            let session = s.projects[0].sessions.last().unwrap();
+            assert_eq!(session.panes.len(), 1);
+            assert!(!session.panes[0].one_mode);
+            assert!(!session.panes[0].chat.active);
         });
     }
 
@@ -23610,10 +23602,9 @@ mod resize_tests {
     fn one_view_completion_menu_is_centered_on_composer() {
         let mut app = TestAppContext::new();
         let (mut cx, state) = open_app(&mut app);
-        let pane_id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
         cx.update_window_entity(&state, |s, window, cx| {
-            s.settings.agent_layout = true;
-            s.set_chat_mode(pane_id, true, window, cx);
+            s.switch_agent_layout(window, cx);
+            let pane_id = s.focused_pane_id.unwrap();
             let input = s.pane_ref(pane_id).unwrap().input_state.clone().unwrap();
             input.update(cx, |input, cx| input.set_value("/", window, cx));
             s.on_pane_input_changed(pane_id, window, cx);
@@ -23628,6 +23619,11 @@ mod resize_tests {
                 (menu.center().x - bar.center().x).abs() <= px(1.0),
                 "menu {menu:?}, bar {bar:?}"
             );
+            if let Some(path) = std::env::var_os("SHOB_BENCH_SCREENSHOT") {
+                let path =
+                    PathBuf::from(path).with_file_name(format!("shob-completion-{width}.png"));
+                cx.update(|window, _| window.render_to_image().unwrap().save(path).unwrap());
+            }
         }
     }
 
@@ -23635,13 +23631,13 @@ mod resize_tests {
     fn completion_menu_closes_on_outside_click() {
         let mut app = TestAppContext::new();
         let (mut cx, state) = open_app(&mut app);
-        let pane_id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
-        cx.update_window_entity(&state, |s, window, cx| {
-            s.settings.agent_layout = true;
-            s.set_chat_mode(pane_id, true, window, cx);
+        let pane_id = cx.update_window_entity(&state, |s, window, cx| {
+            s.switch_agent_layout(window, cx);
+            let pane_id = s.focused_pane_id.unwrap();
             let input = s.pane_ref(pane_id).unwrap().input_state.clone().unwrap();
             input.update(cx, |input, cx| input.set_value("/", window, cx));
             s.on_pane_input_changed(pane_id, window, cx);
+            pane_id
         });
         cx.draw_frame().unwrap();
         assert!(cx.debug_bounds("completion-menu").is_some());
@@ -25220,7 +25216,7 @@ mod pane_tests {
                 .pane_tree
                 .clone()
         });
-        assert!(first_tree.map_or(false, |t| t.contains(1) && t.contains(new_pane_id)));
+        assert!(first_tree.is_some_and(|t| t.contains(1) && t.contains(new_pane_id)));
     }
     /// A project directory that is not the repository the test runs in, so
     /// opening it really is "a second project".
@@ -25930,88 +25926,17 @@ mod shob_bottom_input_tests {
     }
 
     #[test]
-    fn input_mode_pills_show_label_only_on_the_active_tab() {
+    fn entering_agent_mode_without_a_model_does_not_start_a_backend() {
         let mut app = TestAppContext::new();
         let (mut cx, state) = open_app(&mut app);
         let pane_id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
-        cx.draw_frame().expect("draw terminal mode");
-        let terminal_input = cx
-            .debug_bounds("agent-composer-input")
-            .expect("terminal input renders");
-        let terminal_bar = cx
-            .debug_bounds("shob-input-bar")
-            .expect("terminal composer renders");
-        let terminal_terminal_mode = cx
-            .debug_bounds("input-mode-terminal-pill")
-            .expect("terminal pill renders");
-        let agent_terminal_mode = cx
-            .debug_bounds("input-mode-agent-pill")
-            .expect("agent pill renders");
-        assert!(
-            terminal_terminal_mode.size.width > px(60.0),
-            "the active terminal pill shows its icon and label"
-        );
-        assert!(
-            agent_terminal_mode.size.width < px(40.0),
-            "the inactive agent pill is icon only"
-        );
-
         cx.update_window_entity(&state, |s, window, cx| {
             s.set_chat_mode(pane_id, true, window, cx);
             let chat = &s.pane_ref(pane_id).unwrap().chat;
+            assert!(chat.active);
             assert!(chat.selected_model.is_none());
-            assert!(chat.bridge.is_some(), "automatic agent starts before Send");
-            let input = s
-                .pane_ref(pane_id)
-                .unwrap()
-                .input_state
-                .as_ref()
-                .unwrap()
-                .read(cx);
-            assert_eq!(input.placeholder_str(), "Message the agent…");
+            assert!(chat.bridge.is_none());
         });
-        cx.draw_frame().expect("draw agent mode");
-        let agent_input = cx
-            .debug_bounds("agent-composer-input")
-            .expect("agent input renders");
-        let agent_bar = cx
-            .debug_bounds("shob-input-bar")
-            .expect("agent composer renders");
-        assert_eq!(
-            agent_bar.size.height, terminal_bar.size.height,
-            "agent and terminal composer heights match"
-        );
-        assert_eq!(
-            agent_input.size.height, terminal_input.size.height,
-            "agent and terminal input heights match"
-        );
-        let model_picker = cx
-            .debug_bounds("select-agent-model-pill")
-            .expect("model picker renders as a pill");
-        assert!(model_picker.size.height > px(20.0));
-
-        let terminal_agent_mode = cx
-            .debug_bounds("input-mode-terminal-pill")
-            .expect("terminal pill renders");
-        let agent_agent_mode = cx
-            .debug_bounds("input-mode-agent-pill")
-            .expect("agent pill renders");
-        assert!(
-            terminal_agent_mode.size.width < px(40.0),
-            "the inactive terminal pill is icon only"
-        );
-        assert!(
-            agent_agent_mode.size.width > px(60.0),
-            "the active agent pill shows its icon and label"
-        );
-        assert!(
-            terminal_terminal_mode.size.width > terminal_agent_mode.size.width,
-            "the terminal label appears only while terminal mode is active"
-        );
-        assert!(
-            agent_agent_mode.size.width > agent_terminal_mode.size.width,
-            "the agent label appears only while agent mode is active"
-        );
     }
 
     #[test]
@@ -29376,16 +29301,16 @@ First report
                 cx.notify();
             });
             cx.draw_frame().unwrap();
-            if sample == 0 {
-                if let Some(path) = std::env::var_os("SHOB_BENCH_SCREENSHOT") {
-                    cx.update(|window, _| {
-                        window
-                            .render_to_image()
-                            .expect("capture tool card")
-                            .save(path)
-                            .expect("save tool card");
-                    });
-                }
+            if sample == 0
+                && let Some(path) = std::env::var_os("SHOB_BENCH_SCREENSHOT")
+            {
+                cx.update(|window, _| {
+                    window
+                        .render_to_image()
+                        .expect("capture tool card")
+                        .save(path)
+                        .expect("save tool card");
+                });
             }
             timing::tool_finished(&id);
             cx.update_window_entity(&state, |s, _, cx| {
@@ -29584,12 +29509,14 @@ First report
         agent_bridge::set_wake(Arc::new(move || {
             let _ = wake_tx.try_send(());
         }));
-        let mut chat = PaneChat::default();
-        chat.selected_model = Some(agent_auth::AgentModel {
-            provider: "google".into(),
-            id: "gemini-3.8-flash".into(),
-            backend: agent_auth::ModelBackend::Rpi,
-        });
+        let mut chat = PaneChat {
+            selected_model: Some(agent_auth::AgentModel {
+                provider: "google".into(),
+                id: "gemini-3.8-flash".into(),
+                backend: agent_auth::ModelBackend::Rpi,
+            }),
+            ..Default::default()
+        };
         for phase in ["cold", "warm"] {
             let started = Instant::now();
             chat.ensure_agent(cwd.clone()).unwrap();

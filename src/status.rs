@@ -57,6 +57,9 @@ pub fn unknown_foreground_names() -> Arc<[String]> {
     Arc::clone(&*UNKNOWN_FOREGROUND_NAMES)
 }
 
+#[cfg(target_os = "linux")]
+type ForegroundCache = HashMap<u32, (i64, Vec<(u32, Option<u64>)>, Arc<[String]>)>;
+
 /// Foreground-group cache: shell pid -> (tpgid, shared process-name snapshot).
 ///
 /// The poller runs every 500 ms per session, but the foreground group only
@@ -66,9 +69,8 @@ pub fn unknown_foreground_names() -> Arc<[String]> {
 /// unchanged. Snapshots are shared across the status and logo paths; closed
 /// panes explicitly remove their entry.
 #[cfg(target_os = "linux")]
-static FG_CACHE: LazyLock<
-    parking_lot::Mutex<HashMap<u32, (i64, Vec<(u32, Option<u64>)>, Arc<[String]>)>>,
-> = LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
+static FG_CACHE: LazyLock<parking_lot::Mutex<ForegroundCache>> =
+    LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
 
 /// The status a terminal session can report. Exactly one is active at a time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -561,7 +563,7 @@ fn foreground_process_names_inner(pid: Option<u32>) -> Arc<[String]> {
 
 #[cfg(target_os = "linux")]
 fn cache_foreground_names(
-    cache: &mut HashMap<u32, (i64, Vec<(u32, Option<u64>)>, Arc<[String]>)>,
+    cache: &mut ForegroundCache,
     pid: u32,
     tpgid: i64,
     process_ids: Vec<(u32, Option<u64>)>,

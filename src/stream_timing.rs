@@ -12,8 +12,8 @@
 //! - `bridge.*`       JSON decode and event projection on the reader thread
 //! - `ui.drain`       draining a bridge's channel on the UI thread
 //! - `queue.*`        raw/projected admission, mutex wait and queued residence;
-//!                    `.backpressure` counts only admissions that waited,
-//!                    `.snapshot_dropped` is a zero-duration event counter
+//!   `.backpressure` counts only admissions that waited,
+//!   `.snapshot_dropped` is a zero-duration event counter
 //! - `transcript.*`   serializing and enqueueing a history entry
 //! - `ui.apply`       applying one event to the visible transcript
 //! - `ui.render_rows` building chat rows in a frame

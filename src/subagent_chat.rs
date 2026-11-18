@@ -273,10 +273,10 @@ fn parent_has_call(path: &Path, tool_id: &str) -> bool {
 }
 
 fn message_text(message: &Value, role: ChatRole) -> String {
-    if role != ChatRole::Thinking {
-        if let Some(text) = message["content"].as_str() {
-            return text.to_owned();
-        }
+    if role != ChatRole::Thinking
+        && let Some(text) = message["content"].as_str()
+    {
+        return text.to_owned();
     }
     let block_type = if role == ChatRole::Thinking {
         "thinking"
@@ -494,7 +494,8 @@ mod tests {
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[0].text, "Inspect files");
         assert_eq!(messages[1].role, ChatRole::Thinking);
-        assert!(messages[1].expanded);
+        assert_eq!(messages[1].text, "private");
+        assert!(!messages[1].expanded);
         assert_eq!(messages[2].text, "### Report");
     }
 }

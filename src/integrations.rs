@@ -318,16 +318,15 @@ fn backup_before_replace(path: &Path) -> Result<()> {
 }
 
 fn atomic_write_owned(path: &Path, contents: &str) -> Result<()> {
-    if let Ok(existing) = std::fs::read_to_string(path) {
-        if existing != contents
-            && !existing.contains("Shob lifecycle adapter")
-            && !existing.contains("Markup lifecycle adapter")
-            && !existing.contains("shob-status")
-            && !existing.contains("markup-status")
-            && !existing.contains("HERDR_INTEGRATION_ID=opencode-tui")
-        {
-            bail!("refusing to overwrite existing file {}", path.display());
-        }
+    if let Ok(existing) = std::fs::read_to_string(path)
+        && existing != contents
+        && !existing.contains("Shob lifecycle adapter")
+        && !existing.contains("Markup lifecycle adapter")
+        && !existing.contains("shob-status")
+        && !existing.contains("markup-status")
+        && !existing.contains("HERDR_INTEGRATION_ID=opencode-tui")
+    {
+        bail!("refusing to overwrite existing file {}", path.display());
     }
     let parent = path.parent().context("integration path has no parent")?;
     std::fs::create_dir_all(parent)?;
@@ -407,10 +406,10 @@ fn opencode_plugin_config(
                 entry.remove();
             }
         }
-        if array.elements().is_empty() {
-            if let Some(property) = property {
-                property.remove();
-            }
+        if array.elements().is_empty()
+            && let Some(property) = property
+        {
+            property.remove();
         }
     }
     let parent = path.parent().context("OpenCode config has no parent")?;
@@ -530,14 +529,12 @@ fn update_rules(home: &Path) -> Result<()> {
     let mut updated = 0;
     for (id, version, text) in downloads {
         let target = dir.join(format!("{id}.toml"));
-        if let Ok(old) = std::fs::read_to_string(&target) {
-            if let Ok((_, old_version)) =
+        if let Ok(old) = std::fs::read_to_string(&target)
+            && let Ok((_, old_version)) =
                 crate::agent_rules::validate_manifest(&old, &target.to_string_lossy())
-            {
-                if version_key(&version) <= version_key(old_version.as_deref().unwrap_or("")) {
-                    continue;
-                }
-            }
+            && version_key(&version) <= version_key(old_version.as_deref().unwrap_or(""))
+        {
+            continue;
         }
         if target.exists() {
             backup_before_replace(&target)?;
