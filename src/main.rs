@@ -204,8 +204,8 @@ struct ChatMessage {
     text: String,
     tool: Option<ChatTool>,
     expanded: bool,
-    /// Assistant text that is still being appended to. Settled Markdown keeps
-    /// its render cache; the live tail is parsed by the TextView worker.
+    /// Settled Markdown keeps its render cache; oversized live blocks use a
+    /// bounded plain preview until the complete message is finalized.
     streaming: bool,
     /// Cached split refreshed when a delta arrives, never during rendering.
     /// Only the unfinished suffix needs boundary scanning.
@@ -219,7 +219,10 @@ struct ChatMessage {
 struct StreamView {
     settled: SharedString,
     tail: SharedString,
+    plain_tail: bool,
 }
+
+const STREAM_LIVE_BYTES: usize = 8 * 1024;
 
 #[derive(Clone)]
 struct ChatTool {
@@ -258,7 +261,7 @@ impl ChatMessage {
             role,
             text,
             tool: None,
-            expanded: true,
+            expanded: role != ChatRole::Thinking,
             streaming: false,
             stream: None,
             turn: None,
@@ -311,20 +314,13 @@ fn list_marker_len(line: &str) -> Option<usize> {
     }
 }
 
-/// Split a streaming message into settled markdown and the single block that is
-/// still being written (Codex's stable/tail partitioning).
-///
-/// Everything before the boundary can be parsed once and cached. The tail is
-/// the only part re-parsed per token, so streaming stays O(tail) instead of
-/// O(document). Blank lines inside fences are not boundaries, and a list that
-/// is still being written stays whole in the tail so its numbering and nesting
-/// keep their context.
+/// Never partition a fence or list: nested/lazy list continuations can depend on
+/// earlier items, so a list and everything after it stays live until completion.
+/// Callers bound this scan and switch oversized live content to a plain preview.
 fn split_streaming_markdown(text: &str) -> (&str, &str) {
     let mut fence: Option<(u8, usize)> = None;
     let mut boundary: Option<usize> = None;
     let mut last_blank: Option<usize> = None;
-    let mut in_list = false;
-    let mut list_start: Option<usize> = None;
     let mut offset = 0usize;
 
     for line in text.split_inclusive('\n') {
@@ -343,8 +339,6 @@ fn split_streaming_markdown(text: &str) -> (&str, &str) {
 
         if indent <= 3 {
             if let Some(opened) = fence_open(trimmed) {
-                in_list = false;
-                list_start = None;
                 boundary = last_blank.or(boundary);
                 fence = Some(opened);
                 continue;
@@ -353,27 +347,18 @@ fn split_streaming_markdown(text: &str) -> (&str, &str) {
 
         if line.trim().is_empty() {
             last_blank = Some(start);
-            if !in_list {
-                boundary = Some(start);
-            }
+            boundary = Some(start);
             continue;
         }
 
         if indent <= 3 && list_marker_len(trimmed).is_some() {
-            if !in_list {
-                in_list = true;
-                list_start = Some(boundary.or(last_blank).unwrap_or(0));
-            }
-        } else if in_list && indent >= 2 {
-            // Indented continuation of the current list item.
-        } else {
-            in_list = false;
-            list_start = None;
-            boundary = last_blank.or(boundary);
+            let at = boundary.or(last_blank).unwrap_or(0);
+            return (&text[..at], text[at..].trim_start_matches(['\r', '\n']));
         }
+        boundary = last_blank.or(boundary);
     }
 
-    let at = if in_list { list_start } else { boundary };
+    let at = boundary;
     match at {
         Some(at) => (&text[..at], text[at..].trim_start_matches(['\r', '\n'])),
         None => ("", text),
@@ -497,6 +482,7 @@ fn chat_markdown(
                 .child(
                     div()
                         .id("chat-code-copy")
+                        .debug_selector(|| "chat-code-copy".to_string())
                         .size(px(20.0))
                         .flex()
                         .items_center()
@@ -522,6 +508,79 @@ fn chat_markdown(
         .w_full()
         .text_size(base)
         .text_color(color)
+}
+
+fn chat_stream_tail(
+    id: SharedString,
+    view: &StreamView,
+    base: Pixels,
+    paragraph_gap: Rems,
+    color: Hsla,
+    tokens: ThemeTokens,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    if !view.plain_tail {
+        return chat_markdown(
+            id,
+            view.tail.clone(),
+            base,
+            paragraph_gap,
+            color,
+            tokens,
+            window,
+            cx,
+        )
+        .into_any_element();
+    }
+    div()
+        .w_full()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .debug_selector(|| "stream-live-preview".to_string())
+        .child(
+            div()
+                .text_size(px(11.0))
+                .text_color(tokens.text_muted)
+                .child("Earlier live content is temporarily hidden. Full formatting returns when this message completes."),
+        )
+        .child(
+            div()
+                .w_full()
+                .whitespace_normal()
+                .font_family(MONO_FONT)
+                .text_size(base)
+                .text_color(color)
+                .child(view.tail.clone()),
+        )
+        .into_any_element()
+}
+
+fn chat_stream_copy(
+    host: &UiHost,
+    pane_id: usize,
+    index: usize,
+    tokens: ThemeTokens,
+) -> impl IntoElement {
+    div()
+        .id(SharedString::from(format!(
+            "chat-copy-live-{pane_id}-{index}"
+        )))
+        .debug_selector(|| "stream-copy-full-message".to_string())
+        .text_size(px(11.0))
+        .text_color(tokens.text_muted)
+        .cursor(CursorStyle::PointingHand)
+        .on_click(host.listener(move |this, _, _, cx| {
+            if let Some(message) = this
+                .pane_ref(pane_id)
+                .and_then(|pane| pane.chat.visible_messages().get(index))
+            {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(message.text.clone()));
+            }
+        }))
+        .child("Copy full message")
 }
 
 /// Capitalize the first character of a tool or agent name.
@@ -1521,7 +1580,12 @@ fn chat_thinking_row(
 ) -> Div {
     let expanded = message.expanded;
     let running = running && message.streaming;
-    let heading = clip_tool_text(first_line(&message.text), 80).0;
+    let heading_end = message
+        .text
+        .char_indices()
+        .nth(81)
+        .map_or(message.text.len(), |(index, _)| index);
+    let heading = clip_tool_text(first_line(&message.text[..heading_end]), 80).0;
     let label = if running { "Thinking" } else { "Thought" };
 
     let title = div()
@@ -1597,9 +1661,9 @@ fn chat_thinking_row(
                 ));
             }
             if !view.tail.is_empty() {
-                body = body.child(chat_markdown(
+                body = body.child(chat_stream_tail(
                     SharedString::from(format!("thinking-body-{pane_id}-{index}-live")),
-                    view.tail.clone(),
+                    view,
                     px(12.5),
                     rems(0.4),
                     tokens.text_muted,
@@ -1898,36 +1962,35 @@ fn finish_chat_streaming(messages: &mut [Arc<ChatMessage>]) {
     }
 }
 
-/// Refresh the cached settled/tail split for a streaming assistant message.
-///
-/// Settled blocks cannot change when text is appended. Scan only the unfinished
-/// suffix on line breaks; preserve its list/fence context until it settles.
+/// Cap live scans, copies and parser input independently of unfinished block size.
+/// Once oversized, keep a plain suffix until finalization; never fragment a
+/// fence/list into separately parsed pieces with lost syntax or numbering.
 fn refresh_stream_view(message: &mut ChatMessage, scan: bool) {
-    let split_at = if scan {
-        let previous = message.stream.as_ref().map_or(0, |view| view.settled.len());
+    let previous = message.stream.as_ref().map_or(0, |view| view.settled.len());
+    let plain_tail = message.stream.as_ref().is_some_and(|view| view.plain_tail)
+        || message.text.len() - previous > STREAM_LIVE_BYTES;
+    let split_at = if scan && !plain_tail {
         let (_, tail) = split_streaming_markdown(&message.text[previous..]);
         message.text.len() - tail.len()
     } else {
-        message
-            .stream
-            .as_ref()
-            .map(|view| view.settled.len())
-            .unwrap_or(0)
+        previous
     };
-    let settled = message.text.get(..split_at).unwrap_or("");
-    let tail = message.text.get(split_at..).unwrap_or("");
-    let previous = message.stream.as_ref().map(|view| view.settled.len());
-    if previous != Some(split_at) {
-        message.stream = Some(StreamView {
-            settled: SharedString::from(settled),
-            tail: SharedString::from(tail),
-        });
-    } else if let Some(view) = message.stream.as_mut() {
-        view.tail = SharedString::from(tail);
+    let mut tail_at = split_at.max(message.text.len().saturating_sub(STREAM_LIVE_BYTES));
+    while !message.text.is_char_boundary(tail_at) {
+        tail_at += 1;
+    }
+    let tail = SharedString::from(&message.text[tail_at..]);
+    if let Some(view) = message.stream.as_mut() {
+        if previous != split_at {
+            view.settled = SharedString::from(&message.text[..split_at]);
+        }
+        view.tail = tail;
+        view.plain_tail = plain_tail;
     } else {
         message.stream = Some(StreamView {
-            settled: SharedString::from(""),
-            tail: SharedString::from(tail),
+            settled: SharedString::from(&message.text[..split_at]),
+            tail,
+            plain_tail,
         });
     }
 }
@@ -2211,8 +2274,7 @@ struct WorkerView {
     _load: Option<gpui::Task<()>>,
 }
 
-/// An owned subagent row for the virtualized transcript. Worker rows are cloned
-/// only when a frame builds the visible subagent block.
+/// Owned worker display data, refreshed only when worker activity changes.
 #[derive(Clone)]
 struct WorkerRowSnapshot {
     index: usize,
@@ -2242,20 +2304,351 @@ enum ChatRow {
         copy_range: Option<(usize, usize)>,
     },
     Running {
-        label: String,
-        tooltip: String,
+        label: SharedString,
+        tooltip: SharedString,
     },
 }
 
-/// Owned render data for one frame of the transcript list. It clones message
-/// handles, never message text.
+#[derive(Clone, Copy, Default)]
+struct ChatRowCheckpoint {
+    cursor: usize,
+    turn_start: usize,
+    last_assistant_row: Option<usize>,
+    active_row: Option<usize>,
+}
+
+#[derive(Default)]
+struct ChatRowCache {
+    conversation: Option<String>,
+    rows: Vec<ChatRow>,
+    checkpoints: Vec<ChatRowCheckpoint>,
+    state: ChatRowCheckpoint,
+    message_count: usize,
+    running: bool,
+    tail: usize,
+    dirty: bool,
+    workers_dirty: bool,
+    workers: Vec<WorkerRowSnapshot>,
+    activity: Option<(SharedString, SharedString)>,
+    #[cfg(test)]
+    built_rows: usize,
+}
+
+impl ChatRowCache {
+    fn invalidate_from(&mut self, index: usize) {
+        if self.dirty && index >= self.state.cursor {
+            return;
+        }
+        let row = self
+            .checkpoints
+            .partition_point(|checkpoint| checkpoint.cursor <= index)
+            .saturating_sub(1);
+        if let Some(checkpoint) = self.checkpoints.get(row).copied() {
+            self.state = checkpoint;
+            self.rows.truncate(row);
+            self.checkpoints.truncate(row);
+        }
+        self.dirty = true;
+    }
+
+    fn invalidate_workers(&mut self) {
+        self.workers_dirty = true;
+        let first = self
+            .workers
+            .first()
+            .map_or(self.state.cursor, |worker| worker.index);
+        self.invalidate_from(first);
+    }
+}
+
+/// Row storage is shared with list callbacks; invalidation drops mutable
+/// message handles before the next event, avoiding copy-on-write of live text.
 struct ChatSnapshot {
     focused_layout: bool,
     pane_id: usize,
     conversation: SharedString,
     tokens: ThemeTokens,
-    rows: Vec<ChatRow>,
+    rows: std::rc::Rc<std::cell::RefCell<ChatRowCache>>,
     host: UiHost,
+}
+
+#[cfg(test)]
+mod chat_row_cache_tests {
+    use super::*;
+    use agent_bridge::AgentEvent;
+
+    fn apply(chat: &mut PaneChat, event: AgentEvent) {
+        chat.observe_status(&event);
+        match event {
+            AgentEvent::Done | AgentEvent::Closed => {
+                finish_chat_tools(&mut chat.messages);
+                finish_chat_streaming(&mut chat.messages);
+            }
+            event => push_chat_event(&mut chat.messages, event),
+        }
+    }
+
+    fn build(chat: &PaneChat) -> Rc<std::cell::RefCell<ChatRowCache>> {
+        AppState::build_chat_rows(chat, chat.running)
+    }
+
+    #[test]
+    fn unchanged_frames_and_bursty_deltas_reuse_history_without_cloning_live_text() {
+        let mut chat = PaneChat::default();
+        for _ in 0..200 {
+            chat.messages
+                .push(Arc::new(ChatMessage::new(ChatRole::User, "prompt".into())));
+            chat.messages.push(Arc::new(ChatMessage::new(
+                ChatRole::Assistant,
+                "answer".into(),
+            )));
+        }
+        chat.messages
+            .push(Arc::new(ChatMessage::new(ChatRole::User, "next".into())));
+        chat.running = true;
+        apply(&mut chat, AgentEvent::Text("streaming ".repeat(100)));
+        let snapshot = build(&chat);
+        let built = snapshot.borrow().built_rows;
+        let activity = snapshot.borrow().activity.clone().unwrap();
+        build(&chat);
+        assert_eq!(snapshot.borrow().built_rows, built);
+        let last = chat.messages.len() - 1;
+        let address = Arc::as_ptr(&chat.messages[last]);
+        for _ in 0..8 {
+            let event = AgentEvent::Text("more ".into());
+            chat.observe_status(&event);
+            assert_eq!(Arc::strong_count(&chat.messages[last]), 1);
+            push_chat_event(&mut chat.messages, event);
+            assert_eq!(Arc::as_ptr(&chat.messages[last]), address);
+        }
+        build(&chat);
+        let cache = snapshot.borrow();
+        assert_eq!(cache.built_rows - built, 2);
+        assert_eq!(cache.activity.as_ref(), Some(&activity));
+        assert!(matches!(&cache.rows[cache.rows.len() - 2],
+            ChatRow::Message { message, .. } if message.text.ends_with("more more more more more more more more ")));
+    }
+
+    #[test]
+    fn parallel_tools_folding_and_running_transitions_refresh_cached_rows() {
+        let mut chat = PaneChat::default();
+        chat.running = true;
+        chat.messages
+            .push(Arc::new(ChatMessage::new(ChatRole::User, "prompt".into())));
+        apply(&mut chat, AgentEvent::Text("first".into()));
+        for id in ["one", "two"] {
+            apply(
+                &mut chat,
+                AgentEvent::ToolStart {
+                    id: Some(id.into()),
+                    name: "read".into(),
+                    input: "{}".into(),
+                },
+            );
+        }
+        apply(&mut chat, AgentEvent::Text("answer".into()));
+        let snapshot = build(&chat);
+        apply(
+            &mut chat,
+            AgentEvent::ToolEnd {
+                id: Some("one".into()),
+                name: "read".into(),
+                output: "contents".into(),
+                failed: false,
+            },
+        );
+        build(&chat);
+        assert!(matches!(&snapshot.borrow().rows[2],
+            ChatRow::ToolGroup { messages, live: true, open: true, .. }
+                if messages[0].tool.as_ref().unwrap().output.as_ref() == "contents"
+                    && messages[1].tool.as_ref().unwrap().state == ToolState::Running));
+        apply(&mut chat, AgentEvent::Done);
+        build(&chat);
+        {
+            let cache = snapshot.borrow();
+            assert!(matches!(
+                &cache.rows[2],
+                ChatRow::ToolGroup {
+                    live: false,
+                    open: false,
+                    ..
+                }
+            ));
+            assert!(matches!(
+                &cache.rows[3],
+                ChatRow::Message {
+                    live: false,
+                    copy_range: Some((1, 4)),
+                    ..
+                }
+            ));
+            assert!(matches!(
+                &cache.rows[1],
+                ChatRow::Message {
+                    copy_range: None,
+                    ..
+                }
+            ));
+            assert!(
+                !cache
+                    .rows
+                    .iter()
+                    .any(|row| matches!(row, ChatRow::Running { .. }))
+            );
+        }
+        chat.expanded_tool_groups
+            .entry(chat.conversation_key.clone())
+            .or_default()
+            .insert(2);
+        chat.invalidate_message_row(2);
+        build(&chat);
+        assert!(matches!(
+            &snapshot.borrow().rows[2],
+            ChatRow::ToolGroup { open: true, .. }
+        ));
+        let messages = chat.visible_messages_mut();
+        Arc::make_mut(&mut messages[2])
+            .tool
+            .as_mut()
+            .unwrap()
+            .expanded = true;
+        chat.invalidate_message_row(2);
+        build(&chat);
+        assert!(
+            matches!(&snapshot.borrow().rows[2], ChatRow::ToolGroup { messages, .. }
+            if messages[0].tool.as_ref().unwrap().expanded)
+        );
+        chat.running = true;
+        build(&chat);
+        assert!(matches!(
+            &snapshot.borrow().rows[3],
+            ChatRow::Message {
+                copy_range: None,
+                ..
+            }
+        ));
+        chat.running = false;
+        build(&chat);
+        assert!(matches!(
+            &snapshot.borrow().rows[3],
+            ChatRow::Message {
+                copy_range: Some((1, 4)),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn cross_turn_worker_updates_refresh_the_original_deduplicated_row() {
+        let mut chat = PaneChat::default();
+        let mut worker = subagent_chat::Worker {
+            id: "worker".into(),
+            title: "FirstTitle".into(),
+            status: "running".into(),
+            transcript: Some(PathBuf::from("/sessions/worker.jsonl")),
+            result: None,
+        };
+        chat.messages
+            .push(Arc::new(ChatMessage::new(ChatRole::User, "first".into())));
+        apply(
+            &mut chat,
+            AgentEvent::Subagents {
+                tool_id: "first".into(),
+                workers: vec![worker.clone()],
+            },
+        );
+        apply(&mut chat, AgentEvent::Text("response".into()));
+        let snapshot = build(&chat);
+        chat.messages
+            .push(Arc::new(ChatMessage::new(ChatRole::User, "second".into())));
+        worker.status = "completed".into();
+        worker.title = "UpdatedTitle".into();
+        apply(
+            &mut chat,
+            AgentEvent::Subagents {
+                tool_id: "second".into(),
+                workers: vec![worker.clone()],
+            },
+        );
+        build(&chat);
+        {
+            let cache = snapshot.borrow();
+            assert!(matches!(&cache.rows[1], ChatRow::Subagents { rows, .. }
+                if rows.len() == 1 && rows[0].title == "Updated Title" && rows[0].status == "finished"));
+            assert_eq!(
+                cache
+                    .rows
+                    .iter()
+                    .filter(|row| matches!(row, ChatRow::Subagents { .. }))
+                    .count(),
+                1
+            );
+        }
+        worker.status = "failed".into();
+        apply(
+            &mut chat,
+            AgentEvent::Subagents {
+                tool_id: "first".into(),
+                workers: vec![worker],
+            },
+        );
+        build(&chat);
+        // The later completed report still wins, exactly as subagent_chat::rows specifies.
+        assert!(
+            matches!(&snapshot.borrow().rows[1], ChatRow::Subagents { rows, .. }
+            if rows[0].status == "finished")
+        );
+    }
+
+    #[test]
+    fn restores_switches_and_panes_never_reuse_stale_content_or_folding() {
+        let mut chat = PaneChat::default();
+        apply(&mut chat, AgentEvent::Text("old".into()));
+        let snapshot = build(&chat);
+        *chat.visible_messages_mut() = vec![Arc::new(ChatMessage::new(
+            ChatRole::Assistant,
+            "restored".into(),
+        ))];
+        build(&chat);
+        assert!(
+            matches!(&snapshot.borrow().rows[0], ChatRow::Message { message, .. }
+            if message.text == "restored")
+        );
+        let original = chat.conversation_key.clone();
+        chat.expanded_tool_groups
+            .entry(original.clone())
+            .or_default()
+            .insert(0);
+        chat.conversation_key = "another".into();
+        *chat.visible_messages_mut() = Vec::new();
+        apply(
+            &mut chat,
+            AgentEvent::ToolEnd {
+                id: Some("tool".into()),
+                name: "read".into(),
+                output: "new".into(),
+                failed: false,
+            },
+        );
+        build(&chat);
+        assert!(matches!(
+            &snapshot.borrow().rows[0],
+            ChatRow::ToolGroup { open: false, .. }
+        ));
+        chat.conversation_key = original;
+        build(&chat);
+        assert!(matches!(
+            &snapshot.borrow().rows[0],
+            ChatRow::ToolGroup { open: true, .. }
+        ));
+        let other = PaneChat::default();
+        let other_rows = build(&other);
+        assert!(!Rc::ptr_eq(&snapshot, &other_rows));
+        assert!(other_rows.borrow().rows.is_empty());
+        chat.visible_messages_mut().clear();
+        build(&chat);
+        assert!(snapshot.borrow().rows.is_empty());
+    }
 }
 
 fn worker_status_label(label: &str) -> &'static str {
@@ -2535,6 +2928,7 @@ struct PaneChat {
     list_state: ListState,
     list_rows: std::cell::Cell<usize>,
     list_key: std::cell::Cell<u64>,
+    row_cache: std::rc::Rc<std::cell::RefCell<ChatRowCache>>,
     active_dirty: std::cell::Cell<bool>,
     activity_dirty: std::cell::Cell<bool>,
     dirty_messages: std::cell::RefCell<HashSet<usize>>,
@@ -2596,6 +2990,7 @@ impl Default for PaneChat {
             },
             list_rows: std::cell::Cell::new(0),
             list_key: std::cell::Cell::new(0),
+            row_cache: Default::default(),
             active_dirty: std::cell::Cell::new(false),
             activity_dirty: std::cell::Cell::new(false),
             dirty_messages: std::cell::RefCell::new(HashSet::new()),
@@ -2659,6 +3054,7 @@ impl PaneChat {
 
     fn observe_status(&mut self, event: &agent_bridge::AgentEvent) {
         use agent_bridge::AgentEvent;
+        self.invalidate_event_rows(event);
         match event {
             AgentEvent::Usage(usage) => {
                 let mut total = self.usage.unwrap_or(*usage);
@@ -2853,6 +3249,11 @@ impl PaneChat {
     }
 
     fn visible_messages_mut(&mut self) -> &mut Vec<Arc<ChatMessage>> {
+        let mut cache = self.row_cache.borrow_mut();
+        cache.invalidate_workers();
+        cache.invalidate_from(0);
+        cache.activity = None;
+        drop(cache);
         &mut self.messages
     }
 
@@ -2860,16 +3261,104 @@ impl PaneChat {
         self.running
     }
 
-    /// The active reply grew. Its row must be re-measured on the next frame,
-    /// while every settled row keeps its cached height.
+    /// Refresh snapshots after a mutation without a known message index.
     fn mark_active_dirty(&self) {
         self.active_dirty.set(true);
         self.activity_dirty.set(true);
+        let mut cache = self.row_cache.borrow_mut();
+        cache.invalidate_workers();
+        cache.invalidate_from(0);
+        cache.activity = None;
     }
 
     /// A row's height changed because the reader toggled a message.
     fn invalidate_message_row(&self, index: usize) {
         self.dirty_messages.borrow_mut().insert(index);
+        self.row_cache.borrow_mut().invalidate_from(index);
+    }
+
+    fn invalidate_event_rows(&self, event: &agent_bridge::AgentEvent) {
+        use agent_bridge::AgentEvent;
+        if is_task_list_event(event) || matches!(event, AgentEvent::Usage(_) | AgentEvent::Title(_))
+        {
+            return;
+        }
+        let tail = self.messages.len().saturating_sub(1);
+        let mut cache = self.row_cache.borrow_mut();
+        let same_stream = matches!(
+            (event, self.messages.last().map(|message| message.role)),
+            (AgentEvent::Text(_), Some(ChatRole::Assistant))
+                | (AgentEvent::Thinking(_), Some(ChatRole::Thinking))
+        );
+        if !same_stream {
+            cache.activity = None;
+        }
+        let mut from = tail;
+        match event {
+            AgentEvent::Done | AgentEvent::Closed => {
+                from = self
+                    .messages
+                    .iter()
+                    .rposition(|message| message.role == ChatRole::User)
+                    .map_or(0, |index| index + 1);
+            }
+            AgentEvent::Subagents { tool_id, .. } => {
+                cache.invalidate_workers();
+                if let Some(index) = self.messages.iter().rposition(|message| {
+                    message
+                        .tool
+                        .as_ref()
+                        .is_some_and(|tool| tool.id.as_ref() == Some(tool_id))
+                }) {
+                    from = from.min(index);
+                }
+            }
+            AgentEvent::ToolStart { id: Some(id), .. } => {
+                if let Some(index) = self.messages.iter().rposition(|message| {
+                    message.tool.as_ref().is_some_and(|tool| {
+                        tool.id.as_ref() == Some(id) && !tool.workers.is_empty()
+                    })
+                }) {
+                    from = from.min(index);
+                }
+            }
+            AgentEvent::ToolUpdate { id, name, .. } | AgentEvent::ToolEnd { id, name, .. } => {
+                if let Some(offset) = self
+                    .messages
+                    .iter()
+                    .rev()
+                    .take_while(|message| message.role != ChatRole::User)
+                    .enumerate()
+                    .filter_map(|(offset, message)| {
+                        message
+                            .tool
+                            .as_ref()
+                            .filter(|tool| {
+                                tool.state == ToolState::Running
+                                    && match id {
+                                        Some(id) => tool.id.as_ref() == Some(id),
+                                        None => tool.id.is_none() && tool.name == *name,
+                                    }
+                            })
+                            .map(|_| offset)
+                    })
+                    .last()
+                {
+                    from = from.min(self.messages.len() - 1 - offset);
+                }
+                if matches!(event, AgentEvent::ToolEnd { .. })
+                    && (is_agent_tool(name) || name.eq_ignore_ascii_case("wait"))
+                {
+                    cache.invalidate_workers();
+                }
+            }
+            _ => {}
+        }
+        cache.invalidate_from(from);
+        self.active_dirty.set(true);
+        if !same_stream {
+            self.activity_dirty.set(true);
+        }
     }
 
     fn scroll_to_end(&self) {
@@ -14590,15 +15079,11 @@ impl AppState {
                     .line_height(relative(1.6))
                     .text_color(tokens.text_primary);
 
-                if message.streaming {
-                    let (settled, tail) = message.stream.as_ref().map_or_else(
-                        || (SharedString::from(""), message.text.clone().into()),
-                        |view| (view.settled.clone(), view.tail.clone()),
-                    );
-                    if !settled.is_empty() {
+                if let Some(view) = message.stream.as_ref().filter(|_| message.streaming) {
+                    if !view.settled.is_empty() {
                         body = body.child(chat_markdown(
                             id.clone(),
-                            settled,
+                            view.settled.clone(),
                             px(14.0),
                             rems(0.6),
                             tokens.text_primary,
@@ -14607,12 +15092,12 @@ impl AppState {
                             cx,
                         ));
                     }
-                    if !tail.is_empty() {
-                        body = body.child(chat_markdown(
+                    if !view.tail.is_empty() {
+                        body = body.child(chat_stream_tail(
                             SharedString::from(format!(
                                 "agent-markdown-{pane_id}-{conversation}-{index}-live"
                             )),
-                            tail,
+                            view,
                             px(14.0),
                             rems(0.6),
                             tokens.text_primary,
@@ -14620,6 +15105,9 @@ impl AppState {
                             window,
                             cx,
                         ));
+                    }
+                    if view.plain_tail {
+                        body = body.child(chat_stream_copy(host, pane_id, index, tokens));
                     }
                 } else {
                     body = body.child(chat_markdown(
@@ -14689,10 +15177,13 @@ impl AppState {
                     cx.stop_propagation();
                     this.toggle_chat_tool_expanded(pane_id, index, cx);
                 });
-                chat_thinking_row(
+                let mut row = chat_thinking_row(
                     pane_id, index, message, running, tokens, window, cx, on_toggle,
-                )
-                .into_any_element()
+                );
+                if message.expanded && message.stream.as_ref().is_some_and(|view| view.plain_tail) {
+                    row = row.child(chat_stream_copy(host, pane_id, index, tokens));
+                }
+                row.into_any_element()
             }
             ChatRole::Status => div()
                 .w_full()
@@ -15125,7 +15616,10 @@ impl AppState {
 
         let running = pane.chat.visible_running();
         let row_start = std::time::Instant::now();
-        let (rows, active_row) = Self::build_chat_rows(pane, running);
+        let row_cache = Self::build_chat_rows(&pane.chat, running);
+        let cached = row_cache.borrow();
+        let rows = &cached.rows;
+        let active_row = cached.state.active_row;
         crate::stream_timing::record_since("ui.render_rows", row_start);
 
         let row_count = rows.len();
@@ -15162,6 +15656,7 @@ impl AppState {
                 pane.chat.remeasure_row(row);
             }
         }
+        drop(cached);
         if !pane.chat.scroll_handler_installed.get() {
             let weak = cx.weak_entity();
             let id = pane_id;
@@ -15217,15 +15712,15 @@ impl AppState {
         }
 
         let host = UiHost::new(cx.weak_entity());
-        let snapshot = Arc::new(ChatSnapshot {
+        let snapshot = Rc::new(ChatSnapshot {
             focused_layout: self.settings.agent_layout,
             pane_id,
             conversation: conversation.into(),
             tokens,
-            rows,
+            rows: row_cache,
             host: host.clone(),
         });
-        let row_snapshot = Arc::clone(&snapshot);
+        let row_snapshot = Rc::clone(&snapshot);
         let list_state = pane.chat.list_state.clone();
         let chat_view = div()
             .id(("agent-chat", pane_id))
@@ -15333,25 +15828,94 @@ impl AppState {
             .into_any_element()
     }
 
-    fn build_chat_rows(pane: &TerminalPane, running: bool) -> (Vec<ChatRow>, Option<usize>) {
-        let visible = pane.chat.visible_messages();
-        let worker_rows: Vec<WorkerRowSnapshot> = subagent_chat::rows(visible)
-            .into_iter()
-            .map(|row| WorkerRowSnapshot {
-                index: row.index,
-                id: row.worker.id.clone(),
-                avatar: row.avatar,
-                title: row.worker.display_title(),
-                status: worker_status_label(row.worker.status_label()),
-            })
-            .collect();
-        let mut rows = Vec::new();
-        let mut active_row = None;
-        let mut cursor = 0usize;
-        let mut worker_index = 0usize;
-        let mut turn_start = 0usize;
-        let mut last_assistant_row = None;
+    fn build_chat_rows(
+        chat: &PaneChat,
+        running: bool,
+    ) -> std::rc::Rc<std::cell::RefCell<ChatRowCache>> {
+        let visible = chat.visible_messages();
+        let mut cache = chat.row_cache.borrow_mut();
+        if cache.conversation.as_deref() != Some(chat.conversation_key.as_str())
+            || visible.len() < cache.message_count
+            || cache.state.cursor > visible.len()
+        {
+            *cache = ChatRowCache {
+                conversation: Some(chat.conversation_key.clone()),
+                dirty: true,
+                workers_dirty: true,
+                ..Default::default()
+            };
+        }
+        let tail = visible
+            .last()
+            .map_or(0, |message| Arc::as_ptr(message) as usize);
+        if !cache.dirty && (visible.len() != cache.message_count || tail != cache.tail) {
+            let from = visible.len().min(cache.message_count).saturating_sub(1);
+            cache.invalidate_from(from);
+            cache.activity = None;
+            if visible[from..].iter().any(|message| {
+                message
+                    .tool
+                    .as_ref()
+                    .is_some_and(|tool| !tool.workers.is_empty())
+            }) {
+                cache.invalidate_workers();
+            }
+        }
+        if running != cache.running {
+            let from = cache
+                .state
+                .last_assistant_row
+                .and_then(|row| cache.checkpoints.get(row))
+                .map_or(visible.len().saturating_sub(1), |checkpoint| {
+                    checkpoint.cursor
+                });
+            cache.invalidate_from(from);
+            cache.activity = None;
+        }
+        if !cache.dirty {
+            return std::rc::Rc::clone(&chat.row_cache);
+        }
+        if cache.workers_dirty {
+            cache.workers = subagent_chat::rows(visible)
+                .into_iter()
+                .map(|row| WorkerRowSnapshot {
+                    index: row.index,
+                    id: row.worker.id.clone(),
+                    avatar: row.avatar,
+                    title: row.worker.display_title(),
+                    status: worker_status_label(row.worker.status_label()),
+                })
+                .collect();
+            cache.workers_dirty = false;
+        }
+        cache.message_count = visible.len();
+        cache.running = running;
+        cache.tail = tail;
+        cache.dirty = false;
+        let ChatRowCache {
+            rows,
+            checkpoints,
+            state,
+            workers,
+            activity,
+            ..
+        } = &mut *cache;
+        #[cfg(test)]
+        let kept_rows = rows.len();
+        let ChatRowCheckpoint {
+            mut cursor,
+            mut turn_start,
+            mut last_assistant_row,
+            mut active_row,
+        } = *state;
+        let mut worker_index = workers.partition_point(|worker| worker.index < cursor);
         while cursor < visible.len() {
+            let checkpoint = ChatRowCheckpoint {
+                cursor,
+                turn_start,
+                last_assistant_row,
+                active_row,
+            };
             let message = &visible[cursor];
             if message
                 .tool
@@ -15367,12 +15931,10 @@ impl AppState {
                 {
                     cursor += 1;
                 }
-                if worker_index < worker_rows.len() && worker_rows[worker_index].index < cursor {
+                if worker_index < workers.len() && workers[worker_index].index < cursor {
                     let mut block = Vec::new();
-                    while worker_index < worker_rows.len()
-                        && worker_rows[worker_index].index < cursor
-                    {
-                        block.push(worker_rows[worker_index].clone());
+                    while worker_index < workers.len() && workers[worker_index].index < cursor {
+                        block.push(workers[worker_index].clone());
                         worker_index += 1;
                     }
                     if block
@@ -15381,6 +15943,7 @@ impl AppState {
                     {
                         active_row = Some(rows.len());
                     }
+                    checkpoints.push(checkpoint);
                     rows.push(ChatRow::Subagents { start, rows: block });
                 }
                 continue;
@@ -15406,14 +15969,14 @@ impl AppState {
                 }
                 let live = has_running_call || (running && cursor == visible.len());
                 let open = live
-                    || pane
-                        .chat
+                    || chat
                         .expanded_tool_groups
-                        .get(pane.chat.conversation_key.as_str())
+                        .get(chat.conversation_key.as_str())
                         .is_some_and(|groups| groups.contains(&start));
                 if running && cursor == visible.len() {
                     active_row = Some(rows.len());
                 }
+                checkpoints.push(checkpoint);
                 rows.push(ChatRow::ToolGroup {
                     start,
                     messages: visible[start..cursor].to_vec(),
@@ -15446,6 +16009,7 @@ impl AppState {
             {
                 active_row = Some(rows.len());
             }
+            checkpoints.push(checkpoint);
             rows.push(ChatRow::Message {
                 index: cursor,
                 message: Arc::clone(message),
@@ -15454,18 +16018,36 @@ impl AppState {
             });
             cursor += 1;
         }
+        *state = ChatRowCheckpoint {
+            cursor,
+            turn_start,
+            last_assistant_row,
+            active_row,
+        };
         if running {
             if let Some(previous) = last_assistant_row
                 && let ChatRow::Message { copy_range, .. } = &mut rows[previous]
             {
                 *copy_range = None;
             }
+            let (label, tooltip) = activity.get_or_insert_with(|| {
+                (
+                    chat_activity(visible).into(),
+                    chat_activity_tooltip(visible).into(),
+                )
+            });
+            checkpoints.push(*state);
             rows.push(ChatRow::Running {
-                label: chat_activity(visible),
-                tooltip: chat_activity_tooltip(visible),
+                label: label.clone(),
+                tooltip: tooltip.clone(),
             });
         }
-        (rows, active_row)
+        #[cfg(test)]
+        {
+            let built = rows.len() - kept_rows;
+            cache.built_rows += built;
+        }
+        std::rc::Rc::clone(&chat.row_cache)
     }
 
     fn render_chat_row(
@@ -15474,7 +16056,8 @@ impl AppState {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
-        let Some(row) = snapshot.rows.get(index) else {
+        let cached = snapshot.rows.borrow();
+        let Some(row) = cached.rows.get(index) else {
             return div().into_any_element();
         };
         let tokens = snapshot.tokens;
@@ -15615,12 +16198,8 @@ impl AppState {
                 .tooltip({
                     let tooltip = tooltip.clone();
                     move |_, cx| {
-                        cx.new(|_| {
-                            gpui_component::tooltip::Tooltip::new(SharedString::from(
-                                tooltip.clone(),
-                            ))
-                        })
-                        .into()
+                        cx.new(|_| gpui_component::tooltip::Tooltip::new(tooltip.clone()))
+                            .into()
                     }
                 })
                 // A fixed frame, not a repeating animation: a running turn can last
@@ -24910,6 +25489,162 @@ mod shob_bottom_input_tests {
         let (settled, tail) = split_streaming_markdown("Intro\n\n```\n    ```\n\ninside");
         assert_eq!(settled.trim_end(), "Intro");
         assert!(tail.contains("inside"));
+
+        for list in [
+            "7. first\n8. second\n   - nested\n\n     continuation\n9. third",
+            "- first\n\n  ```rust\n  let x = 1;\n  ```\n\n- second\n\nafter",
+            "- first\n  - nested\n\n    paragraph\nlazy continuation\n\n- last",
+        ] {
+            let text = format!("Intro\n\n{list}");
+            let (settled, tail) = split_streaming_markdown(&text);
+            assert_eq!(settled.trim_end(), "Intro");
+            assert_eq!(
+                tail, list,
+                "list numbering/nesting must share one parser input"
+            );
+        }
+    }
+
+    #[test]
+    fn oversized_streaming_markdown_bounds_live_work_and_preserves_final_code() {
+        use agent_bridge::AgentEvent;
+        for delta in ["let value = \"世界🦀\";\n", "世界🦀"] {
+            let mut messages = Vec::new();
+            push_chat_event(&mut messages, AgentEvent::Text("Intro\n\n```rust\n".into()));
+            for _ in 0..2_048 {
+                push_chat_event(&mut messages, AgentEvent::Text(delta.into()));
+                let message = messages.last().unwrap();
+                let view = message.stream.as_ref().unwrap();
+                assert!(view.tail.len() <= STREAM_LIVE_BYTES);
+                assert!(message.text.ends_with(view.tail.as_ref()));
+                assert_eq!(view.settled.as_ref(), "Intro\n\n");
+            }
+            assert!(messages[0].stream.as_ref().unwrap().plain_tail);
+            push_chat_event(&mut messages, AgentEvent::Text("\n```\n\nAfter".into()));
+            assert!(
+                messages[0].stream.as_ref().unwrap().plain_tail,
+                "closing an oversized fence must not submit the entire block to the live parser"
+            );
+            let complete = messages[0].text.clone();
+            finish_chat_streaming(&mut messages);
+            assert!(!messages[0].streaming);
+            assert!(messages[0].stream.is_none());
+            assert_eq!(messages[0].text, complete);
+            let code = pulldown_cmark::Parser::new(&complete)
+                .filter_map(|event| match event {
+                    pulldown_cmark::Event::Text(text) => Some(text.into_string()),
+                    _ => None,
+                })
+                .collect::<String>();
+            assert_eq!(code, format!("Intro{}After", delta.repeat(2_048) + "\n"));
+        }
+
+        let mut list = Vec::new();
+        push_chat_event(&mut list, AgentEvent::Text("7. first\n".into()));
+        for _ in 0..512 {
+            push_chat_event(
+                &mut list,
+                AgentEvent::Text("8. next\n   - nested 世界🦀\n".into()),
+            );
+            assert!(list[0].stream.as_ref().unwrap().tail.len() <= STREAM_LIVE_BYTES);
+        }
+        assert!(list[0].stream.as_ref().unwrap().plain_tail);
+        finish_chat_streaming(&mut list);
+        let lists = pulldown_cmark::Parser::new(&list[0].text)
+            .filter_map(|event| match event {
+                pulldown_cmark::Event::Start(pulldown_cmark::Tag::List(start)) => Some(start),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(lists.first(), Some(&Some(7)));
+        assert_eq!(lists.iter().filter(|start| start.is_some()).count(), 1);
+        assert_eq!(lists.iter().filter(|start| start.is_none()).count(), 512);
+
+        // A single large bridge batch must also avoid an initial unbounded scan.
+        let mut message = ChatMessage::new(ChatRole::Assistant, "🦀".repeat(STREAM_LIVE_BYTES));
+        refresh_stream_view(&mut message, true);
+        let view = message.stream.as_ref().unwrap();
+        assert!(view.plain_tail);
+        assert!(view.settled.is_empty());
+        assert!(view.tail.len() <= STREAM_LIVE_BYTES);
+    }
+
+    #[test]
+    fn oversized_live_preview_copies_full_message_and_finalizes_to_markdown() {
+        use agent_bridge::AgentEvent;
+        let mut cx = TestAppContext::new();
+        let (mut cx, state) = open_app(&mut cx);
+        let pane_id = state.read_with(&cx, |state, _| state.projects[0].sessions[0].panes[0].id);
+        let text = format!("```rust\n{}\n```", "let x = 1; ".repeat(1_000));
+        cx.update_window_entity(&state, |state, window, cx| {
+            state.set_chat_mode(pane_id, true, window, cx);
+            let chat = &mut state.pane_mut(pane_id).unwrap().chat;
+            let event = AgentEvent::Text(text.clone());
+            chat.observe_status(&event);
+            push_chat_event(&mut chat.messages, event);
+            cx.notify();
+        });
+        cx.draw_frame().unwrap();
+        cx.run_until_parked();
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("stream-live-preview").is_some());
+        let copy = cx
+            .debug_bounds("stream-copy-full-message")
+            .expect("complete live copy action");
+        let viewport = cx.debug_bounds("agent-chat").unwrap();
+        assert!(
+            copy.size.height > px(0.0)
+                && copy.center().y >= viewport.top()
+                && copy.center().y < viewport.bottom(),
+            "live copy action must be reachable: copy={copy:?}, viewport={viewport:?}"
+        );
+        cx.simulate_click(copy.center(), Modifiers::default());
+        assert_eq!(
+            cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text())),
+            Some(text.clone())
+        );
+        cx.update_window_entity(&state, |state, _, cx| {
+            let chat = &mut state.pane_mut(pane_id).unwrap().chat;
+            chat.observe_status(&AgentEvent::Done);
+            finish_chat_streaming(&mut chat.messages);
+            cx.notify();
+        });
+        cx.draw_frame().unwrap();
+        cx.run_until_parked();
+        cx.draw_frame().unwrap();
+        cx.update_window_entity(&state, |state, _, cx| {
+            let chat = &mut state.pane_mut(pane_id).unwrap().chat;
+            chat.autoscroll = false;
+            chat.list_state.scroll_to(gpui::ListOffset {
+                item_ix: 0,
+                offset_in_item: px(0.0),
+            });
+            cx.notify();
+        });
+        cx.draw_frame().unwrap();
+        let code_copy = cx
+            .debug_bounds("chat-code-copy")
+            .expect("final fenced code has a copy action");
+        let viewport = cx.debug_bounds("agent-chat").unwrap();
+        assert!(
+            code_copy.center().y >= viewport.top()
+                && code_copy.center().y < viewport.bottom()
+                && code_copy.center().x >= viewport.left()
+                && code_copy.center().x < viewport.right(),
+            "code copy action must be reachable: copy={code_copy:?}, viewport={viewport:?}"
+        );
+        cx.simulate_click(code_copy.center(), Modifiers::default());
+        assert_eq!(
+            cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text())),
+            Some("let x = 1; ".repeat(1_000))
+        );
+        assert!(cx.debug_bounds("stream-live-preview").is_none());
+        assert!(cx.debug_bounds("stream-copy-full-message").is_none());
+        state.read_with(&cx, |state, _| {
+            let message = &state.pane_ref(pane_id).unwrap().chat.visible_messages()[0];
+            assert_eq!(message.text, text);
+            assert!(message.stream.is_none());
+        });
     }
 
     #[test]
@@ -25157,7 +25892,7 @@ mod shob_bottom_input_tests {
         push_chat_event(&mut messages, AgentEvent::Thinking("Looking ".into()));
         push_chat_event(&mut messages, AgentEvent::Thinking("closely".into()));
         assert_eq!(messages.len(), 1);
-        assert!(messages[0].expanded, "live reasoning is visible");
+        assert!(!messages[0].expanded, "live reasoning starts folded");
         assert_eq!(messages[0].text, "Looking closely");
         push_chat_event(&mut messages, AgentEvent::Text("Done".into()));
         assert!(
@@ -25347,13 +26082,14 @@ First report
     }
 
     #[test]
-    fn completed_reasoning_shows_the_full_body_and_can_be_folded() {
+    fn reasoning_starts_folded_and_can_be_expanded_live_and_after_completion() {
         let mut cx = TestAppContext::new();
         let (mut cx, state) = open_app(&mut cx);
         let pane_id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
         cx.update_window_entity(&state, |s, window, cx| {
             s.set_chat_mode(pane_id, true, window, cx);
             let pane = s.pane_mut(pane_id).unwrap();
+            pane.chat.running = true;
             let reasoning = (0..20)
                 .map(|line| format!("reasoning line {line}\n"))
                 .collect::<String>();
@@ -25361,12 +26097,32 @@ First report
                 &mut pane.chat.messages,
                 agent_bridge::AgentEvent::Thinking(reasoning),
             );
-            push_chat_event(
-                &mut pane.chat.messages,
-                agent_bridge::AgentEvent::Text("Answer".into()),
-            );
+        });
+        cx.draw_frame().expect("draw live reasoning header");
+        assert!(cx.debug_bounds("thinking-body-0").is_none());
+        let row = cx.debug_bounds("thinking-row-0").expect("thinking row");
+        cx.simulate_click(row.origin + point(px(20.0), px(10.0)), Modifiers::default());
+        cx.draw_frame().expect("expand live reasoning");
+        assert!(cx.debug_bounds("thinking-body-0").is_some());
+        cx.update_window_entity(&state, |s, _, cx| {
+            let pane = s.pane_mut(pane_id).unwrap();
+            let event = agent_bridge::AgentEvent::Thinking("another reasoning line\n".into());
+            pane.chat.observe_status(&event);
+            push_chat_event(&mut pane.chat.messages, event);
+            assert!(pane.chat.messages[0].expanded);
+            cx.notify();
+        });
+        cx.draw_frame().expect("draw expanded reasoning delta");
+        assert!(cx.debug_bounds("thinking-body-0").is_some());
+        cx.update_window_entity(&state, |s, _, cx| {
+            let pane = s.pane_mut(pane_id).unwrap();
+            let event = agent_bridge::AgentEvent::Text("Answer".into());
+            pane.chat.observe_status(&event);
+            push_chat_event(&mut pane.chat.messages, event);
+            cx.notify();
         });
         cx.draw_frame().expect("draw completed reasoning header");
+        assert!(cx.debug_bounds("thinking-body-0").is_none());
         let row = cx.debug_bounds("thinking-row-0").expect("thinking row");
         cx.simulate_click(row.origin + point(px(20.0), px(10.0)), Modifiers::default());
         cx.draw_frame().expect("expand completed reasoning");
@@ -27535,7 +28291,9 @@ First report
         let mut turn_trace = None;
         cx.update_window_entity(&state, |state, window, cx| {
             state.set_chat_mode(pane_id, true, window, cx);
-            let messages = state.pane_mut(pane_id).unwrap().chat.visible_messages_mut();
+            let chat = &mut state.pane_mut(pane_id).unwrap().chat;
+            chat.running = true;
+            let messages = chat.visible_messages_mut();
             for _ in 0..pairs {
                 messages.push(Arc::new(ChatMessage::new(ChatRole::User, "Prompt".into())));
                 messages.push(Arc::new(ChatMessage::new(
@@ -27575,12 +28333,23 @@ First report
             cx.draw_frame().unwrap();
         }
         let rss_before = process_rss_kib();
+        let built_before = state.read_with(&cx, |state, _| {
+            state
+                .pane_ref(pane_id)
+                .unwrap()
+                .chat
+                .row_cache
+                .borrow()
+                .built_rows
+        });
         let mut samples = Vec::new();
         for _ in 0..48 {
             cx.update_window_entity(&state, |state, _, cx| {
-                let messages = state.pane_mut(pane_id).unwrap().chat.visible_messages_mut();
+                let chat = &mut state.pane_mut(pane_id).unwrap().chat;
                 for _ in 0..deltas_per_frame {
-                    push_chat_event(messages, agent_bridge::AgentEvent::Text("x ".into()));
+                    let event = agent_bridge::AgentEvent::Text("x ".into());
+                    chat.observe_status(&event);
+                    push_chat_event(&mut chat.messages, event);
                 }
                 cx.notify();
             });
@@ -27588,12 +28357,27 @@ First report
             cx.draw_frame().unwrap();
             samples.push(start.elapsed().as_micros());
         }
+        let built_rows = state.read_with(&cx, |state, _| {
+            state
+                .pane_ref(pane_id)
+                .unwrap()
+                .chat
+                .row_cache
+                .borrow()
+                .built_rows
+                - built_before
+        });
+        assert_eq!(
+            built_rows,
+            48 * 2,
+            "only the reply and activity rows rebuild"
+        );
         samples.sort_unstable();
         if let Some(turn) = turn_trace {
             crate::stream_timing::turn_settled(turn);
         }
         println!(
-            "{name}: messages={} frame_us p50={} p95={} max={} rss_delta_kib={}",
+            "{name}: messages={} frame_us p50={} p95={} max={} rss_delta_kib={} built_rows={built_rows}",
             pairs * 3 + 2,
             samples[24],
             samples[45],
@@ -28420,6 +29204,67 @@ First report
     }
 
     #[test]
+    #[ignore = "prints long-block streaming costs; run with --ignored --nocapture"]
+    fn streaming_unsettled_block_microbench() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        for (name, opener, delta) in [
+            ("fence", "```rust\n", "let value = \"世界🦀\";\n"),
+            ("list", "7. first\n", "8. next\n   - nested 世界🦀\n"),
+            ("unfinished-line", "```text\n", "世界🦀"),
+        ] {
+            for deltas in [2_000, 8_000] {
+                let initial = format!("{opener}{}", delta.repeat(1_000));
+                let mut legacy = initial.clone();
+                let mut legacy_bytes = 0usize;
+                let start = Instant::now();
+                for _ in 0..deltas {
+                    legacy.push_str(delta);
+                    // Lower bound on the old full-tail scan/copy: omit Markdown
+                    // parsing, highlighting and list/fence classification.
+                    black_box(legacy.lines().count());
+                    legacy_bytes += legacy.len();
+                    black_box(SharedString::from(legacy.as_str()));
+                }
+                let legacy_time = start.elapsed();
+
+                let mut message = ChatMessage::new(ChatRole::Assistant, initial);
+                refresh_stream_view(&mut message, true);
+                let mut preview_bytes = 0usize;
+                let mut parser_bytes = 0usize;
+                let mut max_preview = 0usize;
+                let mut samples = Vec::with_capacity(deltas);
+                let start = Instant::now();
+                for _ in 0..deltas {
+                    let tick = Instant::now();
+                    message.text.push_str(delta);
+                    refresh_stream_view(&mut message, delta.contains('\n'));
+                    samples.push(tick.elapsed().as_nanos());
+                    let view = message.stream.as_ref().unwrap();
+                    preview_bytes += view.tail.len();
+                    max_preview = max_preview.max(view.tail.len());
+                    if !view.plain_tail {
+                        parser_bytes += view.tail.len();
+                    }
+                    black_box(view.tail.clone());
+                }
+                let bounded_time = start.elapsed();
+                assert_eq!(message.text, legacy);
+                assert!(max_preview <= STREAM_LIVE_BYTES);
+                assert_eq!(parser_bytes, 0, "oversized blocks bypass the live parser");
+                samples.sort_unstable();
+                println!(
+                    "unsettled {name} deltas={deltas} final_bytes={} legacy_scan_copy_lower_bound={legacy_time:?} bounded_refresh={bounded_time:?} refresh_ns_p50={} p95={} legacy_live_parser_and_copy_bytes={legacy_bytes} bounded_preview_copy_bytes={preview_bytes} bounded_live_parser_bytes={parser_bytes} max_preview_bytes={max_preview}",
+                    message.text.len(),
+                    samples[deltas / 2],
+                    samples[deltas * 95 / 100],
+                );
+            }
+        }
+    }
+
+    #[test]
     #[ignore = "prints microbenchmark timings; run with --ignored --nocapture"]
     fn streaming_hot_path_microbench() {
         use agent_bridge::AgentEvent;
@@ -28434,7 +29279,12 @@ First report
             .collect::<Vec<_>>();
 
         let mut old_message = ChatMessage::new(ChatRole::Assistant, base.clone());
-        refresh_stream_view(&mut old_message, true);
+        let (_, tail) = split_streaming_markdown(&old_message.text);
+        old_message.stream = Some(StreamView {
+            settled: SharedString::from(&old_message.text[..old_message.text.len() - tail.len()]),
+            tail: SharedString::from(tail),
+            plain_tail: false,
+        });
         let start = Instant::now();
         for token in &tokens {
             old_message.text.push_str(token);
@@ -28444,6 +29294,7 @@ First report
                 old_message.stream = Some(StreamView {
                     settled: SharedString::from(&old_message.text[..split]),
                     tail: SharedString::from(tail),
+                    plain_tail: false,
                 });
             } else {
                 old_message.stream.as_mut().unwrap().tail = SharedString::from(tail);
@@ -28452,10 +29303,13 @@ First report
         }
         let old_split = start.elapsed();
 
-        let start = Instant::now();
-        let mut new_message = ChatMessage::new(ChatRole::Assistant, base);
+        let mut new_message = ChatMessage::new(ChatRole::Assistant, String::new());
         new_message.streaming = true;
-        refresh_stream_view(&mut new_message, true);
+        for paragraph in base.split_inclusive("\n\n") {
+            new_message.text.push_str(paragraph);
+            refresh_stream_view(&mut new_message, true);
+        }
+        let start = Instant::now();
         for token in &tokens {
             new_message.text.push_str(token);
             refresh_stream_view(&mut new_message, token.contains('\n'));
