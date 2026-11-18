@@ -572,7 +572,13 @@ fn composer_tool_hook(
                     && workspace_edit(name, &call.args, &cwd))
                 || matches!(
                     name,
-                    "read" | "find" | "grep" | "ls" | embedded::task_list::NAME
+                    "read"
+                        | "find"
+                        | "grep"
+                        | "ls"
+                        | "output"
+                        | "batch"
+                        | embedded::task_list::NAME
                 ))
         {
             return Box::pin(async { None });

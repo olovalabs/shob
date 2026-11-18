@@ -52,7 +52,8 @@ use harness::types::{
 #[cfg(windows)]
 use tools::create_powershell_tool;
 use tools::{
-    create_bash_tool, create_edit_tool, create_read_tool, create_write_tool, ExecutionToolContext,
+    create_bash_tool, create_batch_tool, create_edit_tool, create_find_tool, create_grep_tool,
+    create_ls_tool, create_output_tool, create_read_tool, create_write_tool, ExecutionToolContext,
     MutationQueueRegistry, OsExecutionEnv,
 };
 
@@ -120,7 +121,9 @@ pub(crate) fn file_io_router(harness: &AgentHarness) -> Option<Arc<tools::file_i
 }
 
 /// The coding tools registered by the CLI by default.
-pub const BUILTIN_TOOL_NAMES: &[&str] = &["read", "bash", "edit", "write", "docs"];
+pub const BUILTIN_TOOL_NAMES: &[&str] = &[
+    "read", "bash", "edit", "write", "docs", "grep", "find", "ls", "output", "batch",
+];
 
 /// The default coding system prompt for the CLI's built-in tools.
 ///
@@ -302,6 +305,8 @@ fn builtin_tool_snippet(name: &str) -> Option<&'static str> {
         "find" => "Find files by glob pattern",
         "ls" => "List directory contents",
         "powershell" => "Execute PowerShell commands on Windows",
+        "output" => "Read or search saved command output without rerunning the command",
+        "batch" => "Run up to four independent enabled read-only tools concurrently",
         _ => return None,
     })
 }
@@ -2872,6 +2877,7 @@ fn merge_extension_tools(
     tool_context: &extensions::ToolCallContext,
 ) {
     let Some(snapshot) = session.snapshot() else {
+        instrument_tools(tools, false);
         return;
     };
     for et in snapshot.tools() {
@@ -2887,6 +2893,13 @@ fn merge_extension_tools(
             None => tools.push(harness_tool),
         }
     }
+    instrument_tools(
+        tools,
+        snapshot
+            .tools()
+            .iter()
+            .any(|tool| tool.tool.name == "batch"),
+    );
     // `tool_result` transforms see every tool's result, built-in or plugin.
     // Without one, the tools stay unwrapped.
     if let Some(snapshot) = session.snapshot_arc() {
@@ -2961,6 +2974,26 @@ fn build_tools(ctx: &ExecutionToolContext, args: &Args) -> Vec<HarnessTool> {
             "docs",
             HarnessTool::new(create_docs_tool()).with_replay(ToolReplay::Safe),
         ),
+        (
+            "grep",
+            HarnessTool::new(create_grep_tool(ctx, None)).with_replay(ToolReplay::Safe),
+        ),
+        (
+            "find",
+            HarnessTool::new(create_find_tool(ctx, None)).with_replay(ToolReplay::Safe),
+        ),
+        (
+            "ls",
+            HarnessTool::new(create_ls_tool(ctx, None)).with_replay(ToolReplay::Safe),
+        ),
+        (
+            "output",
+            HarnessTool::new(create_output_tool(ctx)).with_replay(ToolReplay::Safe),
+        ),
+        (
+            "batch",
+            HarnessTool::new(create_batch_tool(Vec::new())).with_replay(ToolReplay::Safe),
+        ),
     ];
 
     // Add PowerShell tool on Windows
@@ -3009,6 +3042,43 @@ fn build_tools(ctx: &ExecutionToolContext, args: &Args) -> Vec<HarnessTool> {
     }
 
     all.into_iter().map(|(_, t)| t).collect()
+}
+
+fn instrument_tools(tools: &mut [HarnessTool], custom_batch: bool) {
+    let metrics = Arc::new(tools::metrics::ToolMetrics::default());
+    for tool in tools.iter_mut() {
+        tool.tool = tools::metrics::measure_tool(tool.tool.clone(), metrics.clone());
+    }
+    let batch_replay = if tools.iter().any(|tool| {
+        matches!(
+            tool.tool.schema().name.as_str(),
+            "read" | "grep" | "find" | "ls" | "output"
+        ) && tool.tool.execution_mode() == agent::ToolExecutionMode::Parallel
+            && tool.replay != ToolReplay::Safe
+    }) {
+        ToolReplay::Never
+    } else {
+        ToolReplay::Safe
+    };
+    let read_only = tools
+        .iter()
+        .filter(|tool| {
+            matches!(
+                tool.tool.schema().name.as_str(),
+                "read" | "grep" | "find" | "ls" | "output"
+            )
+        })
+        .map(|tool| tool.tool.clone())
+        .collect();
+    if !custom_batch {
+        if let Some(batch) = tools
+            .iter_mut()
+            .find(|tool| tool.tool.schema().name == "batch")
+        {
+            batch.tool = tools::metrics::measure_tool(create_batch_tool(read_only), metrics);
+            batch.replay = batch_replay;
+        }
+    }
 }
 
 /// Resolve the active tool names from the constructed tools when no explicit
@@ -4905,7 +4975,7 @@ mod tests {
                 .map(|tool| tool.replay)
         };
 
-        for read_only in ["read", "docs"] {
+        for read_only in ["read", "docs", "grep", "find", "ls", "output", "batch"] {
             assert_eq!(
                 replay_of(read_only),
                 Some(ToolReplay::Safe),
@@ -4934,17 +5004,7 @@ mod tests {
             .map(|tool| tool.tool.schema().name.clone())
             .collect();
 
-        // `docs` is a default capability; the legacy rpi-only lookup tools stay
-        // unregistered. Asserted by membership (not exact equality) because
-        // `powershell` is Windows-only and `settings.json#defaultTools` may
-        // narrow the set in a developer's environment.
         assert!(names.contains(&"docs".to_string()));
-        for legacy in ["grep", "find", "ls"] {
-            assert!(
-                !names.contains(&legacy.to_string()),
-                "legacy tool {legacy} should not be registered by default"
-            );
-        }
     }
 
     #[test]
@@ -5339,6 +5399,56 @@ mod tests {
             ..Args::default()
         };
         assert!(filter_active_tool_names(names, &args).is_empty());
+    }
+
+    #[tokio::test]
+    async fn batch_respects_tool_policy_and_child_replay_restrictions() {
+        let env = Arc::new(tools::InMemoryExecutionEnv::new());
+        env.seed_file("/allowed.txt", b"allowed contents".to_vec())
+            .await;
+        let context = ExecutionToolContext::new(env.clone(), Some(env));
+        let args = Args {
+            tools: Some(vec!["read".into(), "batch".into()]),
+            ..Args::default()
+        };
+        let mut tools = build_tools(&context, &args);
+        tools
+            .iter_mut()
+            .find(|tool| tool.tool.schema().name == "read")
+            .unwrap()
+            .replay = ToolReplay::Never;
+        instrument_tools(&mut tools, false);
+        let batch = tools
+            .iter()
+            .find(|tool| tool.tool.schema().name == "batch")
+            .unwrap();
+        assert_eq!(batch.replay, ToolReplay::Never);
+        let result = batch
+            .tool
+            .execute(
+                "allowed",
+                serde_json::json!({"calls": [{"tool": "read", "path": "/allowed.txt"}]}),
+                tokio_util::sync::CancellationToken::new(),
+                Arc::new(|_| {}),
+            )
+            .await
+            .unwrap();
+        let agent::types::TextContentOrImage::Text(text) = &result.content[0] else {
+            panic!("batch text");
+        };
+        let items: serde_json::Value = serde_json::from_str(&text.text).unwrap();
+        assert_eq!(items[0]["result"]["content"][0]["text"], "allowed contents");
+        assert_eq!(result.details["performance"]["session_executions"], 2);
+        let denied = batch
+            .tool
+            .execute(
+                "denied",
+                serde_json::json!({"calls": [{"tool": "grep", "pattern": "contents"}]}),
+                tokio_util::sync::CancellationToken::new(),
+                Arc::new(|_| {}),
+            )
+            .await;
+        assert!(matches!(denied, Err(agent::AgentError::Validation(_))));
     }
 
     #[test]

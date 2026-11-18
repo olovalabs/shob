@@ -4,6 +4,7 @@
 //! shared helpers.
 
 pub mod bash;
+pub mod batch;
 pub mod edit;
 pub mod edit_diff;
 pub mod external;
@@ -11,6 +12,7 @@ pub mod find;
 pub mod grep;
 pub mod image;
 pub mod ls;
+pub mod output;
 pub mod powershell;
 pub mod read;
 pub mod task_list;
@@ -19,6 +21,7 @@ pub mod user_input;
 pub mod write;
 
 pub use bash::{create_bash_tool, BashExecution, BashPrepare, BashToolOptions};
+pub use batch::create_batch_tool;
 pub use edit::create_edit_tool;
 pub use external::{
     create_external_tool, validate_external_tool_definitions, ExternalToolBackend,
@@ -28,6 +31,7 @@ pub use find::create_find_tool;
 pub use grep::create_grep_tool;
 pub use image::{create_image_tool, create_image_tool_with_config, ImageToolConfig};
 pub use ls::create_ls_tool;
+pub use output::create_output_tool;
 pub use powershell::create_powershell_tool;
 pub use read::{create_read_tool, ProcessedImage, ReadImageProcessor, ReadToolOptions};
 pub use tool_context::ExecutionToolContext;

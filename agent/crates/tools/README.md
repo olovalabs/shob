@@ -90,13 +90,22 @@ every other test.
 
 ## Tools available
 
-`read`, `write`, `edit`, `bash`, `grep`, `find`, `ls`, `powershell`.
-`create_*_tool` constructors all take the shared `ExecutionToolContext`;
-`create_read_tool` and `create_bash_tool` additionally take an options argument
-(`None` for the defaults).
+`read`, `write`, `edit`, `bash`, `grep`, `find`, `ls`, `powershell`, `output`, `batch`.
+`create_*_tool` constructors take the shared `ExecutionToolContext`; the batch
+constructor instead takes the enabled read-only tool registry. It cannot run
+shell commands, mutations, or nested batches, and validates all children before
+starting any. It returns at most four ordered results with a 128 KiB cap each;
+oversized results are explicit failures directing the caller to the standalone
+tool.
 
-The `rpi` CLI loads `read`, `write`, `edit` and `bash` by default — the
-Pi-compatible set — and exposes the rest through the `default_tools` setting.
+Batch calls use each tool's fields directly, without an `arguments` wrapper:
+`{"calls":[{"tool":"read","path":"package.json"},{"tool":"ls","path":"app"}]}`.
+The published schema includes the required fields and options of each enabled
+child tool, so invalid child arguments are rejected before any read starts.
+
+The CLI and embedded backend expose these tools by default (PowerShell only on
+Windows), alongside the docs tool. `default_tools`, `--tools`, and
+`--exclude-tools` still restrict the available registry and batch children.
 
 ### Shell execution
 
@@ -109,11 +118,38 @@ completed calls may intentionally leave background descendants alive.
 
 The capture layer maintains a bounded display tail and persists the complete
 sanitized stream after display truncation, batching existing backlogs up to
-64 KiB without delaying sparse writes. First progress is immediate; Bash and
+64 KiB without delaying sparse writes. It also retains the first 6 KiB of
+output (once, never grown) so a *failed* truncated command can show a bounded
+head window alongside the tail — see below. First progress is immediate; Bash and
 PowerShell coalesce later checkpoints with one 16 ms timer, including when
 output goes quiet. `RPI_BASH_UPDATE_THROTTLE_MS` overrides that window.
 `ShellCaptureOptions::update_interval = None` retains per-chunk callbacks for
 other capture consumers.
+
+Display truncation is tail-only by default. When a command failed and its
+output was truncated, the terminal notice additionally shows a bounded head
+window: the first complete lines, an exact elided-line count, then the tail, then
+the full-log path. Nothing is filtered, summarised, reordered or inferred — the
+exit code comes from the recorded child status, not from the text — and the window
+is refused unless it is strictly smaller than the output it replaces, so it can
+never inflate a result. Non-zero output that fits within the limits is unchanged,
+as is every successful command.
+
+Both Bash and PowerShell accept `output_mode: "compact"`; the default `raw`
+preserves the existing output. Compact mode persists the complete sanitized log
+even for small commands, retains unknown text and diagnostics, collapses
+recognized Cargo/pytest/Go/JS passing or progress records, and groups adjacent
+identical diagnostic lines with exact occurrence counts. A compact view is used
+only when its marker and recovery path make it strictly smaller. Truncated
+captures are explicitly partial: only repeated retained diagnostics are grouped,
+never reported as a complete test summary. Failed persistence disables compaction.
+
+Use `output` with the saved `full_output_path` to inspect or search the log
+without rerunning a command. Shell results include capture duration (including
+spooling), final formatting duration, raw/displayed bytes and progress-update
+counts. Runtime tool details add `performance` measurements and shared counters;
+these are observed bytes and timings, not token estimates. Counters include
+batch children, are transient, and reset when tools are rebuilt or reloaded.
 
 Post-exit drain allows 100 ms plus at most 1 MiB of immediately ready bytes per
 pipe, not arbitrary future descendant output. Slow storage can delay final log
@@ -123,6 +159,22 @@ never advertised as a complete log.
 Native benchmark:
 `cargo run --manifest-path agent/Cargo.toml -p tools --example bench_shell -- 15`
 from the Shob root. See the root `SHELL_TOOL_AUDIT.md` for scope and results.
+
+### Saved command output
+
+`output` reads existing saved logs through stable file handles in 64 KiB chunks,
+returning at most 2,000 numbered source lines or 50 KiB. Supply `path`, optional
+1-based `offset` and `limit`, and optional `pattern` (`literal` and `ignore_case`
+are supported). Follow `next_offset` and, when present, `next_byte_offset` as
+`offset` and `byte_offset` to recover clipped text without skipping bytes.
+Continuation rescans the same log rather than caching its contents.
+
+Search uses memory-bounded streaming regular expressions. Unsupported assertions
+(such as Unicode word boundaries) or expressions exceeding the DFA memory budget
+return explicit validation errors; Unicode text and literals remain supported.
+Backends without stable ranged reads fail explicitly rather than eagerly loading
+the file. Logs are temporary files and may disappear during OS temporary-file
+cleanup.
 
 ### Content search
 
@@ -139,6 +191,14 @@ ripgrep, NUL detection stops binary-file searches, CRLF line endings are
 supported, and overlapping context windows are merged. Match counts are
 global across files; trailing context is retained at the match limit. Output
 remains capped at 50 KiB with individual lines capped at 500 characters.
+
+`grep` accepts `mode: "content"` (default), `"files"` (one matching filename), or
+`"count"` (matching-line counts per file). `offset` is a zero-based logical
+result offset; reuse `next_offset` with the same arguments and unchanged inputs.
+Pages rescan deterministically without caching filesystem state. Counts are
+exact only for fully searched files; partial counts and incomplete searches are
+labeled. Each page is capped at 10,000 results, 1,000 context lines per match,
+and the existing display byte limit. `files` stops at the first match per file.
 
 ## Related crates
 
