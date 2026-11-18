@@ -503,6 +503,11 @@ fn resolve_timeout(timeout: Option<f64>, default_timeout: Option<f64>) -> Result
     let secs = timeout
         .or(default_timeout)
         .unwrap_or(DEFAULT_BASH_TIMEOUT_SECONDS);
+    validate_timeout(secs)
+}
+
+/// Validate an explicit shell deadline before allocating or starting a process.
+pub(super) fn validate_timeout(secs: f64) -> Result<f64, AgentError> {
     if !secs.is_finite() || secs <= 0.0 {
         return Err(AgentError::Tool(
             "Invalid timeout: must be a finite number of seconds".into(),

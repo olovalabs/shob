@@ -20,6 +20,54 @@ pub const MAX_OUTPUT_BYTES: usize = MAX_CALLS * (MAX_ITEM_BYTES + 1) + 1;
 #[serde(deny_unknown_fields)]
 struct BatchInput {
     calls: Vec<BatchCall>,
+    codemode: Option<Projection>,
+}
+
+/// A small declarative result program, not a host-language interpreter.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Projection {
+    contains: Option<String>,
+    limit: usize,
+}
+
+impl Projection {
+    fn apply(&self, result: AgentToolResult) -> AgentToolResult {
+        let mut output = String::new();
+        let mut count = 0;
+        'blocks: for block in result.content {
+            let TextContentOrImage::Text(text) = block else {
+                continue;
+            };
+            for line in text.text.lines() {
+                if !line.contains(self.contains.as_deref().unwrap_or("")) {
+                    continue;
+                }
+                if count == self.limit || output.len() >= 4096 {
+                    output.push_str("… (more matches omitted)");
+                    break 'blocks;
+                }
+                let mut end = line.len().min(4096 - output.len());
+                while !line.is_char_boundary(end) {
+                    end -= 1;
+                }
+                output.push_str(&line[..end]);
+                if end < line.len() {
+                    output.push_str("… (truncated)");
+                    break 'blocks;
+                }
+                output.push('\n');
+                count += 1;
+            }
+        }
+        if output.is_empty() {
+            output.push_str("(no matching text lines)");
+        }
+        AgentToolResult {
+            content: vec![TextContentOrImage::text(output)],
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -93,7 +141,7 @@ pub fn create_batch_tool(tools: Vec<Arc<dyn AgentTool>>) -> Arc<dyn AgentTool> {
         schema: Tool {
             name: "batch".into(),
             description: format!(
-                "Run 1–{MAX_CALLS} independent read-only calls in one round trip, with at most {MAX_CONCURRENCY} running at once. Split larger sets across batches. Each call uses the standalone tool's fields directly, plus tool: for example {{\"calls\":[{{\"tool\":\"read\",\"path\":\"package.json\"}},{{\"tool\":\"ls\",\"path\":\"app\"}}]}}. No arguments wrapper. Only enabled read, grep, find, ls and output tools are allowed. Results stay in input order; each failure is explicit. No shell, mutations or nested batches. Each result is capped at 128 KiB; use the standalone tool for larger results."
+                "Run 1–{MAX_CALLS} independent read-only calls in one round trip, with at most {MAX_CONCURRENCY} running at once. Split larger sets across batches. Each call uses the standalone tool's fields directly, plus tool: for example {{\"calls\":[{{\"tool\":\"read\",\"path\":\"package.json\"}},{{\"tool\":\"ls\",\"path\":\"app\"}}]}}. No arguments wrapper. Only enabled read, grep, find, ls and output tools are allowed. Results stay in input order; each failure is explicit. No shell, mutations or nested batches. For code investigation, add optional top-level codemode: {{\"contains\":\"literal\",\"limit\":12}} to return only matching text lines from each successful call (omit contains for first lines). Each result is capped at 128 KiB; use the standalone tool for larger results."
             ),
             parameters: ai::types::Schema::new(parameters),
             constrained_sampling: None,
@@ -134,6 +182,13 @@ fn batch_schema(tools: &[Entry]) -> Value {
     json!({
         "type": "object",
         "properties": {
+            "codemode": {
+                "type": "object", "additionalProperties": false, "required": ["limit"],
+                "properties": {
+                    "contains": {"type": "string", "maxLength": 256},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+                }
+            },
             "calls": {
                 "type": "array",
                 "minItems": 1,
@@ -214,6 +269,13 @@ impl AgentTool for BatchTool {
                 "batch requires 1–{MAX_CALLS} calls"
             )));
         }
+        let projection = input.codemode.as_ref();
+        if projection.is_some_and(|p| {
+            !(1..=100).contains(&p.limit)
+                || p.contains.as_ref().is_some_and(|s| s.chars().count() > 256)
+        }) {
+            return Err(AgentError::Validation("invalid codemode projection".into()));
+        }
         let mut calls = Vec::with_capacity(input.calls.len());
         // Validate the entire batch before any operation starts.
         for (index, call) in input.calls.into_iter().enumerate() {
@@ -245,8 +307,10 @@ impl AgentTool for BatchTool {
         if signal.is_cancelled() {
             return Err(AgentError::Abort);
         }
-        let pending: Vec<_> = calls.into_iter().map(|(entry, arguments, index)| {
-            let signal = signal.clone();
+        let child = signal.child_token();
+        let _cancel = child.clone().drop_guard();
+        let pending = calls.into_iter().map(|(entry, arguments, index): (&Entry, Value, usize)| {
+            let signal = child.clone();
             async move {
                 let name = &entry.tool.schema().name;
                 let id = format!("{tool_call_id}:{index}");
@@ -256,7 +320,7 @@ impl AgentTool for BatchTool {
                     entry.tool.execute(&id, arguments, signal, Arc::new(|_| {})).await
                 };
                 let (result, is_error, error) = match result {
-                    Ok(result) => (Some(result), false, None),
+                    Ok(result) => (Some(match projection { Some(p) => p.apply(result), None => result }), false, None),
                     Err(AgentError::StructuredTool(result)) => (Some(*result), true, None),
                     Err(error) => (None, true, Some(error.to_string())),
                 };
@@ -269,11 +333,19 @@ impl AgentTool for BatchTool {
                     String::from_utf8(writer.0).expect("JSON is UTF-8")
                 }
             }
-        }).collect();
-        let results = stream::iter(pending)
+        }).collect::<Vec<_>>();
+        let collect = stream::iter(pending)
             .buffered(MAX_CONCURRENCY)
-            .collect::<Vec<_>>()
-            .await;
+            .collect::<Vec<_>>();
+        let results = if projection.is_some() {
+            tokio::select! {
+                _ = signal.cancelled() => return Err(AgentError::Abort),
+                result = tokio::time::timeout(std::time::Duration::from_secs(30), collect) =>
+                    result.map_err(|_| AgentError::Tool("codemode exceeded 30 seconds".into()))?,
+            }
+        } else {
+            collect.await
+        };
         if signal.is_cancelled() {
             return Err(AgentError::Abort);
         }
@@ -282,5 +354,26 @@ impl AgentTool for BatchTool {
             details: json!({"calls": results.len(), "max_concurrency": MAX_CONCURRENCY}),
             ..Default::default()
         })
+    }
+}
+
+#[cfg(test)]
+mod projection_tests {
+    use super::*;
+
+    #[test]
+    fn projection_filters_before_limiting() {
+        let projection = Projection {
+            contains: Some("hit".into()),
+            limit: 1,
+        };
+        let result = projection.apply(AgentToolResult {
+            content: vec![TextContentOrImage::text("skip\nhit one\nhit two")],
+            ..Default::default()
+        });
+        let TextContentOrImage::Text(text) = &result.content[0] else {
+            panic!()
+        };
+        assert_eq!(text.text, "hit one\n… (more matches omitted)");
     }
 }
