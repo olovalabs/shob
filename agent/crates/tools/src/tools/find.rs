@@ -28,8 +28,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
-use crate::env::ExecutionEnv;
-use crate::env::FileKind;
+use crate::env::{check_cancel_file, ExecutionEnv, FileKind};
+use crate::error::FileErrorCode;
 use crate::path_utils::resolve_read_tool_path;
 use crate::tools::tool_context::ExecutionToolContext;
 use crate::truncate::{
@@ -165,10 +165,14 @@ impl AgentTool for FindTool {
             }
             let mut entries = match self.env.list_dir(&abs_dir, cancel).await {
                 Ok(e) => e,
+                Err(error) if error.code == FileErrorCode::Aborted => {
+                    return Err(file_err_to_agent(error));
+                }
                 Err(_) => continue, // unreadable dir — skip
             };
-            entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            entries.sort_by_cached_key(|entry| entry.name.to_lowercase());
             for entry in entries {
+                check_cancel_file(cancel, Some(&search_path)).map_err(file_err_to_agent)?;
                 if collected.len() >= effective_limit {
                     result_limit_reached = true;
                     break;

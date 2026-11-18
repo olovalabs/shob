@@ -62,6 +62,13 @@ async fn run_suite(env: Arc<dyn ExecutionEnv>) {
     assert_eq!(info.kind, FileKind::File);
     assert_eq!(info.size, 11);
 
+    let entries = env.list_dir("dir/sub", None).await.expect("list_dir");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].path, info.path);
+    assert_eq!(entries[0].kind, info.kind);
+    assert_eq!(entries[0].size, info.size);
+    assert_eq!(entries[0].mtime_ms, info.mtime_ms);
+
     // exists true/false.
     assert!(env.exists("dir/sub/file.txt", None).await.expect("exists"));
     assert!(!env.exists("nope.txt", None).await.expect("exists false"));

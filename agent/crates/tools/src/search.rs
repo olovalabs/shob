@@ -123,7 +123,7 @@ impl ContentSearch {
             0
         };
         SearcherBuilder::new()
-            .line_number(true)
+            .line_number(self.mode == ContentSearchMode::Content)
             .line_terminator(LineTerminator::crlf())
             .before_context(context)
             .after_context(context)
@@ -131,14 +131,24 @@ impl ContentSearch {
             .build()
     }
 
-    fn includes(&self, path: &Path, rel: &str) -> bool {
+    fn includes(&self, root: &Path, file: &Path) -> bool {
         match &self.glob {
-            Some((matcher, true)) => matcher.is_match(rel),
+            Some((matcher, true)) => {
+                matcher.is_match(relative_file(root, file).to_string_lossy().as_ref())
+            }
             Some((matcher, false)) => {
-                matcher.is_match(path.file_name().unwrap_or(path.as_os_str()))
+                matcher.is_match(file.file_name().unwrap_or(file.as_os_str()))
             }
             None => true,
         }
+    }
+}
+
+fn relative_file<'a>(root: &Path, file: &'a Path) -> &'a Path {
+    if file == root {
+        Path::new(file.file_name().unwrap_or(file.as_os_str()))
+    } else {
+        file.strip_prefix(root).unwrap_or(file)
     }
 }
 
@@ -388,27 +398,23 @@ pub(crate) fn search_native(
     let mut result = ContentSearchResult::default();
     let mut searcher = search.searcher();
     let mut search_file = |path: &Path, rel: &str| {
-        if search.includes(path, rel) {
-            if let Ok(file) = std::fs::File::open(path) {
-                let reader = CancelReader {
-                    inner: file,
-                    cancel,
-                };
-                let sink = SearchSink::new(&mut result, &search, rel, cancel);
-                searcher
-                    .search_reader(&search.matcher, reader, sink)
-                    .map_err(|error| io_to_file_error(error, Some(rel)))?;
-            }
+        if let Ok(file) = std::fs::File::open(path) {
+            let reader = CancelReader {
+                inner: file,
+                cancel,
+            };
+            let sink = SearchSink::new(&mut result, &search, rel, cancel);
+            searcher
+                .search_reader(&search.matcher, reader, sink)
+                .map_err(|error| io_to_file_error(error, Some(rel)))?;
         }
         check_cancel_file(cancel, None)?;
         Ok::<_, FileError>(result.stopped())
     };
     if metadata.is_file() {
-        let rel = path
-            .file_name()
-            .unwrap_or(path.as_os_str())
-            .to_string_lossy();
-        search_file(path, &rel)?;
+        if search.includes(path, path) {
+            search_file(path, &relative_file(path, path).to_string_lossy())?;
+        }
     } else if metadata.is_dir() {
         let mut queue = VecDeque::from([path.to_path_buf()]);
         while let Some(directory) = queue.pop_front() {
@@ -421,10 +427,14 @@ pub(crate) fn search_native(
             let mut entries = Vec::new();
             for entry in walker {
                 check_cancel_file(cancel, None)?;
-                if let Ok(entry) = entry {
-                    if entry.depth() != 0 {
-                        entries.push(entry);
-                    }
+                let Ok(entry) = entry else { continue };
+                if entry.depth() == 0 {
+                    continue;
+                }
+                if entry.file_type().is_some_and(|kind| {
+                    kind.is_dir() || (kind.is_file() && search.includes(path, entry.path()))
+                }) {
+                    entries.push(entry);
                 }
             }
             entries.sort_by_cached_key(|entry| {
@@ -437,11 +447,7 @@ pub(crate) fn search_native(
                 match entry.file_type() {
                     Some(kind) if kind.is_dir() => queue.push_back(entry.into_path()),
                     Some(kind) if kind.is_file() => {
-                        let rel = entry
-                            .path()
-                            .strip_prefix(path)
-                            .unwrap_or(entry.path())
-                            .to_string_lossy();
+                        let rel = relative_file(path, entry.path()).to_string_lossy();
                         if search_file(entry.path(), &rel)? {
                             return Ok(result);
                         }
@@ -511,14 +517,8 @@ pub(crate) async fn search_env<E: FileSystem + ?Sized>(
             }
             continue;
         }
-        let rel = if path == root {
-            path.file_name()
-                .unwrap_or(path.as_os_str())
-                .to_string_lossy()
-        } else {
-            path.strip_prefix(root).unwrap_or(&path).to_string_lossy()
-        };
-        if search.includes(&path, &rel) {
+        if search.includes(root, &path) {
+            let rel = relative_file(root, &path).to_string_lossy();
             match env.read_binary_file(&path.to_string_lossy(), cancel).await {
                 Ok(bytes) => {
                     let sink = SearchSink::new(&mut result, &search, &rel, cancel);

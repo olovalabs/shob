@@ -195,14 +195,43 @@ async fn read_rejects_offset_beyond_end() {
 }
 
 #[tokio::test]
+async fn native_large_reads_return_a_continuation_without_counting_the_tail() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut bytes = b"first\n\nthird\nfourth\n".to_vec();
+    bytes.resize(128 * 1024, b'x');
+    std::fs::write(dir.path().join("large.txt"), bytes).unwrap();
+    let env = Arc::new(tools::OsExecutionEnv::with_cwd(dir.path().to_owned()));
+    let tool = tools::create_read_tool(&ExecutionToolContext::new(env, None), None);
+    let first = run_read(
+        tool.clone(),
+        serde_json::json!({ "path": "large.txt", "offset": 2, "limit": 2 }),
+    )
+    .await
+    .unwrap();
+    assert!(text_output(&first).starts_with("\nthird\n\n"));
+    assert_eq!(first.details["next_offset"], 4);
+    assert!(first.details.get("truncation").is_none());
+
+    let second = run_read(
+        tool,
+        serde_json::json!({ "path": "large.txt", "offset": first.details["next_offset"] }),
+    )
+    .await
+    .unwrap();
+    assert!(text_output(&second).starts_with("fourth\n\n"));
+    assert_eq!(second.details["next_offset"], 5);
+}
+
+#[tokio::test]
 async fn read_detects_supported_image_by_content() {
     use tools::encode_base64;
-    let (env, ctx) = fresh_context();
-    // Minimal valid 1x1 PNG.
-    let png: Vec<u8> = base64_png();
-    seed(&env, "image.txt", png.clone()).await;
-
-    let tool = tools::create_read_tool(&ctx, None);
+    let dir = tempfile::tempdir().unwrap();
+    // Exercise native header sniffing even when a disguised image is large.
+    let mut png = base64_png();
+    png.resize(128 * 1024, 0);
+    std::fs::write(dir.path().join("image.txt"), &png).unwrap();
+    let env = Arc::new(tools::OsExecutionEnv::with_cwd(dir.path().to_owned()));
+    let tool = tools::create_read_tool(&ExecutionToolContext::new(env, None), None);
     let result = run_read(tool, serde_json::json!({ "path": "image.txt" }))
         .await
         .expect("read ok");

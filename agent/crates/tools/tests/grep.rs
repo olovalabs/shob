@@ -254,6 +254,17 @@ async fn grep_native_walk_respects_ignore_rules_and_preserves_breadth_first_orde
         "z.txt:1: needle\nnested/keep.tmp:1: needle\nnested/deep/a.txt:1: needle"
     );
 
+    let filtered = run_grep(
+        tool.clone(),
+        serde_json::json!({"pattern": "needle", "mode": "files", "glob": "nested/**"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        text_output(&filtered).replace('\\', "/"),
+        "nested/keep.tmp\nnested/deep/a.txt"
+    );
+
     let explicit = run_grep(
         tool,
         serde_json::json!({"pattern": "needle", "path": "target/output.txt"}),

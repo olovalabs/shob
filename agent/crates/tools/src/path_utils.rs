@@ -60,29 +60,23 @@ pub async fn resolve_read_tool_path(
 ) -> Result<String, FileError> {
     let resolved = resolve_tool_path(env, path, cancel).await?;
 
-    // Build the candidate variant list in insertion order. Dedupe via a Vec
-    // (preserve order; small N).
-    let mut variants: Vec<String> = Vec::new();
-    variants.push(resolved.clone());
-    // AM/PM: regular-space AM/PM. → narrow-NBSP AM/PM. (case-insensitive, only
-    // the space immediately before AM/PM).
-    variants.push(replace_am_pm_space(&resolved));
-    // NFD decomposition.
-    variants.push(nfd(&resolved));
-    // ASCII apostrophe → right single quote.
-    variants.push(resolved.replace('\'', "\u{2019}"));
-    // NFD + apostrophe.
-    variants.push(replace_apostrophe(&nfd(&resolved), '\u{2019}'));
+    if env.exists(&resolved, cancel).await? {
+        return Ok(resolved);
+    }
 
-    // Dedupe preserving insertion order.
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let deduped: Vec<String> = variants
-        .into_iter()
-        .filter(|v| seen.insert(v.clone()))
-        .collect();
-
-    for variant in &deduped {
-        if env.exists(variant, cancel).await? {
+    let decomposed = nfd(&resolved);
+    let nfd_with_apostrophe = replace_apostrophe(&decomposed, '\u{2019}');
+    let variants = [
+        replace_am_pm_space(&resolved),
+        decomposed,
+        replace_apostrophe(&resolved, '\u{2019}'),
+        nfd_with_apostrophe,
+    ];
+    for (idx, variant) in variants.iter().enumerate() {
+        if variant != &resolved
+            && !variants[..idx].contains(variant)
+            && env.exists(variant, cancel).await?
+        {
             return Ok(variant.clone());
         }
     }
