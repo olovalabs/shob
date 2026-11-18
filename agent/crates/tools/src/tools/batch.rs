@@ -36,15 +36,21 @@ impl Projection {
         let mut output = String::new();
         let mut count = 0;
         'blocks: for block in result.content {
-            let TextContentOrImage::Text(text) = block else { continue };
+            let TextContentOrImage::Text(text) = block else {
+                continue;
+            };
             for line in text.text.lines() {
-                if !line.contains(self.contains.as_deref().unwrap_or("")) { continue; }
+                if !line.contains(self.contains.as_deref().unwrap_or("")) {
+                    continue;
+                }
                 if count == self.limit || output.len() >= 4096 {
                     output.push_str("… (more matches omitted)");
                     break 'blocks;
                 }
                 let mut end = line.len().min(4096 - output.len());
-                while !line.is_char_boundary(end) { end -= 1; }
+                while !line.is_char_boundary(end) {
+                    end -= 1;
+                }
                 output.push_str(&line[..end]);
                 if end < line.len() {
                     output.push_str("… (truncated)");
@@ -54,8 +60,13 @@ impl Projection {
                 count += 1;
             }
         }
-        if output.is_empty() { output.push_str("(no matching text lines)"); }
-        AgentToolResult { content: vec![TextContentOrImage::text(output)], ..Default::default() }
+        if output.is_empty() {
+            output.push_str("(no matching text lines)");
+        }
+        AgentToolResult {
+            content: vec![TextContentOrImage::text(output)],
+            ..Default::default()
+        }
     }
 }
 
@@ -259,8 +270,10 @@ impl AgentTool for BatchTool {
             )));
         }
         let projection = input.codemode.as_ref();
-        if projection.is_some_and(|p| !(1..=100).contains(&p.limit)
-            || p.contains.as_ref().is_some_and(|s| s.chars().count() > 256)) {
+        if projection.is_some_and(|p| {
+            !(1..=100).contains(&p.limit)
+                || p.contains.as_ref().is_some_and(|s| s.chars().count() > 256)
+        }) {
             return Err(AgentError::Validation("invalid codemode projection".into()));
         }
         let mut calls = Vec::with_capacity(input.calls.len());
@@ -330,7 +343,9 @@ impl AgentTool for BatchTool {
                 result = tokio::time::timeout(std::time::Duration::from_secs(30), collect) =>
                     result.map_err(|_| AgentError::Tool("codemode exceeded 30 seconds".into()))?,
             }
-        } else { collect.await };
+        } else {
+            collect.await
+        };
         if signal.is_cancelled() {
             return Err(AgentError::Abort);
         }
@@ -348,12 +363,17 @@ mod projection_tests {
 
     #[test]
     fn projection_filters_before_limiting() {
-        let projection = Projection { contains: Some("hit".into()), limit: 1 };
+        let projection = Projection {
+            contains: Some("hit".into()),
+            limit: 1,
+        };
         let result = projection.apply(AgentToolResult {
             content: vec![TextContentOrImage::text("skip\nhit one\nhit two")],
             ..Default::default()
         });
-        let TextContentOrImage::Text(text) = &result.content[0] else { panic!() };
+        let TextContentOrImage::Text(text) = &result.content[0] else {
+            panic!()
+        };
         assert_eq!(text.text, "hit one\n… (more matches omitted)");
     }
 }

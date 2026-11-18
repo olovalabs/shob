@@ -82,7 +82,10 @@ impl AgentTool for PowerShellTool {
         }
         let input: PowerShellInput = serde_json::from_value(params)
             .map_err(|e| AgentError::Validation(format!("powershell input invalid: {e}")))?;
-        let timeout = input.timeout.map(super::bash::validate_timeout).transpose()?;
+        let timeout = input
+            .timeout
+            .map(super::bash::validate_timeout)
+            .transpose()?;
         let utf16: Vec<u8> = input
             .command
             .encode_utf16()

@@ -172,7 +172,10 @@ pub fn default_system_prompt_with_tool_prompts(
                 .cloned()
                 .unwrap_or_else(|| ToolPromptMetadata {
                     prompt_snippet: builtin_tool_snippet(name).map(str::to_owned),
-                    prompt_guidelines: builtin_tool_guideline(name).map(str::to_owned).into_iter().collect(),
+                    prompt_guidelines: builtin_tool_guideline(name)
+                        .map(str::to_owned)
+                        .into_iter()
+                        .collect(),
                 })
                 .normalized();
             (name.as_str(), prompt)
@@ -4855,7 +4858,11 @@ mod tests {
         assert!(p.contains("Re-stating the same plan without acting on it is a bug"));
         let none = default_system_prompt_with_tools("/tmp/proj", false, &[]);
         assert!(none.contains("Available tools:\n(none)"));
-        for rule in ["Use codemode", "output_mode=compact", "Inspect the saved log"] {
+        for rule in [
+            "Use codemode",
+            "output_mode=compact",
+            "Inspect the saved log",
+        ] {
             assert!(!p.contains(rule));
             assert!(default_system_prompt("/tmp/proj", true).contains(rule));
         }
