@@ -2,7 +2,8 @@
 //! output-capture layer wrapping `Shell::exec`.
 //!
 //! Combines sanitized stdout+stderr into a bounded rolling tail. Once output
-//! exceeds display limits, a complete sanitized log is persisted asynchronously.
+//! exceeds display limits, or when requested, a complete sanitized log is
+//! persisted asynchronously.
 //! A bounded channel backpressures pipe readers while filesystem writes yield;
 //! child status, timeout and cancellation are driven independently of the spool.
 //! Optional progress coalescing uses one execution-local timer, including during
@@ -16,7 +17,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio_util::sync::CancellationToken;
 
@@ -46,6 +47,14 @@ pub struct ShellCaptureProgress {
     pub last_line_bytes: usize,
 }
 
+/// Observed capture work, including asynchronous persistence finalization.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct ShellCaptureMetrics {
+    pub execution_ms: f64,
+    pub captured_bytes: usize,
+    pub progress_updates: usize,
+}
+
 /// Mirrors `ShellCaptureResult`.
 #[derive(Clone)]
 pub struct ShellCaptureResult {
@@ -62,6 +71,7 @@ pub struct ShellCaptureResult {
     pub cancelled: bool,
     pub truncated: bool,
     pub execution_error: Option<ExecutionError>,
+    pub metrics: ShellCaptureMetrics,
 }
 
 /// Mirrors `ShellCaptureOptions`.
@@ -77,6 +87,8 @@ pub struct ShellCaptureOptions<'a> {
     /// Coalesce progress with one timer; `None` preserves per-chunk callbacks.
     pub update_interval: Option<Duration>,
     pub return_execution_errors: bool,
+    /// Persist complete sanitized output even when it fits the display limits.
+    pub persist_output: bool,
 }
 
 impl<'a> Default for ShellCaptureOptions<'a> {
@@ -91,6 +103,7 @@ impl<'a> Default for ShellCaptureOptions<'a> {
             on_chunk: None,
             update_interval: None,
             return_execution_errors: false,
+            persist_output: false,
         }
     }
 }
@@ -115,9 +128,11 @@ impl CaptureState {
     fn ingest_chunk(&mut self, text: &str) {
         let text_bytes = text.len();
         self.total_bytes += text_bytes;
-        let newline_count = text.matches('\n').count();
-        self.completed_lines += newline_count;
-        let last_newline = text.rfind('\n');
+        let mut last_newline = None;
+        for (index, _) in text.match_indices('\n') {
+            self.completed_lines += 1;
+            last_newline = Some(index);
+        }
         match last_newline {
             Some(idx) => {
                 let trailing = &text[idx + 1..];
@@ -134,32 +149,40 @@ impl CaptureState {
         // runs only until the cap is reached, and only ever appends to a
         // `MAX_HEAD_BYTES`-bounded buffer, so a long-running command pays one
         // small memcpy for its first chunks and nothing afterwards.
-        if !self.head_full {
-            self.head_output.push_str(text);
-            if self.head_output.len() > MAX_HEAD_BYTES {
-                let mut cut = MAX_HEAD_BYTES;
-                while cut > 0 && !self.head_output.is_char_boundary(cut) {
-                    cut -= 1;
-                }
-                // Snap down to the last complete line so the head never ends
-                // mid-line; a single line longer than the cap keeps nothing.
-                let head_prefix = &self.head_output[..cut];
-                let keep = match head_prefix.rfind('\n') {
-                    Some(newline) => newline + 1,
-                    None => 0,
-                };
+        if !self.head_full && !text.is_empty() {
+            let available = MAX_HEAD_BYTES - self.head_output.len();
+            let mut take = available.min(text_bytes);
+            while !text.is_char_boundary(take) {
+                take -= 1;
+            }
+            if self.head_output.capacity() == 0 {
+                self.head_output = String::with_capacity(MAX_HEAD_BYTES);
+            }
+            self.head_output.push_str(&text[..take]);
+            if text_bytes >= available {
+                // Include only complete lines, including when a chunk lands
+                // exactly on the cap. Never copy the oversized remainder.
+                let keep = self.head_output.rfind('\n').map_or(0, |index| index + 1);
                 self.head_output.truncate(keep);
-                self.head_output.shrink_to_fit();
                 self.head_full = true;
             }
         }
-        // Advance a logical start without moving the tail on every pipe read.
-        self.tail_output.push_str(text);
-        let live = &self.tail_output[self.tail_start..];
-        self.tail_start += live.len() - trim_to_last_utf8_bytes(live, MAX_OUTPUT_BYTES).len();
-        if self.tail_start >= MAX_OUTPUT_BYTES {
-            self.tail_output.drain(..self.tail_start);
+        if text_bytes >= MAX_OUTPUT_BYTES {
+            // A large backend chunk replaces the entire live tail; do not
+            // allocate/copy its discarded prefix.
+            self.tail_output.clear();
+            self.tail_output
+                .push_str(trim_to_last_utf8_bytes(text, MAX_OUTPUT_BYTES));
             self.tail_start = 0;
+        } else {
+            // Advance a logical start without moving the tail on every read.
+            self.tail_output.push_str(text);
+            let live = &self.tail_output[self.tail_start..];
+            self.tail_start += live.len() - trim_to_last_utf8_bytes(live, MAX_OUTPUT_BYTES).len();
+            if self.tail_start >= MAX_OUTPUT_BYTES {
+                self.tail_output.drain(..self.tail_start);
+                self.tail_start = 0;
+            }
         }
     }
 
@@ -281,6 +304,7 @@ pub async fn execute_shell_with_capture(
     command: &str,
     options: ShellCaptureOptions<'_>,
 ) -> Result<ShellCaptureResult, ExecutionError> {
+    let started = Instant::now();
     let (output, mut receiver) = tokio::sync::mpsc::channel(8);
     let exec_opts = ShellExecOptions {
         shell: options.shell,
@@ -304,6 +328,7 @@ pub async fn execute_shell_with_capture(
         let mut spool_writer: Option<Box<dyn crate::env::AppendFile>> = None;
         let mut spool_buffer = String::new();
         let mut on_chunk = options.on_chunk;
+        let mut progress_updates = 0;
         let mut dirty = false;
         let mut first = true;
         let mut deadline = tokio::time::Instant::now();
@@ -315,6 +340,7 @@ pub async fn execute_shell_with_capture(
                 _ = &mut timer, if dirty && options.update_interval.is_some() => {
                     if let Some(cb) = on_chunk.as_mut() {
                         cb("", &|| Some(state.create_progress()));
+                        progress_updates += 1;
                     }
                     dirty = false;
                     deadline = tokio::time::Instant::now() + options.update_interval.unwrap();
@@ -339,6 +365,7 @@ pub async fn execute_shell_with_capture(
                 let now = tokio::time::Instant::now();
                 if first || options.update_interval.is_none() || now >= deadline {
                     cb(&text, &|| Some(state.create_progress()));
+                    progress_updates += 1;
                     first = false;
                     dirty = false;
                     deadline = now + options.update_interval.unwrap_or_default();
@@ -351,8 +378,9 @@ pub async fn execute_shell_with_capture(
                     prefix.push_str(&text);
                 }
                 let total_lines = state.completed_lines + usize::from(state.has_open_line);
-                let needs_spool =
-                    state.total_bytes > DEFAULT_MAX_BYTES || total_lines > DEFAULT_MAX_LINES;
+                let needs_spool = options.persist_output
+                    || state.total_bytes > DEFAULT_MAX_BYTES
+                    || total_lines > DEFAULT_MAX_LINES;
                 if state.full_output_path.is_none() && !needs_spool {
                     continue;
                 }
@@ -389,6 +417,7 @@ pub async fn execute_shell_with_capture(
                             _ = &mut timer, if dirty && options.update_interval.is_some() => {
                                 if let Some(cb) = on_chunk.as_mut() {
                                     cb("", &|| Some(state.create_progress()));
+                                    progress_updates += 1;
                                 }
                                 dirty = false;
                                 deadline = tokio::time::Instant::now() + options.update_interval.unwrap();
@@ -421,12 +450,21 @@ pub async fn execute_shell_with_capture(
                 {
                     tracing::warn!("shell full-output persistence failed: {error}");
                     state.full_output_path = None;
+                    spool_failed = true;
                 }
+            }
+        }
+        if options.persist_output && !spool_failed && state.full_output_path.is_none() {
+            // Empty/sanitized-away output still has a complete persisted log.
+            match init_full_output_file(env, prefix).await {
+                Ok((path, _writer)) => state.full_output_path = Some(path),
+                Err(error) => tracing::warn!("shell full-output persistence failed: {error}"),
             }
         }
         let progress = state.create_progress();
         if let Some(cb) = on_chunk.as_mut() {
             cb("", &|| Some(progress.clone()));
+            progress_updates += 1;
         }
         // Move the retained prefix out with the final snapshot; the capture state is
         // done afterwards. `mem::take` keeps this a move, not a copy.
@@ -435,10 +473,16 @@ pub async fn execute_shell_with_capture(
         } else {
             String::new()
         };
-        (progress, head_output)
+        (progress, head_output, progress_updates)
     };
     // A stalled spool backpressures reads, not child status/kill/deadline.
-    let (exec_result, (progress, head_output)) = tokio::join!(execution, consumer);
+    let (exec_result, (progress, head_output, progress_updates)) =
+        tokio::join!(execution, consumer);
+    let metrics = ShellCaptureMetrics {
+        execution_ms: started.elapsed().as_secs_f64() * 1000.0,
+        captured_bytes: progress.truncation.total_bytes,
+        progress_updates,
+    };
     // Pull the scalar/move fields out once so we never read a partially-moved
     // `progress` (e.g. `progress.truncation.truncated` after `truncation:` moved it).
     let ShellCaptureProgress {
@@ -461,6 +505,7 @@ pub async fn execute_shell_with_capture(
                 cancelled,
                 truncated: truncated_flag,
                 execution_error: None,
+                metrics,
             })
         }
         Err(e) => {
@@ -477,6 +522,7 @@ pub async fn execute_shell_with_capture(
                     cancelled: true,
                     truncated: truncated_flag,
                     execution_error: None,
+                    metrics,
                 })
             } else if options.return_execution_errors {
                 Ok(ShellCaptureResult {
@@ -489,6 +535,7 @@ pub async fn execute_shell_with_capture(
                     cancelled: false,
                     truncated: truncated_flag,
                     execution_error: Some(e),
+                    metrics,
                 })
             } else {
                 Err(e)
@@ -549,6 +596,231 @@ pub use crate::truncate::format_size;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::env::{FileInfo, FileSystem, Shell, ShellOutput};
+    use crate::error::{FileError, FileErrorCode};
+    use crate::in_memory::InMemoryExecutionEnv;
+    use std::path::Path;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CaptureEnv {
+        files: InMemoryExecutionEnv,
+        chunks: Vec<String>,
+        append_calls: AtomicUsize,
+        fail_append: Option<usize>,
+    }
+
+    impl CaptureEnv {
+        fn new(chunks: Vec<String>) -> Self {
+            Self {
+                files: InMemoryExecutionEnv::new(),
+                chunks,
+                append_calls: AtomicUsize::new(0),
+                fail_append: None,
+            }
+        }
+    }
+
+    // Reuse the memory filesystem except for deterministic append failures.
+    macro_rules! capture_filesystem {
+        ($(fn $name:ident($($arg:ident: $ty:ty),*) -> $result:ty;)*) => {
+            #[async_trait::async_trait]
+            impl FileSystem for CaptureEnv {
+                fn cwd(&self) -> &Path {
+                    self.files.cwd()
+                }
+
+                $(
+                    async fn $name(&self, $($arg: $ty),*) -> $result {
+                        self.files.$name($($arg),*).await
+                    }
+                )*
+
+                async fn append_file(
+                    &self,
+                    path: &str,
+                    content: FileContent,
+                    cancel: Option<&CancellationToken>,
+                ) -> Result<(), FileError> {
+                    let call = self.append_calls.fetch_add(1, Ordering::SeqCst);
+                    if self.fail_append == Some(call) {
+                        return Err(FileError::new(FileErrorCode::Unknown, "spool failed"));
+                    }
+                    self.files.append_file(path, content, cancel).await
+                }
+
+                async fn cleanup(&self) {}
+            }
+        };
+    }
+
+    capture_filesystem! {
+        fn absolute_path(path: &str, cancel: Option<&CancellationToken>) -> Result<PathBuf, FileError>;
+        fn join_path(parts: &[&str], cancel: Option<&CancellationToken>) -> Result<PathBuf, FileError>;
+        fn read_text_file(path: &str, cancel: Option<&CancellationToken>) -> Result<String, FileError>;
+        fn read_text_lines(path: &str, max_lines: Option<usize>, cancel: Option<&CancellationToken>) -> Result<Vec<String>, FileError>;
+        fn read_binary_file(path: &str, cancel: Option<&CancellationToken>) -> Result<Vec<u8>, FileError>;
+        fn write_file(path: &str, content: FileContent, cancel: Option<&CancellationToken>) -> Result<(), FileError>;
+        fn rename_file(source: &str, dest: &str, cancel: Option<&CancellationToken>) -> Result<(), FileError>;
+        fn file_info(path: &str, cancel: Option<&CancellationToken>) -> Result<FileInfo, FileError>;
+        fn list_dir(path: &str, cancel: Option<&CancellationToken>) -> Result<Vec<FileInfo>, FileError>;
+        fn canonical_path(path: &str, cancel: Option<&CancellationToken>) -> Result<PathBuf, FileError>;
+        fn exists(path: &str, cancel: Option<&CancellationToken>) -> Result<bool, FileError>;
+        fn create_dir(path: &str, recursive: bool, cancel: Option<&CancellationToken>) -> Result<(), FileError>;
+        fn remove(path: &str, recursive: bool, force: bool, cancel: Option<&CancellationToken>) -> Result<(), FileError>;
+        fn create_temp_dir(prefix: Option<&str>, cancel: Option<&CancellationToken>) -> Result<PathBuf, FileError>;
+        fn create_temp_file(prefix: &str, suffix: &str, cancel: Option<&CancellationToken>) -> Result<PathBuf, FileError>;
+    }
+
+    #[async_trait::async_trait]
+    impl Shell for CaptureEnv {
+        async fn exec<'a>(
+            &'a self,
+            _command: &str,
+            options: ShellExecOptions<'a>,
+        ) -> Result<ShellOutput, ExecutionError> {
+            for text in &self.chunks {
+                options
+                    .output
+                    .as_ref()
+                    .unwrap()
+                    .send(ShellOutputChunk::Stdout(text.clone()))
+                    .await
+                    .unwrap();
+            }
+            Ok(ShellOutput {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 7,
+            })
+        }
+
+        async fn cleanup(&self) {}
+    }
+
+    impl ExecutionEnv for CaptureEnv {}
+
+    #[tokio::test]
+    async fn capture_large_utf8_chunk_keeps_a_bounded_complete_head() {
+        let first_line = format!("{}\n", "界".repeat((MAX_HEAD_BYTES - 1) / 3));
+        let large = format!("{first_line}{}END", "😀".repeat(MAX_OUTPUT_BYTES));
+        let env: Arc<dyn ExecutionEnv> = Arc::new(CaptureEnv::new(vec![large.clone()]));
+        let capture = execute_shell_with_capture(&env, "large", Default::default())
+            .await
+            .unwrap();
+        assert_eq!(capture.head_output, first_line);
+        assert!(capture.head_output.capacity() <= MAX_HEAD_BYTES);
+        assert!(capture.output.ends_with("END"));
+        assert_eq!(capture.metrics.captured_bytes, large.len());
+        assert_eq!(capture.metrics.progress_updates, 0);
+        assert_eq!(capture.exit_code, Some(7));
+        let full = env
+            .read_text_file(&capture.full_output_path.unwrap().to_string_lossy(), None)
+            .await
+            .unwrap();
+        assert_eq!(full, large);
+    }
+
+    #[tokio::test]
+    async fn capture_head_at_exact_chunk_cap_does_not_include_next_line_fragment() {
+        let first_line = "first\n";
+        let exact = format!(
+            "{first_line}{}",
+            "x".repeat(MAX_HEAD_BYTES - first_line.len())
+        );
+        let env: Arc<dyn ExecutionEnv> = Arc::new(CaptureEnv::new(vec![
+            exact,
+            format!("\n{}\n", "tail\n".repeat(DEFAULT_MAX_LINES)),
+        ]));
+        let capture = execute_shell_with_capture(&env, "exact", Default::default())
+            .await
+            .unwrap();
+        assert!(capture.truncated);
+        assert_eq!(capture.head_output, first_line);
+        assert!(capture.head_output.capacity() <= MAX_HEAD_BYTES);
+    }
+
+    #[tokio::test]
+    async fn persist_output_saves_small_sanitized_output_and_counts_notifications() {
+        let env: Arc<dyn ExecutionEnv> = Arc::new(CaptureEnv::new(vec![
+            "\x1b[31m前\r".into(),
+            "second\x1b[0m\n".into(),
+        ]));
+        let notifications = AtomicUsize::new(0);
+        let capture = execute_shell_with_capture(
+            &env,
+            "small",
+            ShellCaptureOptions {
+                persist_output: true,
+                on_chunk: Some(Box::new(|_, snapshot| {
+                    assert!(snapshot().is_some());
+                    notifications.fetch_add(1, Ordering::SeqCst);
+                })),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(capture.output, "前second\n");
+        assert!(!capture.truncated);
+        assert_eq!(capture.metrics.captured_bytes, capture.output.len());
+        assert_eq!(capture.metrics.progress_updates, 3);
+        assert_eq!(notifications.load(Ordering::SeqCst), 3);
+        assert!(capture.metrics.execution_ms >= 0.0);
+        let full = env
+            .read_text_file(&capture.full_output_path.unwrap().to_string_lossy(), None)
+            .await
+            .unwrap();
+        assert_eq!(full, capture.output);
+    }
+
+    #[tokio::test]
+    async fn persist_output_saves_an_empty_log_only_when_requested() {
+        let env: Arc<dyn ExecutionEnv> = Arc::new(CaptureEnv::new(vec!["\x1b[0m\r".into()]));
+        let ordinary = execute_shell_with_capture(&env, "empty", Default::default())
+            .await
+            .unwrap();
+        assert!(ordinary.full_output_path.is_none());
+        let persisted = execute_shell_with_capture(
+            &env,
+            "empty",
+            ShellCaptureOptions {
+                persist_output: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let full = env
+            .read_text_file(&persisted.full_output_path.unwrap().to_string_lossy(), None)
+            .await
+            .unwrap();
+        assert!(full.is_empty());
+        assert_eq!(persisted.metrics.captured_bytes, 0);
+    }
+
+    #[tokio::test]
+    async fn persist_output_never_advertises_a_failed_initial_or_later_spool() {
+        for fail_append in [0, 1] {
+            let env: Arc<dyn ExecutionEnv> = Arc::new(CaptureEnv {
+                fail_append: Some(fail_append),
+                ..CaptureEnv::new(vec!["first\n".into(), "last\n".into()])
+            });
+            let capture = execute_shell_with_capture(
+                &env,
+                "failure",
+                ShellCaptureOptions {
+                    persist_output: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(capture.output, "first\nlast\n");
+            assert_eq!(capture.exit_code, Some(7));
+            assert!(capture.full_output_path.is_none());
+            assert_eq!(capture.metrics.captured_bytes, capture.output.len());
+        }
+    }
 
     #[test]
     fn sanitize_strips_controls_keeps_tab_lf() {

@@ -13,7 +13,7 @@ use futures::future::BoxFuture;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use agent::agent_tool::AgentTool;
 use agent::error::AgentError;
@@ -26,6 +26,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::env::ExecutionEnv;
 use crate::error::{ExecutionError, ExecutionErrorCode};
+use crate::shell_compact::compact_output;
+pub use crate::shell_compact::{ShellOutputMetrics, ShellOutputMode};
 use crate::shell_output::{
     execute_shell_with_capture, ShellCaptureOptions, ShellCaptureProgress, ShellCaptureResult,
 };
@@ -62,6 +64,10 @@ pub struct BashInput {
     /// Timeout in seconds (optional; uses the host default, otherwise 120 seconds).
     #[serde(default)]
     pub timeout: Option<f64>,
+    /// Output formatting: raw (default) preserves output; compact conservatively
+    /// collapses recognized Cargo/pytest/Go/JS progress and saves the full log.
+    #[serde(default)]
+    pub output_mode: ShellOutputMode,
 }
 
 /// How a bash tool call ended. A non-zero exit is a *command result*, not a
@@ -96,6 +102,8 @@ pub struct BashToolDetails {
     /// output before retrying", not "the tool is broken".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure_kind: Option<BashFailureKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<ShellOutputMetrics>,
 }
 
 /// Mutable execution description passed to the optional prepare hook.
@@ -147,6 +155,8 @@ impl BashTool {
                  If the command failed and the output was truncated, the first lines are shown \
                  as well as the last, with the elided line count stated, so the cause is not \
                  hidden; nothing is summarised or dropped silently. \
+                 output_mode defaults to raw; opt into compact to collapse recognized Cargo, pytest, Go, \
+                 and JS passing/progress lines while retaining diagnostics and saving a complete sanitized log. \
                  Defaults to a {default_timeout}-second timeout; provide timeout in seconds to override it. \
                  A non-zero exit code is a command result: probe commands such as grep (no match) or \
                  git config --get (missing key) legitimately return 1. Read the output before deciding \
@@ -249,6 +259,7 @@ impl AgentTool for BashTool {
             on_chunk: Some(on_chunk),
             update_interval: Some(update_throttle()),
             return_execution_errors: true,
+            persist_output: input.output_mode == ShellOutputMode::Compact,
         };
 
         // execute_shell_with_capture wants `&Arc<dyn ExecutionEnv>`.
@@ -256,84 +267,7 @@ impl AgentTool for BashTool {
             .await
             .map_err(exec_err_to_agent)?;
 
-        // Build the terminal output text + details, applying truncation notices.
-        let (output_text, mut details) = build_bash_output(&capture);
-        details.exit_code = capture.exit_code;
-
-        // A failed call still returns `isError=true` (unchanged), but carries
-        // structured `details` through `AgentError::StructuredTool` so a
-        // caller can tell "the command returned 1" from "the tool broke".
-        // Plain `AgentError::Tool` is only used where no AgentToolResult can be
-        // built (validation errors earlier in execute).
-        let append_status = |status: String| -> String {
-            if output_text.is_empty() {
-                status
-            } else {
-                format!("{output_text}\n\n{status}")
-            }
-        };
-        // A small helper (not an FnMut closure) so `details` is borrowed only
-        // for the duration of each call and `output_text` can be used normally.
-        fn structured_failure(
-            message: String,
-            kind: BashFailureKind,
-            details: &mut BashToolDetails,
-        ) -> AgentError {
-            details.failure_kind = Some(kind);
-            let details_value = serde_json::to_value(&*details).unwrap_or(serde_json::Value::Null);
-            AgentError::StructuredTool(Box::new(AgentToolResult {
-                content: vec![TextContentOrImage::text(message)],
-                details: details_value,
-                ..Default::default()
-            }))
-        }
-        if capture.cancelled {
-            return Err(structured_failure(
-                append_status("Command aborted".into()),
-                BashFailureKind::Cancelled,
-                &mut details,
-            ));
-        }
-        if let Some(ee) = &capture.execution_error {
-            if ee.code == ExecutionErrorCode::Timeout {
-                // `timeout` is `Option<f64>` in seconds; `{timeout:?}` used to render
-                // `Some(2.0)`, so the message read "timed out after Some(2.0) seconds".
-                let limit = match timeout {
-                    Some(secs) => format!("after {secs}s"),
-                    None => "".to_string(),
-                };
-                return Err(structured_failure(
-                    append_status(format!("Command timed out {limit}")),
-                    BashFailureKind::Timeout,
-                    &mut details,
-                ));
-            }
-            return Err(structured_failure(
-                ee.to_string(),
-                BashFailureKind::ToolFailed,
-                &mut details,
-            ));
-        }
-        if let Some(code) = capture.exit_code {
-            if code != 0 {
-                return Err(structured_failure(
-                    append_status(format!("Command exited with code {code}")),
-                    BashFailureKind::CommandFailed,
-                    &mut details,
-                ));
-            }
-        }
-        let text = if output_text.is_empty() {
-            "(no output)".to_string()
-        } else {
-            output_text
-        };
-        let details_value = serde_json::to_value(&details).unwrap_or(serde_json::Value::Null);
-        Ok(AgentToolResult {
-            content: vec![TextContentOrImage::text(text)],
-            details: details_value,
-            ..Default::default()
-        })
+        finish_shell_capture(&capture, input.output_mode, timeout, false)
     }
 }
 
@@ -353,6 +287,7 @@ pub(super) fn emit_update(
                 full_output_path,
                 exit_code: None,
                 failure_kind: None,
+                metrics: None,
             };
             serde_json::to_value(details).unwrap_or(serde_json::Value::Null)
         }
@@ -373,7 +308,7 @@ pub(super) fn emit_update(
 /// tail, with the elided count and the full-log path stated. The window is refused
 /// whenever it would not be strictly smaller than what it replaces, so this can
 /// never inflate a result.
-fn build_bash_output(capture: &ShellCaptureResult) -> (String, BashToolDetails) {
+pub(crate) fn build_bash_output(capture: &ShellCaptureResult) -> (String, BashToolDetails) {
     let path_str = capture
         .full_output_path
         .as_ref()
@@ -404,6 +339,7 @@ fn build_bash_output(capture: &ShellCaptureResult) -> (String, BashToolDetails) 
                     full_output_path: path_str,
                     exit_code: None,
                     failure_kind: None,
+                    metrics: None,
                 },
             );
         }
@@ -442,6 +378,7 @@ fn build_bash_output(capture: &ShellCaptureResult) -> (String, BashToolDetails) 
             full_output_path: path_str,
             exit_code: None,
             failure_kind: None,
+            metrics: None,
         }
     } else {
         BashToolDetails {
@@ -449,9 +386,116 @@ fn build_bash_output(capture: &ShellCaptureResult) -> (String, BashToolDetails) 
             full_output_path: None,
             exit_code: None,
             failure_kind: None,
+            metrics: None,
         }
     };
     (output_text, details)
+}
+
+/// Shared final formatting and failure classification for both shell tools.
+pub(crate) fn finish_shell_capture(
+    capture: &ShellCaptureResult,
+    mode: ShellOutputMode,
+    timeout: Option<f64>,
+    powershell: bool,
+) -> Result<AgentToolResult, AgentError> {
+    let started = Instant::now();
+    let (mut text, mut details) = build_bash_output(capture);
+    details.exit_code = capture.exit_code;
+    let mut compact_status = "raw";
+    if mode == ShellOutputMode::Compact {
+        compact_status = "unchanged";
+        // A complete, successfully persisted log is mandatory before dropping
+        // anything. The bounded retained view is never read back as a full log.
+        if let Some(path) = capture.full_output_path.as_ref() {
+            let path = path.to_string_lossy();
+            if let Some(compact) = compact_output(&text, &path, capture.truncated) {
+                text = compact;
+                compact_status = if capture.truncated {
+                    "partial"
+                } else {
+                    "compacted"
+                };
+            }
+            // Also advertise recovery when compaction was not worth its marker.
+            details.full_output_path = Some(path.into_owned());
+        }
+    }
+    let (status, failure_kind) = if capture.cancelled {
+        (
+            Some(
+                if powershell {
+                    "PowerShell command aborted"
+                } else {
+                    "Command aborted"
+                }
+                .to_string(),
+            ),
+            Some(BashFailureKind::Cancelled),
+        )
+    } else if let Some(error) = &capture.execution_error {
+        if error.code == ExecutionErrorCode::Timeout {
+            let limit = timeout
+                .map(|seconds| format!("after {seconds}s"))
+                .unwrap_or_default();
+            let message = if powershell && mode == ShellOutputMode::Raw {
+                error.to_string()
+            } else {
+                format!("Command timed out {limit}")
+            };
+            (Some(message), Some(BashFailureKind::Timeout))
+        } else {
+            (Some(error.to_string()), Some(BashFailureKind::ToolFailed))
+        }
+    } else if let Some(code) = capture.exit_code.filter(|code| *code != 0) {
+        let shell = if powershell { "PowerShell" } else { "Command" };
+        (
+            Some(format!("{shell} exited with code {code}")),
+            Some(BashFailureKind::CommandFailed),
+        )
+    } else {
+        (None, None)
+    };
+    // Preserve raw-mode error text, including PowerShell's historical empty
+    // output separator. Compact mode keeps the recovery notice on failures.
+    if mode == ShellOutputMode::Raw
+        && (failure_kind == Some(BashFailureKind::ToolFailed)
+            || (powershell && capture.cancelled)
+            || (powershell && capture.execution_error.is_some()))
+    {
+        text.clear();
+    }
+    if let Some(status) = status {
+        if !text.is_empty()
+            || (powershell
+                && mode == ShellOutputMode::Raw
+                && failure_kind == Some(BashFailureKind::CommandFailed))
+        {
+            text.push_str("\n\n");
+        }
+        text.push_str(&status);
+    } else if text.is_empty() || (powershell && text.trim().is_empty()) {
+        text = "(no output)".into();
+    }
+    details.failure_kind = failure_kind;
+    details.metrics = Some(ShellOutputMetrics {
+        execution_ms: capture.metrics.execution_ms,
+        result_format_ms: started.elapsed().as_secs_f64() * 1000.0,
+        raw_bytes: capture.metrics.captured_bytes,
+        displayed_bytes: text.len(),
+        progress_updates: capture.metrics.progress_updates,
+        compact_status,
+    });
+    let result = AgentToolResult {
+        content: vec![TextContentOrImage::text(text)],
+        details: serde_json::to_value(details).unwrap_or(serde_json::Value::Null),
+        ..Default::default()
+    };
+    if failure_kind.is_some() {
+        Err(AgentError::StructuredTool(Box::new(result)))
+    } else {
+        Ok(result)
+    }
 }
 
 /// Resolve and validate the effective deadline before preparing a command.
@@ -532,6 +576,7 @@ mod tests {
             cancelled: false,
             truncated: true,
             execution_error: None,
+            metrics: Default::default(),
         }
     }
 

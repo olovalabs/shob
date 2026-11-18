@@ -49,6 +49,7 @@ unicode-normalization = "0.1"
 encoding_rs = "0.8"
 codepage = "0.1"
 regex = { workspace = true }
+regex-automata = "0.4"
 globset = { workspace = true }
 ignore = "0.4.23"
 grep-regex = "0.1.14"

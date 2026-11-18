@@ -4227,6 +4227,7 @@ dependencies = [
  "nix",
  "plugin-sdk",
  "regex",
+ "regex-automata",
  "same-file",
  "schemars 0.8.22",
  "serde",

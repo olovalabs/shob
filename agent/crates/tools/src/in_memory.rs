@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::env::{
     check_cancel_exec, check_cancel_file, ExecutionEnv, FileContent, FileInfo, FileKind,
-    FileSystem, Shell, ShellExecOptions, ShellOutput,
+    FileSystem, ReadFile, Shell, ShellExecOptions, ShellOutput,
 };
 #[cfg(test)]
 use crate::error::ExecutionErrorCode;
@@ -33,6 +33,33 @@ struct InMemoryFile {
     bytes: Vec<u8>,
     mtime_ms: i64,
     kind: FileKind,
+}
+
+struct MemoryReader(Vec<u8>);
+
+#[async_trait]
+impl ReadFile for MemoryReader {
+    async fn read_all(&self) -> Result<Vec<u8>, FileError> {
+        Ok(self.0.clone())
+    }
+
+    async fn read_range(&self, offset: u64, length: usize) -> Result<Vec<u8>, FileError> {
+        let start = usize::try_from(offset)
+            .map_err(|_| FileError::new(FileErrorCode::Invalid, "read offset is too large"))?;
+        let end = start
+            .checked_add(length)
+            .ok_or_else(|| FileError::new(FileErrorCode::Invalid, "read range is too large"))?;
+        self.0.get(start..end).map(<[u8]>::to_vec).ok_or_else(|| {
+            FileError::new(
+                FileErrorCode::Invalid,
+                "read range extends beyond end of file",
+            )
+        })
+    }
+
+    async fn byte_len(&self) -> Result<Option<u64>, FileError> {
+        Ok(Some(self.0.len() as u64))
+    }
 }
 
 #[derive(Default)]
@@ -315,6 +342,11 @@ impl FileSystem for InMemoryExecutionEnv {
             }
             _ => Err(FileError::not_found(&abs)),
         }
+    }
+
+    async fn open_read_file(&self, path: &str) -> Result<Option<Arc<dyn ReadFile>>, FileError> {
+        let bytes = self.read_binary_file(path, None).await?;
+        Ok(Some(Arc::new(MemoryReader(bytes))))
     }
 
     async fn write_file(

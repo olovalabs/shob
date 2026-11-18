@@ -586,3 +586,145 @@ async fn review_issue14_failure_kind_axis_and_success_have_no_classification() {
     };
     assert_eq!(result.details["failure_kind"], "cancelled");
 }
+
+#[tokio::test]
+async fn compact_mode_persists_complete_sanitized_log_and_reports_metrics() {
+    let (env, ctx) = fresh_context();
+    let raw = format!(
+        "running 80 tests\n{}test result: ok. 80 passed; 0 failed\n",
+        "test example::passes ... ok\n".repeat(80)
+    );
+    env.register_shell(
+        "compact-tests",
+        ShellScript::success(format!("\x1b[32m{raw}\x1b[0m")),
+    )
+    .await;
+    let result = run_bash(
+        tools::create_bash_tool(&ctx, None),
+        serde_json::json!({"command": "compact-tests", "output_mode": "compact"}),
+    )
+    .await
+    .unwrap();
+    let displayed = text_output(&result);
+    assert!(displayed.len() < raw.len(), "{displayed}");
+    assert!(displayed.contains("test result: ok. 80 passed; 0 failed"));
+    assert!(displayed.contains("80 passing/progress lines omitted"));
+    assert_eq!(displayed.matches("Full output:").count(), 1);
+    let path = result.details["full_output_path"].as_str().unwrap();
+    assert!(displayed.contains(path));
+    assert_eq!(env.read_text_file(path, None).await.unwrap(), raw);
+    let metrics = &result.details["metrics"];
+    assert_eq!(metrics["compact_status"], "compacted");
+    assert_eq!(metrics["raw_bytes"], raw.len());
+    assert_eq!(metrics["displayed_bytes"], displayed.len());
+    assert!(metrics["execution_ms"].as_f64().unwrap() >= 0.0);
+    assert!(metrics["result_format_ms"].as_f64().unwrap() >= 0.0);
+    assert!(metrics["progress_updates"].is_u64());
+    assert_eq!(result.details["exit_code"], 0);
+}
+
+#[tokio::test]
+async fn raw_output_default_and_explicit_are_byte_for_byte_unchanged() {
+    let (env, ctx) = fresh_context();
+    let raw = format!(
+        "{}\nunknown diagnostic: file.rs:8\n  left: 1\n right: 2\n",
+        "test passes ... ok\n".repeat(80)
+    );
+    env.register_shell("raw-tests", ShellScript::success(raw.clone()))
+        .await;
+    let tool = tools::create_bash_tool(&ctx, None);
+    for params in [
+        serde_json::json!({"command": "raw-tests"}),
+        serde_json::json!({"command": "raw-tests", "output_mode": "raw"}),
+    ] {
+        let result = run_bash(tool.clone(), params).await.unwrap();
+        assert_eq!(text_output(&result), raw);
+        assert!(result.details.get("full_output_path").is_none());
+        assert_eq!(result.details["metrics"]["compact_status"], "raw");
+        assert_eq!(result.details["metrics"]["raw_bytes"], raw.len());
+        assert_eq!(result.details["metrics"]["displayed_bytes"], raw.len());
+    }
+}
+
+#[tokio::test]
+async fn compact_failure_keeps_unknown_diagnostics_locations_and_real_exit_code() {
+    let (env, ctx) = fresh_context();
+    // A success-looking summary must not override the actual exit status.
+    let raw = format!(
+        "{}test result: ok. 80 passed\n\nCUSTOM unknown diagnostic\n  --> src/main.rs:42:3\nassertion left == right failed\n{}",
+        "test example::passes ... ok\n".repeat(80),
+        "error: exact repeated diagnostic at src/main.rs:42:3\n".repeat(20)
+    );
+    env.register_shell(
+        "compact-failure",
+        ShellScript {
+            stdout: raw.clone(),
+            stderr: String::new(),
+            exit_code: 7,
+            delay_ms: None,
+        },
+    )
+    .await;
+    let error = run_bash(
+        tools::create_bash_tool(&ctx, None),
+        serde_json::json!({"command": "compact-failure", "output_mode": "compact"}),
+    )
+    .await
+    .unwrap_err();
+    let AgentError::StructuredTool(result) = error else {
+        panic!("structured failure required")
+    };
+    let text = text_output(&result);
+    assert!(text.contains(
+        "CUSTOM unknown diagnostic\n  --> src/main.rs:42:3\nassertion left == right failed"
+    ));
+    assert!(text.contains("[repeated 20 times]"));
+    assert!(text.contains("Command exited with code 7"));
+    assert_eq!(result.details["exit_code"], 7);
+    assert_eq!(result.details["failure_kind"], "command_failed");
+    assert_eq!(result.details["metrics"]["compact_status"], "compacted");
+    assert_eq!(result.details["metrics"]["displayed_bytes"], text.len());
+    let path = result.details["full_output_path"].as_str().unwrap();
+    assert_eq!(env.read_text_file(path, None).await.unwrap(), raw);
+}
+
+#[tokio::test]
+async fn compact_fallback_keeps_raw_text_and_recovery_details() {
+    let (env, ctx) = fresh_context();
+    let raw = "unknown diagnostic at src/main.rs:42\n";
+    env.register_shell("unknown", ShellScript::success(raw))
+        .await;
+    let result = run_bash(
+        tools::create_bash_tool(&ctx, None),
+        serde_json::json!({"command": "unknown", "output_mode": "compact"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(text_output(&result), raw);
+    assert_eq!(result.details["metrics"]["compact_status"], "unchanged");
+    let path = result.details["full_output_path"].as_str().unwrap();
+    assert_eq!(env.read_text_file(path, None).await.unwrap(), raw);
+}
+
+#[tokio::test]
+async fn compact_truncated_capture_is_labeled_partial_not_a_runner_summary() {
+    let (env, ctx) = fresh_context();
+    let raw = "error: repeated diagnostic at src/main.rs:42:3\n".repeat(DEFAULT_MAX_LINES + 300);
+    env.register_shell("partial", ShellScript::success(raw.clone()))
+        .await;
+    let result = run_bash(
+        tools::create_bash_tool(&ctx, None),
+        serde_json::json!({"command": "partial", "output_mode": "compact"}),
+    )
+    .await
+    .unwrap();
+    let text = text_output(&result);
+    assert!(text.contains("Compact partial retained view"));
+    assert!(text.contains("not a complete summary"));
+    assert!(!text.contains("passing/progress lines omitted"));
+    assert_eq!(text.matches("Full output:").count(), 1);
+    assert_eq!(result.details["metrics"]["compact_status"], "partial");
+    assert_eq!(result.details["truncation"]["truncated"], true);
+    let path = result.details["full_output_path"].as_str().unwrap();
+    assert_eq!(env.read_text_file(path, None).await.unwrap(), raw);
+}

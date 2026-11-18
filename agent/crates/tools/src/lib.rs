@@ -18,11 +18,13 @@ pub mod file_mutation_queue;
 pub mod image;
 pub mod image_processing;
 pub mod in_memory;
+pub mod metrics;
 pub mod os_env;
 pub mod output_decode;
 pub mod output_window;
 pub mod path_utils;
 pub mod search;
+pub(crate) mod shell_compact;
 pub mod shell_output;
 pub mod truncate;
 
@@ -33,9 +35,10 @@ pub mod utils {
 
 pub mod tools;
 pub use tools::{
-    create_bash_tool, create_edit_tool, create_find_tool, create_grep_tool, create_ls_tool,
-    create_powershell_tool, create_read_tool, create_write_tool, BashExecution, BashPrepare,
-    BashToolOptions, ExecutionToolContext, ProcessedImage, ReadImageProcessor, ReadToolOptions,
+    create_bash_tool, create_batch_tool, create_edit_tool, create_find_tool, create_grep_tool,
+    create_ls_tool, create_output_tool, create_powershell_tool, create_read_tool,
+    create_write_tool, BashExecution, BashPrepare, BashToolOptions, ExecutionToolContext,
+    ProcessedImage, ReadImageProcessor, ReadToolOptions,
 };
 
 pub use env::{

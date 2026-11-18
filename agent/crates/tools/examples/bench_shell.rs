@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use agent::types::TextContentOrImage;
 use tokio_util::sync::CancellationToken;
+use tools::shell_output::{execute_shell_with_capture, ShellCaptureOptions};
 use tools::{create_bash_tool, ExecutionToolContext, OsExecutionEnv, Shell, ShellExecOptions};
 
 type Times = Arc<Mutex<Vec<(String, f64)>>>;
@@ -37,6 +38,7 @@ async fn main() {
     let dir = tempfile::tempdir().unwrap();
     let env = Arc::new(OsExecutionEnv::with_cwd(dir.path().into()));
     let tool = create_bash_tool(&ExecutionToolContext::new(env.clone(), None), None);
+    let capture_env: Arc<dyn tools::ExecutionEnv> = env.clone();
     for _ in 0..samples {
         // Control measurement: only Command::spawn(), not scheduling or execution.
         let mut command = tokio::process::Command::new("/bin/bash");
@@ -172,6 +174,42 @@ async fn main() {
             .unwrap();
         assert_eq!(out.stdout.len(), 1048576);
         record(&times, "exec_1mib", start.elapsed());
+
+        let start = Instant::now();
+        let capture = execute_shell_with_capture(
+            &capture_env,
+            "head -c 1048576 /dev/zero | tr '\\0' x",
+            ShellCaptureOptions {
+                update_interval: Some(Duration::from_millis(100)),
+                on_chunk: Some(Box::new(|_, snapshot| {
+                    std::hint::black_box(snapshot());
+                })),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        record(&times, "capture_1mib", start.elapsed());
+        assert_eq!(capture.metrics.captured_bytes, 1048576);
+        let path = capture.full_output_path.expect("complete capture log");
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 1048576);
+        std::fs::remove_file(path).unwrap();
+
+        let start = Instant::now();
+        let capture = execute_shell_with_capture(
+            &capture_env,
+            "printf small",
+            ShellCaptureOptions {
+                persist_output: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        record(&times, "capture_persist_small", start.elapsed());
+        let path = capture.full_output_path.expect("requested small log");
+        assert_eq!(std::fs::read(&path).unwrap(), b"small");
+        std::fs::remove_file(path).unwrap();
 
         let start = Instant::now();
         let result = tool

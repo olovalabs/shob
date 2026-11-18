@@ -3,23 +3,23 @@
 //! Reports raw microsecond samples; it asserts nothing about wall-clock
 //! performance. Run it on the same machine before and after a change.
 //!
-//! It measures the two quantities the failure-window feature can plausibly affect,
-//! with no shell, no I/O and no inference:
+//! It measures the actual capture pipeline and the final failure window, with
+//! no native shell, network, or inference:
 //!
-//! 1. `capture` — retaining the 6 KiB head prefix while a large output streams in.
-//!    This is the only work added to the hot path, and it stops after 6 KiB.
+//! 1. `capture` — sanitization, bounded head/tail retention, progress snapshot,
+//!    and complete-log persistence through the in-memory execution backend.
 //! 2. `window` — building the head+tail window once, after the command failed.
 //!
 //! Both are reported as per-sample microseconds plus a best/worst spread so a
 //! regression is visible rather than asserted.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tools::output_window::{build_window, OutputTotals, DEFAULT_HEAD_SHARE};
-use tools::truncate::{TruncationOptions, DEFAULT_MAX_BYTES};
-
-const MAX_HEAD_BYTES: usize = DEFAULT_MAX_BYTES / DEFAULT_HEAD_SHARE;
-const MAX_TAIL_BYTES: usize = DEFAULT_MAX_BYTES * 2;
+use tools::shell_output::{execute_shell_with_capture, ShellCaptureOptions};
+use tools::truncate::TruncationOptions;
+use tools::{ExecutionEnv, FileSystem, InMemoryExecutionEnv, ShellScript};
 
 fn micros(time: Duration) -> f64 {
     time.as_secs_f64() * 1e6
@@ -37,67 +37,47 @@ fn spread(label: &str, samples: &[f64]) {
     );
 }
 
-/// Mirror of the capture layer's head retention: append, and once the cap is
-/// exceeded snap down to the last complete line and stop for good.
-fn ingest(state: (&mut String, &mut bool), text: &str) {
-    let (head, full) = state;
-    if *full {
-        return;
-    }
-    head.push_str(text);
-    if head.len() > MAX_HEAD_BYTES {
-        let mut cut = MAX_HEAD_BYTES;
-        while cut > 0 && !head.is_char_boundary(cut) {
-            cut -= 1;
-        }
-        let keep = match head[..cut].rfind('\n') {
-            Some(newline) => newline + 1,
-            None => 0,
-        };
-        head.truncate(keep);
-        head.shrink_to_fit();
-        *full = true;
-    }
-}
-
-fn main() {
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
     let samples = std::env::args()
         .nth(1)
         .map(|n| n.parse::<usize>().unwrap())
         .unwrap_or(200)
         .clamp(1, 1_000);
-    // 8 MiB of realistic log lines, in 8 KiB pipe chunks.
+    // 8 MiB of realistic log lines, streamed by the actual capture consumer.
     let line = "error[E0308]: mismatched types --> src/main.rs:12:5 expected `u32`, found `&str`\n";
-    let chunk: String = line.repeat(8192 / line.len().max(1));
-    let chunks: Vec<&str> = (0..1024).map(|_| chunk.as_str()).collect();
-    let full_bytes: usize = chunks.iter().map(|c| c.len()).sum();
-    let total_lines: usize = full_bytes / line.len().max(1);
+    let chunk = line.repeat(8192 / line.len());
+    let full = chunk.repeat(1024);
+    let full_bytes = full.len();
+    let total_lines = full_bytes / line.len();
+    let memory = Arc::new(InMemoryExecutionEnv::new());
+    memory
+        .register_shell("log", ShellScript::success(full))
+        .await;
+    let env: Arc<dyn ExecutionEnv> = memory.clone();
 
     let mut capture_samples = Vec::with_capacity(samples);
-    let mut head = String::new();
-    let mut head_full = false;
-    for _ in 0..samples {
-        head.clear();
-        head_full = false;
+    let capture = loop {
         let start = Instant::now();
-        for text in &chunks {
-            ingest((&mut head, &mut head_full), text);
-        }
+        let capture = execute_shell_with_capture(&env, "log", ShellCaptureOptions::default())
+            .await
+            .unwrap();
         capture_samples.push(micros(start.elapsed()));
-    }
-    spread("capture (8 MiB, head retention)", &capture_samples);
-
-    // The retained windows the formatter actually sees.
-    let tail_owned: String = chunks[chunks.len() - 16..].concat();
-    let tail_start = {
-        let mut start = tail_owned.len().saturating_sub(MAX_TAIL_BYTES);
-        while start < tail_owned.len() && !tail_owned.is_char_boundary(start) {
-            start += 1;
+        if let Some(path) = &capture.full_output_path {
+            memory
+                .remove(&path.to_string_lossy(), false, false, None)
+                .await
+                .unwrap();
         }
-        start
+        if capture_samples.len() == samples {
+            break capture;
+        }
     };
-    let tail_src = &tail_owned[tail_start..];
-    let head_src = head.as_str();
+    spread("capture (8 MiB, in-memory spool)", &capture_samples);
+
+    // The retained windows the formatter actually sees, not mirrored state.
+    let tail_src = capture.output.as_str();
+    let head_src = capture.head_output.as_str();
     let totals = OutputTotals::new(total_lines, full_bytes);
     let mut window_samples = Vec::with_capacity(samples);
     let mut rendered = 0usize;

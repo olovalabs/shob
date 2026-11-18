@@ -352,3 +352,348 @@ async fn grep_native_caps_output_bytes_even_with_a_large_match_limit() {
     assert_eq!(result.details["truncation"]["truncated"], true);
     assert!(result.details.get("match_limit_reached").is_none());
 }
+
+/// Keep the directory alive while the native and in-memory tools share fixtures.
+async fn search_contexts(
+    files: &[(&str, Vec<u8>)],
+) -> (tempfile::TempDir, Vec<ExecutionToolContext>) {
+    let directory = tempfile::tempdir().unwrap();
+    let (memory, memory_context) = fresh_context();
+    for (name, bytes) in files {
+        let path = directory.path().join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+        // seed_file inserts only the file; mirror native parent creation so
+        // nested fixtures are reachable through the virtual directory walker.
+        let parent = std::path::Path::new(name).parent().unwrap();
+        if !parent.as_os_str().is_empty() {
+            memory
+                .create_dir(&parent.to_string_lossy(), true, None)
+                .await
+                .unwrap();
+        }
+        seed(&memory, name, bytes.clone()).await;
+    }
+    let native_context = ExecutionToolContext::new(
+        Arc::new(tools::OsExecutionEnv::with_cwd(directory.path().into())),
+        None,
+    );
+    (directory, vec![native_context, memory_context])
+}
+
+fn result_body(result: &agent::types::AgentToolResult) -> Vec<String> {
+    text_output(result)
+        .split("\n\n")
+        .next()
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+#[tokio::test]
+async fn grep_all_modes_page_without_dropping_or_repeating_results() {
+    let (_directory, contexts) = search_contexts(&[
+        (
+            "A.txt",
+            b"needle one\nother\nneedle two\nneedle three\n".to_vec(),
+        ),
+        ("a.txt", b"needle four\n".to_vec()),
+        ("b:colon.txt", b"needle five\nneedle six\n".to_vec()),
+        ("z.txt", b"needle seven\n".to_vec()),
+        ("child/first.txt", b"needle eight\n".to_vec()),
+    ])
+    .await;
+    for context in contexts {
+        let tool = tools::create_grep_tool(&context, None);
+        for mode in ["content", "files", "count"] {
+            let complete = run_grep(
+                tool.clone(),
+                serde_json::json!({"pattern": "needle", "mode": mode}),
+            )
+            .await
+            .unwrap();
+            let expected = result_body(&complete);
+            assert!(expected[0].starts_with("A.txt"), "{mode}: {expected:?}");
+            assert!(expected.last().unwrap().starts_with("child/first.txt"));
+            let mut actual = Vec::new();
+            let mut offset = 0;
+            loop {
+                let page = run_grep(
+                    tool.clone(),
+                    serde_json::json!({
+                        "pattern": "needle", "mode": mode, "limit": 2, "offset": offset
+                    }),
+                )
+                .await
+                .unwrap();
+                let rows = result_body(&page);
+                assert!(rows.len() <= 2);
+                assert_eq!(page.details["returned_results"], rows.len());
+                assert_eq!(page.details["display_bytes"], text_output(&page).len());
+                actual.extend(rows);
+                match page.details["next_offset"].as_u64() {
+                    Some(next) => {
+                        assert_eq!(
+                            next,
+                            offset + page.details["returned_results"].as_u64().unwrap()
+                        );
+                        assert_eq!(page.details["search_complete"], false);
+                        assert_eq!(page.details["totals_exact"], false);
+                        offset = next;
+                    }
+                    None => break,
+                }
+                assert!(actual.len() < 20, "cursor did not terminate");
+            }
+            assert_eq!(actual, expected, "{mode}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn grep_files_and_count_use_backend_paths_and_count_completed_files() {
+    let (_directory, contexts) = search_contexts(&[
+        ("a:2:odd.txt", b"needle needle\nneedle\n".repeat(100)),
+        ("no.txt", b"other\n".to_vec()),
+        ("z.txt", b"needle\n".to_vec()),
+    ])
+    .await;
+    for context in contexts {
+        let tool = tools::create_grep_tool(&context, None);
+        let files = run_grep(
+            tool.clone(),
+            serde_json::json!({"pattern": "needle", "mode": "files", "context": 3}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(text_output(&files), "a:2:odd.txt\nz.txt");
+        assert_eq!(files.details["returned_results"], 2);
+        assert_eq!(files.details["scanned_matches"], 2);
+        // First-match witnesses must never be advertised as a total line count.
+        assert_eq!(files.details["totals_exact"], false);
+        let counts = run_grep(
+            tool.clone(),
+            serde_json::json!({"pattern": "needle", "mode": "count", "limit": 1}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result_body(&counts), vec!["a:2:odd.txt: 200"]);
+        assert_eq!(counts.details["counts_complete"], true);
+        assert_eq!(counts.details["returned_matches"], 200);
+        assert_eq!(counts.details["next_offset"], 1);
+        let next = run_grep(
+            tool.clone(),
+            serde_json::json!({"pattern": "needle", "mode": "count", "limit": 1, "offset": 1}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(text_output(&next), "z.txt: 1");
+        assert!(next.details.get("next_offset").is_none());
+        assert_eq!(next.details["counts_complete"], true);
+        assert_eq!(next.details["search_complete"], true);
+        assert!(next.details.get("match_limit_reached").is_none());
+    }
+}
+
+#[tokio::test]
+async fn grep_byte_capped_content_continuation_retrieves_every_omitted_line() {
+    let line = format!("needle {}\r\n", "x".repeat(440));
+    let (_directory, contexts) =
+        search_contexts(&[("a:b.txt", line.repeat(400).into_bytes())]).await;
+    for context in contexts {
+        let tool = tools::create_grep_tool(&context, None);
+        let mut actual = Vec::new();
+        let mut offset = 0;
+        let mut pages = 0;
+        loop {
+            let page = run_grep(
+                tool.clone(),
+                serde_json::json!({"pattern": "^needle", "limit": 10000, "offset": offset}),
+            )
+            .await
+            .unwrap();
+            assert!(text_output(&page).len() <= tools::DEFAULT_MAX_BYTES);
+            let rows = result_body(&page);
+            assert!(!rows.is_empty());
+            actual.extend(rows);
+            pages += 1;
+            if let Some(next) = page.details["next_offset"].as_u64() {
+                assert_eq!(page.details["truncation"]["truncated"], true);
+                assert!(page.details.get("match_limit_reached").is_none());
+                assert_eq!(next, actual.len() as u64);
+                assert!(next > offset);
+                offset = next;
+            } else {
+                break;
+            }
+            assert!(pages < 10);
+        }
+        assert!(pages > 1);
+        let expected: Vec<String> = (1..=400)
+            .map(|number| format!("a:b.txt:{number}: {}", line.trim_end()))
+            .collect();
+        assert_eq!(actual, expected);
+    }
+}
+
+#[tokio::test]
+async fn grep_compact_byte_caps_keep_whole_file_results_and_exact_counts() {
+    let names: Vec<String> = (0..400)
+        .map(|index| format!("{index:03}:{}.txt", "p".repeat(175)))
+        .collect();
+    let files: Vec<(&str, Vec<u8>)> = names
+        .iter()
+        .map(|name| (name.as_str(), b"needle\nneedle\n".to_vec()))
+        .collect();
+    let (_directory, contexts) = search_contexts(&files).await;
+    for context in contexts {
+        let tool = tools::create_grep_tool(&context, None);
+        for mode in ["files", "count"] {
+            let mut actual = Vec::new();
+            let mut offset = 0;
+            let mut pages = 0;
+            loop {
+                let page = run_grep(
+                    tool.clone(),
+                    serde_json::json!({
+                        "pattern": "needle", "mode": mode, "limit": 10000, "offset": offset
+                    }),
+                )
+                .await
+                .unwrap();
+                assert!(text_output(&page).len() <= tools::DEFAULT_MAX_BYTES);
+                let rows = result_body(&page);
+                assert_eq!(page.details["returned_results"], rows.len());
+                if mode == "count" {
+                    assert_eq!(page.details["counts_complete"], true);
+                    assert_eq!(page.details["returned_matches"], (rows.len() * 2) as u64);
+                }
+                actual.extend(rows);
+                pages += 1;
+                if let Some(next) = page.details["next_offset"].as_u64() {
+                    assert_eq!(page.details["truncation"]["truncated"], true);
+                    assert!(page.details.get("match_limit_reached").is_none());
+                    assert_eq!(next, actual.len() as u64);
+                    assert!(next > offset);
+                    offset = next;
+                } else {
+                    break;
+                }
+                assert!(pages < 5);
+            }
+            assert!(pages > 1);
+            let expected: Vec<String> = names
+                .iter()
+                .map(|name| {
+                    if mode == "count" {
+                        format!("{name}: 2")
+                    } else {
+                        name.clone()
+                    }
+                })
+                .collect();
+            assert_eq!(actual, expected, "{mode}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn grep_continuation_consumes_matches_already_displayed_as_trailing_context() {
+    let (_directory, contexts) = search_contexts(&[(
+        "ctx.txt",
+        b"before\nneedle one\nneedle two\nneedle three\nbetween\nneedle four\nafter\n".to_vec(),
+    )])
+    .await;
+    for context in contexts {
+        let tool = tools::create_grep_tool(&context, None);
+        let page = run_grep(
+            tool.clone(),
+            serde_json::json!({"pattern": "needle", "limit": 2, "context": 1}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(page.details["next_offset"], 3);
+        assert_eq!(page.details["returned_matches"], 3);
+        let next = run_grep(
+            tool.clone(),
+            serde_json::json!({"pattern": "needle", "limit": 2, "context": 1, "offset": 3}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            text_output(&next),
+            "ctx.txt-5- between\nctx.txt:6: needle four\nctx.txt-7- after"
+        );
+        assert!(next.details.get("next_offset").is_none());
+        let exhausted = run_grep(
+            tool,
+            serde_json::json!({"pattern": "needle", "context": 1, "offset": 100}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(text_output(&exhausted), "No more matches found");
+        assert_eq!(exhausted.details["returned_results"], 0);
+    }
+}
+
+#[tokio::test]
+async fn grep_count_labels_binary_terminated_files_partial() {
+    // Keep the NUL beyond ripgrep's initial binary probe, so both backends
+    // observe matching lines before binary detection stops the file.
+    let mut bytes = b"needle\n".repeat(20_000);
+    bytes.extend_from_slice(b"\0needle\n");
+    let (_directory, contexts) = search_contexts(&[("late.bin", bytes)]).await;
+    for context in contexts {
+        let result = run_grep(
+            tools::create_grep_tool(&context, None),
+            serde_json::json!({"pattern": "needle", "mode": "count"}),
+        )
+        .await
+        .unwrap();
+        assert!(text_output(&result).contains("(partial: binary data)"));
+        assert_eq!(result.details["counts_complete"], false);
+        assert_eq!(result.details["totals_exact"], false);
+        assert_eq!(result.details["search_complete"], false);
+        assert!(result.details["returned_matches"].as_u64().unwrap() > 0);
+    }
+}
+
+#[tokio::test]
+async fn grep_rejects_invalid_page_bounds_and_unknown_modes() {
+    let (_env, context) = fresh_context();
+    let tool = tools::create_grep_tool(&context, None);
+    for params in [
+        serde_json::json!({"pattern": "x", "limit": 0}),
+        serde_json::json!({"pattern": "x", "limit": 10001}),
+        serde_json::json!({"pattern": "x", "context": 1001}),
+        serde_json::json!({"pattern": "x", "offset": u64::MAX}),
+        serde_json::json!({"pattern": "x", "offset": -1}),
+        serde_json::json!({"pattern": "x", "mode": "unknown"}),
+    ] {
+        let error = run_grep(tool.clone(), params).await.unwrap_err();
+        assert!(matches!(error, AgentError::Validation(_)), "{error:?}");
+    }
+}
+
+#[tokio::test]
+async fn grep_offset_does_not_emit_distant_skipped_match_context() {
+    let (_directory, contexts) = search_contexts(&[(
+        "gap.txt",
+        b"needle old\nold trailing\ngap one\ngap two\nnew leading\nneedle new\nnew trailing\n"
+            .to_vec(),
+    )])
+    .await;
+    for context in contexts {
+        let result = run_grep(
+            tools::create_grep_tool(&context, None),
+            serde_json::json!({"pattern": "needle", "context": 1, "offset": 1}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            text_output(&result),
+            "gap.txt-5- new leading\ngap.txt:6: needle new\ngap.txt-7- new trailing"
+        );
+    }
+}
