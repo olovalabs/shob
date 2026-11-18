@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Explicit, confirmed workspace-scoped OMP trust: protected `write` by default, opt-in `yolo`, canonical-path checks and safe deferred authority changes during active turns.
 - Per-pane explicit OMP reasoning effort without changing models, alongside Fast/Deep presets.
 - Metadata-only OMP provider/argument/tool-cycle timings and `scripts/bench-omp-tools.py`, an isolated loopback fixture exercising real batched reads, local shell steps and approvals.
-- Center and enlarge the Shob wordmark on the empty Agent page; show only the selected model beneath it.
+- Center the empty focused Agent screen's input with the Shob wordmark directly above it; keep the input at the bottom once a conversation starts.
 - Zed-style per-platform app data directories (`src/paths.rs`): workspace, scrollback, agent conversations and backups under the OS data dir; user settings under the OS config dir. Missing folders are created on launch.
 - Full session restoration: projects, sidebar tabs, nested split layouts, focused pane, per-pane working directories, tab titles/logos, input drafts, command history, sidebar width and window geometry are saved and restored after a restart.
 - Terminal scrollback is snapshotted per pane and seeded above the fresh shell prompt on restore.

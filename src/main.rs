@@ -15993,7 +15993,19 @@ impl AppState {
             })
         });
         view.clone()
-            .cached(StyleRefinement::default().size_full())
+            .cached(
+                if self.settings.agent_layout
+                    && pane.chat.visible_messages().is_empty()
+                    && pane.chat.worker_view.is_none()
+                {
+                    StyleRefinement::default()
+                        .w_full()
+                        .h(px(105.0))
+                        .flex_shrink_0()
+                } else {
+                    StyleRefinement::default().size_full()
+                },
+            )
             .into_any_element()
     }
 
