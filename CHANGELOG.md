@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Center focused Agent completion menus above the composer at both wide and narrow window sizes.
+- Group batched tool calls under a per-tool count summary (Read, Write, Shell, etc.); show calls while running, collapse on completion, and retain independently expandable output and per-call failures.
+- Preserve nested Markdown emphasis, links, inline code and hard line breaks in Agent replies; keep prompts and tool output literal instead of interpreting their Markdown characters.
 - Align the standalone terminal's GPUI pins and lockfile with the app, and check its locked dependency resolution in CI so standalone tests do not fail on a stale lockfile.
 - List each project's sidebar sessions newest-first, so a newly created session appears at the top and remains visible when the project already has five or more sessions.
 - Show the OpenCode provider marks on the model dialog's popular-provider cards and on every row in the provider list.
@@ -54,6 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Multi-line programmatic edits now leave the cursor at the end of the line.
 
 ### Changed
+- Align Agent conversation typography, prompt bubbles and collapsible tool details with OpenCode Desktop's conversation view, while retaining the original input/composer, native rendering and bounded output previews.
 - Stop native `read` after a bounded text page instead of loading the entire large file. Reduce filesystem and sorting overhead in `ls`, `find`, and `grep` without changing search order.
 - Make native agent tools exclusive by default, preserve parallel read-only groups around mutations, and order result hooks without serializing safe tool bodies. Reduce shell capture and custom-tool input copying, bound validator retention, and preserve malformed arguments for explicit validation errors.
 - Show built-in Agent activity, completion and failure in the sidebar's existing status indicators, independently of hidden terminal output. Unseen completions stay marked until viewed or acknowledged.

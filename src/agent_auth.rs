@@ -6,7 +6,9 @@ use std::sync::{LazyLock, RwLock};
 
 use serde::{Deserialize, Serialize};
 
-static THINKING_LEVELS: LazyLock<RwLock<HashMap<(String, String), Vec<String>>>> =
+type ThinkingLevels = HashMap<(String, String), Vec<String>>;
+
+static THINKING_LEVELS: LazyLock<RwLock<ThinkingLevels>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
 #[derive(Clone, Debug)]

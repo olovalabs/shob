@@ -141,7 +141,7 @@ fn peer_is_same_user(stream: &UnixStream) -> bool {
                 &mut length,
             )
         };
-        return result == 0 && credentials.uid == unsafe { libc::getuid() };
+        result == 0 && credentials.uid == unsafe { libc::getuid() }
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -239,6 +239,21 @@ pub fn send(socket: &Path, event: &StatusEvent) -> std::io::Result<()> {
     serde_json::to_writer(&mut stream, event)?;
     stream.write_all(b"\n")?;
     stream.flush()
+}
+
+fn random_token() -> String {
+    let mut bytes = [0u8; 12];
+    if std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut bytes))
+        .is_err()
+    {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        bytes.copy_from_slice(&nanos.to_le_bytes()[..12]);
+    }
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 #[cfg(test)]
@@ -341,19 +356,4 @@ mod tests {
         assert_eq!(round.agent_id.as_deref(), Some("child"));
         assert_eq!(round.parent.as_deref(), Some("t1"));
     }
-}
-
-fn random_token() -> String {
-    let mut bytes = [0u8; 12];
-    if std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut bytes))
-        .is_err()
-    {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        bytes.copy_from_slice(&nanos.to_le_bytes()[..12]);
-    }
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }

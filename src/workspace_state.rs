@@ -1050,7 +1050,6 @@ mod tests {
                     }],
                     ..Default::default()
                 }],
-                ..Default::default()
             }],
         };
         save_atomic(&path, &workspace).expect("save");

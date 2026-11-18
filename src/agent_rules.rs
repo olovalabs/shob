@@ -299,7 +299,7 @@ impl RulePack {
         // breaks priority ties — exactly the resolution `evaluate` used to
         // compute per tick, now paid once at load so evaluation can stop at
         // the first match.
-        rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+        rules.sort_by_key(|rule| std::cmp::Reverse(rule.priority));
 
         Ok(RulePack {
             id: raw.id,

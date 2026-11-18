@@ -18,6 +18,7 @@ pub(super) struct Inline {
     text: SharedString,
     links: Rc<Vec<(Range<usize>, LinkMark)>>,
     highlights: Vec<(Range<usize>, HighlightStyle)>,
+    code_ranges: Vec<Range<usize>>,
     styled_text: StyledText,
 
     state: Arc<Mutex<InlineState>>,
@@ -50,10 +51,16 @@ impl Inline {
             id: id.into(),
             links: Rc::new(links),
             highlights,
+            code_ranges: Vec::new(),
             text: text.clone(),
             styled_text: StyledText::new(text),
             state,
         }
+    }
+
+    pub(super) fn code_ranges(mut self, ranges: Vec<Range<usize>>) -> Self {
+        self.code_ranges = ranges;
+        self
     }
 
     fn link_for_position(
@@ -230,11 +237,25 @@ impl Element for Inline {
 
         let mut runs = Vec::new();
         let mut ix = 0;
+        let mut code_ranges = self.code_ranges.iter().peekable();
         for (range, highlight) in self.highlights.iter() {
             if ix < range.start {
                 runs.push(text_style.clone().to_run(range.start - ix));
             }
-            runs.push(text_style.clone().highlight(*highlight).to_run(range.len()));
+            let mut style = text_style.clone().highlight(*highlight);
+            while code_ranges
+                .peek()
+                .is_some_and(|code| code.end <= range.start)
+            {
+                code_ranges.next();
+            }
+            if code_ranges
+                .peek()
+                .is_some_and(|code| code.contains(&range.start))
+            {
+                style.font_family = cx.theme().mono_font_family.clone();
+            }
+            runs.push(style.to_run(range.len()));
             ix = range.end;
         }
         if ix < self.text.len() {

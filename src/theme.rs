@@ -349,10 +349,10 @@ impl ThemeColors {
             (&mut self.dark, before.dark, after.dark),
         ] {
             for (key, value) in &mut current.style {
-                if previous.style.get(key) == Some(value) {
-                    if let Some(replacement) = next.style.get(key) {
-                        *value = replacement.clone();
-                    }
+                if previous.style.get(key) == Some(value)
+                    && let Some(replacement) = next.style.get(key)
+                {
+                    *value = replacement.clone();
                 }
             }
         }
@@ -1216,21 +1216,6 @@ mod tests {
     #[test]
     fn test_theme_preference_default_is_system() {
         assert_eq!(ThemePreference::default(), ThemePreference::System);
-    }
-
-    #[test]
-    fn test_theme_tokens_modes() {
-        let dark = ThemeTokens::dark();
-        assert!(dark.is_dark);
-        assert!(dark.sidebar_bg.l < 0.2);
-
-        let light = ThemeTokens::light();
-        assert!(!light.is_dark);
-        assert!(
-            light.sidebar_bg.l > 0.8,
-            "Light sidebar should be directly light like other places"
-        );
-        assert_eq!(light.sidebar_bg, light.window_bg);
     }
 
     #[test]

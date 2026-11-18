@@ -612,10 +612,10 @@ fn git_branches(cwd: &Path) -> Vec<String> {
             if line.starts_with('#') || line.starts_with('^') {
                 continue;
             }
-            if let Some((_, reference)) = line.split_once(' ') {
-                if let Some(name) = reference.strip_prefix("refs/heads/") {
-                    branches.push(name.to_string());
-                }
+            if let Some((_, reference)) = line.split_once(' ')
+                && let Some(name) = reference.strip_prefix("refs/heads/")
+            {
+                branches.push(name.to_string());
             }
         }
     }

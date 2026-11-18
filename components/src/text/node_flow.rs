@@ -262,7 +262,13 @@ impl Node {
                     let mut cells: Vec<_> = row
                         .children
                         .into_iter()
-                        .map(|cell| (cell.width, cell.children.flow_parts().into_iter()))
+                        .map(|cell| {
+                            let mut parts = cell.children.flow_parts();
+                            if parts.is_empty() {
+                                parts.push(Paragraph::default());
+                            }
+                            (cell.width, parts.into_iter())
+                        })
                         .collect();
                     loop {
                         let mut any = false;
@@ -280,7 +286,10 @@ impl Node {
                         if !any {
                             break;
                         }
-                        rows.push(TableRow { children });
+                        rows.push(TableRow {
+                            children,
+                            header: row.header,
+                        });
                     }
                 }
                 let count = rows.len();
@@ -445,6 +454,7 @@ mod tests {
                     },
                     width: None,
                 }],
+                ..Default::default()
             }],
             ..Default::default()
         };
@@ -463,5 +473,52 @@ mod tests {
             }
         }
         assert_eq!(actual, text);
+    }
+
+    #[test]
+    fn table_fragments_keep_empty_rows_and_header_continuations() {
+        let source = format!(
+            "| {} | short |\n| --- | --- |\n| | |\n",
+            "header ".repeat(400)
+        );
+        let mut context = NodeContext::default();
+        let root = crate::text::format::markdown::parse(
+            &source,
+            &TextViewStyle::default(),
+            &mut context,
+            &HighlightTheme::default_light(),
+        )
+        .unwrap();
+        let tables: Vec<_> = root
+            .flow_fragments()
+            .into_iter()
+            .map(|fragment| {
+                let Node::Table(table) = fragment.node else {
+                    panic!("expected table fragment")
+                };
+                assert!(
+                    table.children[0]
+                        .children
+                        .iter()
+                        .all(|cell| cell.children.text_len() <= 1024)
+                );
+                table
+            })
+            .collect();
+        assert!(tables.len() > 2);
+        assert!(
+            tables[..tables.len() - 1]
+                .iter()
+                .all(|table| table.children[0].header)
+        );
+        let empty_row = &tables.last().unwrap().children[0];
+        assert!(!empty_row.header);
+        assert_eq!(empty_row.children.len(), 2);
+        assert!(
+            empty_row
+                .children
+                .iter()
+                .all(|cell| cell.children.is_empty())
+        );
     }
 }
