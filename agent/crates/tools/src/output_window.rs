@@ -181,7 +181,14 @@ pub fn build_output_window(
         lines: line_count(content),
         bytes: content.len(),
     };
-    build_window(content, content, totals, options, head_share, full_output_hint)
+    build_window(
+        content,
+        content,
+        totals,
+        options,
+        head_share,
+        full_output_hint,
+    )
 }
 
 /// `\n`-count lines, counting a non-terminated final line. Matches
@@ -207,11 +214,13 @@ pub fn window_truncation(
         truncated: true,
         // Report the limit that was actually binding, matching `truncate_tail`'s
         // convention, so `details` never disagrees with the reason given.
-        truncated_by: Some(if totals.bytes > options.max_bytes.unwrap_or(DEFAULT_MAX_BYTES) {
-            crate::truncate::TruncationLimit::Bytes
-        } else {
-            crate::truncate::TruncationLimit::Lines
-        }),
+        truncated_by: Some(
+            if totals.bytes > options.max_bytes.unwrap_or(DEFAULT_MAX_BYTES) {
+                crate::truncate::TruncationLimit::Bytes
+            } else {
+                crate::truncate::TruncationLimit::Lines
+            },
+        ),
         total_lines: totals.lines,
         total_bytes: totals.bytes,
         output_lines: window.head_lines + window.tail_lines,
@@ -280,7 +289,10 @@ mod tests {
         let truncation = window_truncation(&window, totals_of(&s), TruncationOptions::default());
         assert!(truncation.truncated);
         assert_eq!(truncation.output_bytes, window.content.len());
-        assert_eq!(truncation.output_lines, window.head_lines + window.tail_lines);
+        assert_eq!(
+            truncation.output_lines,
+            window.head_lines + window.tail_lines
+        );
         assert_eq!(truncation.total_lines, total);
     }
 

@@ -230,7 +230,8 @@ async fn successful_truncated_command_stays_tail_only() {
     let lines: String = (0..20_000)
         .map(|i| format!("line-{i}\n"))
         .collect::<String>();
-    env.register_shell("noisy", ShellScript::success(lines)).await;
+    env.register_shell("noisy", ShellScript::success(lines))
+        .await;
 
     let tool = tools::create_bash_tool(&ctx, None);
     let r = run_bash(tool, serde_json::json!({ "command": "noisy" }))
