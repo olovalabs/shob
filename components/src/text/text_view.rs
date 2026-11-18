@@ -11,6 +11,7 @@ use gpui::{
     StyleRefinement, Styled, Window, div, px,
 };
 
+use super::flow::{Flow, FlowElement, MarkdownBlocks};
 use crate::highlighter::HighlightTheme;
 use crate::menu::{ContextMenuExt, PopupMenuItem};
 use crate::scroll::ScrollableElement;
@@ -24,16 +25,14 @@ use crate::{
         node::{self, NodeContext},
     },
 };
-use super::flow::{Flow, FlowElement, MarkdownBlocks};
 
 const CONTEXT: &'static str = "TextView";
 
 // Opt-in parse timings for the streaming chat pipeline. The app enables these
 // with `SHOB_STREAM_TIMINGS=1`; with the variable unset no samples are
 // retained. Only durations are recorded.
-static TIMING_ENABLED: LazyLock<bool> = LazyLock::new(|| {
-    std::env::var_os("SHOB_STREAM_TIMINGS").is_some_and(|value| value != "0")
-});
+static TIMING_ENABLED: LazyLock<bool> =
+    LazyLock::new(|| std::env::var_os("SHOB_STREAM_TIMINGS").is_some_and(|value| value != "0"));
 static PARSE_SAMPLES: LazyLock<Mutex<Vec<(&'static str, u64)>>> =
     LazyLock::new(|| Mutex::new(Vec::new()));
 static PARSE_ORIGIN: LazyLock<Instant> = LazyLock::new(Instant::now);
@@ -159,7 +158,7 @@ impl RenderOnce for TextViewElement {
 pub(crate) type CodeBlockActionsFn =
     dyn Fn(&CodeBlock, &mut Window, &mut App) -> AnyElement + Send + Sync;
 
-/// A text view that can render Markdown or HTML.
+/// A text view that can render selectable plain text, Markdown, or HTML.
 ///
 /// ## Goals
 ///
@@ -494,6 +493,10 @@ async fn parse_updates(
 
 #[derive(Clone)]
 enum InitState {
+    Plain {
+        text: SharedString,
+        style: Box<TextViewStyle>,
+    },
     Initializing {
         type_: TextViewType,
         text: SharedString,
@@ -600,6 +603,13 @@ impl TextViewState {
                     |(blocks, _)| blocks.copy_text(),
                 ));
             }
+            if let Some(Ok(content)) = &self.parsed_result
+                && let node::Node::Root { children } = &content.root_node
+                && let [node::Node::Paragraph(paragraph)] = children.as_slice()
+                && let [inline] = paragraph.children.as_slice()
+            {
+                return Some(inline.text.to_string());
+            }
         }
         Some({
             let content = self.parsed_result.as_ref()?.as_ref().ok()?;
@@ -643,7 +653,6 @@ impl From<TextView> for Text {
 }
 
 impl Text {
-
     pub fn style(self, style: TextViewStyle) -> Self {
         match self {
             Self::String(s) => Self::String(s),
@@ -693,6 +702,36 @@ impl TextView {
                 style: Default::default(),
                 highlight_theme: highlight_theme.clone(),
             }
+        }
+    }
+
+    /// Selectable literal text with preserved whitespace and no markup parser.
+    pub fn plain(
+        id: impl Into<ElementId>,
+        text: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
+        let id = id.into();
+        let text = text.into();
+        let state = window.use_keyed_state(
+            SharedString::from(format!("{id}/plain/state")),
+            cx,
+            |_, cx| TextViewState::new(cx),
+        );
+        Self {
+            id,
+            init_state: Some(InitState::Plain {
+                text: text.clone(),
+                style: Default::default(),
+            }),
+            raw: text,
+            state,
+            style: StyleRefinement::default(),
+            selectable: true,
+            scrollable: false,
+            code_block_actions: None,
+            blocks: None,
         }
     }
 
@@ -784,7 +823,9 @@ impl TextView {
         let raw: SharedString = raw.into();
         if let Some(init_state) = &mut self.init_state {
             match init_state {
-                InitState::Initializing { text, .. } => *text = raw.clone(),
+                InitState::Plain { text, .. } | InitState::Initializing { text, .. } => {
+                    *text = raw.clone()
+                }
                 InitState::Initialized { tx } => {
                     tx.send(Update::Text(raw.clone()));
                 }
@@ -797,7 +838,9 @@ impl TextView {
     pub fn style(mut self, style: TextViewStyle) -> Self {
         if let Some(init_state) = &mut self.init_state {
             match init_state {
-                InitState::Initializing { style: s, .. } => **s = style,
+                InitState::Plain { style: s, .. } | InitState::Initializing { style: s, .. } => {
+                    **s = style
+                }
                 InitState::Initialized { tx } => {
                     tx.send(Update::Style(style));
                 }
@@ -821,7 +864,7 @@ impl TextView {
             return;
         };
 
-        cx.write_to_clipboard(ClipboardItem::new_string(selected_text.trim().to_string()));
+        cx.write_to_clipboard(ClipboardItem::new_string(selected_text));
     }
 
     pub fn code_block_actions<F, E>(mut self, f: F) -> Self
@@ -855,12 +898,37 @@ impl Element for TextView {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
+        if let Some(InitState::Plain { text, style }) = &self.init_state {
+            self.state.update(cx, |state, _| {
+                let unchanged = state.parsed_result.as_ref().is_some_and(|content| {
+                    let Ok(content) = content else { return false };
+                    let node::Node::Root { children } = &content.root_node else {
+                        return false;
+                    };
+                    let [node::Node::Paragraph(paragraph)] = children.as_slice() else {
+                        return false;
+                    };
+                    paragraph.children.len() == 1 && paragraph.children[0].text == *text
+                });
+                if unchanged {
+                    if let Some(Ok(content)) = &mut state.parsed_result {
+                        content.node_cx.style = (**style).clone();
+                    }
+                } else {
+                    state.parsed_result =
+                        Some(Ok(plain_content(text.clone(), (**style).clone(), None)));
+                    state.clear_selection();
+                }
+            });
+        }
         if let Some(InitState::Initializing {
             type_,
             text,
             style,
             highlight_theme,
-        }) = self.init_state.take()
+        }) = self
+            .init_state
+            .take_if(|state| matches!(state, InitState::Initializing { .. }))
         {
             let style = *style;
             let (wake, rx) = smol::channel::bounded(1);
@@ -980,9 +1048,7 @@ impl Element for TextView {
                 let selected_text = state.read(cx).selection_text().unwrap_or_default();
                 let select_state = state.clone();
                 menu.item(PopupMenuItem::new("Copy").on_click(move |_, _, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(
-                        selected_text.trim().to_string(),
-                    ));
+                    cx.write_to_clipboard(ClipboardItem::new_string(selected_text.clone()));
                 }))
                 .item(PopupMenuItem::new("Select All").on_click(move |_, _, cx| {
                     select_state.update(cx, |state, cx| {
@@ -1168,7 +1234,11 @@ fn parse_content(
         }
         TextViewType::Html => super::format::html::parse(text, &mut node_cx),
     };
-    res.map(move |root_node| ParsedContent { root_node, node_cx, flow: None })
+    res.map(move |root_node| ParsedContent {
+        root_node,
+        node_cx,
+        flow: None,
+    })
 }
 
 fn selection_bounds(
@@ -1292,8 +1362,7 @@ mod tests {
         });
         handle.send(Update::Text("new".into()));
         assert!(UpdateHandle::take_result(&handle.mailbox).is_none());
-        let actions: Arc<CodeBlockActionsFn> =
-            Arc::new(|_, _, _| div().into_any_element());
+        let actions: Arc<CodeBlockActionsFn> = Arc::new(|_, _, _| div().into_any_element());
         {
             let mut mailbox = handle.mailbox.lock().unwrap();
             mailbox.code_block_actions = Some(actions.clone());
@@ -1306,7 +1375,10 @@ mod tests {
         }
         let content = UpdateHandle::take_result(&handle.mailbox).unwrap().unwrap();
         assert_eq!(content.root_node.to_markdown(), "new");
-        assert!(Arc::ptr_eq(content.node_cx.code_block_actions.as_ref().unwrap(), &actions));
+        assert!(Arc::ptr_eq(
+            content.node_cx.code_block_actions.as_ref().unwrap(),
+            &actions
+        ));
         assert!(UpdateHandle::take_result(&handle.mailbox).is_none());
     }
 
@@ -1349,11 +1421,17 @@ mod tests {
 
     #[test]
     fn test_streaming_plain_fallback_preserves_source_and_native_state() {
-        let source: SharedString = "# Heading\n\n```rust\nlet x = 1;\n```\nλ".into();
+        let source: SharedString = "# Heading\n\n*literal* <tag> & >\n\tλ  aligned\n".into();
         let content = plain_content(source.clone(), TextViewStyle::default(), None);
-        let node::Node::Root { children } = &content.root_node else { panic!("root") };
-        let node::Node::Paragraph(paragraph) = &children[0] else { panic!("paragraph") };
+        let node::Node::Root { children } = &content.root_node else {
+            panic!("root")
+        };
+        let node::Node::Paragraph(paragraph) = &children[0] else {
+            panic!("paragraph")
+        };
         assert_eq!(paragraph.children[0].text, source);
+        assert_eq!(paragraph.children.len(), 1);
+        assert!(paragraph.children[0].marks.is_empty());
         let (handle, _, _, _) = pipeline(source.as_str());
         handle.send(Update::Text(source));
         assert_eq!(handle.mailbox.lock().unwrap().generation, 0);
@@ -1367,12 +1445,15 @@ mod tests {
         handle.mailbox.lock().unwrap().result = Some(ParseResult {
             generation: 0,
             epoch: 0,
-            content: Ok(plain_content("# Heading".into(), TextViewStyle::default(), None)),
+            content: Ok(plain_content(
+                "# Heading".into(),
+                TextViewStyle::default(),
+                None,
+            )),
             completed_at: Instant::now(),
         });
         for size in 1..=1_000 {
-            let style = TextViewStyle::default()
-                .heading_font_size(move |_, _| px(size as f32));
+            let style = TextViewStyle::default().heading_font_size(move |_, _| px(size as f32));
             handle.send(Update::Style(style));
         }
         assert_eq!(handle.mailbox.lock().unwrap().generation, 0);
@@ -1403,14 +1484,21 @@ mod tests {
                 });
             }
             let content = UpdateHandle::take_result(&handle.mailbox).unwrap().unwrap();
-            assert_eq!(content.root_node.to_markdown().len(), generation as usize + 1);
+            assert_eq!(
+                content.root_node.to_markdown().len(),
+                generation as usize + 1
+            );
         }
         {
             let mut mailbox = handle.mailbox.lock().unwrap();
             mailbox.result = Some(ParseResult {
                 generation: 98,
                 epoch: 0,
-                content: Ok(plain_content("older".into(), TextViewStyle::default(), None)),
+                content: Ok(plain_content(
+                    "older".into(),
+                    TextViewStyle::default(),
+                    None,
+                )),
                 completed_at: Instant::now(),
             });
         }
@@ -1421,7 +1509,11 @@ mod tests {
             mailbox.result = Some(ParseResult {
                 generation: 100,
                 epoch: 0,
-                content: Ok(plain_content("old prefix".into(), TextViewStyle::default(), None)),
+                content: Ok(plain_content(
+                    "old prefix".into(),
+                    TextViewStyle::default(),
+                    None,
+                )),
                 completed_at: Instant::now(),
             });
         }
@@ -1431,7 +1523,11 @@ mod tests {
             mailbox.result = Some(ParseResult {
                 generation: mailbox.generation,
                 epoch: mailbox.epoch,
-                content: Ok(plain_content("replacement".into(), TextViewStyle::default(), None)),
+                content: Ok(plain_content(
+                    "replacement".into(),
+                    TextViewStyle::default(),
+                    None,
+                )),
                 completed_at: Instant::now(),
             });
         }
@@ -1446,7 +1542,11 @@ mod tests {
             mailbox.result = Some(ParseResult {
                 generation: mailbox.generation - 1,
                 epoch: previous_epoch,
-                content: Ok(plain_content("old style".into(), TextViewStyle::default(), None)),
+                content: Ok(plain_content(
+                    "old style".into(),
+                    TextViewStyle::default(),
+                    None,
+                )),
                 completed_at: Instant::now(),
             });
         }
@@ -1456,24 +1556,41 @@ mod tests {
     #[test]
     #[ignore = "manual parse-versus-first-layout control; prints metadata only"]
     fn streaming_markdown_first_layout_benchmark() {
-        let source: SharedString = ("# Heading\n\nA **formatted** paragraph with [link](https://example.com).\n\n\
+        let source: SharedString =
+            ("# Heading\n\nA **formatted** paragraph with [link](https://example.com).\n\n\
             ```json\n{\"stream\":true,\"items\":[1,2,3],\"message\":\"hello\"}\n```\n\n")
-            .repeat(1_000)
-            .into();
+                .repeat(1_000)
+                .into();
         let theme = HighlightTheme::default_light();
         // Warm the language query cache, as in a running application.
-        let _ = parse_content(TextViewType::Markdown, "```json\n{}\n```",
-            TextViewStyle::default(), &theme, &None).unwrap();
+        let _ = parse_content(
+            TextViewType::Markdown,
+            "```json\n{}\n```",
+            TextViewStyle::default(),
+            &theme,
+            &None,
+        )
+        .unwrap();
         let parse_start = Instant::now();
-        let parsed = parse_content(TextViewType::Markdown, &source,
-            TextViewStyle::default(), &theme, &None).unwrap();
+        let parsed = parse_content(
+            TextViewType::Markdown,
+            &source,
+            TextViewStyle::default(),
+            &theme,
+            &None,
+        )
+        .unwrap();
         let parse_us = parse_start.elapsed().as_micros();
         let plain_start = Instant::now();
         let plain = plain_content(source.clone(), TextViewStyle::default(), None);
         let plain_us = plain_start.elapsed().as_micros();
         std::hint::black_box((&parsed, &plain));
-        eprintln!("markdown first-layout control bytes={} paragraphs=1000 parse_highlight_us={} plain_native_us={} update_slots=1 result_slots=1 in_flight=1",
-            source.len(), parse_us, plain_us);
+        eprintln!(
+            "markdown first-layout control bytes={} paragraphs=1000 parse_highlight_us={} plain_native_us={} update_slots=1 result_slots=1 in_flight=1",
+            source.len(),
+            parse_us,
+            plain_us
+        );
     }
 
     #[test]
@@ -1616,7 +1733,7 @@ mod tests {
         let source = "# Heading\n\nLong **formatted** paragraph.\n\n".repeat(2_000);
         blocks.finish(source.clone().into());
         handle.send(Update::Blocks(blocks));
-        let state = TextViewState {
+        let mut state = TextViewState {
             parent_entity: None,
             tx: Some(handle),
             parsed_result: None,
@@ -1628,5 +1745,14 @@ mod tests {
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
         };
         assert_eq!(state.selection_text(), Some(source));
+
+        let literal: SharedString = "\t# literal *text* <tag>\n  aligned\n".into();
+        state.tx = None;
+        state.parsed_result = Some(Ok(plain_content(
+            literal.clone(),
+            TextViewStyle::default(),
+            None,
+        )));
+        assert_eq!(state.selection_text().as_deref(), Some(literal.as_str()));
     }
 }

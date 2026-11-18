@@ -212,6 +212,7 @@ struct ChatMessage {
     stream: Option<StreamView>,
     /// Shared, immutable completed document (also used by replayed messages).
     markdown: std::sync::OnceLock<MarkdownBlocks>,
+    literal: std::sync::OnceLock<SharedString>,
     /// Metadata-only turn identity for opt-in paint timings.
     turn: Option<(u64, std::time::Instant)>,
     source_timestamp: Option<u64>,
@@ -241,6 +242,7 @@ struct ChatTool {
     preview_truncated: bool,
     batch_result: Option<Arc<chat_batch::BatchResult>>,
     state: ToolState,
+    expanded_calls: [bool; embedded::MAX_BATCH_CALLS],
     expanded: bool,
     /// Argument and output derivatives computed once when the tool starts.
     /// Rendering must not re-parse JSON or re-serialize arguments per frame.
@@ -267,6 +269,7 @@ impl ChatMessage {
             streaming: false,
             stream: None,
             markdown: std::sync::OnceLock::new(),
+            literal: std::sync::OnceLock::new(),
             turn: None,
             source_timestamp: None,
         }
@@ -434,11 +437,7 @@ fn format_tool_summary(_name: &str, input: &str) -> String {
     clip(input.lines().next().unwrap_or("").trim())
 }
 
-/// Markdown body shared by user and assistant chat messages.
-///
-/// Mirrors the Wake reading pane: GFM tables/quotes/dividers come from the
-/// component, headings scale relative to body text, and code blocks get a
-/// raised surface plus a language label and copy action.
+/// Shared assistant/reasoning typography; prompts and tool output stay literal.
 enum ChatMarkdown {
     Text(SharedString),
     Blocks(MarkdownBlocks),
@@ -490,19 +489,17 @@ fn chat_markdown(
             ..Default::default()
         }
         .heading_font_size(|level, base| match level {
-            1 => base * 1.45,
-            2 => base * 1.28,
-            3 => base * 1.14,
-            4 => base * 1.05,
+            1 => base * (17.0 / 14.0),
+            2 => base * (15.0 / 14.0),
             _ => base,
         })
         .code_block(
             StyleRefinement::default()
                 .bg(tokens.card_hover)
-                .border_1()
+                .border(px(0.5))
                 .border_color(tokens.border_subtle)
-                .rounded(px(8.0))
-                .px(px(16.0))
+                .rounded(px(6.0))
+                .px(px(12.0))
                 .py(px(12.0)),
         ),
     )
@@ -637,7 +634,15 @@ fn is_agent_tool(name: &str) -> bool {
 fn is_shell_tool(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
-        "shell" | "bash" | "run" | "run_command" | "exec" | "execute" | "terminal" | "command"
+        "shell"
+            | "bash"
+            | "powershell"
+            | "run"
+            | "run_command"
+            | "exec"
+            | "execute"
+            | "terminal"
+            | "command"
     )
 }
 
@@ -645,13 +650,12 @@ fn tool_title(name: &str) -> String {
     match name.to_ascii_lowercase().as_str() {
         "read" | "read_file" => "Read".into(),
         "list" | "ls" | "list_dir" => "List".into(),
-        "glob" => "Glob".into(),
-        "grep" | "search" | "rg" => "Grep".into(),
+        "find" | "glob" => "Glob".into(),
+        "grep" | "ast_grep" | "search" | "rg" => "Grep".into(),
         "webfetch" | "web_fetch" | "fetch" => "Webfetch".into(),
         "websearch" | "web_search" | "search_web" => "Web Search".into(),
-        "shell" | "bash" | "run" | "run_command" | "exec" | "execute" | "terminal" | "command" => {
-            "Shell".into()
-        }
+        "shell" | "bash" | "powershell" | "run" | "run_command" | "exec" | "execute"
+        | "terminal" | "command" => "Shell".into(),
         "edit" | "str_replace" | "str_replace_editor" | "apply_patch" => "Edit".into(),
         "write" | "write_file" | "create_file" => "Write".into(),
         "patch" => "Patch".into(),
@@ -662,6 +666,7 @@ fn tool_title(name: &str) -> String {
         "skill" => "Skill".into(),
         "todowrite" | "todo_write" | "todos" => "Todos".into(),
         "browser" => "Browser".into(),
+        "batch" => "Batch".into(),
         _ => title_case(name),
     }
 }
@@ -678,7 +683,7 @@ fn file_name(path: &str) -> &str {
 struct ToolView {
     title: String,
     subtitle: String,
-    args: Vec<String>,
+    args: Vec<SharedString>,
 }
 
 /// Parsed, render-ready tool fields. Built once per tool call so a stream of
@@ -689,6 +694,12 @@ struct ToolDisplay {
     batch_calls: chat_batch::BatchCalls,
     activity_detail: Option<String>,
     shell_command: Option<SharedString>,
+    shell_preview: Option<SharedString>,
+    shell_truncated: bool,
+    show_raw_input: bool,
+    input: SharedString,
+    input_preview: SharedString,
+    input_truncated: bool,
     content_body: Option<SharedString>,
     content_preview: Option<SharedString>,
     content_truncated: bool,
@@ -697,6 +708,7 @@ struct ToolDisplay {
 impl ToolDisplay {
     fn new(name: &str, input: &str) -> Self {
         let parsed = serde_json::from_str::<serde_json::Value>(input.trim()).ok();
+        let (input, input_preview, input_truncated) = tool_output_fields(input.to_owned());
         let content_body = tool_content_body(name, parsed.as_ref()).map(SharedString::from);
         let (content_preview, content_truncated) = match content_body.as_ref() {
             Some(body) => {
@@ -712,8 +724,28 @@ impl ToolDisplay {
             }
             None => (None, false),
         };
+        let view = tool_view(name, &input, parsed.as_ref());
+        let shell = is_shell_tool(name)
+            .then(|| shell_command(&input, parsed.as_ref()))
+            .filter(|command| !command.is_empty());
+        let (shell_command, shell_preview, shell_truncated) = match shell {
+            Some(command) => {
+                let (full, preview, truncated) = tool_output_fields(command);
+                (Some(full), Some(preview), truncated)
+            }
+            None => (None, None, false),
+        };
+        let show_raw_input = content_body.is_none()
+            && shell_command
+                .as_ref()
+                .is_none_or(|command| command.is_empty())
+            && (view.subtitle.is_empty()
+                || !matches!(
+                    view.title.as_str(),
+                    "Read" | "List" | "Glob" | "Grep" | "Webfetch" | "Web Search"
+                ));
         Self {
-            view: tool_view(name, input, parsed.as_ref()),
+            view,
             batch_calls: if chat_batch::is_batch(name) {
                 chat_batch::calls(parsed.as_ref())
             } else {
@@ -726,8 +758,13 @@ impl ToolDisplay {
                     .filter(|path| !path.is_empty())
                     .map(|path| clip_tool_text(first_line(path), 300).0)
             }),
-            shell_command: is_shell_tool(name)
-                .then(|| SharedString::from(shell_command(input, parsed.as_ref()))),
+            shell_command,
+            shell_preview,
+            shell_truncated,
+            show_raw_input,
+            input,
+            input_preview,
+            input_truncated,
             content_body,
             content_preview,
             content_truncated,
@@ -763,11 +800,18 @@ fn tool_view(name: &str, input: &str, parsed: Option<&serde_json::Value>) -> Too
             .map(|value| clip(first_line(value), 80))
             .unwrap_or_default();
     } else if is_shell_tool(name) {
-        if let Some(command) = field("command").or_else(|| field("cmd")) {
-            subtitle = first_line(command).to_owned();
-        } else if parsed.is_none() && !input.trim_start().starts_with('{') {
-            subtitle = first_line(input).to_owned();
-        }
+        subtitle = field("description")
+            .or_else(|| field("title"))
+            .or_else(|| {
+                parsed
+                    .and_then(|value| value.get("metadata"))
+                    .and_then(|metadata| metadata.get("title"))
+                    .and_then(serde_json::Value::as_str)
+            })
+            .filter(|text| !text.trim().is_empty())
+            .map(first_line)
+            .map(str::to_owned)
+            .unwrap_or_else(|| first_line(&shell_command(input, parsed)).to_owned());
     } else {
         match lower.as_str() {
             "read" | "read_file" => {
@@ -788,15 +832,7 @@ fn tool_view(name: &str, input: &str, parsed: Option<&serde_json::Value>) -> Too
                 subtitle = field("path").unwrap_or(".").to_string();
             }
             "find" | "glob" | "grep" | "ast_grep" | "search" | "rg" => {
-                let path = field("path").unwrap_or(".");
-                subtitle = match field("pattern")
-                    .map(first_line)
-                    .filter(|value| !value.is_empty())
-                {
-                    Some(pattern) if path != "." => format!("{pattern} in {path}"),
-                    Some(pattern) => pattern.to_owned(),
-                    None => path.to_owned(),
-                };
+                subtitle = field("path").unwrap_or(".").to_owned();
                 for key in ["pattern", "include"] {
                     if let Some(value) = object.and_then(|map| map.get(key)) {
                         let value = value
@@ -830,8 +866,11 @@ fn tool_view(name: &str, input: &str, parsed: Option<&serde_json::Value>) -> Too
 
     ToolView {
         title,
-        subtitle,
-        args,
+        subtitle: clip(first_line(&subtitle), 300),
+        args: args
+            .into_iter()
+            .map(|arg| SharedString::from(clip(first_line(&arg), 300)))
+            .collect(),
     }
 }
 
@@ -942,6 +981,20 @@ fn chat_output_expander(
         .child(label)
 }
 
+#[derive(IntoElement)]
+struct ToolPlainText {
+    id: SharedString,
+    text: SharedString,
+}
+
+impl gpui::RenderOnce for ToolPlainText {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        TextView::plain(self.id, self.text, window, cx)
+            .selectable(true)
+            .w_full()
+    }
+}
+
 fn chat_console_section(
     copy_id: SharedString,
     display: SharedString,
@@ -961,17 +1014,20 @@ fn chat_console_section(
         .items_start()
         .gap(px(8.0))
         .px(px(12.0))
-        .py(px(8.0))
+        .py(px(12.0))
         .whitespace_normal()
         .font_family(MONO_FONT)
-        .text_size(px(12.0))
+        .text_size(px(13.0))
         .line_height(relative(1.6))
         .text_color(if command {
             tokens.text_primary
         } else {
             tokens.text_secondary
         })
-        .child(div().flex_1().min_w_0().child(display))
+        .child(div().flex_1().min_w_0().child(ToolPlainText {
+            id: format!("{copy_id}-text").into(),
+            text: display,
+        }))
         .child(chat_copy_button(copy_id, copy_text, tip, tokens))
 }
 
@@ -986,64 +1042,94 @@ struct ToolOutputView {
 fn chat_console_output(
     pane_id: usize,
     index: usize,
-    command: SharedString,
+    command: ToolOutputView,
     output: ToolOutputView,
+    failed: bool,
     tokens: ThemeTokens,
     on_show_more: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
 ) -> Div {
-    let mut card = div()
+    let has_command = !command.full.is_empty();
+    let hidden = command.full.len().saturating_sub(command.preview.len())
+        + output.full.len().saturating_sub(output.preview.len());
+    let mut scroll = div()
+        .id(SharedString::from(format!(
+            "tool-console-{pane_id}-{index}"
+        )))
         .w_full()
         .min_w_0()
-        .rounded(px(6.0))
-        .border_1()
-        .border_color(tokens.border_subtle)
-        .bg(tokens.window_bg)
-        .overflow_hidden()
-        .flex()
-        .flex_col();
-    if !command.trim().is_empty() {
-        card = card.child(chat_console_section(
+        .max_h(px(240.0))
+        .overflow_y_scroll();
+    if has_command {
+        scroll = scroll.child(chat_console_section(
             SharedString::from(format!("copy-tool-cmd-{pane_id}-{index}")),
-            command.clone(),
-            command,
+            if command.show_full {
+                command.full.clone()
+            } else {
+                command.preview.clone()
+            },
+            command.full,
             true,
             tokens,
         ));
     }
-    if !output.full.trim().is_empty() {
-        let display = if output.show_full {
-            output.full.clone()
+    if !output.full.is_empty() {
+        scroll = scroll.child(
+            div()
+                .w_full()
+                .min_w_0()
+                .when(has_command, |section| {
+                    section.border_t_1().border_color(tokens.border_subtle)
+                })
+                .bg(if failed {
+                    tokens.block_failure.opacity(0.06)
+                } else {
+                    tokens.card_bg
+                })
+                .child(chat_console_section(
+                    SharedString::from(format!("copy-tool-output-{pane_id}-{index}")),
+                    if output.show_full {
+                        output.full.clone()
+                    } else {
+                        output.preview.clone()
+                    },
+                    output.full,
+                    false,
+                    tokens,
+                )),
+        );
+    }
+    div()
+        .w_full()
+        .min_w_0()
+        .rounded(px(6.0))
+        .border_1()
+        .border_color(if failed {
+            tokens.block_failure.opacity(0.35)
         } else {
-            output.preview.clone()
-        };
-        let hidden = output.full.len().saturating_sub(display.len());
-        let mut output_card = div()
-            .w_full()
-            .min_w_0()
-            .border_t_1()
-            .border_color(tokens.border_subtle)
-            .child(chat_console_section(
-                SharedString::from(format!("copy-tool-output-{pane_id}-{index}")),
-                display,
-                output.full.clone(),
-                false,
-                tokens,
-            ));
-        if output.truncated {
-            output_card = output_card.child(chat_output_expander(
+            tokens.border_subtle
+        })
+        .bg(tokens.window_bg)
+        .overflow_hidden()
+        .flex()
+        .flex_col()
+        .child(scroll)
+        .when(command.truncated || output.truncated, |card| {
+            card.child(chat_output_expander(
                 SharedString::from(format!("tool-output-more-{pane_id}-{index}")),
                 hidden,
                 output.show_full,
                 tokens,
                 on_show_more,
-            ));
-        }
-        card = card.child(output_card);
-    }
-    card
+            ))
+        })
 }
 
-fn chat_tool_output_block(text: SharedString, is_error: bool, tokens: ThemeTokens) -> Div {
+fn chat_tool_output_block(
+    id: SharedString,
+    text: SharedString,
+    is_error: bool,
+    tokens: ThemeTokens,
+) -> Div {
     div()
         .w_full()
         .min_w_0()
@@ -1063,30 +1149,44 @@ fn chat_tool_output_block(text: SharedString, is_error: bool, tokens: ThemeToken
         .py(px(8.0))
         .whitespace_normal()
         .font_family(MONO_FONT)
-        .text_size(px(12.0))
+        .text_size(px(13.0))
         .line_height(relative(1.6))
         .text_color(if is_error {
             tokens.block_failure
         } else {
             tokens.text_secondary
         })
-        .child(text)
+        .child(
+            div()
+                .id(id.clone())
+                .max_h(px(240.0))
+                .overflow_y_scroll()
+                .child(ToolPlainText {
+                    id: format!("{id}-text").into(),
+                    text,
+                }),
+        )
 }
 
 fn shell_command(input: &str, parsed: Option<&serde_json::Value>) -> String {
     parsed
         .and_then(|value| {
-            value
-                .get("command")
-                .or_else(|| value.get("cmd"))
-                .and_then(|command| command.as_str())
+            ["command", "cmd"]
+                .into_iter()
+                .find_map(|key| value.get(key).and_then(serde_json::Value::as_str))
+                .or_else(|| {
+                    value
+                        .get("metadata")
+                        .and_then(|metadata| metadata.get("command"))
+                        .and_then(serde_json::Value::as_str)
+                })
                 .map(str::to_owned)
         })
         .unwrap_or_else(|| {
-            if input.trim_start().starts_with('{') {
+            if parsed.is_some() || input.trim_start().starts_with('{') {
                 String::new()
             } else {
-                input.trim().to_string()
+                input.trim().to_owned()
             }
         })
 }
@@ -1107,12 +1207,59 @@ fn tool_content_body(name: &str, parsed: Option<&serde_json::Value>) -> Option<S
         return None;
     }
     let object = parsed?.as_object()?;
-    object
-        .get("content")
-        .and_then(|value| value.as_str())
-        .or_else(|| object.get("newString").and_then(|value| value.as_str()))
-        .or_else(|| object.get("new_string").and_then(|value| value.as_str()))
-        .map(str::to_owned)
+    let field = |keys: &[&str]| {
+        keys.iter()
+            .find_map(|key| object.get(*key).and_then(serde_json::Value::as_str))
+    };
+    if let Some(content) = field(&["patch", "patchText", "patch_text", "diff"]) {
+        return Some(content.to_owned());
+    }
+    if matches!(lower.as_str(), "write" | "write_file" | "create_file") {
+        return field(&["content", "text"]).map(str::to_owned);
+    }
+    let mut diff = String::new();
+    let decoded = object
+        .get("edits")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|edits| serde_json::from_str::<serde_json::Value>(edits).ok());
+    if let Some(edits) = decoded
+        .as_ref()
+        .or_else(|| object.get("edits"))
+        .and_then(serde_json::Value::as_array)
+    {
+        for edit in edits {
+            append_tool_edit(&mut diff, edit);
+        }
+    } else {
+        append_tool_edit(&mut diff, parsed?);
+    }
+    if diff.is_empty() {
+        field(&["content", "newString", "new_string", "newText", "new_text"]).map(str::to_owned)
+    } else {
+        Some(diff)
+    }
+}
+
+fn append_tool_edit(diff: &mut String, edit: &serde_json::Value) {
+    let field = |keys: &[&str]| {
+        keys.iter()
+            .find_map(|key| edit.get(*key).and_then(serde_json::Value::as_str))
+    };
+    let old = field(&["oldString", "old_string", "oldText", "old_text"]);
+    let new = field(&["newString", "new_string", "newText", "new_text"]);
+    let (Some(old), Some(new)) = (old, new) else {
+        return;
+    };
+    diff.push_str("@@\n");
+    for (prefix, text) in [('-', old), ('+', new)] {
+        for line in text.split_inclusive('\n') {
+            diff.push(prefix);
+            diff.push_str(line);
+            if !line.ends_with('\n') {
+                diff.push('\n');
+            }
+        }
+    }
 }
 
 fn model_picker_filter_marker(color: Hsla, row_height: f32) -> impl IntoElement {
@@ -1173,11 +1320,10 @@ fn chat_tool_content(
     let mut body = div()
         .w_full()
         .min_w_0()
-        .ml(px(12.0))
-        .pl(px(12.0))
-        .border_l_1()
-        .border_color(tokens.border_subtle)
-        .py(px(6.0))
+        .when(tool.display.shell_command.is_none(), |body| {
+            body.pl(px(12.0))
+        })
+        .py(px(8.0))
         .flex()
         .flex_col()
         .gap(px(8.0));
@@ -1187,49 +1333,120 @@ fn chat_tool_content(
         body = body.relative().child(marker);
     }
 
-    if chat_batch::is_batch(&tool.name) && (tool.batch_result.is_some() || tool.output.is_empty()) {
-        return chat_batch::details(body, pane_id, index, tool, tokens, on_show_more);
-    }
-
-    if !tool.display.view.args.is_empty() {
-        body = body.child(
-            div()
-                .text_size(px(12.0))
-                .text_color(tokens.text_muted)
-                .whitespace_normal()
-                .child(tool.display.view.args.join(" · ")),
-        );
-    }
-
-    if let Some(command) = tool
-        .display
-        .shell_command
-        .as_ref()
-        .filter(|_| tool.state != ToolState::Failed)
-    {
+    if let Some(command) = tool.display.shell_command.as_ref() {
         body = body.child(chat_console_output(
             pane_id,
             index,
-            command.clone(),
+            ToolOutputView {
+                full: command.clone(),
+                preview: tool
+                    .display
+                    .shell_preview
+                    .clone()
+                    .unwrap_or_else(|| command.clone()),
+                truncated: tool.display.shell_truncated,
+                show_full: tool.show_full,
+            },
             ToolOutputView {
                 full: tool.output.clone(),
                 preview: tool.preview.clone(),
                 truncated: tool.preview_truncated,
                 show_full: tool.show_full,
             },
+            tool.state == ToolState::Failed,
             tokens,
             on_show_more,
         ));
-    } else if !tool.output.trim().is_empty() {
-        let is_error = tool.state == ToolState::Failed;
-        let display = if tool.show_full {
-            tool.output.clone()
-        } else {
-            tool.preview.clone()
+    } else {
+        let section_header = |label: &'static str, suffix: &'static str, text: SharedString| {
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .text_size(px(11.0))
+                .text_color(tokens.text_muted)
+                .child(label)
+                .child(chat_copy_button(
+                    format!("copy-tool-{suffix}-{pane_id}-{index}").into(),
+                    text,
+                    format!("Copy {}", label.to_ascii_lowercase()).into(),
+                    tokens,
+                ))
         };
-        let hidden = tool.output.len().saturating_sub(display.len());
-        body = body.child(chat_tool_output_block(display, is_error, tokens));
-        if tool.preview_truncated {
+        if tool.display.show_raw_input && !tool.display.input.is_empty() {
+            let input = if tool.show_full {
+                tool.display.input.clone()
+            } else {
+                tool.display.input_preview.clone()
+            };
+            body = body
+                .child(section_header("Input", "input", tool.display.input.clone()))
+                .child(chat_tool_output_block(
+                    format!("tool-input-{pane_id}-{index}").into(),
+                    input,
+                    false,
+                    tokens,
+                ));
+        }
+        if let Some(content) = tool.display.content_body.as_ref() {
+            let display = if tool.show_full {
+                content.clone()
+            } else {
+                tool.display
+                    .content_preview
+                    .clone()
+                    .unwrap_or_else(|| content.clone())
+            };
+            body = body
+                .child(section_header(
+                    if tool.display.view.title == "Write" {
+                        "Content"
+                    } else {
+                        "Changes"
+                    },
+                    "content",
+                    content.clone(),
+                ))
+                .child(chat_tool_output_block(
+                    format!("tool-content-{pane_id}-{index}").into(),
+                    display,
+                    false,
+                    tokens,
+                ));
+        }
+        if !tool.output.trim().is_empty() {
+            let display = if tool.show_full {
+                tool.output.clone()
+            } else {
+                tool.preview.clone()
+            };
+            body = body.child(section_header("Output", "output", tool.output.clone()));
+            body = body.child(chat_tool_output_block(
+                format!("tool-output-{pane_id}-{index}").into(),
+                display,
+                tool.state == ToolState::Failed,
+                tokens,
+            ));
+        }
+        if (tool.display.show_raw_input && tool.display.input_truncated)
+            || tool.display.content_truncated
+            || tool.preview_truncated
+        {
+            let hidden = if tool.display.show_raw_input {
+                tool.display
+                    .input
+                    .len()
+                    .saturating_sub(tool.display.input_preview.len())
+            } else {
+                0
+            } + tool.display.content_body.as_ref().map_or(0, |content| {
+                content.len().saturating_sub(
+                    tool.display
+                        .content_preview
+                        .as_ref()
+                        .map_or(0, |preview| preview.len()),
+                )
+            }) + tool.output.len().saturating_sub(tool.preview.len());
             body = body.child(chat_output_expander(
                 SharedString::from(format!("tool-body-more-{pane_id}-{index}")),
                 hidden,
@@ -1238,32 +1455,22 @@ fn chat_tool_content(
                 on_show_more,
             ));
         }
-    } else if let Some(content) = tool.display.content_body.as_ref() {
-        let display = if tool.show_full {
-            content.clone()
-        } else {
-            tool.display
-                .content_preview
-                .clone()
-                .unwrap_or_else(|| content.clone())
-        };
-        let hidden = content.len().saturating_sub(display.len());
-        body = body.child(chat_tool_output_block(display, false, tokens));
-        if tool.display.content_truncated {
-            body = body.child(chat_output_expander(
-                SharedString::from(format!("tool-content-more-{pane_id}-{index}")),
-                hidden,
-                tool.show_full,
-                tokens,
-                on_show_more,
-            ));
-        }
-    } else if tool.state == ToolState::Running {
+    }
+    let notice = match tool.state {
+        ToolState::Failed if tool.output.is_empty() => Some("Tool execution failed."),
+        ToolState::Unknown if tool.output.is_empty() => Some("Execution ended without a result."),
+        _ => None,
+    };
+    if let Some(notice) = notice {
         body = body.child(
             div()
                 .text_size(px(12.0))
-                .text_color(tokens.text_muted)
-                .child("Running…"),
+                .text_color(if tool.state == ToolState::Failed {
+                    tokens.block_failure
+                } else {
+                    tokens.text_muted
+                })
+                .child(notice),
         );
     }
     body
@@ -1362,56 +1569,22 @@ fn chat_tool_header(
     let view = &tool.display.view;
     let running = tool.state == ToolState::Running;
     let failed = tool.state == ToolState::Failed;
-    let (icon, title) = match view.title.as_str() {
-        "Batch" => (IconName::GalleryVerticalEnd, "Batch"),
-        "Shell" => (
-            IconName::SquareTerminal,
-            if running { "Running" } else { "Ran" },
-        ),
-        "Read" => (IconName::BookOpen, if running { "Reading" } else { "Read" }),
-        "List" => (
-            IconName::FolderClosed,
-            if running {
-                "Listing files in"
-            } else {
-                "Listed files in"
-            },
-        ),
-        "Web Search" => (
-            IconName::Globe,
-            if running {
-                "Searching the web for"
-            } else {
-                "Searched the web for"
-            },
-        ),
-        "Grep" | "Glob" => (
-            IconName::Search,
-            if running {
-                "Searching for"
-            } else {
-                "Searched for"
-            },
-        ),
-        "Webfetch" => (
-            IconName::Globe,
-            if running { "Fetching" } else { "Fetched" },
-        ),
-        "Browser" => (IconName::Globe, view.title.as_str()),
-        _ if is_agent_tool(&tool.name) => (IconName::Bot, view.title.as_str()),
-        _ => (IconName::File, view.title.as_str()),
+    let icon = match view.title.as_str() {
+        "Batch" => IconName::GalleryVerticalEnd,
+        "Shell" => IconName::SquareTerminal,
+        "Read" => IconName::BookOpen,
+        "List" => IconName::FolderClosed,
+        "Web Search" | "Webfetch" | "Browser" => IconName::Globe,
+        "Grep" | "Glob" => IconName::Search,
+        "Edit" | "Patch" => IconName::Replace,
+        _ if is_agent_tool(&tool.name) => IconName::Bot,
+        _ => IconName::File,
     };
 
-    let batch = chat_batch::is_batch(&tool.name);
-    let batch_count = chat_batch::known_count(tool);
-    let partial_failures = tool
-        .batch_result
-        .as_ref()
-        .map_or(0, |result| result.failed_count());
     let color = if failed {
         tokens.block_failure
     } else {
-        tokens.text_secondary
+        tokens.text_primary
     };
     let icon_color = if failed { color } else { tokens.text_muted };
 
@@ -1420,11 +1593,11 @@ fn chat_tool_header(
         .debug_selector(move || format!("tool-row-{index}"))
         .w_full()
         .min_w_0()
-        .h(px(24.0))
+        .h(px(28.0))
         .flex()
         .items_center()
-        .gap(px(7.0))
-        .text_size(px(14.0))
+        .gap(px(8.0))
+        .text_size(px(13.0))
         .text_color(color)
         .cursor(CursorStyle::PointingHand)
         .hover(move |style| style.text_color(if failed { color } else { tokens.text_primary }))
@@ -1436,23 +1609,43 @@ fn chat_tool_header(
                 } else {
                     icon
                 })
-                .size(px(13.0))
+                .size(px(14.0))
                 .text_color(icon_color),
             ),
         )
-        .child(div().flex_shrink_0().child(if failed {
-            format!("{} failed", view.title)
-        } else {
-            title.to_owned()
-        }))
-        .when_some(batch_count, |row, count| {
+        .child(
+            div()
+                .flex_shrink_0()
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .child(if failed {
+                    format!("{} failed", view.title)
+                } else {
+                    view.title.clone()
+                }),
+        )
+        .when(chat_batch::is_batch(&tool.name), |row| {
             row.child(
                 div()
-                    .flex_shrink_0()
-                    .child(format!("· {}", chat_batch::call_count_label(count))),
+                    .min_w_0()
+                    .truncate()
+                    .text_color(tokens.text_muted)
+                    .child(chat_batch::counts(tool)),
             )
         })
-        .when(batch && running, |row| {
+        .when_some(
+            tool.batch_result
+                .as_ref()
+                .filter(|result| result.failed_count() > 0),
+            |row, result| {
+                row.child(
+                    div()
+                        .flex_shrink_0()
+                        .text_color(tokens.block_failure)
+                        .child(format!("{} failed", result.failed_count())),
+                )
+            },
+        )
+        .when(running, |row| {
             row.child(
                 div()
                     .min_w_0()
@@ -1461,26 +1654,25 @@ fn chat_tool_header(
                     .child("· Running…"),
             )
         })
-        .when(!failed && partial_failures > 0, |row| {
-            row.child(
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .text_color(tokens.block_failure)
-                    .child(format!("· {partial_failures} failed")),
-            )
-        })
-        .when(!view.subtitle.is_empty(), |row| {
-            row.child(
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .when(view.title == "Read", |text| {
-                        text.underline().text_color(tokens.text_muted)
-                    })
-                    .child(first_line(&view.subtitle).to_owned()),
-            )
-        })
+        .when(
+            !view.subtitle.is_empty() && !(view.title == "Shell" && tool.expanded),
+            |row| {
+                row.child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(tokens.text_muted)
+                        .child(view.subtitle.clone()),
+                )
+            },
+        )
+        .children(view.args.iter().map(|arg| {
+            div()
+                .min_w_0()
+                .truncate()
+                .text_color(tokens.text_muted)
+                .child(arg.clone())
+        }))
         .when(!tool.web_sources.is_empty(), |row| {
             let mut avatars = div().flex().items_center().flex_shrink_0();
             for (index, source) in tool.web_sources.iter().take(3).enumerate() {
@@ -1544,7 +1736,6 @@ fn chat_tool_header(
                         )),
                 )
         })
-        .child(div().flex_1())
         .child(
             svg()
                 .path(if tool.expanded {
@@ -1565,9 +1756,43 @@ fn chat_tool_card(
     index: usize,
     tool: &ChatTool,
     tokens: ThemeTokens,
+    host: &UiHost,
     on_toggle: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     on_show_more: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
 ) -> Div {
+    if chat_batch::is_batch(&tool.name) && chat_batch::known_count(tool).is_some() {
+        let mut calls = div()
+            .w_full()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .child(chat_tool_header(pane_id, index, tool, tokens, on_toggle));
+        if tool.expanded {
+            calls = calls.child(chat_batch::details(
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .pl(px(12.0)),
+                pane_id,
+                index,
+                tool,
+                tokens,
+                host,
+            ));
+        }
+        if let Some(marker) = tool_paint_marker(tool.id.as_deref(), false) {
+            calls = calls.relative().child(marker);
+        }
+        if !tool.output.is_empty()
+            && let Some(marker) = tool_paint_marker(tool.id.as_deref(), true)
+        {
+            calls = calls.relative().child(marker);
+        }
+        return calls;
+    }
     let mut card = div()
         .w_full()
         .min_w_0()
@@ -1786,6 +2011,9 @@ fn update_chat_tool(
         tool.preview_truncated = truncated;
         tool.batch_result = batch_result;
         tool.state = state;
+        if chat_batch::is_batch(&tool.name) && state != ToolState::Running {
+            tool.expanded = false;
+        }
     } else {
         let display = ToolDisplay::new(&name, "");
         messages.push(Arc::new(ChatMessage {
@@ -1806,6 +2034,7 @@ fn update_chat_tool(
                 batch_result,
                 state,
                 expanded: false,
+                expanded_calls: [false; embedded::MAX_BATCH_CALLS],
                 display,
                 show_full: false,
             }),
@@ -1813,6 +2042,7 @@ fn update_chat_tool(
             streaming: false,
             stream: None,
             markdown: std::sync::OnceLock::new(),
+            literal: std::sync::OnceLock::new(),
             turn: None,
             source_timestamp: None,
         }));
@@ -2044,6 +2274,9 @@ fn finish_chat_tools(messages: &mut [Arc<ChatMessage>]) {
         {
             if let Some(tool) = Arc::make_mut(message).tool.as_mut() {
                 tool.state = ToolState::Unknown;
+                if chat_batch::is_batch(&tool.name) {
+                    tool.expanded = false;
+                }
             }
         }
     }
@@ -2114,6 +2347,7 @@ fn push_chat_event(messages: &mut Vec<Arc<ChatMessage>>, event: agent_bridge::Ag
                 return;
             }
             let display = ToolDisplay::new(&name, &input);
+            let expanded = chat_batch::is_batch(&name);
             messages.push(Arc::new(ChatMessage {
                 role: ChatRole::Tool,
                 text: String::new(),
@@ -2127,7 +2361,8 @@ fn push_chat_event(messages: &mut Vec<Arc<ChatMessage>>, event: agent_bridge::Ag
                     preview_truncated: false,
                     batch_result: None,
                     state: ToolState::Running,
-                    expanded: false,
+                    expanded,
+                    expanded_calls: [false; embedded::MAX_BATCH_CALLS],
                     display,
                     show_full: false,
                 }),
@@ -2135,6 +2370,7 @@ fn push_chat_event(messages: &mut Vec<Arc<ChatMessage>>, event: agent_bridge::Ag
                 streaming: false,
                 stream: None,
                 markdown: std::sync::OnceLock::new(),
+                literal: std::sync::OnceLock::new(),
                 turn: None,
                 source_timestamp: None,
             }));
@@ -2724,7 +2960,11 @@ fn chat_activity(messages: &[Arc<ChatMessage>]) -> String {
             .filter(|tool| tool.state == ToolState::Running)
     });
     if let Some(tool) = active.next() {
-        let label = tool_activity(&tool.name);
+        let label = if chat_batch::is_batch(&tool.name) {
+            chat_batch::title(tool)
+        } else {
+            tool_activity(&tool.name).to_owned()
+        };
         let detail = if matches!(
             tool.name.to_ascii_lowercase().as_str(),
             "read"
@@ -2795,10 +3035,7 @@ fn chat_activity_tooltip(messages: &[Arc<ChatMessage>]) -> String {
         .take(10)
         .map(|tool| {
             if chat_batch::is_batch(&tool.name) {
-                return chat_batch::known_count(tool).map_or_else(
-                    || "Running batch".to_string(),
-                    |count| format!("Running batch · {}", chat_batch::call_count_label(count)),
-                );
+                return chat_batch::activity_details(tool);
             }
             let detail = tool
                 .display
@@ -2833,7 +3070,7 @@ fn chat_activity_tooltip(messages: &[Arc<ChatMessage>]) -> String {
 
 fn tool_activity(name: &str) -> &'static str {
     match name.to_ascii_lowercase().as_str() {
-        "batch" => "Running batch…",
+        "batch" => "Running tools…",
         "read" | "read_file" | "cat" => "Reading files…",
         "edit" | "write" | "write_file" | "create_file" | "str_replace" | "str_replace_editor"
         | "patch" | "apply_patch" => "Editing files…",
@@ -8685,6 +8922,35 @@ impl AppState {
                 }
             }
         }
+    }
+
+    fn toggle_chat_batch_call(
+        &mut self,
+        pane_id: usize,
+        index: usize,
+        call: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pane) = self.pane_mut(pane_id) else {
+            return;
+        };
+        let messages = if let Some(view) = &mut pane.chat.worker_view {
+            &mut view.messages
+        } else {
+            pane.chat.visible_messages_mut()
+        };
+        let Some(message) = messages.get_mut(index) else {
+            return;
+        };
+        let Some(tool) = Arc::make_mut(message).tool.as_mut() else {
+            return;
+        };
+        let Some(expanded) = tool.expanded_calls.get_mut(call) else {
+            return;
+        };
+        *expanded = !*expanded;
+        pane.chat.invalidate_message_row(index);
+        cx.notify();
     }
 
     fn toggle_chat_tool_show_full(&mut self, pane_id: usize, index: usize, cx: &mut Context<Self>) {
@@ -15112,89 +15378,98 @@ impl AppState {
             }
         }
         let inner: AnyElement = match message.role {
-            ChatRole::User => div()
-                .w_full()
-                .flex()
-                .flex_col()
-                .items_end()
-                .child(
-                    div()
-                        .max_w(px(540.0))
-                        .min_w_0()
-                        .px(px(14.0))
-                        .py(px(8.0))
-                        .rounded(px(16.0))
-                        .bg(tokens.primary_btn_bg.opacity(0.55))
-                        .text_size(px(14.0))
-                        .line_height(relative(1.6))
-                        .child(chat_markdown(
-                            SharedString::from(format!(
-                                "agent-user-{pane_id}-{conversation}-{index}"
-                            )),
-                            message.markdown(),
-                            px(14.0),
-                            rems(0.5),
-                            tokens.text_primary,
-                            tokens,
-                            window,
-                            cx,
-                        )),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_end()
-                        .gap(px(2.0))
-                        .child(chat_copy_button(
-                            format!("chat-copy-user-{pane_id}-{index}").into(),
-                            message.text.clone().into(),
-                            "Copy prompt".into(),
-                            tokens,
-                        ))
-                        .child({
-                            let text = message.text.clone();
-                            div()
-                                .id(SharedString::from(format!(
-                                    "chat-edit-user-{pane_id}-{index}"
-                                )))
-                                .size(px(22.0))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded(px(5.0))
-                                .text_color(tokens.text_muted)
-                                .cursor(CursorStyle::PointingHand)
-                                .hover(move |style| {
-                                    style
-                                        .bg(tokens.sidebar_item_hover)
-                                        .text_color(tokens.text_primary)
-                                })
-                                .tooltip(|window, cx| {
-                                    gpui_component::tooltip::Tooltip::new("Edit in empty composer")
-                                        .build(window, cx)
-                                })
-                                .on_click(host.listener(move |this, _, window, cx| {
-                                    if let Some(input) = this
-                                        .pane_ref(pane_id)
-                                        .and_then(|pane| pane.input_state.clone())
-                                        && input.read(cx).value().trim().is_empty()
-                                    {
-                                        input.update(cx, |input, cx| {
-                                            input.set_value(text.clone(), window, cx);
-                                            input.focus(window, cx);
-                                        });
-                                    }
-                                }))
-                                .child(
-                                    svg()
-                                        .path("icons/pencil.svg")
-                                        .size(px(14.0))
-                                        .text_color(tokens.text_muted),
+            ChatRole::User => {
+                let text = message
+                    .literal
+                    .get_or_init(|| SharedString::from(message.text.clone()))
+                    .clone();
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .items_end()
+                    .child(
+                        div()
+                            .max_w(relative(0.82))
+                            .min_w_0()
+                            .px(px(12.0))
+                            .py(px(8.0))
+                            .rounded(px(10.0))
+                            .bg(tokens.card_bg)
+                            .text_size(px(14.0))
+                            .line_height(relative(1.6))
+                            .child(
+                                TextView::plain(
+                                    SharedString::from(format!(
+                                        "agent-user-{pane_id}-{conversation}-{index}"
+                                    )),
+                                    text.clone(),
+                                    window,
+                                    cx,
                                 )
-                        }),
-                )
-                .into_any_element(),
+                                .selectable(true)
+                                .text_size(px(14.0))
+                                .text_color(tokens.text_primary),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .gap(px(2.0))
+                            .child(chat_copy_button(
+                                format!("chat-copy-user-{pane_id}-{index}").into(),
+                                text.clone(),
+                                "Copy prompt".into(),
+                                tokens,
+                            ))
+                            .child({
+                                let text = text.clone();
+                                div()
+                                    .id(SharedString::from(format!(
+                                        "chat-edit-user-{pane_id}-{index}"
+                                    )))
+                                    .size(px(22.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(px(5.0))
+                                    .text_color(tokens.text_muted)
+                                    .cursor(CursorStyle::PointingHand)
+                                    .hover(move |style| {
+                                        style
+                                            .bg(tokens.sidebar_item_hover)
+                                            .text_color(tokens.text_primary)
+                                    })
+                                    .tooltip(|window, cx| {
+                                        gpui_component::tooltip::Tooltip::new(
+                                            "Edit in empty composer",
+                                        )
+                                        .build(window, cx)
+                                    })
+                                    .on_click(host.listener(move |this, _, window, cx| {
+                                        if let Some(input) = this
+                                            .pane_ref(pane_id)
+                                            .and_then(|pane| pane.input_state.clone())
+                                            && input.read(cx).value().trim().is_empty()
+                                        {
+                                            input.update(cx, |input, cx| {
+                                                input.set_value(text.clone(), window, cx);
+                                                input.focus(window, cx);
+                                            });
+                                        }
+                                    }))
+                                    .child(
+                                        svg()
+                                            .path("icons/pencil.svg")
+                                            .size(px(14.0))
+                                            .text_color(tokens.text_muted),
+                                    )
+                            }),
+                    )
+                    .into_any_element()
+            }
             ChatRole::Assistant => {
                 let id =
                     SharedString::from(format!("agent-markdown-{pane_id}-{conversation}-{index}"));
@@ -15203,7 +15478,7 @@ impl AppState {
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .gap(px(8.0))
+                    .gap(px(12.0))
                     .text_size(px(14.0))
                     .line_height(relative(1.6))
                     .text_color(tokens.text_primary);
@@ -15214,7 +15489,7 @@ impl AppState {
                             id.clone(),
                             view.settled.clone(),
                             px(14.0),
-                            rems(0.6),
+                            rems(0.75),
                             tokens.text_primary,
                             tokens,
                             window,
@@ -15228,7 +15503,7 @@ impl AppState {
                             )),
                             view,
                             px(14.0),
-                            rems(0.6),
+                            rems(0.75),
                             tokens.text_primary,
                             tokens,
                             window,
@@ -15243,7 +15518,7 @@ impl AppState {
                         id,
                         message.markdown(),
                         px(14.0),
-                        rems(0.6),
+                        rems(0.75),
                         tokens.text_primary,
                         tokens,
                         window,
@@ -15341,7 +15616,7 @@ impl AppState {
                         cx.stop_propagation();
                         this.toggle_chat_tool_show_full(pane_id, index, cx);
                     });
-                    chat_tool_card(pane_id, index, tool, tokens, on_toggle, on_show_more)
+                    chat_tool_card(pane_id, index, tool, tokens, host, on_toggle, on_show_more)
                         .into_any_element()
                 } else {
                     div()
@@ -16406,7 +16681,7 @@ impl AppState {
             )
             .when(
                 !snapshot.focused_layout || !matches!(row, ChatRow::Message { message, .. } if message.role == ChatRole::User),
-                |row| row.pb(px(if live_tools { 0.0 } else { 8.0 })),
+                |row| row.pb(px(if live_tools { 0.0 } else { 12.0 })),
             )
             .child(inner);
         if snapshot.focused_layout {
@@ -26207,6 +26482,65 @@ mod shob_bottom_input_tests {
     }
 
     #[test]
+    fn tool_inputs_keep_full_text_and_bound_the_initial_preview() {
+        let input = format!(r#"{{"payload":"{}"}}"#, "x".repeat(20_000));
+        let display = ToolDisplay::new("custom_tool", &input);
+        assert_eq!(display.input.as_ref(), input);
+        assert!(display.input_truncated);
+        assert!(display.input_preview.len() <= TOOL_OUTPUT_PREVIEW_BYTES);
+
+        let shell = ToolDisplay::new("bash", r#"{"command":"false"}"#);
+        assert_eq!(shell.shell_command.as_deref(), Some("false"));
+        let long_command = "printf λ\n".repeat(2_000);
+        let shell = ToolDisplay::new(
+            "bash",
+            &serde_json::json!({"command": long_command}).to_string(),
+        );
+        assert_eq!(shell.shell_command.as_deref(), Some(long_command.as_str()));
+        assert!(shell.shell_truncated);
+        assert!(shell.shell_preview.as_ref().unwrap().len() <= TOOL_OUTPUT_PREVIEW_BYTES);
+        assert!(ToolDisplay::new("shell", r#"{"unsupported":"value"}"#).show_raw_input);
+
+        let described = ToolDisplay::new(
+            "powershell",
+            r#"{"command":"Get-ChildItem","description":"Inspect project files"}"#,
+        );
+        assert_eq!(described.shell_command.as_deref(), Some("Get-ChildItem"));
+        assert_eq!(described.view.subtitle, "Inspect project files");
+        let metadata = ToolDisplay::new(
+            "shell",
+            r#"{"metadata":{"command":"printf ok","title":"Check output"}}"#,
+        );
+        assert_eq!(metadata.shell_command.as_deref(), Some("printf ok"));
+        assert_eq!(metadata.view.subtitle, "Check output");
+        assert_eq!(
+            ToolDisplay::new("bash", r#"{"command":null,"cmd":"echo ok"}"#)
+                .shell_command
+                .as_deref(),
+            Some("echo ok")
+        );
+
+        let write = ToolDisplay::new(
+            "write_file",
+            r##"{"file_path":"a.rs","content":"# literal\n\tx < y"}"##,
+        );
+        assert_eq!(write.content_body.as_deref(), Some("# literal\n\tx < y"));
+        assert!(!write.show_raw_input);
+        let edit = ToolDisplay::new(
+            "edit",
+            r#"{"path":"a.rs","edits":[{"oldText":"old\nline","newText":"new\nline"},{"oldText":"gone","newText":""}]}"#,
+        );
+        let diff = edit.content_body.as_deref().expect("embedded edit diff");
+        assert!(diff.contains("-old\n-line\n+new\n+line"));
+        assert!(diff.contains("-gone"));
+        assert!(!edit.show_raw_input);
+        assert!(
+            ToolDisplay::new("edit", r#"{"path":"a.rs","unsupported":"value"}"#).show_raw_input
+        );
+        assert!(ToolDisplay::new("custom_tool", r#"{"payload":"raw"}"#).show_raw_input);
+    }
+
+    #[test]
     fn concurrent_tool_snapshots_stay_with_their_original_calls() {
         use agent_bridge::AgentEvent;
         let mut messages = Vec::new();
@@ -28910,16 +29244,38 @@ First report
                 AgentEvent::ToolStart {
                     id: Some("batch-1".into()),
                     name: "batch".into(),
-                    input: r#"{"calls":[{"tool":"read","path":"README.md"}]}"#.into(),
+                    input: r#"{"calls":[{"tool":"read","path":"README.md"},{"tool":"grep","path":"src","pattern":"TODO"},{"tool":"read_file","path":"Cargo.toml"}]}"#.into(),
                 },
             );
-            assert_eq!(chat_activity(messages), "Running batch · 1 call…");
+            assert_eq!(chat_activity(messages), "Read, Grep · 3 calls…");
+            assert_eq!(chat_batch::counts(messages[0].tool.as_ref().unwrap()).as_str(), "Read 2 · Grep 1");
+            let activity = chat_activity_tooltip(messages);
+            assert!(activity.contains("Read · README.md"));
+            assert!(activity.contains("Grep · src"));
+            assert!(activity.contains("TODO"));
+            cx.notify();
+        });
+        cx.draw_frame().unwrap();
+        assert!(
+            cx.debug_bounds("tool-row-0").is_some(),
+            "Batch group is visible"
+        );
+        assert!(
+            cx.debug_bounds("tool-call-0-0").is_some(),
+            "running calls start open"
+        );
+        assert!(
+            cx.debug_bounds("tool-call-0-2").is_some(),
+            "every call is visible"
+        );
+        cx.update_window_entity(&state, |s, _, cx| {
+            let messages = s.pane_mut(pane_id).unwrap().chat.visible_messages_mut();
             push_chat_event(
                 messages,
                 AgentEvent::ToolEnd {
                     id: Some("batch-1".into()),
                     name: "batch".into(),
-                    output: r#"[{"index":0,"tool":"read","is_error":false,"result":{"content":[{"type":"text","text":"Shob"}]}}]"#.into(),
+                    output: r#"[{"index":0,"tool":"read","is_error":false,"result":{"content":[{"type":"text","text":"Shob\n  **literal** <tag>"}]}},{"index":1,"tool":"grep","is_error":true,"error":"Permission denied"},{"index":2,"tool":"read_file","is_error":false,"result":{"content":[{"type":"text","text":"[package]\nname = \"shob\""}]}}]"#.into(),
                     failed: false,
                 },
             );
@@ -28928,19 +29284,47 @@ First report
             cx.notify();
         });
         cx.draw_frame().unwrap();
-        let row = cx
+        let group = cx
             .debug_bounds("tool-row-0")
-            .expect("batch summary is always visible");
+            .expect("completed Batch summary stays visible");
+        assert!(
+            cx.debug_bounds("tool-call-0-0").is_none(),
+            "completion collapses the group"
+        );
+        assert!(cx.debug_bounds("tool-call-0-1").is_none());
         assert!(cx.debug_bounds("tool-group-0").is_none());
-        cx.simulate_click(row.center(), Modifiers::none());
+        if let Some(path) = std::env::var_os("SHOB_BENCH_SCREENSHOT") {
+            let path = PathBuf::from(path).with_extension("collapsed.png");
+            cx.update(|window, _| window.render_to_image().unwrap().save(path).unwrap());
+        }
+        cx.simulate_click(group.center(), Modifiers::none());
         cx.draw_frame().unwrap();
-        assert!(state.read_with(&cx, |s, _| {
-            s.projects[0].sessions[0].panes[0].chat.visible_messages()[0]
-                .tool
-                .as_ref()
-                .unwrap()
-                .expanded
-        }));
+        let first = cx
+            .debug_bounds("tool-call-0-0")
+            .expect("Read stays visible");
+        assert!(
+            cx.debug_bounds("tool-call-0-1").is_some(),
+            "Grep stays visible"
+        );
+        assert!(cx.debug_bounds("tool-call-output-0-0").is_none());
+        assert!(cx.debug_bounds("tool-call-output-0-1").is_none());
+        cx.simulate_click(first.center(), Modifiers::none());
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("tool-call-output-0-0").is_some());
+        assert!(cx.debug_bounds("tool-call-output-0-1").is_none());
+        let second = cx.debug_bounds("tool-call-0-1").unwrap();
+        cx.simulate_click(second.center(), Modifiers::none());
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("tool-call-output-0-0").is_some());
+        assert!(cx.debug_bounds("tool-call-output-0-1").is_some());
+        if let Some(path) = std::env::var_os("SHOB_BENCH_SCREENSHOT") {
+            cx.update(|window, _| window.render_to_image().unwrap().save(path).unwrap());
+        }
+        let first = cx.debug_bounds("tool-call-0-0").unwrap();
+        cx.simulate_click(first.center(), Modifiers::none());
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("tool-call-output-0-0").is_none());
+        assert!(cx.debug_bounds("tool-call-output-0-1").is_some());
     }
 
     #[test]

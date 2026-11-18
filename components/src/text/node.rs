@@ -268,6 +268,7 @@ impl From<mdast::AlignKind> for ColumnumnAlign {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct TableRow {
     pub children: Vec<TableCell>,
+    pub header: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -632,6 +633,7 @@ impl Paragraph {
         let mut text = String::new();
         let mut highlights: Vec<(Range<usize>, HighlightStyle)> = vec![];
         let mut links: Vec<(Range<usize>, LinkMark)> = vec![];
+        let mut code_ranges = Vec::new();
         let mut offset = 0;
 
         let mut ix = 0;
@@ -645,14 +647,15 @@ impl Paragraph {
                         .state
                         .lock()
                         .unwrap()
-                        .set_text(text.clone().into());
+                        .set_text(std::mem::take(&mut text).into());
                     child_nodes.push(
                         Inline::new(
                             ix,
                             inline_node.state.clone(),
-                            links.clone(),
-                            highlights.clone(),
+                            std::mem::take(&mut links),
+                            gpui::combine_highlights(std::mem::take(&mut highlights), []).collect(),
                         )
+                        .code_ranges(std::mem::take(&mut code_ranges))
                         .into_any_element(),
                     );
                 }
@@ -663,6 +666,12 @@ impl Paragraph {
                         .max_w(relative(1.))
                         .when_some(image.width, |this, width| this.w(width))
                         .when_some(image.link.clone(), |this, link| {
+                            let link = link
+                                .identifier
+                                .as_ref()
+                                .and_then(|identifier| node_cx.link_refs.get(identifier))
+                                .cloned()
+                                .unwrap_or(link);
                             let title = image.title();
                             this.cursor_pointer()
                                 .tooltip(move |window, cx| {
@@ -679,6 +688,7 @@ impl Paragraph {
                 text.clear();
                 links.clear();
                 highlights.clear();
+                code_ranges.clear();
                 offset = 0;
             } else {
                 let mut node_highlights = vec![];
@@ -699,15 +709,18 @@ impl Paragraph {
                         });
                     }
                     if style.code {
-                        highlight.background_color = Some(cx.theme().accent);
+                        code_ranges.push(inner_range.clone());
+                        if !style.bold {
+                            highlight.font_weight = Some(FontWeight::MEDIUM);
+                        }
+                        if style.link.is_none() {
+                            highlight.background_color = Some(cx.theme().muted);
+                        }
                     }
 
                     if let Some(mut link_mark) = style.link.clone() {
                         highlight.color = Some(cx.theme().link);
-                        highlight.underline = Some(gpui::UnderlineStyle {
-                            thickness: gpui::px(1.),
-                            ..Default::default()
-                        });
+                        highlight.underline = None;
 
                         if let Some(identifier) = link_mark.identifier.as_ref() {
                             if let Some(mark) = node_cx.link_refs.get(identifier) {
@@ -721,7 +734,7 @@ impl Paragraph {
                     node_highlights.push((inner_range, highlight));
                 }
 
-                highlights = gpui::combine_highlights(highlights, node_highlights).collect();
+                highlights.extend(node_highlights);
                 offset += text_len;
             }
             ix += 1;
@@ -729,8 +742,16 @@ impl Paragraph {
 
         if text.len() > 0 {
             self.state.lock().unwrap().set_text(text.into());
-            child_nodes
-                .push(Inline::new(ix, self.state.clone(), links, highlights).into_any_element());
+            child_nodes.push(
+                Inline::new(
+                    ix,
+                    self.state.clone(),
+                    links,
+                    gpui::combine_highlights(highlights, []).collect(),
+                )
+                .code_ranges(code_ranges)
+                .into_any_element(),
+            );
         }
 
         div().id(span.unwrap_or_default()).children(child_nodes)
@@ -826,7 +847,11 @@ impl Node {
                     .collect::<Vec<_>>()
                     .join("\n")
             }
-            Node::List { children, ordered, start } => children
+            Node::List {
+                children,
+                ordered,
+                start,
+            } => children
                 .iter()
                 .enumerate()
                 .map(|(i, child)| {
@@ -994,9 +1019,6 @@ impl Node {
                     for (child_ix, child) in children.iter().enumerate() {
                         match child {
                             Node::Paragraph(_) => {
-                                let last_not_list = child_ix > 0
-                                    && !matches!(children[child_ix - 1], Node::List { .. });
-
                                 let text = child.render_block(
                                     NodeRenderOptions {
                                         ix: child_ix,
@@ -1012,7 +1034,7 @@ impl Node {
 
                                 // Continuation paragraph: stack below the previous row,
                                 // indented to align with the text column past the marker.
-                                if last_not_list {
+                                if child_ix > 0 {
                                     if let Some(preceding_row) = items.pop() {
                                         items.push(
                                             v_flex().child(preceding_row).child(
@@ -1117,13 +1139,18 @@ impl Node {
         };
 
         let column_fractions = match item {
-            Node::Table(table) => table.column_fractions.clone().unwrap_or_else(|| table_column_fractions(&col_lens)),
+            Node::Table(table) => table
+                .column_fractions
+                .clone()
+                .unwrap_or_else(|| table_column_fractions(&col_lens)),
             _ => table_column_fractions(&col_lens),
         };
 
         match item {
             Node::Table(table) => div()
-                .when(table.flow_edges.is_none_or(|(_, last)| last), |this| this.pb(rems(1.)))
+                .when(table.flow_edges.is_none_or(|(_, last)| last), |this| {
+                    this.pb(rems(1.))
+                })
                 .w_full()
                 .child(
                     div()
@@ -1133,17 +1160,23 @@ impl Node {
                         .border_1()
                         .border_color(cx.theme().border)
                         .rounded(cx.theme().radius)
-                        .when(table.flow_edges.is_some_and(|(first, _)| !first), |mut this| {
-                            this.style().border_widths.top = Some(px(0.).into());
-                            this.style().corner_radii.top_left = Some(px(0.).into());
-                            this.style().corner_radii.top_right = Some(px(0.).into());
-                            this
-                        })
-                        .when(table.flow_edges.is_some_and(|(_, last)| !last), |mut this| {
-                            this.style().corner_radii.bottom_left = Some(px(0.).into());
-                            this.style().corner_radii.bottom_right = Some(px(0.).into());
-                            this
-                        })
+                        .when(
+                            table.flow_edges.is_some_and(|(first, _)| !first),
+                            |mut this| {
+                                this.style().border_widths.top = Some(px(0.).into());
+                                this.style().corner_radii.top_left = Some(px(0.).into());
+                                this.style().corner_radii.top_right = Some(px(0.).into());
+                                this
+                            },
+                        )
+                        .when(
+                            table.flow_edges.is_some_and(|(_, last)| !last),
+                            |mut this| {
+                                this.style().corner_radii.bottom_left = Some(px(0.).into());
+                                this.style().corner_radii.bottom_right = Some(px(0.).into());
+                                this
+                            },
+                        )
                         .overflow_hidden()
                         .children({
                             let mut rows = Vec::with_capacity(table.children.len());
@@ -1159,6 +1192,11 @@ impl Node {
                                         .border_color(cx.theme().border)
                                         .flex()
                                         .flex_row()
+                                        .when(row.header, |this| {
+                                            this.bg(cx.theme().muted)
+                                                .text_color(cx.theme().muted_foreground)
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                        })
                                         .children({
                                             let mut cells = Vec::with_capacity(row.children.len());
                                             for (ix, cell) in row.children.iter().enumerate() {
@@ -1177,11 +1215,13 @@ impl Node {
                                                         .whitespace_normal()
                                                         .when(
                                                             align == ColumnumnAlign::Center,
-                                                            |this| this.justify_center(),
+                                                            |this| {
+                                                                this.justify_center().text_center()
+                                                            },
                                                         )
                                                         .when(
                                                             align == ColumnumnAlign::Right,
-                                                            |this| this.justify_end(),
+                                                            |this| this.justify_end().text_right(),
                                                         )
                                                         .w(Length::Definite(relative(width)))
                                                         .px_2()
@@ -1273,8 +1313,17 @@ impl Node {
         match self {
             Node::Root { children } => div()
                 .id("div")
-                .children(children.into_iter().enumerate().map(move |(ix, node)| {
-                    node.render_block(NodeRenderOptions { ix, ..options }, node_cx, window, cx)
+                .children(children.iter().enumerate().map(move |(ix, node)| {
+                    node.render_block(
+                        NodeRenderOptions {
+                            ix,
+                            is_last: ix + 1 == children.len(),
+                            ..options
+                        },
+                        node_cx,
+                        window,
+                        cx,
+                    )
                 }))
                 .into_any_element(),
             Node::Paragraph(paragraph) => div()
@@ -1339,7 +1388,11 @@ impl Node {
                         }),
                 )
                 .into_any_element(),
-            Node::List { children, ordered, start } => v_flex()
+            Node::List {
+                children,
+                ordered,
+                start,
+            } => v_flex()
                 .id((if *ordered { "ol" } else { "ul" }, options.ix))
                 .w_full()
                 .min_w_0()
