@@ -17,7 +17,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
-use crate::env::ExecutionEnv;
+use crate::env::{ExecutionEnv, ReadToolFile};
 use crate::file_io::{
     resolve_client_path, FileIOOperation, FileIOReadRange, FileIORouter, FileIOSnapshot,
 };
@@ -184,11 +184,59 @@ impl AgentTool for ReadTool {
         let abs = resolve_read_tool_path(&*self.env, &input.path, Some(&signal))
             .await
             .map_err(file_err_to_agent)?;
-        let bytes = self
+        let offset = u64::from(input.offset.unwrap_or(1).max(1));
+        let max_lines = input
+            .limit
+            .map_or(DEFAULT_MAX_LINES, |limit| limit as usize)
+            .min(DEFAULT_MAX_LINES);
+        let bytes = match self
             .env
-            .read_binary_file(&abs, Some(&signal))
+            .read_tool_file(&abs, offset, max_lines, Some(&signal))
             .await
-            .map_err(file_err_to_agent)?;
+            .map_err(file_err_to_agent)?
+        {
+            ReadToolFile::Complete(bytes) => bytes,
+            ReadToolFile::Page {
+                mut text,
+                next_offset,
+            } => {
+                let details = match next_offset {
+                    Some(next) => {
+                        if !text.is_empty() {
+                            text.push_str("\n\n");
+                        }
+                        if max_lines == 0 {
+                            text.push_str("[Use a positive limit to read lines.]");
+                        } else {
+                            text.push_str(&format!(
+                                "[More lines in file. Use offset={next} to continue.]"
+                            ));
+                        }
+                        serde_json::json!({ "next_offset": next })
+                    }
+                    None => serde_json::Value::Null,
+                };
+                return Ok(AgentToolResult {
+                    content: vec![TextContentOrImage::text(text)],
+                    details,
+                    ..Default::default()
+                });
+            }
+            ReadToolFile::OversizedFirstLine => {
+                return Ok(AgentToolResult {
+                    content: vec![TextContentOrImage::text(format!(
+                        "[Line {offset} exceeds the {} display limit. Use offset={} to try the next line.]",
+                        format_size(DEFAULT_MAX_BYTES), offset + 1,
+                    ))],
+                    ..Default::default()
+                });
+            }
+            ReadToolFile::OffsetPastEnd { total_lines } => {
+                return Err(AgentError::Tool(format!(
+                    "Offset {offset} is beyond end of file ({total_lines} lines total)"
+                )));
+            }
+        };
 
         // Image path.
         if let Some(mime) = detect_supported_image_mime_type(&bytes) {
@@ -201,7 +249,7 @@ impl AgentTool for ReadTool {
         }
 
         // Text path.
-        let text_content = String::from_utf8_lossy(&bytes).into_owned();
+        let text_content = String::from_utf8_lossy(&bytes);
         let all_lines: Vec<&str> = text_content.split('\n').collect();
         // Mirror TS: `textContent.split("\n")` keeps a trailing "" when the
         // content ends with '\n'; the line-count + slice math below uses the raw
@@ -222,7 +270,8 @@ impl AgentTool for ReadTool {
 
         let (selected_content, user_limited_lines): (String, Option<usize>) =
             if let Some(limit) = input.limit {
-                let end_line = std::cmp::min(start_line + limit as usize, all_lines.len());
+                let end_line =
+                    std::cmp::min(start_line.saturating_add(limit as usize), all_lines.len());
                 (
                     all_lines[start_line..end_line].join("\n"),
                     Some(end_line - start_line),

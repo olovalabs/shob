@@ -23,6 +23,7 @@ pub mod os_env;
 pub mod output_decode;
 pub mod output_window;
 pub mod path_utils;
+mod read_page;
 pub mod search;
 pub(crate) mod shell_compact;
 pub mod shell_output;

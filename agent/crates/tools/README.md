@@ -107,6 +107,15 @@ The CLI and embedded backend expose these tools by default (PowerShell only on
 Windows), alongside the docs tool. `default_tools`, `--tools`, and
 `--exclude-tools` still restrict the available registry and batch children.
 
+### Native file tools
+
+Large local text reads stop at the requested line or byte budget. Continue from
+`next_offset` on the unchanged file; the tool does not scan the remaining text to
+report an exact line count. Small files and image attachments keep full reads.
+
+Offline benchmark from the Shob root:
+`cargo run --release --locked --manifest-path agent/Cargo.toml -p tools --example bench_fs`.
+
 ### Shell execution
 
 Bash and native PowerShell use `tokio::process::Command` with stdin, both output

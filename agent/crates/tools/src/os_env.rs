@@ -33,7 +33,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::env::{
     check_cancel_exec, check_cancel_file, ExecutionEnv, FileContent, FileInfo, FileKind,
-    FileSystem, Shell, ShellExecOptions, ShellOutput, ShellOutputChunk,
+    FileSystem, ReadToolFile, Shell, ShellExecOptions, ShellOutput, ShellOutputChunk,
 };
 use crate::error::{
     io_to_file_error, ExecutionError, ExecutionErrorCode, FileError, FileErrorCode,
@@ -610,6 +610,20 @@ impl FileSystem for OsExecutionEnv {
         read_cancellable(&abs, cancel).await
     }
 
+    async fn read_tool_file(
+        &self,
+        path: &str,
+        offset: u64,
+        max_lines: usize,
+        cancel: Option<&CancellationToken>,
+    ) -> Result<ReadToolFile, FileError> {
+        let path = Self::resolve_path(&self.cwd, path);
+        on_file_worker(path, cancel, move |path, cancel| {
+            read::read_for_tool(path, offset, max_lines, cancel)
+        })
+        .await
+    }
+
     async fn write_file(
         &self,
         path: &str,
@@ -724,59 +738,7 @@ impl FileSystem for OsExecutionEnv {
         path: &str,
         cancel: Option<&CancellationToken>,
     ) -> Result<Vec<FileInfo>, FileError> {
-        check_cancel_file(cancel, Some(path))?;
-        let abs = Self::resolve_path(&self.cwd, path);
-        let mut entries = tokio::fs::read_dir(&abs)
-            .await
-            .map_err(|e| io_to_file_error(e, Some(&abs.to_string_lossy())))?;
-        let mut out = Vec::new();
-        while let Some(entry) = entries
-            .next_entry()
-            .await
-            .map_err(|e| io_to_file_error(e, Some(&abs.to_string_lossy())))?
-        {
-            if let Some(t) = cancel {
-                if t.is_cancelled() {
-                    return Err(FileError::aborted().with_path(abs.to_string_lossy()));
-                }
-            }
-            let ep = entry.path();
-            let meta = match tokio::fs::symlink_metadata(&ep).await {
-                Ok(m) => m,
-                Err(e) => {
-                    // Skip unsupported types silently; propagate real stat errors.
-                    let code = crate::error::io_to_file_code(&e);
-                    if code == FileErrorCode::NotSupported {
-                        continue;
-                    }
-                    return Err(io_to_file_error(e, Some(&ep.to_string_lossy())));
-                }
-            };
-            let ft = meta.file_type();
-            let kind = if ft.is_file() {
-                FileKind::File
-            } else if ft.is_dir() {
-                FileKind::Directory
-            } else if ft.is_symlink() {
-                FileKind::Symlink
-            } else {
-                continue; // silently skip sockets/fifos/etc.
-            };
-            let mtime_ms = meta
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_millis() as i64)
-                .unwrap_or(0);
-            out.push(FileInfo {
-                name: entry.file_name().to_string_lossy().into_owned(),
-                path: ep,
-                kind,
-                size: meta.len(),
-                mtime_ms,
-            });
-        }
-        Ok(out)
+        on_file_worker(Self::resolve_path(&self.cwd, path), cancel, read_directory).await
     }
 
     async fn search_contents(
@@ -785,14 +747,11 @@ impl FileSystem for OsExecutionEnv {
         search: crate::search::ContentSearch,
         cancel: Option<&CancellationToken>,
     ) -> Result<crate::search::ContentSearchResult, FileError> {
-        check_cancel_file(cancel, Some(path))?;
-        let abs = Self::resolve_path(&self.cwd, path);
-        let cancel = cancel.cloned();
-        tokio::task::spawn_blocking(move || {
-            crate::search::search_native(&abs, search, cancel.as_ref())
+        let path = Self::resolve_path(&self.cwd, path);
+        on_file_worker(path, cancel, move |path, cancel| {
+            crate::search::search_native(path, search, cancel)
         })
         .await
-        .map_err(|error| io_to_file_error(std::io::Error::other(error), Some(path)))?
     }
 
     async fn canonical_path(
@@ -920,6 +879,75 @@ impl FileSystem for OsExecutionEnv {
             .unwrap_or_else(|e| e.into_inner())
             .clear();
     }
+}
+
+async fn on_file_worker<T: Send + 'static>(
+    path: PathBuf,
+    cancel: Option<&CancellationToken>,
+    run: impl FnOnce(&Path, Option<&CancellationToken>) -> Result<T, FileError> + Send + 'static,
+) -> Result<T, FileError> {
+    let addressed = path.to_string_lossy().into_owned();
+    check_cancel_file(cancel, Some(&addressed))?;
+    let worker_cancel = cancel.cloned();
+    let worker = tokio::task::spawn_blocking(move || {
+        check_cancel_file(worker_cancel.as_ref(), Some(&path.to_string_lossy()))?;
+        run(&path, worker_cancel.as_ref())
+    });
+    let result = match cancel {
+        Some(token) => tokio::select! {
+            biased;
+            _ = token.cancelled() => return Err(FileError::aborted().with_path(addressed)),
+            result = worker => result,
+        },
+        None => worker.await,
+    };
+    result.map_err(|error| io_to_file_error(std::io::Error::other(error), Some(&addressed)))?
+}
+
+fn read_directory(
+    path: &Path,
+    cancel: Option<&CancellationToken>,
+) -> Result<Vec<FileInfo>, FileError> {
+    let addressed = path.to_string_lossy();
+    let entries =
+        std::fs::read_dir(path).map_err(|error| io_to_file_error(error, Some(&addressed)))?;
+    let mut out = Vec::new();
+    for entry in entries {
+        check_cancel_file(cancel, Some(&addressed))?;
+        let entry = entry.map_err(|error| io_to_file_error(error, Some(&addressed)))?;
+        let entry_path = entry.path();
+        let meta = match entry.metadata() {
+            Ok(meta) => meta,
+            Err(error) if crate::error::io_to_file_code(&error) == FileErrorCode::NotSupported => {
+                continue
+            }
+            Err(error) => return Err(io_to_file_error(error, Some(&entry_path.to_string_lossy()))),
+        };
+        let file_type = meta.file_type();
+        let kind = if file_type.is_file() {
+            FileKind::File
+        } else if file_type.is_dir() {
+            FileKind::Directory
+        } else if file_type.is_symlink() {
+            FileKind::Symlink
+        } else {
+            continue;
+        };
+        let mtime_ms = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_millis() as i64);
+        out.push(FileInfo {
+            name: entry.file_name().to_string_lossy().into_owned(),
+            path: entry_path,
+            kind,
+            size: meta.len(),
+            mtime_ms,
+        });
+    }
+    check_cancel_file(cancel, Some(&addressed))?;
+    Ok(out)
 }
 
 /// Read a file to bytes, honoring cooperative cancellation.

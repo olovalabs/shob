@@ -54,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Multi-line programmatic edits now leave the cursor at the end of the line.
 
 ### Changed
+- Stop native `read` after a bounded text page instead of loading the entire large file. Reduce filesystem and sorting overhead in `ls`, `find`, and `grep` without changing search order.
 - Make native agent tools exclusive by default, preserve parallel read-only groups around mutations, and order result hooks without serializing safe tool bodies. Reduce shell capture and custom-tool input copying, bound validator retention, and preserve malformed arguments for explicit validation errors.
 - Show built-in Agent activity, completion and failure in the sidebar's existing status indicators, independently of hidden terminal output. Unseen completions stay marked until viewed or acknowledged.
 - Match terminal and Agent pane frames with 0.5px slate outlines and 10px rounded corners, with focused and inactive colors shared across palettes in dark and light mode.

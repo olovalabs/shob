@@ -18,6 +18,7 @@ use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{ExecutionError, FileError, FileErrorCode};
+pub use crate::read_page::ReadToolFile;
 
 /// `file` | `directory` | `symlink`. Mirrors TS `FileKind`.
 ///
@@ -233,6 +234,20 @@ pub trait FileSystem: Send + Sync {
         path: &str,
         cancel: Option<&CancellationToken>,
     ) -> Result<Vec<u8>, FileError>;
+
+    /// Read for the paginated `read` tool. Backends can bound native text I/O
+    /// while keeping full bytes for small files, images, or virtual reads.
+    async fn read_tool_file(
+        &self,
+        path: &str,
+        _offset: u64,
+        _max_lines: usize,
+        cancel: Option<&CancellationToken>,
+    ) -> Result<ReadToolFile, FileError> {
+        self.read_binary_file(path, cancel)
+            .await
+            .map(ReadToolFile::Complete)
+    }
 
     /// Creates parent directories (recursive) automatically. Mirrors TS
     /// `writeFile`.

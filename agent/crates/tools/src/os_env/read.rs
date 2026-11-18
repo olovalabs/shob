@@ -1,13 +1,14 @@
 //! A file-generation reader; unlike append handles it never follows a rename.
 use crate::{
-    env::{check_cancel_file, ReadFile},
+    env::{check_cancel_file, ReadFile, ReadToolFile},
     error::{io_to_file_error, FileError, FileErrorCode},
+    truncate::{DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES},
 };
 use async_trait::async_trait;
 use std::{
     fs::{File, OpenOptions},
     future::Future,
-    io::{Read, Seek, SeekFrom},
+    io::{self, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -94,6 +95,36 @@ fn decode_line(bytes: Vec<u8>, path: &str) -> Result<String, FileError> {
     String::from_utf8(bytes).map_err(|error| {
         FileError::new(FileErrorCode::Invalid, format!("invalid utf-8: {error}")).with_path(path)
     })
+}
+
+pub(super) fn read_for_tool(
+    path: &Path,
+    offset: u64,
+    max_lines: usize,
+    cancel: Option<&CancellationToken>,
+) -> Result<ReadToolFile, FileError> {
+    let addressed = path.to_string_lossy();
+    let file = File::open(path).map_err(|error| io_to_file_error(error, Some(&addressed)))?;
+    let size_hint = file.metadata().map_or(0, |metadata| metadata.len());
+    crate::read_page::read_tool_file(
+        file,
+        size_hint,
+        offset,
+        max_lines.min(DEFAULT_MAX_LINES),
+        DEFAULT_MAX_BYTES,
+        |bytes| crate::image::detect_supported_image_mime_type(bytes).is_some(),
+        || {
+            if cancel.is_some_and(CancellationToken::is_cancelled) {
+                Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "operation aborted",
+                ))
+            } else {
+                Ok(())
+            }
+        },
+    )
+    .map_err(|error| io_to_file_error(error, Some(&addressed)))
 }
 
 pub(super) struct OsReadFile {
