@@ -1,3 +1,4 @@
+mod flow;
 mod format;
 mod inline;
 mod node;
@@ -5,6 +6,7 @@ mod style;
 mod text_view;
 mod utils;
 
+pub use flow::MarkdownBlocks;
 use gpui::App;
 pub use style::*;
 pub use text_view::*;

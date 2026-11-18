@@ -432,7 +432,7 @@ fn parse_node(
             local_name!("ul") | local_name!("ol") => {
                 let ordered = name.local == local_name!("ol");
                 let children = consume_children_nodes(node, paragraph, cx);
-                Some(node::Node::List { children, ordered })
+                Some(node::Node::List { children, ordered, start: 1 })
             }
             local_name!("li") => {
                 let mut children = vec![];

@@ -26,6 +26,10 @@ use crate::{
 
 use super::{TextViewStyle, utils::list_item_prefix};
 
+#[path = "node_flow.rs"]
+mod flow_fragments;
+pub(crate) use flow_fragments::FlowFragment;
+
 fn table_column_fractions(lengths: &[usize]) -> Vec<f32> {
     let largest = lengths.iter().copied().max().unwrap_or(5).clamp(5, 150);
     let minimum = (largest / 3).max(5);
@@ -232,6 +236,8 @@ impl Paragraph {
 pub(crate) struct Table {
     pub children: Vec<TableRow>,
     pub column_aligns: Vec<ColumnumnAlign>,
+    pub column_fractions: Option<Vec<f32>>,
+    pub flow_edges: Option<(bool, bool)>,
 }
 
 impl Table {
@@ -330,6 +336,8 @@ pub struct CodeBlock {
     lang: Option<SharedString>,
     styles: Vec<(Range<usize>, HighlightStyle)>,
     state: Arc<Mutex<InlineState>>,
+    copy_source: Option<SharedString>,
+    flow_edges: Option<(bool, bool)>,
 }
 
 impl PartialEq for CodeBlock {
@@ -344,7 +352,9 @@ impl CodeBlock {
     }
 
     pub fn code(&self) -> SharedString {
-        self.state.lock().unwrap().text.clone()
+        self.copy_source
+            .clone()
+            .unwrap_or_else(|| self.state.lock().unwrap().text.clone())
     }
 
     pub(crate) fn new(
@@ -367,6 +377,8 @@ impl CodeBlock {
             lang,
             styles,
             state,
+            copy_source: None,
+            flow_edges: None,
         }
     }
 
@@ -405,6 +417,26 @@ impl CodeBlock {
                     .text_size(cx.theme().mono_font_size)
                     .relative()
                     .refine_style(&style.code_block)
+                    .when(
+                        self.flow_edges.is_some_and(|(first, _)| !first),
+                        |mut this| {
+                            this.style().padding.top = Some(px(0.).into());
+                            this.style().border_widths.top = Some(px(0.).into());
+                            this.style().corner_radii.top_left = Some(px(0.).into());
+                            this.style().corner_radii.top_right = Some(px(0.).into());
+                            this
+                        },
+                    )
+                    .when(
+                        self.flow_edges.is_some_and(|(_, last)| !last),
+                        |mut this| {
+                            this.style().padding.bottom = Some(px(0.).into());
+                            this.style().border_widths.bottom = Some(px(0.).into());
+                            this.style().corner_radii.bottom_left = Some(px(0.).into());
+                            this.style().corner_radii.bottom_right = Some(px(0.).into());
+                            this
+                        },
+                    )
                     .child(Inline::new(
                         "code",
                         self.state.clone(),
@@ -429,14 +461,16 @@ impl CodeBlock {
 
 #[derive(Default, Clone)]
 pub(crate) struct NodeContext {
-    pub(crate) link_refs: HashMap<SharedString, LinkMark>,
+    pub(crate) link_refs: Arc<HashMap<SharedString, LinkMark>>,
     pub(crate) style: TextViewStyle,
     pub(crate) code_block_actions: Option<Arc<CodeBlockActionsFn>>,
 }
 
 impl NodeContext {
     pub(super) fn add_ref(&mut self, identifier: SharedString, link: LinkMark) {
-        self.link_refs.insert(identifier, link);
+        Arc::make_mut(&mut self.link_refs)
+            .entry(identifier)
+            .or_insert(link);
     }
 }
 
@@ -462,6 +496,7 @@ pub(crate) enum Node {
     List {
         children: Vec<Node>,
         ordered: bool,
+        start: usize,
     },
     ListItem {
         children: Vec<Node>,
@@ -791,12 +826,12 @@ impl Node {
                     .collect::<Vec<_>>()
                     .join("\n")
             }
-            Node::List { children, ordered } => children
+            Node::List { children, ordered, start } => children
                 .iter()
                 .enumerate()
                 .map(|(i, child)| {
                     let prefix = if *ordered {
-                        format!("{}. ", i + 1)
+                        format!("{}. ", i + start)
                     } else {
                         "- ".to_string()
                     };
@@ -1081,11 +1116,14 @@ impl Node {
             _ => vec![],
         };
 
-        let column_fractions = table_column_fractions(&col_lens);
+        let column_fractions = match item {
+            Node::Table(table) => table.column_fractions.clone().unwrap_or_else(|| table_column_fractions(&col_lens)),
+            _ => table_column_fractions(&col_lens),
+        };
 
         match item {
             Node::Table(table) => div()
-                .pb(rems(1.))
+                .when(table.flow_edges.is_none_or(|(_, last)| last), |this| this.pb(rems(1.)))
                 .w_full()
                 .child(
                     div()
@@ -1095,6 +1133,17 @@ impl Node {
                         .border_1()
                         .border_color(cx.theme().border)
                         .rounded(cx.theme().radius)
+                        .when(table.flow_edges.is_some_and(|(first, _)| !first), |mut this| {
+                            this.style().border_widths.top = Some(px(0.).into());
+                            this.style().corner_radii.top_left = Some(px(0.).into());
+                            this.style().corner_radii.top_right = Some(px(0.).into());
+                            this
+                        })
+                        .when(table.flow_edges.is_some_and(|(_, last)| !last), |mut this| {
+                            this.style().corner_radii.bottom_left = Some(px(0.).into());
+                            this.style().corner_radii.bottom_right = Some(px(0.).into());
+                            this
+                        })
                         .overflow_hidden()
                         .children({
                             let mut rows = Vec::with_capacity(table.children.len());
@@ -1290,14 +1339,14 @@ impl Node {
                         }),
                 )
                 .into_any_element(),
-            Node::List { children, ordered } => v_flex()
+            Node::List { children, ordered, start } => v_flex()
                 .id((if *ordered { "ol" } else { "ul" }, options.ix))
                 .w_full()
                 .min_w_0()
                 .pb(mb)
                 .children({
                     let mut items = Vec::with_capacity(children.len());
-                    let mut item_index = 0;
+                    let mut item_index = start.saturating_sub(1);
                     for (child_ix, item) in children.into_iter().enumerate() {
                         let is_item = item.is_list_item();
 

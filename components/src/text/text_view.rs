@@ -24,6 +24,7 @@ use crate::{
         node::{self, NodeContext},
     },
 };
+use super::flow::{Flow, FlowElement, MarkdownBlocks};
 
 const CONTEXT: &'static str = "TextView";
 
@@ -127,12 +128,21 @@ impl RenderOnce for TextViewElement {
             v_flex()
                 .size_full()
                 .map(|this| match &mut state.parsed_result {
-                    Some(Ok(content)) => this.child(content.root_node.render_root(
-                        self.list_state.clone(),
-                        &content.node_cx,
-                        window,
-                        cx,
-                    )),
+                    Some(Ok(content)) => {
+                        if let Some(flow) = &content.flow {
+                            this.child(FlowElement {
+                                flow: flow.clone(),
+                                context: content.node_cx.clone(),
+                            })
+                        } else {
+                            this.child(content.root_node.render_root(
+                                self.list_state.clone(),
+                                &content.node_cx,
+                                window,
+                                cx,
+                            ))
+                        }
+                    }
                     Some(Err(err)) => this.child(
                         v_flex()
                             .gap_1()
@@ -175,12 +185,25 @@ pub struct TextView {
     selectable: bool,
     scrollable: bool,
     code_block_actions: Option<Arc<CodeBlockActionsFn>>,
+    blocks: Option<MarkdownBlocks>,
 }
 
-#[derive(PartialEq)]
 pub(crate) struct ParsedContent {
     pub(crate) root_node: node::Node,
     pub(crate) node_cx: node::NodeContext,
+    pub(crate) flow: Option<Arc<Mutex<Flow>>>,
+}
+
+impl PartialEq for ParsedContent {
+    fn eq(&self, other: &Self) -> bool {
+        self.root_node == other.root_node
+            && self.node_cx == other.node_cx
+            && match (&self.flow, &other.flow) {
+                (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+                (None, None) => true,
+                _ => false,
+            }
+    }
 }
 
 /// The type of the text view.
@@ -195,6 +218,7 @@ enum TextViewType {
 enum Update {
     Text(SharedString),
     Style(TextViewStyle),
+    Blocks(MarkdownBlocks),
 }
 
 #[derive(Clone)]
@@ -203,6 +227,7 @@ struct ParseRequest {
     text: SharedString,
     style: TextViewStyle,
     highlight_theme: Arc<HighlightTheme>,
+    blocks: Option<(MarkdownBlocks, (usize, bool))>,
 }
 
 struct ParseResult {
@@ -234,8 +259,34 @@ struct UpdateHandle {
 
 impl UpdateHandle {
     fn send(&self, update: Update) {
-        let mut mailbox = self.mailbox.lock().unwrap_or_else(|error| error.into_inner());
+        let mut mailbox = self
+            .mailbox
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let changed = match update {
+            Update::Blocks(blocks) => {
+                let revision = blocks.revision();
+                let changed =
+                    mailbox
+                        .request
+                        .blocks
+                        .as_ref()
+                        .is_none_or(|(previous, old_revision)| {
+                            !previous.same(&blocks) || *old_revision != revision
+                        });
+                if changed {
+                    if mailbox
+                        .request
+                        .blocks
+                        .as_ref()
+                        .is_some_and(|(previous, _)| !previous.same(&blocks))
+                    {
+                        mailbox.epoch += 1;
+                    }
+                    mailbox.request.blocks = Some((blocks, revision));
+                }
+                changed
+            }
             Update::Text(text) if mailbox.request.text != text => {
                 if !text.starts_with(mailbox.request.text.as_str()) {
                     mailbox.epoch += 1;
@@ -264,7 +315,10 @@ impl UpdateHandle {
     }
 
     fn update_context(&self, type_: TextViewType, highlight_theme: &Arc<HighlightTheme>) {
-        let mut mailbox = self.mailbox.lock().unwrap_or_else(|error| error.into_inner());
+        let mut mailbox = self
+            .mailbox
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         if mailbox.request.type_ != type_
             || !Arc::ptr_eq(&mailbox.request.highlight_theme, highlight_theme)
         {
@@ -281,7 +335,9 @@ impl UpdateHandle {
         let mut mailbox = mailbox.lock().unwrap_or_else(|error| error.into_inner());
         let mut result = mailbox.result.take()?;
         if result.epoch != mailbox.epoch
-            || mailbox.last_applied.is_some_and(|generation| generation >= result.generation)
+            || mailbox
+                .last_applied
+                .is_some_and(|generation| generation >= result.generation)
         {
             drop(mailbox);
             return None;
@@ -312,6 +368,7 @@ async fn parse_updates(
     result_wake: smol::channel::Sender<()>,
 ) {
     let mut last_generation = None;
+    let mut blocks_state: Option<(MarkdownBlocks, u64, usize, Arc<Mutex<Flow>>, bool)> = None;
     while wake.recv().await.is_ok() {
         // Capacity is one. Consume its token before snapshotting, so an update
         // arriving during a parse always schedules another pass. The mailbox
@@ -322,17 +379,92 @@ async fn parse_updates(
             if last_generation == Some(mailbox.generation) {
                 continue;
             }
-            (mailbox.generation, mailbox.epoch, mailbox.request.clone(), mailbox.submitted_at)
+            (
+                mailbox.generation,
+                mailbox.epoch,
+                mailbox.request.clone(),
+                mailbox.submitted_at,
+            )
         };
         record_parse("markdown.queue_wait", submitted_at);
         let parse_start = Instant::now();
-        let content = parse_content(
-            request.type_,
-            &request.text,
-            request.style,
-            &request.highlight_theme,
-            &None,
-        );
+        let content = if let Some((blocks, revision)) = &request.blocks {
+            if blocks_state
+                .as_ref()
+                .is_none_or(|(previous, previous_epoch, _, _, _)| {
+                    !previous.same(blocks) || *previous_epoch != epoch
+                })
+            {
+                blocks_state = Some((
+                    blocks.clone(),
+                    epoch,
+                    0,
+                    Arc::new(Mutex::new(Flow::default())),
+                    false,
+                ));
+            }
+            let (_, _, parsed_chunks, flow, finalized) = blocks_state.as_mut().unwrap();
+            let parsed = if *finalized {
+                Ok(())
+            } else if let Some(complete) = blocks.complete() {
+                // One authoritative parse resolves references/footnotes across
+                // settled chunks, then immutable layout fragments replace them.
+                parse_content(
+                    request.type_,
+                    &complete,
+                    request.style.clone(),
+                    &request.highlight_theme,
+                    &None,
+                )
+                .map(|content| {
+                    let final_flow = Arc::new(Mutex::new(Flow::default()));
+                    final_flow.lock().unwrap().append(content);
+                    *flow = final_flow;
+                    *finalized = true;
+                    blocks.release_chunks();
+                })
+            } else {
+                let mut result = Ok(());
+                while *parsed_chunks < revision.0 {
+                    let Some(chunk) = blocks.chunk(*parsed_chunks) else {
+                        break;
+                    };
+                    match parse_content(
+                        request.type_,
+                        &chunk,
+                        request.style.clone(),
+                        &request.highlight_theme,
+                        &None,
+                    ) {
+                        Ok(content) => flow.lock().unwrap().append(content),
+                        Err(error) => {
+                            result = Err(error);
+                            break;
+                        }
+                    }
+                    *parsed_chunks += 1;
+                }
+                result
+            };
+            parsed.map(|()| ParsedContent {
+                root_node: node::Node::Root {
+                    children: Vec::new(),
+                },
+                node_cx: NodeContext {
+                    style: request.style.clone(),
+                    ..Default::default()
+                },
+                flow: Some(flow.clone()),
+            })
+        } else {
+            parse_content(
+                request.type_,
+                &request.text,
+                request.style.clone(),
+                &request.highlight_theme,
+                &None,
+            )
+        };
         record_parse(
             if last_generation.is_none() {
                 "markdown.initial_parse"
@@ -406,7 +538,6 @@ impl TextViewState {
 }
 
 impl TextViewState {
-
     fn update_bounds(&mut self, bounds: Bounds<Pixels>) {
         if self.bounds.size != bounds.size {
             self.clear_selection();
@@ -461,14 +592,23 @@ impl TextViewState {
     }
 
     fn selection_text(&self) -> Option<String> {
-        Some(
-            self.parsed_result
-                .as_ref()?
-                .as_ref()
-                .ok()?
-                .root_node
-                .selected_text(),
-        )
+        if self.selection_positions.0 == Some(gpui::point(px(-1.), px(-1.))) {
+            if let Some(tx) = &self.tx {
+                let mailbox = tx.mailbox.lock().unwrap_or_else(|error| error.into_inner());
+                return Some(mailbox.request.blocks.as_ref().map_or_else(
+                    || mailbox.request.text.to_string(),
+                    |(blocks, _)| blocks.copy_text(),
+                ));
+            }
+        }
+        Some({
+            let content = self.parsed_result.as_ref()?.as_ref().ok()?;
+            if let Some(flow) = &content.flow {
+                flow.lock().unwrap().selected_text()
+            } else {
+                content.root_node.selected_text()
+            }
+        })
     }
 }
 
@@ -588,7 +728,25 @@ impl TextView {
             selectable: false,
             scrollable: false,
             code_block_actions: None,
+            blocks: None,
         }
+    }
+
+    /// Chat document whose immutable settled chunks are parsed exactly once.
+    /// The final canonical source is parsed once to resolve document-wide links.
+    pub fn markdown_blocks(
+        id: impl Into<ElementId>,
+        blocks: MarkdownBlocks,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
+        let mut view = Self::markdown(id, SharedString::default(), window, cx);
+        if let Some(tx) = &view.state.read(cx).tx {
+            tx.send(Update::Blocks(blocks.clone()));
+        }
+        view.raw = blocks.complete().unwrap_or_default();
+        view.blocks = Some(blocks);
+        view
     }
 
     pub fn html(
@@ -618,6 +776,7 @@ impl TextView {
             selectable: false,
             scrollable: false,
             code_block_actions: None,
+            blocks: None,
         }
     }
 
@@ -712,6 +871,10 @@ impl Element for TextView {
                     text: text.clone(),
                     style: style.clone(),
                     highlight_theme,
+                    blocks: self
+                        .blocks
+                        .as_ref()
+                        .map(|blocks| (blocks.clone(), blocks.revision())),
                 },
                 generation: 0,
                 epoch: 0,
@@ -720,16 +883,19 @@ impl Element for TextView {
                 result: None,
                 code_block_actions: self.code_block_actions.clone(),
             }));
-            let tx = UpdateHandle { mailbox: mailbox.clone(), wake };
+            let tx = UpdateHandle {
+                mailbox: mailbox.clone(),
+                wake,
+            };
             self.state.update(cx, {
                 let tx = tx.clone();
                 |state, _| {
                     // Native inline text is immediately visible and selectable,
                     // without running Markdown or syntax highlighting on GPUI.
                     // HTML waits for its parser rather than flashing raw tags.
-                    state.parsed_result = (type_ == TextViewType::Markdown).then(|| {
-                        Ok(plain_content(text, style, self.code_block_actions.clone()))
-                    });
+                    state.parsed_result = (type_ == TextViewType::Markdown
+                        && self.blocks.is_none())
+                    .then(|| Ok(plain_content(text, style, self.code_block_actions.clone())));
                     state.tx = Some(tx);
                 }
             });
@@ -745,7 +911,9 @@ impl Element for TextView {
                         _ = state.update(cx, |state, cx| {
                             // Recheck context epoch and monotonic progress: the
                             // foreground may have stalled since completion.
-                            let Some(parsed_result) = UpdateHandle::take_result(&mailbox) else { return };
+                            let Some(parsed_result) = UpdateHandle::take_result(&mailbox) else {
+                                return;
+                            };
                             state.parsed_result = Some(parsed_result);
                             if let Some(parent_entity) = state.parent_entity {
                                 let app = &mut **cx;
@@ -759,7 +927,8 @@ impl Element for TextView {
             .detach();
 
             let _ = tx.wake.try_send(());
-            cx.background_spawn(parse_updates(mailbox, rx, result_wake)).detach();
+            cx.background_spawn(parse_updates(mailbox, rx, result_wake))
+                .detach();
             self.init_state = Some(InitState::Initialized { tx });
         }
 
@@ -811,20 +980,26 @@ impl Element for TextView {
                 let selected_text = state.read(cx).selection_text().unwrap_or_default();
                 let select_state = state.clone();
                 menu.item(PopupMenuItem::new("Copy").on_click(move |_, _, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(selected_text.trim().to_string()));
+                    cx.write_to_clipboard(ClipboardItem::new_string(
+                        selected_text.trim().to_string(),
+                    ));
                 }))
                 .item(PopupMenuItem::new("Select All").on_click(move |_, _, cx| {
                     select_state.update(cx, |state, cx| {
                         state.selection_positions = (
                             Some(gpui::point(px(-1.), px(-1.))),
-                            Some(gpui::point(state.bounds.size.width + px(1.), state.bounds.size.height + px(1.))),
+                            Some(gpui::point(
+                                state.bounds.size.width + px(1.),
+                                state.bounds.size.height + px(1.),
+                            )),
                         );
                         if let Some(parent) = state.parent_entity {
                             (&mut **cx).notify(parent);
                         }
                     });
                 }))
-            }).into_any_element()
+            })
+            .into_any_element()
         } else {
             el.into_any_element()
         };
@@ -959,6 +1134,7 @@ fn plain_content(
     code_block_actions: Option<Arc<CodeBlockActionsFn>>,
 ) -> ParsedContent {
     ParsedContent {
+        flow: None,
         root_node: node::Node::Root {
             children: vec![node::Node::Paragraph(node::Paragraph {
                 children: vec![node::InlineNode::new(text)],
@@ -992,7 +1168,7 @@ fn parse_content(
         }
         TextViewType::Html => super::format::html::parse(text, &mut node_cx),
     };
-    res.map(move |root_node| ParsedContent { root_node, node_cx })
+    res.map(move |root_node| ParsedContent { root_node, node_cx, flow: None })
 }
 
 fn selection_bounds(
@@ -1066,6 +1242,7 @@ mod tests {
                     text: text.to_owned().into(),
                     style: TextViewStyle::default(),
                     highlight_theme: HighlightTheme::default_light().clone(),
+                    blocks: None,
                 },
                 generation: 0,
                 epoch: 0,
@@ -1378,5 +1555,78 @@ mod tests {
                 size: size(px(40.), px(40.))
             }
         );
+    }
+
+    #[test]
+    fn streaming_blocks_worker_reuses_flow_and_replaces_it_once_at_completion() {
+        let (handle, wake, result_wake, results) = pipeline("");
+        let mailbox = handle.mailbox.clone();
+        let blocks = MarkdownBlocks::default();
+        blocks.push("First **paragraph**.\n\n".into());
+        handle.send(Update::Blocks(blocks.clone()));
+        smol::block_on(smol::future::zip(
+            parse_updates(mailbox.clone(), wake, result_wake),
+            async move {
+                results.recv().await.unwrap();
+                let first = UpdateHandle::take_result(&mailbox)
+                    .unwrap()
+                    .unwrap()
+                    .flow
+                    .unwrap();
+                blocks.push("Second [link][target].\n\n".into());
+                handle.send(Update::Blocks(blocks.clone()));
+                results.recv().await.unwrap();
+                let second = UpdateHandle::take_result(&mailbox)
+                    .unwrap()
+                    .unwrap()
+                    .flow
+                    .unwrap();
+                assert!(
+                    Arc::ptr_eq(&first, &second),
+                    "settling a paragraph must append, not rebuild"
+                );
+                blocks.finish("First **paragraph**.\n\nSecond [link][target].\n\n[target]: https://example.com\n".into());
+                handle.send(Update::Blocks(blocks.clone()));
+                results.recv().await.unwrap();
+                let final_flow = UpdateHandle::take_result(&mailbox)
+                    .unwrap()
+                    .unwrap()
+                    .flow
+                    .unwrap();
+                assert!(
+                    !Arc::ptr_eq(&second, &final_flow),
+                    "one final parse resolves document-wide definitions"
+                );
+                assert!(
+                    blocks.chunk(0).is_none(),
+                    "completed source chunks are released off-thread"
+                );
+                assert_eq!(blocks.len(), blocks.complete().unwrap().len());
+                assert!(results.len() <= 1);
+                drop(handle);
+                assert!(results.recv().await.is_err());
+            },
+        ));
+    }
+
+    #[test]
+    fn select_all_copies_canonical_source_without_realizing_offscreen_nodes() {
+        let (handle, _, _, _) = pipeline("");
+        let blocks = MarkdownBlocks::default();
+        let source = "# Heading\n\nLong **formatted** paragraph.\n\n".repeat(2_000);
+        blocks.finish(source.clone().into());
+        handle.send(Update::Blocks(blocks));
+        let state = TextViewState {
+            parent_entity: None,
+            tx: Some(handle),
+            parsed_result: None,
+            focus_handle: None,
+            bounds: Bounds::default(),
+            selection_positions: (Some(point(px(-1.), px(-1.))), Some(point(px(1.), px(1.)))),
+            is_selecting: false,
+            is_selectable: true,
+            list_state: ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
+        };
+        assert_eq!(state.selection_text(), Some(source));
     }
 }
