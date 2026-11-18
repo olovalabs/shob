@@ -411,7 +411,6 @@ impl EmbeddedBridge {
             .with_session_dir(crate::paths::rpi_sessions_dir())
             .with_selector(model)
             .with_session(session)
-            .with_append_system_prompt(crate::agent_ui::CATALOG_PROMPT)
             .with_provider_request_hook(Arc::new(move || {
                 crate::stream_timing::turn_provider_request(request_trace);
             }))

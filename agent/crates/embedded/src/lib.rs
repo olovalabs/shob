@@ -40,7 +40,7 @@ use runtime::{RuntimeConfig, RuntimeSettings, ValueSource};
 mod antigravity;
 pub const ANTIGRAVITY: &str = ai::providers::antigravity::ID;
 pub use cli::native_auth::{AuthMethod, AuthMethods};
-pub use cli::session::{task_list, user_input};
+pub use cli::session::{task_list, user_input, MAX_BATCH_CALLS, MAX_BATCH_OUTPUT_BYTES};
 
 static EXTENSION_OAUTH_METHODS: std::sync::LazyLock<
     std::sync::RwLock<std::collections::BTreeMap<PathBuf, Arc<std::collections::BTreeSet<String>>>>,
