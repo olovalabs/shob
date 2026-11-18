@@ -248,9 +248,14 @@ AWS SDK credentials or Google ADC at request time, not during local discovery.
   bounded event delivery and structural flushes. Embedded host wakes coalesce
   per session before acquiring callback locks; polling acknowledges before a
   bounded drain and resignals any backlog. No UI delivery timer is added.
-- Assistant boundary scanning starts at the unfinished Markdown suffix.
-  Conversation rows remain virtualized; measured row assembly did not justify
-  replacing that implementation.
+- The workspace root and per-pane chat view use definite-size cached GPUI
+  boundaries. Text/reasoning deltas notify only the chat entity; lifecycle,
+  approval and metadata changes still notify root. Separate `Render`
+  implementations alone do not isolate GPUI-fast's update dependencies.
+- Settled Markdown appends immutable source chunks; the parser processes only
+  new chunks. Completion parses the canonical document once to resolve
+  cross-block references. Measured block heights and an ancestor-viewport flow
+  index virtualize long messages without introducing a nested scroll region.
 - `components/src/text/text_view.rs` parses Markdown/HTML and highlights code
   on the background executor, including the first parse. Initial Markdown has
   an immediate selectable native-text view. One desired document, one active

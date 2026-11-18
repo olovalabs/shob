@@ -389,7 +389,11 @@ impl Render for Root {
                 .font_family(cx.theme().font_family.clone())
                 .bg(cx.theme().background)
                 .text_color(cx.theme().foreground)
-                .child(self.view.clone()),
+                .child(
+                    self.view
+                        .clone()
+                        .cached(gpui::StyleRefinement::default().size_full()),
+                ),
         )
     }
 }

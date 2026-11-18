@@ -252,6 +252,7 @@ fn ast_to_node(
                 .collect();
             node::Node::List {
                 ordered: list.ordered,
+                start: list.start.unwrap_or(1) as usize,
                 children,
             }
         }

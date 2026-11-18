@@ -897,20 +897,30 @@ impl AppState {
         let Some(pane) = self.pane_mut(pane_id) else {
             return;
         };
-        let (rows, _) = Self::build_chat_rows(pane, pane.chat.running);
-        let Some((row, message)) = rows
+        let cache = Self::build_chat_rows(&pane.chat, pane.chat.running);
+        let target = cache
+            .borrow()
+            .rows
             .iter()
             .enumerate()
             .find(|(_, row)| chat_row_contains(row, index))
-        else {
+            .map(|(row, message)| {
+                let start = match message {
+                    ChatRow::ToolGroup { start, .. } => Some(*start),
+                    _ => None,
+                };
+                (row, start)
+            });
+        let Some((row, group_start)) = target else {
             return;
         };
-        if let ChatRow::ToolGroup { start, .. } = message {
+        if let Some(start) = group_start {
             pane.chat
                 .expanded_tool_groups
                 .entry(pane.chat.conversation_key.clone())
                 .or_default()
-                .insert(*start);
+                .insert(start);
+            pane.chat.invalidate_message_row(start);
             pane.chat.remeasure_row(row);
         }
         pane.chat.autoscroll = false;

@@ -147,6 +147,8 @@ shob integration doctor
 
 To use Shob's native AI chat, switch a terminal pane to **Agent** mode and run `/auth` to connect your model provider.
 
+Reasoning starts folded and can be expanded while the agent runs. If an unfinished Markdown block exceeds 8 KiB, chat temporarily shows its latest 8 KiB as plain text; copying keeps the full message, and full Markdown returns when the message finishes.
+
 For an OpenAI-compatible Chat Completions service, choose **OpenAI-compatible API** in `/auth`. Enter a unique provider ID, display name, base URL (including `/v1` if required), API key, and comma-separated model IDs. The provider and models are saved for future sessions; keys use the same credential store as other providers.
 
 The editor shortcut opens the last editor you chose. If you haven’t chosen one, Shob uses the first supported editor it finds on your PATH.

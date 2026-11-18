@@ -1344,6 +1344,8 @@ impl Element for TextElement {
         }
 
         self.state.update(cx, |state, cx| {
+            let geometry_changed = state.last_bounds != Some(bounds)
+                || state.scroll_size != prepaint.scroll_size;
             state.last_layout = Some(prepaint.last_layout.clone());
             state.last_bounds = Some(bounds);
             state.last_cursor = Some(state.cursor());
@@ -1353,7 +1355,9 @@ impl Element for TextElement {
             state.update_scroll_offset(Some(prepaint.cursor_scroll_offset), cx);
             state.deferred_scroll_offset = None;
 
-            cx.notify();
+            if geometry_changed {
+                cx.notify();
+            }
         });
 
         if let Some(hitbox) = prepaint.hover_definition_hitbox.as_ref() {
