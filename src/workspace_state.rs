@@ -111,6 +111,8 @@ pub struct SavedChat {
     pub prompt_title: Option<String>,
     pub rpi_session_id: Option<String>,
     pub conversation_key: Option<String>,
+    #[serde(default)]
+    pub workspace_override: Option<PathBuf>,
     pub models: Vec<SavedModelChat>,
 }
 
@@ -138,6 +140,7 @@ impl Default for SavedChat {
             prompt_title: None,
             rpi_session_id: None,
             conversation_key: None,
+            workspace_override: None,
             models: Vec::new(),
         }
     }
@@ -1046,6 +1049,10 @@ mod tests {
                         cwd: Some(PathBuf::from("/tmp/one/src")),
                         draft: "cargo t".into(),
                         command_history: vec!["cargo test".into()],
+                        chat: SavedChat {
+                            workspace_override: Some(PathBuf::from("/tmp/one-wt")),
+                            ..Default::default()
+                        },
                         ..Default::default()
                     }],
                     ..Default::default()

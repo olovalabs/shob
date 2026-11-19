@@ -111,6 +111,10 @@ pub fn backups_dir() -> PathBuf {
     data_dir().join("backups")
 }
 
+pub fn worktrees_dir() -> PathBuf {
+    data_dir().join("worktrees")
+}
+
 /// Create every directory the app writes to. Safe to call on every launch.
 pub fn ensure_dirs() -> io::Result<()> {
     for dir in [
@@ -223,6 +227,7 @@ mod tests {
             assert!(dir.is_dir(), "{} should exist", dir.display());
             assert!(dir.starts_with(&root));
         }
+        assert!(worktrees_dir().starts_with(&root));
         unsafe { std::env::remove_var("SHOB_DATA_DIR") };
         let _ = std::fs::remove_dir_all(&root);
     }

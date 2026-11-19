@@ -51,6 +51,7 @@ mod diagnostics;
 mod file_icons;
 mod file_preview;
 mod files_surface;
+mod git_workspace;
 mod integrations;
 mod logos;
 mod paths;
@@ -72,6 +73,7 @@ mod subagent_chat;
 mod theme;
 mod updater;
 mod workspace_state;
+mod workspace_switcher;
 
 use theme::{PaletteScheme, ThemePreference, ThemeTokens};
 
@@ -3881,6 +3883,12 @@ pub struct TerminalPane {
     model_picker_bounds: Rc<std::cell::Cell<Bounds<Pixels>>>,
     permission_menu_open: bool,
     permission_toggle_bounds: Rc<std::cell::Cell<Bounds<Pixels>>>,
+    workspace_menu_open: bool,
+    workspace_toggle_bounds: Rc<std::cell::Cell<Bounds<Pixels>>>,
+    branch_picker: Option<BranchPickerState>,
+    branch_toggle_bounds: Rc<std::cell::Cell<Bounds<Pixels>>>,
+    project_menu_open: bool,
+    project_toggle_bounds: Rc<std::cell::Cell<Bounds<Pixels>>>,
     /// Files staged in the input bar; dropped, pasted, or picked. They are
     /// sent to the agent as file paths when the prompt is submitted.
     pub attachments: Vec<attachments::AttachedFile>,
@@ -4023,6 +4031,12 @@ impl TerminalPane {
             model_picker_bounds: Rc::new(std::cell::Cell::new(Bounds::default())),
             permission_menu_open: false,
             permission_toggle_bounds: Rc::new(std::cell::Cell::new(Bounds::default())),
+            workspace_menu_open: false,
+            workspace_toggle_bounds: Rc::new(std::cell::Cell::new(Bounds::default())),
+            branch_picker: None,
+            branch_toggle_bounds: Rc::new(std::cell::Cell::new(Bounds::default())),
+            project_menu_open: false,
+            project_toggle_bounds: Rc::new(std::cell::Cell::new(Bounds::default())),
             attachments: Vec::new(),
             command_running: false,
             terminal_subscription: None,
@@ -4428,6 +4442,12 @@ struct AppState {
     pane_index: HashMap<usize, (usize, usize, usize)>,
     /// Background-computed working-tree counts, shared by panes in a project.
     project_change_counts: HashMap<PathBuf, Option<project_diff::ChangeSummary>>,
+    /// Cached Git workspace snapshots keyed by active directory.
+    git_snapshots: HashMap<PathBuf, git_workspace::GitWorkspaceSnapshot>,
+    /// Directories currently being inspected off-thread.
+    git_refreshing: HashSet<PathBuf>,
+    /// Agent panes currently creating a new worktree off-thread.
+    git_worktree_creating: HashSet<usize>,
     /// Pane that currently owns keyboard focus, tracked every render frame
     /// and consumed by the status poller (Active state, sticky-state clearing).
     focused_pane_id: Option<usize>,
@@ -4502,6 +4522,12 @@ struct HistorySearchState {
     pane_id: usize,
     input: Entity<InputState>,
     matches: Vec<String>,
+    selected: usize,
+    _subscription: gpui::Subscription,
+}
+
+struct BranchPickerState {
+    input: Entity<InputState>,
     selected: usize,
     _subscription: gpui::Subscription,
 }
@@ -4657,6 +4683,7 @@ impl AppState {
                                         conversation_key: (self.settings.restore.agent_history
                                             || pane.chat.conversation_key != "default")
                                             .then(|| pane.chat.conversation_key.clone()),
+                                        workspace_override: pane.chat.workspace_override.clone(),
                                         models: pane.chat.legacy_models.clone(),
                                     },
                                 }
@@ -4978,6 +5005,14 @@ impl AppState {
                     pane.chat.first_response_provider =
                         saved_pane.chat.first_response_provider.clone();
                     pane.chat.rpi_session_id = saved_pane.chat.rpi_session_id.clone();
+                    pane.chat.workspace_override = saved_pane
+                        .chat
+                        .workspace_override
+                        .clone()
+                        .filter(|path| path.is_dir());
+                    if let Some(override_dir) = pane.chat.workspace_override.as_ref() {
+                        pane.chat.cwd = Some(override_dir.clone());
+                    }
                     pane.chat.terminal_draft = saved_pane.draft.clone();
                     pane.chat.agent_draft = saved_pane.agent_draft.clone();
                     pane.chat.follow_ups = saved_pane
@@ -5181,11 +5216,13 @@ impl AppState {
             self.refresh_project_diff(pane_id, cx);
         }
         if let Some(pane_id) = self.focused_pane_id
-            && self
-                .pane_ref(pane_id)
-                .is_some_and(|pane| pane.chat.active && pane.chat.selected_model.is_none())
+            && let Some(pane) = self.pane_ref(pane_id)
         {
-            self.warm_agent_bridge(pane_id);
+            if pane.chat.active && pane.chat.selected_model.is_none() {
+                self.warm_agent_bridge(pane_id);
+            }
+            let dir = self.agent_working_directory(pane);
+            self.schedule_git_refresh(dir, cx);
         }
         self.schedule_workspace_save(cx);
         cx.notify();
@@ -6662,19 +6699,20 @@ impl AppState {
             .active_session_idx
             .min(project.sessions.len().saturating_sub(1));
         project.active_session_idx = session_idx;
-        let first_pane = project
+        let target_pane_id = project
             .sessions
             .get(session_idx)
-            .and_then(|s| s.panes.first());
-        if let Some(pane) = first_pane {
-            pane.terminal
-                .read(cx)
-                .focus_handle()
-                .clone()
-                .focus(window, cx);
+            .and_then(|s| s.panes.first().map(|pane| pane.id));
+        if let Some(pane_id) = target_pane_id {
+            self.focus_pane(pane_id, window, cx);
+            if let Some(pane) = self.pane_ref(pane_id) {
+                let dir = self.agent_working_directory(pane);
+                self.schedule_git_refresh(dir, cx);
+            }
+        } else {
+            self.focused_pane_id = None;
+            cx.notify();
         }
-        self.focused_pane_id = first_pane.map(|pane| pane.id);
-        cx.notify();
         self.schedule_workspace_save(cx);
     }
 
@@ -6998,7 +7036,11 @@ impl AppState {
     /// sidebar focuses that project (and revives it if it has no sessions)
     /// rather than creating a duplicate.
     fn open_project_path(&mut self, folder: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(existing) = self.projects.iter().position(|p| p.path == folder) {
+        if let Some(existing) = self
+            .projects
+            .iter()
+            .position(|p| git_workspace::paths_equal(&p.path, &folder))
+        {
             if self.projects[existing].sessions.is_empty() {
                 self.create_new_session_in_project(existing, window, cx);
             } else {
@@ -7067,6 +7109,9 @@ impl AppState {
             self.focused_pane_id = Some(next_id);
             if self.settings.agent_layout {
                 self.set_chat_mode(next_id, true, window, cx);
+            } else if let Some(pane) = self.pane_ref(next_id) {
+                let dir = self.agent_working_directory(pane);
+                self.schedule_git_refresh(dir, cx);
             }
             cx.notify();
             self.schedule_workspace_save(cx);
@@ -7382,7 +7427,11 @@ impl AppState {
         let Some(&(project, _, _)) = self.pane_index.get(&source) else {
             return;
         };
-        let directory = self.projects[project].path.clone();
+        let directory = self
+            .pane_ref(source)
+            .filter(|pane| pane.chat.active)
+            .map(|pane| self.agent_working_directory(pane))
+            .unwrap_or_else(|| self.projects[project].path.clone());
         let Some(new_id) = self.prepare_preview_pane(source, window, cx) else {
             return;
         };
@@ -7431,7 +7480,11 @@ impl AppState {
         let Some(&(project, _, _)) = self.pane_index.get(&source) else {
             return;
         };
-        let root = self.projects[project].path.clone();
+        let root = self
+            .pane_ref(source)
+            .filter(|pane| pane.chat.active)
+            .map(|pane| self.agent_working_directory(pane))
+            .unwrap_or_else(|| self.projects[project].path.clone());
         let Some(id) = self.prepare_preview_pane(source, window, cx) else {
             return;
         };
@@ -8288,6 +8341,14 @@ impl AppState {
                 }
             }
         }
+        if let Some(pane) = self.pane_ref(pane_id)
+            && pane.chat.active
+        {
+            let dir = self.agent_working_directory(pane);
+            if !self.git_snapshots.contains_key(&dir) {
+                self.schedule_git_refresh(dir, cx);
+            }
+        }
         self.dirty = true;
         cx.notify();
     }
@@ -8991,9 +9052,7 @@ impl AppState {
         let Some(pane) = self.pane_ref(pane_id) else {
             return;
         };
-        let cwd = self
-            .pane_cwd_path(pane)
-            .unwrap_or_else(|| PathBuf::from("."));
+        let cwd = self.agent_working_directory(pane);
         let Some(pane) = self.pane_mut(pane_id) else {
             return;
         };
@@ -9214,6 +9273,10 @@ impl AppState {
         self.focus_pane(pane_id, window, cx);
         if active {
             self.warm_agent_bridge(pane_id);
+            if let Some(pane) = self.pane_ref(pane_id) {
+                let dir = self.agent_working_directory(pane);
+                self.schedule_git_refresh(dir, cx);
+            }
         }
     }
     fn open_agent_auth(
@@ -9226,9 +9289,7 @@ impl AppState {
         let Some(pane) = self.pane_ref(pane_id) else {
             return;
         };
-        let cwd = self
-            .pane_cwd_path(pane)
-            .unwrap_or_else(|| PathBuf::from("."));
+        let cwd = self.agent_working_directory(pane);
         self.focused_pane_id = Some(pane_id);
         let input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Enter API key or credential"));
@@ -9746,6 +9807,7 @@ impl AppState {
         let mut authenticated = false;
         let mut streaming = false;
         let mut titled_panes: Vec<usize> = Vec::new();
+        let mut done_panes: Vec<usize> = Vec::new();
         let mut ready_follow_ups = Vec::new();
         let mut removed_providers = Vec::new();
         let save_history = self.settings.restore.agent_history;
@@ -9961,6 +10023,7 @@ impl AppState {
                                     crate::stream_timing::turn_settled(trace);
                                     finish_chat_tools(&mut pane.chat.messages);
                                     finish_chat_streaming(&mut pane.chat.messages);
+                                    done_panes.push(pane.id);
                                 }
                                 agent_bridge::AgentEvent::Closed => {
                                     pane.chat.follow_ups_paused = true;
@@ -10101,6 +10164,13 @@ impl AppState {
         }
         for pane_id in titled_panes {
             self.sync_session_title(pane_id, cx);
+        }
+        for pane_id in done_panes {
+            if let Some(pane) = self.pane_ref(pane_id) {
+                let dir = self.agent_working_directory(pane);
+                git_workspace::invalidate_branch_cache(&dir);
+                self.schedule_git_refresh(dir, cx);
+            }
         }
         if session_changed {
             self.schedule_workspace_save(cx);
@@ -12087,82 +12157,16 @@ impl AppState {
     }
 
     fn pane_git_branch(&self, pane: &TerminalPane) -> Option<String> {
-        let dir = self.pane_cwd_path(pane)?;
+        let dir = if pane.chat.active {
+            self.agent_working_directory(pane)
+        } else {
+            self.pane_cwd_path(pane)?
+        };
         Self::detect_git_branch(&dir)
     }
 
     fn detect_git_branch(dir: &std::path::Path) -> Option<String> {
-        type BranchCache = HashMap<PathBuf, (std::time::Instant, Option<String>)>;
-        static BRANCH_CACHE: std::sync::LazyLock<Mutex<BranchCache>> =
-            std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
-        let now = std::time::Instant::now();
-        if let Some((at, branch)) = BRANCH_CACHE.lock().get(dir)
-            && now.duration_since(*at) < std::time::Duration::from_secs(1)
-        {
-            return branch.clone();
-        }
-        let branch = Self::detect_git_branch_uncached(dir);
-        BRANCH_CACHE
-            .lock()
-            .insert(dir.to_path_buf(), (now, branch.clone()));
-        branch
-    }
-
-    fn detect_git_branch_uncached(dir: &std::path::Path) -> Option<String> {
-        let mut current = dir;
-        loop {
-            let git_path = current.join(".git");
-            if git_path.is_dir() {
-                let head_file = git_path.join("HEAD");
-                if let Ok(content) = std::fs::read_to_string(head_file) {
-                    let trimmed = content.trim();
-                    if let Some(branch) = trimmed.strip_prefix("ref: refs/heads/") {
-                        return Some(branch.to_string());
-                    } else if !trimmed.is_empty() {
-                        let short = if trimmed.len() > 7 {
-                            &trimmed[..7]
-                        } else {
-                            trimmed
-                        };
-                        return Some(short.to_string());
-                    }
-                }
-                return None;
-            } else if git_path.is_file() {
-                if let Ok(content) = std::fs::read_to_string(&git_path) {
-                    for line in content.lines() {
-                        if let Some(rest) = line.strip_prefix("gitdir:") {
-                            let rel = rest.trim();
-                            let target = if std::path::Path::new(rel).is_absolute() {
-                                std::path::PathBuf::from(rel)
-                            } else {
-                                current.join(rel)
-                            };
-                            let head_file = target.join("HEAD");
-                            if let Ok(head_content) = std::fs::read_to_string(head_file) {
-                                let trimmed = head_content.trim();
-                                if let Some(branch) = trimmed.strip_prefix("ref: refs/heads/") {
-                                    return Some(branch.to_string());
-                                } else if !trimmed.is_empty() {
-                                    let short = if trimmed.len() > 7 {
-                                        &trimmed[..7]
-                                    } else {
-                                        trimmed
-                                    };
-                                    return Some(short.to_string());
-                                }
-                            }
-                        }
-                    }
-                }
-                return None;
-            }
-            match current.parent() {
-                Some(parent) if parent != current => current = parent,
-                _ => break,
-            }
-        }
-        None
+        git_workspace::detect_git_branch(dir)
     }
 
     fn pane_cwd_display(&self, pane: &TerminalPane) -> String {
@@ -12646,8 +12650,12 @@ impl AppState {
         let pane_id = pane.id;
         let focused_composer = self.settings.agent_layout && pane.chat.active;
         let tokens = self.tokens(cx);
-        let agent_cwd = pane.chat.active.then_some(pane.chat.cwd.as_ref()).flatten();
+        let agent_cwd = pane
+            .chat
+            .active
+            .then(|| self.agent_working_directory(pane));
         let cwd_display = agent_cwd
+            .as_ref()
             .map(|path| Self::format_path_display(path))
             .unwrap_or_else(|| self.pane_cwd_display(pane));
         let git_branch = if pane.chat.active {
@@ -12655,11 +12663,15 @@ impl AppState {
         } else {
             self.pane_git_branch(pane)
         };
-        let change_summary = self
-            .pane_index
-            .get(&pane_id)
-            .and_then(|&(project, _, _)| self.projects.get(project))
-            .and_then(|project| self.project_change_counts.get(&project.path))
+        let change_summary = agent_cwd
+            .as_ref()
+            .and_then(|dir| self.project_change_counts.get(dir))
+            .or_else(|| {
+                self.pane_index
+                    .get(&pane_id)
+                    .and_then(|&(project, _, _)| self.projects.get(project))
+                    .and_then(|project| self.project_change_counts.get(&project.path))
+            })
             .and_then(Option::as_ref)
             .filter(|summary| summary.files > 0);
         let model_pill = pane
@@ -12787,10 +12799,16 @@ impl AppState {
                             cx.stop_propagation();
                             this.close_agent_auth(pane_id, window, cx);
                         } else if let Some(pane) = this.pane_mut(pane_id)
-                            && pane.chat.info_open
+                            && (pane.chat.info_open
+                                || pane.workspace_menu_open
+                                || pane.project_menu_open
+                                || pane.branch_picker.is_some())
                         {
                             cx.stop_propagation();
                             pane.chat.info_open = false;
+                            pane.workspace_menu_open = false;
+                            pane.project_menu_open = false;
+                            pane.branch_picker = None;
                             cx.notify();
                         }
                     },
@@ -13335,47 +13353,31 @@ impl AppState {
                     .when(!self.settings.agent_layout || !pane.chat.active, |input| input.mt(px(12.0)))
                     .child(input_element),
             ))
-            .when(!self.settings.agent_layout || !pane.chat.active, |bar| bar.child(
-                div()
-                    .w_full()
-                    .mt(px(7.0))
-                    .h(px(12.0))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .text_size(px(10.0))
-                    .text_color(tokens.text_muted)
-                    .when(!pane.chat.active, |hint| {
-                        hint.child(
+            .when(!pane.chat.active, |bar| {
+                bar.child(
+                    div()
+                        .w_full()
+                        .mt(px(7.0))
+                        .h(px(12.0))
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .text_size(px(10.0))
+                        .text_color(tokens.text_muted)
+                        .child(
                             "Tab complete · ↑↓ history · Ctrl+R search · Shift+Enter newline · Drop or paste images",
-                        )
-                    })
-                    .when(
-                        pane.chat.active
-                            && pane.chat.worker_view.is_none()
-                            && pane.chat.usage.is_some_and(|usage| {
-                                usage.input != 0 || usage.output != 0 || usage.cache_read != 0 || usage.cache_write != 0
-                                    || usage.cost.is_some_and(|cost| cost > 0.0)
-                            }),
-                        |hint| {
-                            let detail = pane.chat.usage_detail.clone();
-                            hint.child(
-                                div()
-                                    .id(("agent-usage", pane_id))
-                                    .debug_selector(|| "agent-usage".into())
-                                    .min_w_0()
-                                    .truncate()
-                                    .child(pane.chat.usage_label.clone())
-                                    .tooltip(move |window, cx| {
-                                        gpui_component::tooltip::Tooltip::new(detail.clone()).build(window, cx)
-                                    }),
-                            )
-                        },
-                    ),
-            ))
+                        ),
+                )
+            })
+            .when(pane.chat.active && !self.settings.agent_layout, |bar| {
+                bar.child(self.render_composer_context_strip(pane, &tokens, true, window, cx))
+            })
             .when(pane.chat.active && pane.chat.info_open && !self.settings.agent_layout, |this| {
                 this.child(self.render_agent_info(pane, cx))
             }))
+            .when(focused_composer, |stack| {
+                stack.child(self.render_composer_context_strip(pane, &tokens, false, window, cx))
+            })
     }
 
     /// Shob-style completion popup, anchored above the input bar.
@@ -16762,7 +16764,7 @@ impl AppState {
     ) {
         let Some(directory) = self
             .pane_ref(pane_id)
-            .and_then(|pane| pane.chat.cwd.clone().or_else(|| self.pane_cwd_path(pane)))
+            .map(|pane| self.agent_working_directory(pane))
         else {
             return;
         };
@@ -17039,18 +17041,19 @@ impl AppState {
     ) -> gpui::Stateful<gpui::Div> {
         let tokens = self.tokens(cx);
         let pane_id = pane.id;
-        let branch = pane
-            .chat
-            .cwd
-            .as_deref()
-            .and_then(Self::detect_git_branch)
+        let active_dir = self.agent_working_directory(pane);
+        let branch = Self::detect_git_branch(&active_dir)
             .or_else(|| self.pane_git_branch(pane))
             .unwrap_or_else(|| "Not in a Git repository".into());
         let summary = self
-            .pane_index
-            .get(&pane_id)
-            .and_then(|&(project, _, _)| self.projects.get(project))
-            .and_then(|project| self.project_change_counts.get(&project.path))
+            .project_change_counts
+            .get(&active_dir)
+            .or_else(|| {
+                self.pane_index
+                    .get(&pane_id)
+                    .and_then(|&(project, _, _)| self.projects.get(project))
+                    .and_then(|project| self.project_change_counts.get(&project.path))
+            })
             .and_then(Option::as_ref)
             .filter(|summary| summary.files > 0);
         let owner = self
@@ -17445,17 +17448,9 @@ impl AppState {
             .max_w_full()
             .flex()
             .when(pane.chat.info_open, |this| {
-                let cwd_display = pane
-                    .chat
-                    .cwd
-                    .as_deref()
-                    .map(Self::format_path_display)
-                    .unwrap_or_else(|| self.pane_cwd_display(pane));
-                let branch = if let Some(cwd) = pane.chat.cwd.as_deref() {
-                    Self::detect_git_branch(cwd)
-                } else {
-                    self.pane_git_branch(pane)
-                };
+                let active_dir = self.agent_working_directory(pane);
+                let cwd_display = Self::format_path_display(&active_dir);
+                let branch = Self::detect_git_branch(&active_dir);
                 this.child(
                     div()
                         .overflow_hidden()
@@ -21888,6 +21883,9 @@ fn main() -> Result<()> {
                         navigation_position: 0,
                         pane_index: HashMap::new(),
                         project_change_counts: HashMap::new(),
+                        git_snapshots: HashMap::new(),
+                        git_refreshing: HashSet::new(),
+                        git_worktree_creating: HashSet::new(),
                         palette: palette.clone(),
                         focused_pane_id: None,
                         sidebar_visible: app_settings.sidebar.visible,
@@ -22168,8 +22166,8 @@ fn main() -> Result<()> {
                     })
                     .detach();
 
-                    // Keep the active project's summary fresh without running Git on the UI thread.
-                    // One loop serves all agent panes in the project and never overlaps requests.
+                    // Keep the active project's summary and Git workspace snapshot fresh without running Git on the UI thread.
+                    // One loop serves active agent panes and never overlaps requests.
                     let changes_state = app_state.downgrade();
                     cx.spawn(async move |cx: &mut gpui::AsyncApp| {
                         loop {
@@ -22177,18 +22175,28 @@ fn main() -> Result<()> {
                                 if state.active_view != ActiveView::Workspace { return None; }
                                 let project = state.projects.get(state.active_project_idx)?;
                                 let session = project.sessions.get(project.active_session_idx)?;
-                                session.panes.iter().any(|pane| pane.chat.active && pane.preview_owner.is_none())
-                                    .then(|| project.path.clone())
+                                if let Some(focused_id) = state.focused_pane_id
+                                    && let Some(pane) = session.panes.iter().find(|p| p.id == focused_id && p.chat.active && p.preview_owner.is_none())
+                                {
+                                    return Some(state.agent_working_directory(pane));
+                                }
+                                session.panes.iter().find(|pane| pane.chat.active && pane.preview_owner.is_none())
+                                    .map(|pane| state.agent_working_directory(pane))
                             }) else { break; };
                             if let Some(directory) = directory {
                                 let workdir = directory.clone();
-                                let summary = cx.background_executor().spawn(async move { project_diff::summary(workdir).ok() }).await;
+                                let (summary, snapshot) = cx.background_executor().spawn(async move {
+                                    let snapshot = git_workspace::inspect(&workdir);
+                                    let summary = project_diff::summary(workdir).ok();
+                                    (summary, snapshot)
+                                }).await;
                                 if changes_state.update(cx, |state, cx| {
-                                    if state.projects.iter().any(|project| project.path == directory)
-                                        && state.project_change_counts.get(&directory) != Some(&summary) {
-                                        state.project_change_counts.insert(directory, summary);
+                                    let summary_changed = state.project_change_counts.get(&directory) != Some(&summary);
+                                    if summary_changed {
+                                        state.project_change_counts.insert(directory.clone(), summary);
                                         cx.notify();
                                     }
+                                    state.apply_git_snapshot(directory, snapshot, cx);
                                 }).is_err() { break; }
                             }
                             cx.background_executor().timer(std::time::Duration::from_secs(4)).await;
@@ -22540,6 +22548,9 @@ mod resize_tests {
             navigation_position: 0,
             pane_index: HashMap::from([(1, (0, 0, 0))]),
             project_change_counts: HashMap::new(),
+            git_snapshots: HashMap::new(),
+            git_refreshing: HashSet::new(),
+            git_worktree_creating: HashSet::new(),
             palette,
             focused_pane_id: Some(1),
             sidebar_visible: true,
@@ -30159,5 +30170,324 @@ First report
             "  coalesce 10,000 deltas: {burst_len} -> {} events in {coalesce_time:?}",
             coalesced.len()
         );
+    }
+
+    struct EnvVarGuard {
+        key: &'static str,
+        prev: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, val: &std::ffi::OsStr) -> Self {
+            let prev = std::env::var_os(key);
+            // SAFETY: serialized in tests using this guard or unique temp dirs.
+            unsafe { std::env::set_var(key, val) };
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(prev) = &self.prev {
+                // SAFETY: paired with EnvVarGuard::set.
+                unsafe { std::env::set_var(self.key, prev) };
+            } else {
+                // SAFETY: paired with EnvVarGuard::set.
+                unsafe { std::env::remove_var(self.key) };
+            }
+        }
+    }
+
+    fn test_git(dir: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .env("GIT_AUTHOR_NAME", "Shob Test")
+            .env("GIT_AUTHOR_EMAIL", "test@shob.local")
+            .env("GIT_COMMITTER_NAME", "Shob Test")
+            .env("GIT_COMMITTER_EMAIL", "test@shob.local")
+            .status()
+            .expect("spawn git");
+        assert!(status.success(), "git {:?} failed", args);
+    }
+
+    fn init_test_git_repo(dir: &Path, branch: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        test_git(dir, &["init", "-b", branch]);
+        std::fs::write(dir.join("README.md"), "shob test\n").unwrap();
+        test_git(dir, &["add", "README.md"]);
+        test_git(dir, &["commit", "-m", "init"]);
+    }
+
+    #[test]
+    fn workspace_switcher_renders_context_strip_and_dropdown_in_both_layouts() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        init_test_git_repo(&repo, "main");
+
+        let mut app = TestAppContext::new();
+        let (mut cx, state) = open_app(&mut app);
+        let pane_id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
+
+        for agent_layout in [false, true] {
+            cx.update_window_entity(&state, |s, window, cx| {
+                s.projects[0].path = repo.clone();
+                s.projects[0].name = SharedString::from("repo");
+                s.settings.agent_layout = agent_layout;
+                if let Some(pane) = s.pane_mut(pane_id) {
+                    pane.pid = None;
+                    pane.cwd = Some(repo.clone());
+                    pane.chat.active = true;
+                }
+                s.schedule_git_refresh(repo.clone(), cx);
+                let _ = window;
+                cx.notify();
+            });
+            cx.run_until_parked();
+            cx.draw_frame().unwrap();
+
+            assert!(cx.debug_bounds("composer-context-strip").is_some());
+            let ws_btn = cx.debug_bounds("agent-workspace-selector").unwrap();
+            assert!(cx.debug_bounds("agent-branch-selector").is_some());
+            assert!(cx.debug_bounds("agent-project-selector").is_some());
+
+            cx.simulate_click(ws_btn.center(), Modifiers::none());
+            cx.draw_frame().unwrap();
+            let menu = cx.debug_bounds("agent-workspace-menu").unwrap();
+            assert!(menu.bottom() <= ws_btn.top() + px(2.0));
+            assert!(cx.debug_bounds("workspace-option-local").is_some());
+            assert!(cx.debug_bounds("workspace-option-new-worktree").is_some());
+
+            // Close menu before next layout iteration.
+            cx.simulate_click(ws_btn.center(), Modifiers::none());
+            cx.draw_frame().unwrap();
+            assert!(cx.debug_bounds("agent-workspace-menu").is_none());
+        }
+    }
+
+    #[test]
+    fn workspace_switcher_creates_switches_worktree_and_preserves_chat() {
+        let temp = tempfile::tempdir().unwrap();
+        let data_dir = temp.path().join("shob-data");
+        let repo = temp.path().join("demo-repo");
+        init_test_git_repo(&repo, "main");
+        let _data_guard = EnvVarGuard::set("SHOB_DATA_DIR", data_dir.as_os_str());
+        let _restore_guard = EnvVarGuard::set("SHOB_DISABLE_RESTORE", std::ffi::OsStr::new("1"));
+
+        let mut app = TestAppContext::new();
+        let (mut cx, state) = open_app(&mut app);
+        let pane_id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
+
+        cx.update_window_entity(&state, |s, window, cx| {
+            s.projects[0].path = repo.clone();
+            s.projects[0].name = SharedString::from("demo-repo");
+            s.set_chat_mode(pane_id, true, window, cx);
+            if let Some(pane) = s.pane_mut(pane_id) {
+                pane.pid = None;
+                pane.cwd = Some(repo.clone());
+                pane.chat.messages.push(Arc::new(ChatMessage::new(
+                    ChatRole::User,
+                    "preserve this session",
+                )));
+                pane.chat.agent_draft = "draft text".into();
+            }
+            s.schedule_git_refresh(repo.clone(), cx);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        cx.draw_frame().unwrap();
+
+        let ws_btn = cx.debug_bounds("agent-workspace-selector").unwrap();
+        cx.simulate_click(ws_btn.center(), Modifiers::none());
+        cx.draw_frame().unwrap();
+
+        let new_wt_btn = cx.debug_bounds("workspace-option-new-worktree").unwrap();
+        cx.simulate_click(new_wt_btn.center(), Modifiers::none());
+        cx.run_until_parked();
+        cx.draw_frame().unwrap();
+
+        let wt_path = state.read_with(&cx, |s, _| {
+            let pane = s.pane_ref(pane_id).unwrap();
+            assert_eq!(pane.chat.messages.len(), 1);
+            assert_eq!(pane.chat.messages[0].text.as_str(), "preserve this session");
+            assert_eq!(pane.chat.agent_draft, "draft text");
+            let override_path = pane.chat.workspace_override.clone().expect("worktree override");
+            assert!(override_path.starts_with(data_dir.join("worktrees")));
+            assert_eq!(s.agent_working_directory(pane), override_path);
+            assert!(
+                AppState::detect_git_branch(&override_path)
+                    .as_deref()
+                    .is_some_and(|b| b.starts_with("shob/"))
+            );
+            override_path
+        });
+
+        // Switch back to Current checkout and verify existing worktree stays listed.
+        let ws_btn = cx.debug_bounds("agent-workspace-selector").unwrap();
+        cx.simulate_click(ws_btn.center(), Modifiers::none());
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("workspace-option-worktree-0").is_some());
+        let local_btn = cx.debug_bounds("workspace-option-local").unwrap();
+        cx.simulate_click(local_btn.center(), Modifiers::none());
+        cx.run_until_parked();
+        cx.draw_frame().unwrap();
+
+        state.read_with(&cx, |s, _| {
+            let pane = s.pane_ref(pane_id).unwrap();
+            assert_eq!(pane.chat.workspace_override, None);
+            assert_eq!(s.agent_working_directory(pane), repo);
+            assert_eq!(pane.chat.messages.len(), 1);
+        });
+
+        // Switch back to the existing worktree from the dropdown.
+        let ws_btn = cx.debug_bounds("agent-workspace-selector").unwrap();
+        cx.simulate_click(ws_btn.center(), Modifiers::none());
+        cx.draw_frame().unwrap();
+        let existing_wt = cx.debug_bounds("workspace-option-worktree-0").unwrap();
+        cx.simulate_click(existing_wt.center(), Modifiers::none());
+        cx.run_until_parked();
+        cx.draw_frame().unwrap();
+
+        state.read_with(&cx, |s, _| {
+            let pane = s.pane_ref(pane_id).unwrap();
+            assert_eq!(pane.chat.workspace_override.as_ref(), Some(&wt_path));
+        });
+    }
+
+    #[test]
+    fn project_switcher_switches_projects_and_preserves_sessions() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo_a = temp.path().join("alpha");
+        let repo_b = temp.path().join("beta");
+        init_test_git_repo(&repo_a, "main");
+        init_test_git_repo(&repo_b, "develop");
+
+        let mut app = TestAppContext::new();
+        let (mut cx, state) = open_app(&mut app);
+        let pane_a = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
+
+        cx.update_window_entity(&state, |s, window, cx| {
+            s.projects[0].path = repo_a.clone();
+            s.projects[0].name = SharedString::from("alpha");
+            s.set_chat_mode(pane_a, true, window, cx);
+            if let Some(pane) = s.pane_mut(pane_a) {
+                pane.pid = None;
+                pane.cwd = Some(repo_a.clone());
+                pane.chat
+                    .messages
+                    .push(Arc::new(ChatMessage::new(ChatRole::User, "alpha prompt")));
+            }
+            s.open_project_path(repo_b.clone(), window, cx);
+            let pane_b = s.focused_pane_id.unwrap();
+            s.set_chat_mode(pane_b, true, window, cx);
+            if let Some(pane) = s.pane_mut(pane_b) {
+                pane.pid = None;
+                pane.cwd = Some(repo_b.clone());
+                pane.chat
+                    .messages
+                    .push(Arc::new(ChatMessage::new(ChatRole::User, "beta prompt")));
+            }
+            s.schedule_git_refresh(repo_b.clone(), cx);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        cx.draw_frame().unwrap();
+
+        let proj_btn = cx.debug_bounds("agent-project-selector").unwrap();
+        cx.simulate_click(proj_btn.center(), Modifiers::none());
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("agent-project-menu").is_some());
+        let opt_alpha = cx.debug_bounds("project-option-0").unwrap();
+        cx.simulate_click(opt_alpha.center(), Modifiers::none());
+        cx.run_until_parked();
+        cx.draw_frame().unwrap();
+
+        state.read_with(&cx, |s, _| {
+            assert_eq!(s.active_project_idx, 0);
+            assert_eq!(s.focused_pane_id, Some(pane_a));
+            let pane = s.pane_ref(pane_a).unwrap();
+            assert_eq!(s.agent_working_directory(pane), repo_a);
+            assert_eq!(pane.chat.messages[0].text.as_str(), "alpha prompt");
+            let pane_b = &s.projects[1].sessions[0].panes[0];
+            assert_eq!(pane_b.chat.messages[0].text.as_str(), "beta prompt");
+            assert_eq!(s.agent_working_directory(pane_b), repo_b);
+        });
+    }
+
+    #[test]
+    fn branch_picker_switches_branches_and_jumps_worktrees() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("branch-repo");
+        let wt_root = temp.path().join("worktrees");
+        init_test_git_repo(&repo, "main");
+        test_git(&repo, &["branch", "feat/test"]);
+        let wt = git_workspace::create_worktree(&repo, &wt_root, Some("main")).unwrap();
+
+        let mut app = TestAppContext::new();
+        let (mut cx, state) = open_app(&mut app);
+        let pane_id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
+
+        cx.update_window_entity(&state, |s, window, cx| {
+            s.projects[0].path = repo.clone();
+            s.projects[0].name = SharedString::from("branch-repo");
+            s.set_chat_mode(pane_id, true, window, cx);
+            if let Some(pane) = s.pane_mut(pane_id) {
+                pane.pid = None;
+                pane.cwd = Some(repo.clone());
+            }
+            s.schedule_git_refresh(repo.clone(), cx);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        cx.draw_frame().unwrap();
+
+        let branch_btn = cx.debug_bounds("agent-branch-selector").unwrap();
+        cx.simulate_click(branch_btn.center(), Modifiers::none());
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("agent-branch-menu").is_some());
+        assert!(cx.debug_bounds("agent-branch-search").is_some());
+
+        // Branches sorted: [0] main (current), [1] feat/test (no worktree), [2] shob/... (has worktree)
+        // Or let's click whichever item corresponds to feat/test vs wt branch cleanly via index:
+        let (feat_idx, wt_idx) = state.read_with(&cx, |s, _| {
+            let branches = &s.git_snapshots.get(&repo).unwrap().branches;
+            let feat = branches.iter().position(|b| b.name == "feat/test").unwrap();
+            let wt_b = branches
+                .iter()
+                .position(|b| b.name == wt.branch.as_deref().unwrap())
+                .unwrap();
+            (feat, wt_b)
+        });
+
+        let feat_btn = cx
+            .debug_bounds(&format!("branch-option-{feat_idx}"))
+            .unwrap();
+        cx.simulate_click(feat_btn.center(), Modifiers::none());
+        cx.run_until_parked();
+        cx.draw_frame().unwrap();
+        assert_eq!(
+            AppState::detect_git_branch(&repo).as_deref(),
+            Some("feat/test")
+        );
+
+        // Open branch picker again and select the branch checked out in the worktree -> switches workspace!
+        let branch_btn = cx.debug_bounds("agent-branch-selector").unwrap();
+        cx.simulate_click(branch_btn.center(), Modifiers::none());
+        cx.draw_frame().unwrap();
+        let wt_branch_btn = cx.debug_bounds(&format!("branch-option-{wt_idx}")).unwrap();
+        cx.simulate_click(wt_branch_btn.center(), Modifiers::none());
+        cx.run_until_parked();
+        cx.draw_frame().unwrap();
+
+        state.read_with(&cx, |s, _| {
+            let pane = s.pane_ref(pane_id).unwrap();
+            assert_eq!(
+                pane.chat
+                    .workspace_override
+                    .as_deref()
+                    .map(|p| git_workspace::paths_equal(p, &wt.path)),
+                Some(true)
+            );
+        });
     }
 }

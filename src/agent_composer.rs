@@ -949,13 +949,7 @@ impl AppState {
             };
             let folder = folder.path().to_path_buf();
             let _ = this.update(cx, |this, cx| {
-                if let Some(pane) = this.pane_mut(pane_id) {
-                    pane.chat.workspace_override = Some(folder);
-                    // A session resumed from another directory may retain that directory.
-                    pane.chat.bridge = None;
-                    pane.chat.rpi_session_id = None;
-                    cx.notify();
-                }
+                this.apply_workspace_override(pane_id, Some(folder), cx);
             });
         })
         .detach();
