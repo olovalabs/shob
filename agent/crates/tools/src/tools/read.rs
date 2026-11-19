@@ -39,6 +39,12 @@ pub struct ReadInput {
     /// Maximum number of lines to read.
     #[serde(default)]
     pub limit: Option<u32>,
+    /// Return the content even when this conversation has already been given a
+    /// byte-identical copy of it. A host-side read cache uses this to answer a
+    /// repeat with "unchanged since turn N" instead of the body; `true` opts out
+    /// (`docs/token-efficiency/02-design.md`).
+    #[serde(default)]
+    pub fresh: Option<bool>,
 }
 
 /// Structured details for the read tool. Mirrors TS `ReadToolDetails`.

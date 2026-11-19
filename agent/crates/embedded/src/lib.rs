@@ -29,7 +29,10 @@ use std::time::Duration;
 
 use agent::events::AgentEvent as RpiEvent;
 use agent::message::AgentMessage;
-pub use agent::{BeforeToolCall, BeforeToolCallResult};
+pub use agent::{
+    AfterToolCall, AfterToolCallResult, BeforeToolCall, BeforeToolCallContext,
+    BeforeToolCallResult, TextContentOrImage,
+};
 use ai::types::{AssistantMessageEvent, StopReason};
 use cli::args::{Args, Mode};
 use cli::session::BuildError;
@@ -81,14 +84,39 @@ pub struct SessionTitleRequest {
 }
 
 impl SessionTitleRequest {
+    /// Generate a title on the conversation's own model. Prefer
+    /// [`Self::spawn_routed`], which lets the host send this cheap task to a
+    /// cheaper model.
     pub fn spawn(
         cwd: &Path,
         selector: &str,
         first_prompt: &str,
         wake: fn(),
     ) -> Result<Self, String> {
+        Self::spawn_routed(cwd, selector, selector, first_prompt, wake)
+    }
+
+    /// Generate a title, using `selector` for the run and `provider_hint` only
+    /// to keep credential resolution on the same provider the conversation is
+    /// on. Naming a conversation does not need the conversation's model, and
+    /// doing it on one costs a full frontier-model turn per conversation.
+    pub fn spawn_routed(
+        cwd: &Path,
+        selector: &str,
+        provider_hint: &str,
+        first_prompt: &str,
+        wake: fn(),
+    ) -> Result<Self, String> {
         let runtime = auth_runtime()?;
-        let options = SessionOptions::new(cwd).with_selector(Some(selector));
+        let (provider_hint, model_hint) = match provider_hint.split_once('/') {
+            Some((provider, model)) => (Some(provider.to_string()), model.to_string()),
+            None => (None, provider_hint.to_string()),
+        };
+        let options = SessionOptions {
+            provider: provider_hint,
+            model: Some(model_hint),
+            ..SessionOptions::new(cwd).with_selector(Some(selector))
+        };
         let end = first_prompt
             .char_indices()
             .nth(2_000)
@@ -899,6 +927,11 @@ pub struct SessionOptions {
     /// Hooks run outside queue locks. They must remain lightweight.
     pub phase_hook: Option<Arc<dyn Fn(&'static str, std::time::Duration) + Send + Sync>>,
     pub before_tool_call: Option<BeforeToolCall>,
+    /// Host hook that may rewrite a tool result before it reaches the model.
+    /// The harness already threads `AgentHarnessOptions::after_tool_call` into
+    /// the loop; this exposes it to embedded hosts, which is where a
+    /// token-reduction layer needs it (read dedupe, output minimization).
+    pub after_tool_call: Option<agent::AfterToolCall>,
     pub user_input: bool,
 }
 
@@ -915,6 +948,7 @@ impl SessionOptions {
             delta_arrival_hook: None,
             phase_hook: None,
             before_tool_call: None,
+            after_tool_call: None,
             user_input: false,
         }
     }
@@ -963,6 +997,11 @@ impl SessionOptions {
         hook: Arc<dyn Fn(&'static str, std::time::Duration) + Send + Sync>,
     ) -> Self {
         self.phase_hook = Some(hook);
+        self
+    }
+
+    pub fn with_after_tool_call(mut self, hook: Option<agent::AfterToolCall>) -> Self {
+        self.after_tool_call = hook;
         self
     }
 }
@@ -1287,6 +1326,7 @@ async fn run_session(
         delta_arrival_hook,
         phase_hook,
         before_tool_call,
+        after_tool_call,
         user_input,
     } = options;
     let trusted = project_trusted(&cwd);
@@ -1347,12 +1387,13 @@ async fn run_session(
     }
 
     let build_started = std::time::Instant::now();
-    let mut built = cli::session::build_with_tool_hook(
+    let mut built = cli::session::build_with_tool_hooks(
         &resolved,
         &args,
         &cwd,
         trusted,
         before_tool_call.clone(),
+        after_tool_call.clone(),
     )
     .await;
     if built.is_err() && resume.is_some() {
@@ -1360,9 +1401,15 @@ async fn run_session(
         // screen, so start a fresh durable session and publish its new id.
         let mut fresh = args.clone();
         fresh.session = None;
-        if let Ok(retry) =
-            cli::session::build_with_tool_hook(&resolved, &fresh, &cwd, trusted, before_tool_call)
-                .await
+        if let Ok(retry) = cli::session::build_with_tool_hooks(
+            &resolved,
+            &fresh,
+            &cwd,
+            trusted,
+            before_tool_call,
+            after_tool_call,
+        )
+        .await
         {
             built = Ok(retry);
         }
