@@ -541,16 +541,7 @@ impl AppState {
             };
             let path = folder.path().to_path_buf();
             let _ = this.update_in(cx, |this, window, cx| {
-                let existing = this
-                    .projects
-                    .iter()
-                    .position(|p| git_workspace::paths_equal(&p.path, &path));
                 this.open_project_path(path, window, cx);
-                if existing.is_none()
-                    && let Some(new_pane_id) = this.focused_pane_id
-                {
-                    this.set_chat_mode(new_pane_id, true, window, cx);
-                }
                 if let Some(active_pane) = this.focused_pane_id.and_then(|id| this.pane_ref(id)) {
                     let dir = this.agent_working_directory(active_pane);
                     this.schedule_git_refresh(dir, cx);

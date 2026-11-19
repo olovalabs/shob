@@ -45,7 +45,7 @@ Run your favorite AI coding agents side by side.
 - Command Code
 - Shob's built-in AI agent
 
-Use terminal-based agents or switch to native AI chat whenever you need it.
+Split view is terminal-only. Enable One mode from the sidebar to use Shob’s built-in agent. Switching back to Split view keeps your conversations and drafts. Terminal-based agents still work in either layout.
 
 ### Native Performance
 

@@ -1,13 +1,13 @@
 use anyhow::Result;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, App, AppContext, Bounds, ClipboardEntry, Context,
-    CursorStyle, Div, Edges, Entity, ExternalPaths, FollowMode, Hsla, InteractiveElement as _,
-    IntoElement, KeyDownEvent, ListAlignment, ListState, MouseButton, MouseDownEvent,
-    MouseMoveEvent, ObjectFit, ParentElement, Pixels, Point, Rems, Render, SharedString,
-    StatefulInteractiveElement as _, StyleRefinement, Styled, StyledImage as _, StyledText, Window,
-    WindowControlArea, WindowDecorations, WindowOptions, actions, canvas, deferred, div, img, list,
-    px, relative, rems, rgba, size, svg,
+    AnyElement, App, AppContext, Bounds, ClipboardEntry, Context, CursorStyle, Div, Edges, Entity,
+    ExternalPaths, FollowMode, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent,
+    ListAlignment, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit,
+    ParentElement, Pixels, Point, Rems, Render, SharedString, StatefulInteractiveElement as _,
+    StyleRefinement, Styled, StyledImage as _, StyledText, Window, WindowControlArea,
+    WindowDecorations, WindowOptions, actions, canvas, deferred, div, img, list, px, relative,
+    rems, rgba, size, svg,
 };
 #[cfg(target_os = "linux")]
 use gpui_component::TitleBar;
@@ -3821,6 +3821,7 @@ pub struct TerminalPane {
     /// Agent pane that owns this reusable preview. Preview panes reuse themselves.
     preview_owner: Option<usize>,
     one_mode: bool,
+    legacy_chat: bool,
     regular_focus: Option<usize>,
     tool_panel: bool,
     tool_panel_tab: Option<usize>,
@@ -3995,6 +3996,7 @@ impl TerminalPane {
             files_active: false,
             files_restore: None,
             preview_owner: None,
+            legacy_chat: false,
             one_mode: false,
             regular_focus: None,
             tool_panel: false,
@@ -4662,7 +4664,7 @@ impl AppState {
                                         .rev()
                                         .cloned()
                                         .collect(),
-                                    chat_active: pane.chat.active,
+                                    chat_active: pane.chat.active || pane.legacy_chat,
                                     one_mode: pane.one_mode,
                                     regular_focus: pane.regular_focus,
                                     tool_panel_owner: pane
@@ -5031,7 +5033,11 @@ impl AppState {
                     }
                     pane.command_history = saved_pane.command_history;
                     pane.restore_draft = Some(saved_pane.draft.clone());
-                    pane.chat.active = saved_pane.chat_active && !pane.tool_panel;
+                    pane.legacy_chat = saved_pane.chat_active && !pane.one_mode && !pane.tool_panel;
+                    pane.chat.active = saved_pane.chat_active && pane.one_mode && !pane.tool_panel;
+                    if pane.chat.active {
+                        pane.restore_draft = Some(saved_pane.agent_draft.clone());
+                    }
                     pane.chat.fast_mode = saved_pane.chat.fast_mode;
                     pane.chat.thinking_override = saved_pane
                         .chat
@@ -5095,6 +5101,11 @@ impl AppState {
                         if let Some(total) = usage.get(&transcript_key(&pane.uid, key)) {
                             pane.chat.set_usage(*total);
                         }
+                    }
+                    if !pane.one_mode && !pane.tool_panel {
+                        pane.legacy_chat |= !pane.chat.agent_draft.is_empty()
+                            || !pane.chat.messages.is_empty()
+                            || pane.chat.rpi_session_id.is_some();
                     }
 
                     pane.terminal_subscription = Some(terminal_subscription);
@@ -5427,12 +5438,13 @@ impl AppState {
 
     fn one_mode_pane<'a>(&self, session: &'a Session) -> Option<&'a TerminalPane> {
         let panes = || session.panes.iter().filter(|pane| !pane.tool_panel);
+        let focused = self.focused_pane_id.and_then(|id| {
+            let pane = session.panes.iter().find(|pane| pane.id == id)?;
+            Some(pane.preview_owner.filter(|_| pane.tool_panel).unwrap_or(id))
+        });
         panes()
-            .find(|pane| pane.one_mode)
-            .or_else(|| {
-                panes().find(|pane| pane.chat.active && Some(pane.id) == self.focused_pane_id)
-            })
-            .or_else(|| panes().find(|pane| pane.chat.active))
+            .find(|pane| pane.chat.active && Some(pane.id) == focused)
+            .or_else(|| panes().find(|pane| pane.one_mode))
             .or_else(|| panes().find(|pane| Some(pane.id) == self.focused_pane_id))
             .or_else(|| panes().next())
     }
@@ -6798,7 +6810,7 @@ impl AppState {
             .get(session_idx)
             .and_then(|s| s.panes.first().map(|pane| pane.id));
         if let Some(pane_id) = target_pane_id {
-            self.focus_pane(pane_id, window, cx);
+            self.focus_workspace_pane(pane_id, window, cx);
             if let Some(pane) = self.pane_ref(pane_id) {
                 let dir = self.agent_working_directory(pane);
                 self.schedule_git_refresh(dir, cx);
@@ -6897,8 +6909,8 @@ impl AppState {
             self.active_project_idx = project_idx;
             self.focused_pane_id = Some(next_id);
             self.rebuild_session_index();
-            if agent_chat {
-                self.set_chat_mode(next_id, true, window, cx);
+            if agent_chat && self.settings.agent_layout {
+                self.focus_one_chat(next_id, window, cx);
             }
             self.schedule_workspace_save(cx);
             cx.notify();
@@ -6906,18 +6918,11 @@ impl AppState {
     }
 
     fn focus_empty_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if let Some(pane) = self.active_session().and_then(|session| {
-            session
-                .panes
-                .iter()
-                .find(|pane| self.settings.agent_layout && pane.one_mode && !pane.tool_panel)
-                .or_else(|| {
-                    session
-                        .panes
-                        .iter()
-                        .find(|pane| Some(pane.id) == self.focused_pane_id)
-                })
-        }) && pane.chat.active
+        if self.settings.agent_layout
+            && let Some(pane) = self
+                .active_session()
+                .and_then(|session| self.one_mode_pane(session))
+            && pane.chat.active
             && pane.chat.messages.is_empty()
             && !pane.chat.running
             && pane.attachments.is_empty()
@@ -6936,6 +6941,9 @@ impl AppState {
     }
 
     fn create_new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.settings.agent_layout {
+            return;
+        }
         if self.focus_empty_chat(window, cx) {
             return;
         }
@@ -6946,14 +6954,6 @@ impl AppState {
         }
 
         self.select_folder_and_add_project(window, cx);
-        if !self.settings.agent_layout
-            && let Some(pane_id) = self
-                .active_session()
-                .and_then(|session| session.panes.first())
-                .map(|pane| pane.id)
-        {
-            self.set_chat_mode(pane_id, true, window, cx);
-        }
     }
 
     /// Close one session (all of its panes) without touching the other
@@ -7042,9 +7042,10 @@ impl AppState {
             .get(project.active_session_idx)
             .and_then(|s| s.panes.first())
             .map(|pane| pane.id);
+        self.rebuild_session_index();
         if is_active_project {
             if let Some(pane_id) = pane_id {
-                self.focus_pane(pane_id, window, cx);
+                self.focus_workspace_pane(pane_id, window, cx);
             } else {
                 self.focused_pane_id = None;
             }
@@ -7052,7 +7053,6 @@ impl AppState {
         // Drop the removed terminals after forgetting their pids, so their
         // PTY masters close and the shells go away with them.
         drop(removed);
-        self.rebuild_session_index();
         // Invalidate older debounced snapshots before publishing the deletion.
         self.save_generation.fetch_add(1, Ordering::SeqCst);
         let saved = if self.persistence_enabled {
@@ -7101,13 +7101,13 @@ impl AppState {
             self.active_project_idx = self.projects.len().saturating_sub(1);
         }
         drop(removed);
+        self.rebuild_session_index();
         if was_active && !self.projects.is_empty() {
             let next_idx = self.active_project_idx;
             self.activate_project(next_idx, window, cx);
         } else if self.projects.is_empty() {
             self.focused_pane_id = None;
         }
-        self.rebuild_session_index();
         cx.notify();
         self.schedule_workspace_save(cx);
     }
@@ -7239,7 +7239,7 @@ impl AppState {
             self.rebuild_session_index();
             self.focused_pane_id = Some(next_id);
             if self.settings.agent_layout {
-                self.set_chat_mode(next_id, true, window, cx);
+                self.focus_one_chat(next_id, window, cx);
             } else if let Some(pane) = self.pane_ref(next_id) {
                 let dir = self.agent_working_directory(pane);
                 self.schedule_git_refresh(dir, cx);
@@ -8626,14 +8626,40 @@ impl AppState {
     }
 
     fn focus_pane(&mut self, pane_id: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let pane_id = if !self.settings.agent_layout {
-            self.pane_ref(pane_id)
-                .filter(|pane| pane.tool_panel)
-                .and_then(|pane| pane.preview_owner)
-                .unwrap_or(pane_id)
-        } else {
-            pane_id
-        };
+        let mut pane_id = pane_id;
+        if !self.settings.agent_layout
+            && let Some(pane) = self.pane_ref(pane_id)
+        {
+            if pane.tool_panel {
+                pane_id = pane.preview_owner.unwrap_or(pane_id);
+            }
+            if self
+                .pane_ref(pane_id)
+                .is_some_and(|pane| pane.one_mode || pane.tool_panel)
+                && let Some(&(project, session, _)) = self.pane_index.get(&pane_id)
+            {
+                let screen = &self.projects[project].sessions[session];
+                let regular_focus = self.pane_ref(pane_id).and_then(|pane| pane.regular_focus);
+                let regular = || {
+                    screen
+                        .panes
+                        .iter()
+                        .filter(|pane| !pane.one_mode && !pane.tool_panel)
+                };
+                let Some(target) = regular()
+                    .find(|pane| Some(pane.id) == regular_focus)
+                    .or_else(|| regular().next())
+                else {
+                    self.active_project_idx = project;
+                    self.projects[project].active_session_idx = session;
+                    self.focused_pane_id = None;
+                    self.active_view = ActiveView::Workspace;
+                    cx.notify();
+                    return;
+                };
+                pane_id = target.id;
+            }
+        }
         self.active_view = ActiveView::Workspace;
         self.focused_pane_id = Some(pane_id);
         if let Some(&(p_idx, s_idx, _)) = self.pane_index.get(&pane_id) {
@@ -9477,81 +9503,137 @@ impl AppState {
         if self.settings.agent_layout {
             self.settings.agent_layout = false;
             let target = self.active_session().and_then(|session| {
-                session
-                    .panes
-                    .iter()
-                    .find(|pane| pane.one_mode && !pane.tool_panel)
-                    .and_then(|pane| pane.regular_focus)
-                    .filter(|id| {
+                self.one_mode_pane(session)
+                    .and_then(|pane| {
+                        if pane.one_mode {
+                            pane.regular_focus
+                        } else {
+                            Some(pane.id)
+                        }
+                    })
+                    .and_then(|id| {
                         session
                             .panes
                             .iter()
-                            .any(|pane| pane.id == *id && !pane.one_mode && !pane.tool_panel)
+                            .find(|pane| pane.id == id && !pane.one_mode && !pane.tool_panel)
                     })
                     .or_else(|| {
                         session
                             .panes
                             .iter()
                             .find(|pane| !pane.one_mode && !pane.tool_panel)
-                            .map(|pane| pane.id)
                     })
+                    .map(|pane| pane.id)
             });
+            for pane in self
+                .projects
+                .iter_mut()
+                .flat_map(|project| &mut project.sessions)
+                .flat_map(|session| &mut session.panes)
+            {
+                if pane.chat.active && !pane.one_mode && !pane.tool_panel {
+                    pane.legacy_chat = true;
+                    Self::update_chat_mode(pane, false, window, cx);
+                }
+            }
             if let Some(id) = target {
                 self.focus_pane(id, window, cx);
             }
         } else {
-            let Some(source) = self.active_session().and_then(|session| {
-                self.focused_pane_id
-                    .filter(|id| {
-                        session
-                            .panes
-                            .iter()
-                            .any(|pane| pane.id == *id && !pane.one_mode && !pane.tool_panel)
-                    })
-                    .or_else(|| {
-                        session
-                            .panes
-                            .iter()
-                            .find(|pane| !pane.one_mode && !pane.tool_panel)
-                            .map(|pane| pane.id)
-                    })
-            }) else {
-                return;
-            };
-            let existing = self.active_session().and_then(|session| {
+            self.settings.agent_layout = true;
+            if let Some(source) = self.active_session().and_then(|session| {
                 session
                     .panes
                     .iter()
-                    .find(|pane| pane.one_mode && !pane.tool_panel)
+                    .find(|pane| Some(pane.id) == self.focused_pane_id)
+                    .or_else(|| session.panes.first())
                     .map(|pane| pane.id)
-            });
-            let id = if let Some(id) = existing {
-                id
-            } else {
-                let maximized = self
-                    .active_session()
-                    .and_then(|session| session.maximized_pane_id);
-                self.split_pane(source, gpui::Axis::Horizontal, window, cx);
-                if let Some(&(project, session, _)) = self.pane_index.get(&source) {
-                    self.projects[project].sessions[session].maximized_pane_id = maximized;
-                }
-                let Some(id) = self.focused_pane_id.filter(|id| *id != source) else {
-                    return;
-                };
-                if let Some(pane) = self.pane_mut(id) {
-                    pane.one_mode = true;
-                }
-                id
-            };
-            if let Some(pane) = self.pane_mut(id) {
-                pane.regular_focus = Some(source);
+            }) {
+                self.focus_one_chat(source, window, cx);
             }
-            self.settings.agent_layout = true;
-            self.set_chat_mode(id, true, window, cx);
-            self.focus_pane(id, window, cx);
         }
         self.schedule_workspace_save(cx);
         cx.notify();
+    }
+
+    fn focus_workspace_pane(&mut self, id: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings.agent_layout {
+            self.focus_one_chat(id, window, cx);
+        } else {
+            self.focus_pane(id, window, cx);
+        }
+    }
+
+    fn focus_one_chat(&mut self, source: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.settings.agent_layout {
+            return;
+        }
+        let Some(&(project, session, _)) = self.pane_index.get(&source) else {
+            return;
+        };
+        let screen = &self.projects[project].sessions[session];
+        let source = self
+            .pane_ref(source)
+            .filter(|pane| pane.tool_panel)
+            .and_then(|pane| pane.preview_owner)
+            .unwrap_or(source);
+        let regular = screen
+            .panes
+            .iter()
+            .find(|pane| pane.id == source && !pane.one_mode && !pane.tool_panel)
+            .or_else(|| {
+                screen
+                    .panes
+                    .iter()
+                    .find(|pane| !pane.one_mode && !pane.tool_panel)
+            });
+        let regular_id = regular.map(|pane| pane.id);
+        let maximized = screen.maximized_pane_id;
+        let legacy = |pane: &&TerminalPane| {
+            pane.legacy_chat
+                && pane.diff_preview.is_none()
+                && pane.markdown_preview.is_none()
+                && !pane.files_active
+        };
+        let existing = regular
+            .filter(legacy)
+            .or_else(|| {
+                screen
+                    .panes
+                    .iter()
+                    .find(|pane| pane.one_mode && !pane.tool_panel)
+            })
+            .or_else(|| screen.panes.iter().find(legacy))
+            .map(|pane| pane.id);
+        let id = if let Some(id) = existing {
+            id
+        } else if let Some(regular_id) = regular_id {
+            let id = self.next_id + 1;
+            self.split_pane(regular_id, gpui::Axis::Horizontal, window, cx);
+            self.projects[project].sessions[session].maximized_pane_id = maximized;
+            let Some(pane) = self.pane_mut(id) else {
+                return;
+            };
+            pane.one_mode = true;
+            id
+        } else {
+            return;
+        };
+        if let Some(pane) = self.pane_mut(id)
+            && pane.one_mode
+            && regular_id.is_some()
+        {
+            pane.regular_focus = regular_id;
+        }
+        if self
+            .pane_ref(id)
+            .is_some_and(|pane| pane.input_state.is_none())
+        {
+            self.create_pane_input(id, window, cx);
+        }
+        if !self.set_chat_mode(id, true, window, cx) {
+            self.focus_pane(id, window, cx);
+        }
     }
 
     fn set_chat_mode(
@@ -9560,28 +9642,35 @@ impl AppState {
         active: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        if active
-            && self.settings.agent_layout
-            && self
-                .pane_ref(pane_id)
-                .is_some_and(|pane| !pane.one_mode && !pane.tool_panel)
-        {
-            self.settings.agent_layout = false;
-            self.switch_agent_layout(window, cx);
-            return;
+    ) -> bool {
+        let changed = self
+            .pane_mut(pane_id)
+            .is_some_and(|pane| Self::update_chat_mode(pane, active, window, cx));
+        if !changed {
+            return false;
         }
-        let Some(pane) = self.pane_mut(pane_id) else {
-            return;
-        };
-        if pane.tool_panel {
-            return;
+        self.focus_pane(pane_id, window, cx);
+        if active {
+            self.warm_agent_bridge(pane_id);
+            if let Some(pane) = self.pane_ref(pane_id) {
+                let dir = self.agent_working_directory(pane);
+                self.schedule_git_refresh(dir, cx);
+            }
         }
-        if pane.chat.active == active {
-            return;
+        true
+    }
+
+    fn update_chat_mode(
+        pane: &mut TerminalPane,
+        active: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if pane.tool_panel || pane.chat.active == active {
+            return false;
         }
         let Some(input) = pane.input_state.clone() else {
-            return;
+            return false;
         };
         let current = input.read(cx).value().to_string();
         let draft = if active {
@@ -9613,14 +9702,7 @@ impl AppState {
             );
         });
         set_input_text(&input, draft, window, cx);
-        self.focus_pane(pane_id, window, cx);
-        if active {
-            self.warm_agent_bridge(pane_id);
-            if let Some(pane) = self.pane_ref(pane_id) {
-                let dir = self.agent_working_directory(pane);
-                self.schedule_git_refresh(dir, cx);
-            }
-        }
+        true
     }
     fn open_agent_auth(
         &mut self,
@@ -10595,9 +10677,6 @@ impl AppState {
                 });
                 if let Some(project_idx) = project_idx {
                     self.create_new_session_in_project(project_idx, window, cx);
-                    if let Some(new_id) = self.focused_pane_id {
-                        self.set_chat_mode(new_id, true, window, cx);
-                    }
                     cx.notify();
                 }
                 return;
@@ -13027,17 +13106,6 @@ impl AppState {
         } else {
             self.pane_git_branch(pane)
         };
-        let change_summary = agent_cwd
-            .as_ref()
-            .and_then(|dir| self.project_change_counts.get(dir))
-            .or_else(|| {
-                self.pane_index
-                    .get(&pane_id)
-                    .and_then(|&(project, _, _)| self.projects.get(project))
-                    .and_then(|project| self.project_change_counts.get(&project.path))
-            })
-            .and_then(Option::as_ref)
-            .filter(|summary| summary.files > 0);
         let model_pill = pane
             .chat
             .selected_model
@@ -13089,22 +13157,6 @@ impl AppState {
         } else {
             rgba(0x0000000a).into()
         };
-        let mode_active_bg: Hsla = if gradient_ascii {
-            tokens.sidebar_item_active
-        } else if tokens.is_dark {
-            rgba(0x1e1f22ff).into()
-        } else {
-            rgba(0xffffffff).into()
-        };
-        let mode_active_icon: Hsla = if gradient_ascii {
-            tokens.text_primary
-        } else if tokens.is_dark {
-            rgba(0xe5e6fcff).into()
-        } else {
-            tokens.text_primary
-        };
-        let terminal_mode_active = !pane.chat.active;
-        let agent_mode_active = pane.chat.active;
         let dir_icon_color: Hsla = if gradient_ascii {
             tokens.text_secondary
         } else if tokens.is_dark {
@@ -13419,117 +13471,6 @@ impl AppState {
                                 this.choose_attachments(pane_id, cx);
                             }))
                     ))
-                    .when(!self.settings.agent_layout || !pane.chat.active, |row| row.child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(2.0))
-                            .p(px(2.0))
-                            .rounded(px(7.0))
-                            .border_1()
-                            .border_color(badge_border)
-                            .bg(badge_bg)
-                            .child(
-                                div()
-                                    .id(("input-mode-terminal", pane_id))
-                                    .debug_selector(|| "input-mode-terminal-pill".to_string())
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(5.0))
-                                    .h(px(24.0))
-                                    .px(px(8.0))
-                                    .rounded(px(5.0))
-                                    .bg(if !pane.chat.active {
-                                        mode_active_bg
-                                    } else {
-                                        badge_bg
-                                    })
-                                    .text_size(px(12.0))
-                                    .text_color(if !pane.chat.active {
-                                        tokens.text_primary
-                                    } else {
-                                        tokens.text_muted
-                                    })
-                                    .cursor(CursorStyle::PointingHand)
-                                    .hover(move |style| {
-                                        if terminal_mode_active {
-                                            style
-                                        } else {
-                                            style.bg(tokens.pane_header_btn_hover)
-                                        }
-                                    })
-                                    .child(
-                                        svg()
-                                            .path("icons/terminal-bottom.svg")
-                                            .size(px(13.0))
-                                            .text_color(if !pane.chat.active {
-                                                mode_active_icon
-                                            } else {
-                                                tokens.text_muted
-                                            }),
-                                    )
-                                    .when(terminal_mode_active, |pill| {
-                                        pill.child(div().child("Terminal"))
-                                    })
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(move |this, _, window, cx| {
-                                            cx.stop_propagation();
-                                            this.set_chat_mode(pane_id, false, window, cx);
-                                        }),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .id(("input-mode-agent", pane_id))
-                                    .debug_selector(|| "input-mode-agent-pill".to_string())
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(5.0))
-                                    .h(px(24.0))
-                                    .px(px(8.0))
-                                    .rounded(px(5.0))
-                                    .bg(if pane.chat.active {
-                                        mode_active_bg
-                                    } else {
-                                        badge_bg
-                                    })
-                                    .text_size(px(12.0))
-                                    .text_color(if pane.chat.active {
-                                        tokens.text_primary
-                                    } else {
-                                        tokens.text_muted
-                                    })
-                                    .cursor(CursorStyle::PointingHand)
-                                    .hover(move |style| {
-                                        if agent_mode_active {
-                                            style
-                                        } else {
-                                            style.bg(tokens.pane_header_btn_hover)
-                                        }
-                                    })
-                                    .child(
-                                        svg()
-                                            .path("icons/sparkle.svg")
-                                            .size(px(13.0))
-                                            .text_color(if pane.chat.active {
-                                                mode_active_icon
-                                            } else {
-                                                tokens.text_muted
-                                            }),
-                                    )
-                                    .when(agent_mode_active, |pill| {
-                                        pill.child(div().child("Agent"))
-                                    })
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(move |this, _, window, cx| {
-                                            cx.stop_propagation();
-                                            this.set_chat_mode(pane_id, true, window, cx);
-                                        }),
-                                    ),
-                            ),
-                    ))
                     .when(pane.chat.active, |row| {
                         row.child(self.render_agent_permission(pane, false, window, cx))
                     })
@@ -13653,59 +13594,6 @@ impl AppState {
                                 ),
                         )
                     })
-                    .when(pane.chat.active && !self.settings.agent_layout, |row| {
-                        let added = if tokens.is_dark { rgba(0x3fb950ff) } else { rgba(0x1a7f37ff) };
-                        let removed = if tokens.is_dark { rgba(0xf85149ff) } else { rgba(0xcf222eff) };
-                        row.child(div().flex_1().min_w_0()).child(
-                            div().id(("agent-changes", pane_id)).debug_selector(|| "agent-changes".into())
-                                .flex().items_center().gap(px(6.0)).h(px(28.0)).px(px(8.0)).rounded(px(7.0))
-                                .cursor_pointer().hover(|style| style.bg(tokens.pane_header_btn_hover))
-                                .text_size(px(11.0)).text_color(tokens.text_secondary)
-                                .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new("Project working-tree changes").build(window, cx))
-                                .child("Changes")
-                                .when_some(change_summary, |button, summary| button
-                                    .child(div().debug_selector(|| "agent-changes-files".into()).text_color(tokens.text_secondary).child(format!("{}", summary.files)))
-                                    .child(div().debug_selector(|| "agent-changes-added".into()).text_color(added).child(format!("+{}", summary.additions)))
-                                    .child(div().debug_selector(|| "agent-changes-removed".into()).text_color(removed).child(format!("-{}", summary.deletions))))
-                                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
-                                    cx.stop_propagation();
-                                    this.open_project_diff(pane_id, window, cx);
-                                }))
-                        ).child(
-                            div()
-                                .id(("agent-info-toggle", pane_id))
-                                .debug_selector(|| "agent-info-toggle".into())
-                                .size(px(28.0))
-                                .flex_shrink_0()
-                                .rounded(px(7.0))
-                                .border_1()
-                                .border_color(tokens.border_subtle)
-                                .bg(tokens.pane_header_bg)
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .cursor(CursorStyle::PointingHand)
-                                .hover(|style| style.bg(tokens.pane_header_btn_hover))
-                                .tooltip(|window, cx| {
-                                    gpui_component::tooltip::Tooltip::new("Environment").build(window, cx)
-                                })
-                                .child(
-                                    svg().path("icons/info.svg").size(px(15.0))
-                                        .text_color(if pane.chat.info_open {
-                                            tokens.text_primary
-                                        } else {
-                                            tokens.text_muted
-                                        }),
-                                )
-                                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    if let Some(pane) = this.pane_mut(pane_id) {
-                                        pane.chat.info_open = !pane.chat.info_open;
-                                        cx.notify();
-                                    }
-                                })),
-                        )
-                    }),
             )
             // Row 2: Staged image attachments
             .children(attachment_strip)
@@ -13732,12 +13620,6 @@ impl AppState {
                             "Tab complete · ↑↓ history · Ctrl+R search · Shift+Enter newline · Drop or paste images",
                         ),
                 )
-            })
-            .when(pane.chat.active && !self.settings.agent_layout, |bar| {
-                bar.child(self.render_composer_context_strip(pane, &tokens, true, window, cx))
-            })
-            .when(pane.chat.active && pane.chat.info_open && !self.settings.agent_layout, |this| {
-                this.child(self.render_agent_info(pane, cx))
             }))
             .when(show_welcome_context, |stack| {
                 stack.child(self.render_composer_context_strip(pane, &tokens, false, window, cx))
@@ -17796,119 +17678,6 @@ impl AppState {
             })
     }
 
-    fn render_agent_info(
-        &self,
-        pane: &TerminalPane,
-        cx: &mut Context<Self>,
-    ) -> gpui::Stateful<gpui::Div> {
-        let pane_id = pane.id;
-        let tokens = self.tokens(cx);
-        div()
-            .id(("agent-info", pane_id))
-            .absolute()
-            .bottom(gpui::relative(1.0))
-            .mb(px(8.0))
-            .right(px(12.0))
-            .max_w_full()
-            .flex()
-            .when(pane.chat.info_open, |this| {
-                let active_dir = self.agent_working_directory(pane);
-                let cwd_display = Self::format_path_display(&active_dir);
-                let branch = Self::detect_git_branch(&active_dir);
-                this.child(
-                    div()
-                        .overflow_hidden()
-                        .flex_shrink(1.0)
-                        .min_w_0()
-                        .child(
-                            div()
-                                .id(("agent-info-panel", pane_id))
-                                .debug_selector(|| "agent-info-panel".into())
-                                .ml(px(8.0))
-                                .w(px(260.0))
-                                .rounded(px(12.0))
-                                .border_1()
-                                .border_color(tokens.card_border)
-                                .bg(tokens.card_hover)
-                                .shadow_lg()
-                                .flex()
-                                .flex_col()
-                                .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                    cx.stop_propagation();
-                                })
-                                .child(
-                                    div()
-                                        .px(px(14.0))
-                                        .pt(px(12.0))
-                                        .pb(px(4.0))
-                                        .text_size(px(11.0))
-                                        .text_color(tokens.text_muted)
-                                        .child("Environment"),
-                                )
-                                .children(
-                                    [
-                                        ("Working directory", "icons/folder.svg", cwd_display),
-                                        (
-                                            "Git branch",
-                                            "icons/git-branch.svg",
-                                            branch.unwrap_or_else(|| {
-                                                "Not in a Git repository".into()
-                                            }),
-                                        ),
-                                    ]
-                                    .into_iter()
-                                    .enumerate()
-                                    .map(
-                                        |(index, (label, icon, value))| {
-                                            div()
-                                                .id(("agent-info-section", index))
-                                                .px(px(14.0))
-                                                .py(px(6.0))
-                                                .flex()
-                                                .items_start()
-                                                .gap(px(10.0))
-                                                .child(
-                                                    svg()
-                                                        .path(icon)
-                                                        .size(px(15.0))
-                                                        .flex_shrink_0()
-                                                        .text_color(tokens.text_secondary),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .flex_1()
-                                                        .min_w_0()
-                                                        .flex()
-                                                        .flex_col()
-                                                        .gap(px(5.0))
-                                                        .child(
-                                                            div()
-                                                                .text_size(px(11.0))
-                                                                .text_color(tokens.text_muted)
-                                                                .child(label),
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .text_size(px(12.0))
-                                                                .text_color(tokens.text_primary)
-                                                                .whitespace_normal()
-                                                                .overflow_hidden()
-                                                                .child(value),
-                                                        ),
-                                                )
-                                        },
-                                    ),
-                                ),
-                        )
-                        .with_animation(
-                            ("agent-info-slide", pane_id),
-                            Animation::new(std::time::Duration::from_millis(180)),
-                            |element, delta| element.w(px(268.0 * delta)),
-                        ),
-                )
-            })
-    }
-
     fn render_tool_panel_chooser(
         &self,
         owner: usize,
@@ -18241,31 +18010,6 @@ impl AppState {
                                 .flex()
                                 .items_center()
                                 .gap(px(6.0))
-                                .when(
-                                    pane.diff_preview.is_none()
-                                        && pane.markdown_preview.is_none()
-                                        && !pane.should_show_bottom_input(cx),
-                                    |row| {
-                                        row.child(
-                                            div()
-                                                .id(("header-agent", pane_id))
-                                                .px(px(7.0))
-                                                .text_size(px(11.0))
-                                                .text_color(tokens.pane_header_fg)
-                                                .cursor(CursorStyle::PointingHand)
-                                                .child("Agent")
-                                                .on_mouse_down(
-                                                    MouseButton::Left,
-                                                    cx.listener(move |this, _, window, cx| {
-                                                        cx.stop_propagation();
-                                                        this.set_chat_mode(
-                                                            pane_id, true, window, cx,
-                                                        );
-                                                    }),
-                                                ),
-                                        )
-                                    },
-                                )
                                 .child(
                                     div()
                                         .id(("split-v-btn", pane_id))
@@ -18828,12 +18572,14 @@ impl AppState {
             .gap(px(4.0))
             .px(px(8.0))
             .pt(px(8.0))
-            .child(menu_row(
-                "sidebar-new-thread",
-                "New chat",
-                "session-create.svg",
-                Self::create_new_chat,
-            ))
+            .when(self.settings.agent_layout, |sidebar| {
+                sidebar.child(menu_row(
+                    "sidebar-new-thread",
+                    "New chat",
+                    "session-create.svg",
+                    Self::create_new_chat,
+                ))
+            })
             .child(if let Some(search) = &self.sidebar_search {
                 div()
                     .id("sidebar-search-field")
@@ -21397,7 +21143,7 @@ impl AppState {
         self.active_project_idx = project_idx;
         let pane_id = project.sessions[session_idx].panes.first().map(|p| p.id);
         if let Some(pane_id) = pane_id {
-            self.focus_pane(pane_id, window, cx);
+            self.focus_workspace_pane(pane_id, window, cx);
         } else {
             self.focused_pane_id = None;
         }
@@ -21868,6 +21614,12 @@ impl Render for AppState {
                 } else {
                     div().into_any_element()
                 }
+            } else if !session
+                .panes
+                .iter()
+                .any(|pane| !pane.one_mode && !pane.tool_panel)
+            {
+                self.render_empty_terminal(cx).into_any_element()
             } else if let Some(max_pane_id) = session.maximized_pane_id {
                 if let Some(pane) = session
                     .panes
@@ -22621,6 +22373,7 @@ fn main() -> Result<()> {
 
                     let weak_state = app_state.downgrade();
                     let load_path = persistence_path.clone();
+                    let restore_window = window.window_handle();
                     cx.spawn(async move |cx: &mut gpui::AsyncApp| {
                         let restored = cx
                             .background_executor()
@@ -22700,6 +22453,21 @@ fn main() -> Result<()> {
                         startup_mark("restore data loaded");
                         let _ = weak_state.update(cx, |state, cx| {
                             state.apply_saved_workspace(restored, cx);
+                            if let Some(id) = state.focused_pane_id {
+                                let state = cx.entity().downgrade();
+                                cx.defer(move |cx| {
+                                    let _ = restore_window.update(cx, |_, window, cx| {
+                                        let _ = state.update(cx, |state, cx| {
+                                            if !state.settings.agent_layout
+                                                || !state.active_session().and_then(|session| state.one_mode_pane(session)).is_some_and(|pane| pane.chat.active)
+                                            {
+                                                state.focus_workspace_pane(id, window, cx);
+                                                state.schedule_workspace_save(cx);
+                                            }
+                                        });
+                                    });
+                                });
+                            }
                             if updater::enabled() {
                                 state.check_for_updates(cx);
                             }
@@ -23703,6 +23471,7 @@ mod resize_tests {
         let mut app = TestAppContext::new();
         let (mut cx, state) = open_app(&mut app);
         cx.update_window_entity(&state, |s, _, cx| {
+            s.settings.agent_layout = true;
             let chat = &mut s.projects[0].sessions[0].panes[0].chat;
             chat.active = true;
             cx.notify();
@@ -23762,9 +23531,7 @@ mod resize_tests {
             empty_bar_height, bar.size.height,
             "usage must not change input height"
         );
-        assert!(footer.top() >= editor.bottom());
-        assert!(footer.bottom() <= bar.bottom());
-        assert!(footer.right() <= bar.right());
+        assert!(footer.bottom() < editor.top());
         if let Some(path) = std::env::var_os("SHOB_USAGE_SCREENSHOT") {
             cx.update(|window, _| window.render_to_image().unwrap().save(path).unwrap());
         }
@@ -23795,8 +23562,14 @@ mod resize_tests {
     fn agent_changes_indicator_opens_the_reusable_changes_pane() {
         let mut app = TestAppContext::new();
         let (mut cx, state) = open_app(&mut app);
-        cx.update_window_entity(&state, |state, window, cx| {
-            state.set_chat_mode(1, true, window, cx);
+        cx.update_window_entity(&state, |state, _, cx| {
+            state.settings.agent_layout = true;
+            let pane = state.pane_mut(1).unwrap();
+            pane.chat.active = true;
+            pane.chat.info_open = true;
+            pane.chat
+                .messages
+                .push(Arc::new(ChatMessage::new(ChatRole::User, "Hello".into())));
             let path = state.projects[0].path.clone();
             state.project_change_counts.insert(
                 path,
@@ -23810,7 +23583,6 @@ mod resize_tests {
         });
         cx.draw_frame().unwrap();
         let button = cx.debug_bounds("agent-changes").expect("changes indicator");
-        assert!(cx.debug_bounds("agent-changes-files").is_some());
         assert!(cx.debug_bounds("agent-changes-added").is_some());
         assert!(cx.debug_bounds("agent-changes-removed").is_some());
         cx.simulate_click(button.center(), Modifiers::none());
@@ -23828,33 +23600,47 @@ mod resize_tests {
     }
 
     #[test]
-    fn agent_info_toggle_stays_in_composer_toolbar() {
+    fn split_view_keeps_legacy_chat_and_shell_drafts_separate() {
         let mut app = TestAppContext::new();
         let (mut cx, state) = open_app(&mut app);
-        cx.draw_frame().unwrap();
-        let id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
         cx.update_window_entity(&state, |s, window, cx| {
-            s.set_chat_mode(id, true, window, cx)
+            let mut workspace = s.saved_workspace(cx);
+            let pane = &mut workspace.projects[0].sessions[0].panes[0];
+            pane.chat_active = true;
+            pane.draft = "echo shell".into();
+            pane.agent_draft = "Agent draft".into();
+            s.startup_loaded = false;
+            s.settings.agent_layout = false;
+            s.settings.restore.agent_history = false;
+            s.apply_saved_workspace(
+                RestoreData {
+                    workspace,
+                    scrollbacks: HashMap::new(),
+                    transcripts: HashMap::new(),
+                    usage: HashMap::new(),
+                },
+                cx,
+            );
+            s.ensure_panes_input_state(window, cx);
+            s.create_new_chat(window, cx);
+            assert_eq!(s.active_project().unwrap().sessions.len(), 1);
         });
-        cx.draw_frame().unwrap();
-        let input = cx.debug_bounds("shob-input-bar").unwrap();
-        let mode = cx.debug_bounds("input-mode-agent-pill").unwrap();
-        let toggle = cx.debug_bounds("agent-info-toggle").unwrap();
-        let editor = cx.debug_bounds("agent-composer-input").unwrap();
-        assert!((toggle.center().y - mode.center().y).abs() < px(1.0));
-        assert!(toggle.bottom() < editor.top());
-        assert!((input.right() - toggle.right() - px(12.0)).abs() < px(1.0));
-        cx.simulate_click(toggle.center(), Modifiers::none());
-        cx.draw_frame().unwrap();
-        cx.background_executor
-            .advance_clock(std::time::Duration::from_millis(220));
-        cx.draw_frame().unwrap();
-        let panel = cx.debug_bounds("agent-info-panel").unwrap();
-        assert!(panel.bottom() < input.top());
-        assert!((panel.right() - toggle.right()).abs() < px(1.0));
-        cx.simulate_click(toggle.center(), Modifiers::none());
-        cx.draw_frame().unwrap();
-        assert!(cx.debug_bounds("agent-info-panel").is_none());
+        for one in [false, true, false, true] {
+            cx.draw_frame().unwrap();
+            assert_eq!(cx.debug_bounds("sidebar-new-thread").is_some(), one);
+            assert_eq!(cx.debug_bounds("agent-attach-file").is_some(), one);
+            assert!(cx.debug_bounds("input-mode-agent-pill").is_none());
+            state.read_with(&cx, |s, cx| {
+                let pane = s.pane_ref(s.focused_pane_id.unwrap()).unwrap();
+                assert_eq!(pane.chat.active, one);
+                assert_eq!(
+                    pane.input_state.as_ref().unwrap().read(cx).value().as_str(),
+                    if one { "Agent draft" } else { "echo shell" },
+                );
+            });
+            let toggle = cx.debug_bounds("layout-switch").unwrap();
+            cx.simulate_click(toggle.center(), Modifiers::none());
+        }
     }
 
     #[test]
@@ -25420,10 +25206,9 @@ mod pane_tests {
     fn tool_panel_switches_tabs_without_replacing_terminals() {
         let mut cx = TestAppContext::new();
         let (mut cx, app_state) = open_app(&mut cx);
-        cx.update_window_entity(&app_state, |state, _, cx| {
-            state.settings.agent_layout = true;
-            state.pane_mut(1).unwrap().chat.active = true;
-            cx.notify();
+        let owner = cx.update_window_entity(&app_state, |state, window, cx| {
+            state.switch_agent_layout(window, cx);
+            state.focused_pane_id.unwrap()
         });
         fn click(cx: &mut gpui::VisualTestContext, selector: &'static str) {
             cx.draw_frame().unwrap();
@@ -25435,7 +25220,7 @@ mod pane_tests {
         cx.draw_frame().unwrap();
         assert!(cx.debug_bounds("tool-panel-chooser").is_some());
         app_state.read_with(&cx, |state, _| {
-            assert_eq!(state.active_session().unwrap().panes.len(), 1)
+            assert_eq!(state.active_session().unwrap().panes.len(), 2)
         });
         cx.simulate_keystrokes("t");
         let first = app_state.read_with(&cx, |state, _| state.focused_pane_id.unwrap());
@@ -25466,9 +25251,9 @@ mod pane_tests {
         let workspace = app_state.read_with(&cx, |state, cx| {
             let saved = state.saved_workspace(cx);
             let panes = &saved.projects[0].sessions[0].panes;
-            let owner = panes.iter().find(|pane| pane.id == 1).unwrap();
-            assert!(owner.tool_panel_hidden);
-            assert_eq!(owner.tool_panel_tab, Some(files));
+            let saved_owner = panes.iter().find(|pane| pane.id == owner).unwrap();
+            assert!(saved_owner.tool_panel_hidden);
+            assert_eq!(saved_owner.tool_panel_tab, Some(files));
             for id in [first, second, files] {
                 assert_eq!(
                     panes
@@ -25476,7 +25261,7 @@ mod pane_tests {
                         .find(|pane| pane.id == id)
                         .unwrap()
                         .tool_panel_owner,
-                    Some(1)
+                    Some(owner)
                 );
             }
             serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap()
@@ -25501,17 +25286,17 @@ mod pane_tests {
         cx.draw_frame().unwrap();
         assert!(cx.debug_bounds("files-workspace").is_some());
         cx.update_window_entity(&app_state, |state, window, cx| {
-            state.select_tool_panel_tab(1, second, window, cx);
+            state.select_tool_panel_tab(owner, second, window, cx);
             state.open_project_diff(second, window, cx);
             let changes = state.focused_pane_id.unwrap();
             assert_ne!(changes, second);
             assert!(state.pane_ref(changes).unwrap().diff_preview.is_some());
-            state.select_tool_panel_tab(1, second, window, cx);
+            state.select_tool_panel_tab(owner, second, window, cx);
             state.close_pane(changes, window, cx);
             assert_eq!(state.focused_pane_id, Some(second));
             state.close_pane(second, window, cx);
             assert_eq!(state.focused_pane_id, Some(first));
-            state.settings.agent_layout = false;
+            state.switch_agent_layout(window, cx);
             state.focus_pane(first, window, cx);
             assert_eq!(state.focused_pane_id, Some(1));
         });
@@ -26275,6 +26060,7 @@ mod pane_tests {
         let mut cx = TestAppContext::new();
         let (mut cx, app_state) = open_app(&mut cx);
         cx.update_window_entity(&app_state, |state, _, cx| {
+            state.settings.agent_layout = true;
             for idx in 2..=6 {
                 let title: SharedString = format!("Session {idx}").into();
                 state.projects[0].sessions.push(Session {
@@ -26317,8 +26103,9 @@ mod pane_tests {
             assert_eq!(state.active_project().unwrap().sessions.len(), 7);
         });
         cx.update_window_entity(&app_state, |state, _, cx| {
+            let pane_id = state.focused_pane_id.unwrap();
             state
-                .pane_mut(7)
+                .pane_mut(pane_id)
                 .unwrap()
                 .chat
                 .messages
@@ -26330,14 +26117,14 @@ mod pane_tests {
         cx.simulate_click(new_thread.center(), Modifiers::default());
         app_state.read_with(&cx, |state, _| {
             let chat = state.active_session().unwrap();
-            assert_eq!(chat.id, 8);
+            assert_eq!(chat.id, 10);
             assert!(chat.panes.iter().any(|pane| pane.chat.active));
         });
         cx.draw_frame()
             .expect("sidebar with the newest session first");
 
         let newest = cx
-            .debug_bounds("session-row-8")
+            .debug_bounds("session-row-10")
             .expect("newest session row");
         let previous = cx
             .debug_bounds("session-row-7")
@@ -31025,7 +30812,7 @@ First report
     }
 
     #[test]
-    fn workspace_switcher_renders_context_strip_and_dropdown_in_both_layouts() {
+    fn workspace_switcher_renders_context_strip_and_dropdown_only_in_one_mode() {
         let temp = tempfile::tempdir().unwrap();
         let repo = temp.path().join("repo");
         init_test_git_repo(&repo, "main");
@@ -31035,21 +30822,24 @@ First report
         let pane_id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
 
         for agent_layout in [false, true] {
-            cx.update_window_entity(&state, |s, window, cx| {
+            cx.update_window_entity(&state, |s, _, cx| {
                 s.projects[0].path = repo.clone();
                 s.projects[0].name = SharedString::from("repo");
                 s.settings.agent_layout = agent_layout;
                 if let Some(pane) = s.pane_mut(pane_id) {
                     pane.pid = None;
                     pane.cwd = Some(repo.clone());
-                    pane.chat.active = true;
+                    pane.chat.active = agent_layout;
                 }
                 s.schedule_git_refresh(repo.clone(), cx);
-                let _ = window;
                 cx.notify();
             });
             cx.run_until_parked();
             cx.draw_frame().unwrap();
+            if !agent_layout {
+                assert!(cx.debug_bounds("composer-context-strip").is_none());
+                continue;
+            }
 
             assert!(cx.debug_bounds("composer-context-strip").is_some());
             let ws_btn = cx.debug_bounds("agent-workspace-selector").unwrap();
@@ -31098,14 +30888,11 @@ First report
         cx.update_window_entity(&state, |s, window, cx| {
             s.projects[0].path = repo.clone();
             s.projects[0].name = SharedString::from("demo-repo");
+            s.settings.agent_layout = true;
             s.set_chat_mode(pane_id, true, window, cx);
             if let Some(pane) = s.pane_mut(pane_id) {
                 pane.pid = None;
                 pane.cwd = Some(repo.clone());
-                pane.chat.messages.push(Arc::new(ChatMessage::new(
-                    ChatRole::User,
-                    "preserve this session".into(),
-                )));
                 pane.chat.agent_draft = "draft text".into();
             }
             s.schedule_git_refresh(repo.clone(), cx);
@@ -31125,8 +30912,6 @@ First report
 
         let wt_path = state.read_with(&cx, |s, _| {
             let pane = s.pane_ref(pane_id).unwrap();
-            assert_eq!(pane.chat.messages.len(), 1);
-            assert_eq!(pane.chat.messages[0].text.as_str(), "preserve this session");
             assert_eq!(pane.chat.agent_draft, "draft text");
             let override_path = pane
                 .chat
@@ -31157,7 +30942,7 @@ First report
             let pane = s.pane_ref(pane_id).unwrap();
             assert_eq!(pane.chat.workspace_override, None);
             assert_eq!(s.agent_working_directory(pane), repo);
-            assert_eq!(pane.chat.messages.len(), 1);
+            assert_eq!(pane.chat.agent_draft, "draft text");
         });
 
         // Switch back to the existing worktree from the dropdown.
@@ -31190,7 +30975,9 @@ First report
         cx.update_window_entity(&state, |s, window, cx| {
             s.projects[0].path = repo_a.clone();
             s.projects[0].name = SharedString::from("alpha");
-            s.set_chat_mode(pane_a, true, window, cx);
+            s.settings.agent_layout = true;
+            s.focus_one_chat(pane_a, window, cx);
+            let pane_a = s.focused_pane_id.unwrap();
             if let Some(pane) = s.pane_mut(pane_a) {
                 pane.pid = None;
                 pane.cwd = Some(repo_a.clone());
@@ -31201,14 +30988,10 @@ First report
             }
             s.open_project_path(repo_b.clone(), window, cx);
             let pane_b = s.focused_pane_id.unwrap();
-            s.set_chat_mode(pane_b, true, window, cx);
             if let Some(pane) = s.pane_mut(pane_b) {
                 pane.pid = None;
                 pane.cwd = Some(repo_b.clone());
-                pane.chat.messages.push(Arc::new(ChatMessage::new(
-                    ChatRole::User,
-                    "beta prompt".into(),
-                )));
+                pane.chat.agent_draft = "beta draft".into();
             }
             s.schedule_git_refresh(repo_b.clone(), cx);
             cx.notify();
@@ -31230,12 +31013,22 @@ First report
 
         state.read_with(&cx, |s, _| {
             assert_eq!(s.active_project_idx, 0);
+            let pane_a = s.projects[0].sessions[0]
+                .panes
+                .iter()
+                .find(|pane| pane.one_mode)
+                .unwrap()
+                .id;
             assert_eq!(s.focused_pane_id, Some(pane_a));
             let pane = s.pane_ref(pane_a).unwrap();
             assert_eq!(s.agent_working_directory(pane), repo_a);
             assert_eq!(pane.chat.messages[0].text.as_str(), "alpha prompt");
-            let pane_b = &s.projects[1].sessions[0].panes[0];
-            assert_eq!(pane_b.chat.messages[0].text.as_str(), "beta prompt");
+            let pane_b = s.projects[1].sessions[0]
+                .panes
+                .iter()
+                .find(|pane| pane.one_mode)
+                .unwrap();
+            assert_eq!(pane_b.chat.agent_draft, "beta draft");
             assert_eq!(s.agent_working_directory(pane_b), repo_b);
         });
     }
