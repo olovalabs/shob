@@ -12651,10 +12651,7 @@ impl AppState {
         let pane_id = pane.id;
         let focused_composer = self.settings.agent_layout && pane.chat.active;
         let tokens = self.tokens(cx);
-        let agent_cwd = pane
-            .chat
-            .active
-            .then(|| self.agent_working_directory(pane));
+        let agent_cwd = pane.chat.active.then(|| self.agent_working_directory(pane));
         let cwd_display = agent_cwd
             .as_ref()
             .map(|path| Self::format_path_display(path))
@@ -30324,7 +30321,11 @@ First report
             assert_eq!(pane.chat.messages.len(), 1);
             assert_eq!(pane.chat.messages[0].text.as_str(), "preserve this session");
             assert_eq!(pane.chat.agent_draft, "draft text");
-            let override_path = pane.chat.workspace_override.clone().expect("worktree override");
+            let override_path = pane
+                .chat
+                .workspace_override
+                .clone()
+                .expect("worktree override");
             assert!(override_path.starts_with(data_dir.join("worktrees")));
             assert_eq!(s.agent_working_directory(pane), override_path);
             assert!(

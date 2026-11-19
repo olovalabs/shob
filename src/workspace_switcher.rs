@@ -24,9 +24,7 @@ fn filtered_branch_items(
     let mut items: Vec<BranchPickerItem> = snapshot
         .branches
         .iter()
-        .filter(|branch| {
-            needle.is_empty() || branch.name.to_lowercase().contains(&needle)
-        })
+        .filter(|branch| needle.is_empty() || branch.name.to_lowercase().contains(&needle))
         .cloned()
         .map(BranchPickerItem::Existing)
         .collect();
@@ -48,9 +46,8 @@ fn filtered_branch_items(
 impl AppState {
     pub(crate) fn close_workspace_popovers(&mut self, pane_id: usize, cx: &mut Context<Self>) {
         if let Some(pane) = self.pane_mut(pane_id) {
-            let changed = pane.workspace_menu_open
-                || pane.project_menu_open
-                || pane.branch_picker.is_some();
+            let changed =
+                pane.workspace_menu_open || pane.project_menu_open || pane.branch_picker.is_some();
             pane.workspace_menu_open = false;
             pane.project_menu_open = false;
             pane.branch_picker = None;
@@ -201,7 +198,9 @@ impl AppState {
             .map(|project| project.path.clone());
 
         let new_override = match (main_path, project_path) {
-            (Some(main), Some(proj)) if !git_workspace::paths_equal(&main, &proj) && main.is_dir() => {
+            (Some(main), Some(proj))
+                if !git_workspace::paths_equal(&main, &proj) && main.is_dir() =>
+            {
                 Some(main)
             }
             _ => None,
@@ -301,12 +300,7 @@ impl AppState {
         .detach();
     }
 
-    fn open_branch_picker(
-        &mut self,
-        pane_id: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn open_branch_picker(&mut self, pane_id: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(pane) = self.pane_ref(pane_id) else {
             return;
         };
@@ -318,7 +312,8 @@ impl AppState {
         let active_dir = self.agent_working_directory(pane);
         self.schedule_git_refresh(active_dir, cx);
 
-        let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Search or create branch..."));
+        let filter =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search or create branch..."));
         filter.update(cx, |state, cx| state.focus(window, cx));
         let subscription = cx.subscribe_in(
             &filter,
@@ -351,12 +346,7 @@ impl AppState {
         }
     }
 
-    fn close_branch_picker(
-        &mut self,
-        pane_id: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn close_branch_picker(&mut self, pane_id: usize, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(pane) = self.pane_mut(pane_id)
             && pane.branch_picker.take().is_some()
         {
@@ -369,7 +359,12 @@ impl AppState {
         }
     }
 
-    fn move_branch_picker_selection(&mut self, pane_id: usize, delta: isize, cx: &mut Context<Self>) {
+    fn move_branch_picker_selection(
+        &mut self,
+        pane_id: usize,
+        delta: isize,
+        cx: &mut Context<Self>,
+    ) {
         let Some(pane) = self.pane_ref(pane_id) else {
             return;
         };
@@ -527,10 +522,7 @@ impl AppState {
         } else {
             self.activate_project(project_idx, window, cx);
         }
-        if let Some(pane) = self
-            .focused_pane_id
-            .and_then(|id| self.pane_ref(id))
-        {
+        if let Some(pane) = self.focused_pane_id.and_then(|id| self.pane_ref(id)) {
             let dir = self.agent_working_directory(pane);
             self.schedule_git_refresh(dir, cx);
         }
@@ -559,10 +551,7 @@ impl AppState {
                 {
                     this.set_chat_mode(new_pane_id, true, window, cx);
                 }
-                if let Some(active_pane) = this
-                    .focused_pane_id
-                    .and_then(|id| this.pane_ref(id))
-                {
+                if let Some(active_pane) = this.focused_pane_id.and_then(|id| this.pane_ref(id)) {
                     let dir = this.agent_working_directory(active_pane);
                     this.schedule_git_refresh(dir, cx);
                 }
@@ -601,11 +590,7 @@ impl AppState {
                     || usage.cost.is_some_and(|cost| cost > 0.0)
             });
 
-        let mut right_group = div()
-            .flex()
-            .items_center()
-            .gap(px(6.0))
-            .flex_shrink_0();
+        let mut right_group = div().flex().items_center().gap(px(6.0)).flex_shrink_0();
 
         if show_usage {
             let detail = pane.chat.usage_detail.clone();
@@ -850,8 +835,7 @@ impl AppState {
                             .items_center()
                             .gap(px(8.0))
                             .when(can_mutate, |row| {
-                                row.cursor_pointer()
-                                    .hover(move |s| s.bg(hover_bg))
+                                row.cursor_pointer().hover(move |s| s.bg(hover_bg))
                             })
                             .when(!can_mutate, |row| row.opacity(0.5))
                             .child(
@@ -905,8 +889,7 @@ impl AppState {
                             .items_center()
                             .gap(px(8.0))
                             .when(can_new_worktree, |row| {
-                                row.cursor_pointer()
-                                    .hover(move |s| s.bg(hover_bg))
+                                row.cursor_pointer().hover(move |s| s.bg(hover_bg))
                             })
                             .when(!can_new_worktree, |row| row.opacity(0.5))
                             .child(
@@ -978,9 +961,8 @@ impl AppState {
                                                 .items_center()
                                                 .gap(px(8.0))
                                                 .when(can_mutate, |row| {
-                                                    row.cursor_pointer().hover(move |s| {
-                                                        s.bg(hover_bg)
-                                                    })
+                                                    row.cursor_pointer()
+                                                        .hover(move |s| s.bg(hover_bg))
                                                 })
                                                 .when(!can_mutate, |row| row.opacity(0.5))
                                                 .child(
@@ -1218,29 +1200,27 @@ impl AppState {
                                 this.close_branch_picker(pane_id, window, cx);
                             },
                         ))
-                        .on_key_down(cx.listener(
-                            move |this, event: &KeyDownEvent, window, cx| {
-                                match event.keystroke.key.as_str() {
-                                    "escape" => {
-                                        cx.stop_propagation();
-                                        this.close_branch_picker(pane_id, window, cx);
-                                    }
-                                    "up" => {
-                                        cx.stop_propagation();
-                                        this.move_branch_picker_selection(pane_id, -1, cx);
-                                    }
-                                    "down" => {
-                                        cx.stop_propagation();
-                                        this.move_branch_picker_selection(pane_id, 1, cx);
-                                    }
-                                    "enter" => {
-                                        cx.stop_propagation();
-                                        this.confirm_branch_picker_selection(pane_id, window, cx);
-                                    }
-                                    _ => {}
+                        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                            match event.keystroke.key.as_str() {
+                                "escape" => {
+                                    cx.stop_propagation();
+                                    this.close_branch_picker(pane_id, window, cx);
                                 }
-                            },
-                        ))
+                                "up" => {
+                                    cx.stop_propagation();
+                                    this.move_branch_picker_selection(pane_id, -1, cx);
+                                }
+                                "down" => {
+                                    cx.stop_propagation();
+                                    this.move_branch_picker_selection(pane_id, 1, cx);
+                                }
+                                "enter" => {
+                                    cx.stop_propagation();
+                                    this.confirm_branch_picker_selection(pane_id, window, cx);
+                                }
+                                _ => {}
+                            }
+                        }))
                         .child(
                             div()
                                 .id(("branch-search-box", pane_id))
@@ -1297,10 +1277,8 @@ impl AppState {
                                     let is_highlighted = idx == selected_idx;
                                     match item {
                                         BranchPickerItem::Existing(branch) => {
-                                            let has_other_worktree = branch
-                                                .worktree_path
-                                                .as_ref()
-                                                .is_some_and(|p| {
+                                            let has_other_worktree =
+                                                branch.worktree_path.as_ref().is_some_and(|p| {
                                                     !git_workspace::paths_equal(p, active_dir)
                                                 });
                                             let badge = if branch.is_current {
@@ -1327,9 +1305,7 @@ impl AppState {
                                                 .items_center()
                                                 .gap(px(6.0))
                                                 .cursor_pointer()
-                                                .when(is_highlighted, |row| {
-                                                    row.bg(hover_bg)
-                                                })
+                                                .when(is_highlighted, |row| row.bg(hover_bg))
                                                 .hover(move |s| s.bg(hover_bg))
                                                 .child(
                                                     svg()
@@ -1402,9 +1378,7 @@ impl AppState {
                                             .items_center()
                                             .gap(px(6.0))
                                             .cursor_pointer()
-                                            .when(is_highlighted, |row| {
-                                                row.bg(hover_bg)
-                                            })
+                                            .when(is_highlighted, |row| row.bg(hover_bg))
                                             .hover(move |s| s.bg(hover_bg))
                                             .child(
                                                 svg()
@@ -1594,7 +1568,8 @@ impl AppState {
                             .id(("project-switcher-list", pane_id))
                             .min_h_0()
                             .max_h(
-                                (window.viewport_size().height - px(96.0)).clamp(px(0.0), px(200.0)),
+                                (window.viewport_size().height - px(96.0))
+                                    .clamp(px(0.0), px(200.0)),
                             )
                             .overflow_y_scroll()
                             .flex()

@@ -160,7 +160,9 @@ fn run_git(dir: &Path, args: &[&str]) -> Result<String, String> {
         .output()
         .map_err(|err| format!("Failed to run git: {err}"))?;
     if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).trim_end().to_string())
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .trim_end()
+            .to_string())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -209,7 +211,12 @@ pub fn inspect(dir: &Path) -> GitWorkspaceSnapshot {
 
     let default_branch = run_git(
         &repo_root,
-        &["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+        &[
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ],
     )
     .ok()
     .and_then(|s| s.strip_prefix("origin/").map(ToString::to_string));
@@ -345,8 +352,7 @@ fn parse_branches(
                     .find(|wt| wt.branch.as_deref() == Some(name) && !wt.is_prunable)
                     .map(|wt| wt.path.clone())
             };
-            let is_current =
-                head_marker.trim() == "*" || current_branch == Some(name);
+            let is_current = head_marker.trim() == "*" || current_branch == Some(name);
             let is_default = default_branch == Some(name);
             raw_locals.push(BranchInfo {
                 name: name.to_string(),
@@ -361,11 +367,7 @@ fn parse_branches(
                 Some((remote, short)) => (Some(remote.to_string()), short),
                 None => (None, remote_full),
             };
-            raw_remotes.push((
-                remote_full.to_string(),
-                short_name.to_string(),
-                remote_name,
-            ));
+            raw_remotes.push((remote_full.to_string(), short_name.to_string(), remote_name));
         }
     }
 
@@ -408,9 +410,9 @@ pub fn sanitize_new_ref_name(raw: &str) -> String {
         || trimmed.contains("..")
         || trimmed.contains("@{")
         || trimmed.ends_with(".lock")
-        || trimmed.chars().any(|c| {
-            c.is_ascii_control() || matches!(c, '~' | '^' | ':' | '?' | '*' | '[' | '\\')
-        })
+        || trimmed
+            .chars()
+            .any(|c| c.is_ascii_control() || matches!(c, '~' | '^' | ':' | '?' | '*' | '[' | '\\'))
     {
         return String::new();
     }
@@ -442,7 +444,8 @@ fn next_worktree_hex() -> String {
         .unwrap_or_default()
         .as_nanos() as u64;
     let seq = WORKTREE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let mixed = nanos ^ ((std::process::id() as u64) << 16) ^ seq.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    let mixed =
+        nanos ^ ((std::process::id() as u64) << 16) ^ seq.wrapping_mul(0x9e37_79b9_7f4a_7c15);
     format!("{:08x}", (mixed & 0xffff_ffff) as u32)
 }
 
@@ -464,10 +467,7 @@ pub fn create_worktree(
         );
     }
 
-    let main_root = snapshot
-        .main_worktree_path
-        .as_deref()
-        .unwrap_or(repo_root);
+    let main_root = snapshot.main_worktree_path.as_deref().unwrap_or(repo_root);
     let repo_name = main_root
         .file_name()
         .map(|n| sanitize_dir_segment(&n.to_string_lossy()))
@@ -478,7 +478,11 @@ pub fn create_worktree(
         .map_err(|err| format!("Failed to prepare worktree directory: {err}"))?;
 
     // Avoid ref prefix conflicts if `refs/heads/shob` exists as a branch file.
-    let use_slash = run_git(repo_root, &["show-ref", "--verify", "--quiet", "refs/heads/shob"]).is_err();
+    let use_slash = run_git(
+        repo_root,
+        &["show-ref", "--verify", "--quiet", "refs/heads/shob"],
+    )
+    .is_err();
 
     let mut chosen_branch = String::new();
     let mut chosen_path = PathBuf::new();
@@ -556,9 +560,7 @@ pub fn checkout_branch(dir: &Path, branch: &str, is_remote: bool) -> Result<Stri
         return Err("Invalid branch name.".to_string());
     }
     let checked_out = if is_remote {
-        let local = branch
-            .split_once('/')
-            .map_or(branch, |(_, rest)| rest);
+        let local = branch.split_once('/').map_or(branch, |(_, rest)| rest);
         let local_ref = format!("refs/heads/{local}");
         if run_git(dir, &["show-ref", "--verify", "--quiet", &local_ref]).is_ok() {
             run_git(dir, &["checkout", local])?;
@@ -602,7 +604,12 @@ mod tests {
             .env("GIT_COMMITTER_EMAIL", "test@shob.local")
             .status()
             .expect("spawn git");
-        assert!(status.success(), "git {:?} failed in {}", args, dir.display());
+        assert!(
+            status.success(),
+            "git {:?} failed in {}",
+            args,
+            dir.display()
+        );
     }
 
     #[test]
@@ -633,7 +640,10 @@ detached
 
     #[test]
     fn sanitizes_new_branch_names() {
-        assert_eq!(sanitize_new_ref_name("  feat  my branch "), "feat-my-branch");
+        assert_eq!(
+            sanitize_new_ref_name("  feat  my branch "),
+            "feat-my-branch"
+        );
         assert_eq!(sanitize_new_ref_name("--flag"), "flag");
         assert_eq!(sanitize_new_ref_name("feat..bad"), "");
         assert_eq!(sanitize_new_ref_name("bad.lock"), "");
@@ -663,10 +673,7 @@ detached
         let wt = create_worktree(&repo, &wt_root, None).expect("create worktree");
         assert!(wt.path.is_dir());
         assert!(wt.branch.as_deref().is_some_and(|b| b.starts_with("shob/")));
-        assert_eq!(
-            detect_git_branch_uncached(&wt.path),
-            wt.branch
-        );
+        assert_eq!(detect_git_branch_uncached(&wt.path), wt.branch);
 
         let wt_snap = inspect(&wt.path);
         assert!(wt_snap.is_git_repo);
