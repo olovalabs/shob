@@ -1,13 +1,13 @@
 use anyhow::Result;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, App, AppContext, Bounds, ClipboardEntry, Context, CursorStyle, Div, Edges, Entity,
-    ExternalPaths, FollowMode, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent,
-    ListAlignment, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit,
-    ParentElement, Pixels, Point, Rems, Render, SharedString, StatefulInteractiveElement as _,
-    StyleRefinement, Styled, StyledImage as _, StyledText, Window, WindowControlArea,
-    WindowDecorations, WindowOptions, actions, canvas, deferred, div, img, list, px, relative,
-    rems, rgba, size, svg,
+    Animation, AnimationExt, AnyElement, App, AppContext, Bounds, ClipboardEntry, Context,
+    CursorStyle, Div, Edges, Entity, ExternalPaths, FollowMode, Hsla, InteractiveElement as _,
+    IntoElement, KeyDownEvent, ListAlignment, ListState, MouseButton, MouseDownEvent,
+    MouseMoveEvent, ObjectFit, ParentElement, Pixels, Point, Rems, Render, SharedString,
+    StatefulInteractiveElement as _, StyleRefinement, Styled, StyledImage as _, StyledText, Window,
+    WindowControlArea, WindowDecorations, WindowOptions, actions, canvas, deferred, div, img, list,
+    px, relative, rems, rgba, size, svg,
 };
 #[cfg(target_os = "linux")]
 use gpui_component::TitleBar;
@@ -20758,7 +20758,15 @@ impl AppState {
         let indicator = match session.status {
             SessionStatus::Working => div()
                 .size(px(16.0))
-                .child(sidebar_loader(0.0, tokens.sidebar_muted))
+                .with_animation(
+                    ("session-spinner", session.id),
+                    Animation::new(std::time::Duration::from_millis(650))
+                        .repeat_synced()
+                        .with_max_fps(12.0),
+                    move |element, phase| {
+                        element.child(sidebar_loader(phase, tokens.sidebar_muted))
+                    },
+                )
                 .into_any_element(),
             SessionStatus::Done => div()
                 .id(("session-status-ack", session.id))
