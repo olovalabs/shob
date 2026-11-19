@@ -15,6 +15,7 @@ gpui_platform = { package = "gpui-fast-platform", version = "=0.1.16", features 
 gpui-component = { version = "0.5.1", features = ["tree-sitter-languages"] }
 gpui-kit = { version = "=0.10.0", features = ["gpui-fast"] }
 terminal = { path = "terminal" }
+agent-cli = { package = "cli", path = "agent/crates/cli", features = ["shob"] }
 embedded = { path = "agent/crates/embedded" }
 rust-embed = "8.12.0"
 serde = { version = "1", features = ["derive"] }
@@ -38,6 +39,10 @@ unicode-width = "0.2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
 gpui-updater-core = { version = "=0.4.4", features = ["delta"] }
 tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_Console", "Win32_System_Threading"] }
 
 [dev-dependencies]
 tree-sitter = "0.25"

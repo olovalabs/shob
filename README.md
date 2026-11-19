@@ -95,9 +95,11 @@ Customize Shob to match your workflow.
 
 Download Shob from [GitHub Releases](https://github.com/olovalabs/shob/releases) or build it from source.
 
-Official builds check for stable updates at launch. Open **Settings → Updates** to check manually, download an available update, and restart when you can close your running terminals. Linux x86-64 portable installs and AppImages, macOS Apple Silicon portable installs, and Windows x86-64 portable installs use a verified binary delta from the previous release when available. Shob downloads the full package when it cannot use a delta. Windows MSI installs upgrade through Windows Installer. Update Linux DEB, RPM, and Arch installs through their package manager.
+Official builds check for stable Shob updates at launch. From your shell, run `shob update --check` to check without installing, or exit the TUI and run `shob update` to install. In the desktop app, use **Settings → Updates**. Linux x86-64 portable installs and AppImages, macOS Apple Silicon portable installs, and Windows x86-64 portable installs use verified binary deltas when available and fall back to the full package. Windows MSI installs upgrade through Windows Installer. Update Linux DEB, RPM, and Arch installs through their package manager.
 
 If your current release predates the updater, install the first release that includes it using your usual installation method.
+
+With `shob` on your `PATH`, run `shob` from any project folder to start the coding-agent TUI in your current terminal. If you haven't configured credentials, run `shob auth login --provider <id>` first. Run `shob gui` to open the desktop workspace, or `shob --help` for CLI options. Both modes ship in the same executable; no separate agent CLI is needed.
 
 ### Prerequisites
 
@@ -119,11 +121,15 @@ cd shob
 cargo run
 ```
 
+`cargo run` opens the desktop app. To try the agent TUI from source, run `cargo run -- tui`.
+
 For an optimized release build:
 
 ```bash
 cargo build --release
 ```
+
+To install the command from source, run `cargo install --path . --locked` and make sure Cargo’s `bin` directory is on your `PATH`. For a portable download, put the `shob` executable or AppImage (named `shob`) in a directory on your `PATH`.
 
 ## Connect Your Agents
 

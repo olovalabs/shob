@@ -77,7 +77,7 @@ The most common defect in this repo is a change that works on the path you teste
 
 ## Running Shob during development
 
-- `cargo run` starts a dev build. The dev profile is tuned so dependencies optimize while the app builds fast; do not "simplify" the profile sections in `Cargo.toml`.
+- `cargo run` opens the desktop app; `cargo run -- tui` starts the agent TUI in the current terminal. The dev profile is tuned so dependencies optimize while the app builds fast; do not "simplify" the profile sections in `Cargo.toml`.
 - For UI work, launch against scratch state:
   ```bash
   SHOB_DATA_DIR=/tmp/shob-dev SHOB_DISABLE_RESTORE=1 cargo run

@@ -66,6 +66,31 @@ impl UpdateReport {
     }
 }
 
+type AppUpdateCheck = fn() -> futures::future::BoxFuture<'static, Option<UpdateNotice>>;
+static APP_UPDATE_CHECK: std::sync::OnceLock<AppUpdateCheck> = std::sync::OnceLock::new();
+
+/// Register the host's release check for the terminal UI.
+pub fn set_app_update_check(check: AppUpdateCheck) {
+    let _ = APP_UPDATE_CHECK.set(check);
+}
+
+pub(crate) async fn check_app_update() -> Option<UpdateNotice> {
+    if update_checks_disabled() {
+        return None;
+    }
+    APP_UPDATE_CHECK.get()?().await
+}
+
+pub(crate) async fn check_tui_updates() -> UpdateReport {
+    if !cfg!(feature = "shob") {
+        return check_rpi_startup().await;
+    }
+    if update_checks_disabled() {
+        return UpdateReport::default();
+    }
+    check_startup_with_client(startup_http_client(), false).await
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct UpdateCache {
@@ -149,7 +174,7 @@ pub async fn check_rpi_startup() -> UpdateReport {
     if update_checks_disabled() {
         return report_without_remote_checks();
     }
-    check_startup_with_client(startup_http_client()).await
+    check_startup_with_client(startup_http_client(), true).await
 }
 
 fn update_checks_disabled() -> bool {
@@ -171,17 +196,24 @@ fn report_without_remote_checks() -> UpdateReport {
 fn startup_http_client() -> Option<reqwest::Client> {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_millis(REQUEST_TIMEOUT_MS))
-        .user_agent(format!("rpi/{}", crate::VERSION))
+        .user_agent(format!("{}/{}", crate::COMMAND, crate::VERSION))
         .build()
         .ok()
 }
 
-async fn check_startup_with_client(client: Option<reqwest::Client>) -> UpdateReport {
+async fn check_startup_with_client(
+    client: Option<reqwest::Client>,
+    include_rpi: bool,
+) -> UpdateReport {
     let agent_dir = match crate::config::agent_dir() {
         Ok(dir) => dir,
         Err(_) => return UpdateReport::default(),
     };
-    let warnings = consume_self_update_statuses(&agent_dir);
+    let warnings = if include_rpi {
+        consume_self_update_statuses(&agent_dir)
+    } else {
+        Vec::new()
+    };
     let cache_path = agent_dir.join(CACHE_FILE);
     let previous_cache = read_cache(&cache_path);
 
@@ -212,6 +244,9 @@ async fn check_startup_with_client(client: Option<reqwest::Client>) -> UpdateRep
             }
         });
     let rpi_check = async {
+        if !include_rpi {
+            return None;
+        }
         Some(match client.as_ref() {
             Some(client) => fetch_rpi_latest(client).await,
             None => RegistryLookup::TransientFailure,
@@ -254,7 +289,7 @@ async fn check_startup_with_client(client: Option<reqwest::Client>) -> UpdateRep
     );
 
     let cache = merge_and_write_cache(&cache_path, checked_at, rpi_update, native_packages);
-    let mut report = report_from_cache(&cache);
+    let mut report = report_from_cache(&cache, include_rpi);
     report.warnings = warnings;
     report
 }
@@ -391,9 +426,9 @@ fn native_cache_key(package: &crate::install::InstalledNativePackage) -> String 
     }
 }
 
-fn report_from_cache(cache: &UpdateCache) -> UpdateReport {
+fn report_from_cache(cache: &UpdateCache, include_rpi: bool) -> UpdateReport {
     let mut notices = Vec::new();
-    if let Some(latest) = cache.rpi_latest.as_deref() {
+    if let Some(latest) = cache.rpi_latest.as_deref().filter(|_| include_rpi) {
         if is_newer(crate::VERSION, latest) {
             notices.push(UpdateNotice {
                 name: "rpi".into(),
@@ -415,7 +450,7 @@ fn report_from_cache(cache: &UpdateCache) -> UpdateReport {
                 name: package.name.clone(),
                 current: package.version,
                 latest: latest.clone(),
-                command: format!("rpi extension update {}", package.name),
+                command: format!("{} extension update {}", crate::COMMAND, package.name),
             });
         }
     }
@@ -2651,14 +2686,17 @@ mod tests {
         .unwrap();
         let mut cache = super::UpdateCache::default();
         cache.native_packages.insert("demo".into(), "99.0.0".into()); // old Cargo source cannot supply a prebuilt update
-        assert!(super::report_from_cache(&cache).notices.is_empty());
+        assert!(super::report_from_cache(&cache, false).notices.is_empty());
         cache
             .native_packages
             .insert(super::native_cache_key(&record), "2.0.0".into());
-        let report = super::report_from_cache(&cache);
+        cache.rpi_latest = Some("99.0.0".into());
+        assert_eq!(super::report_from_cache(&cache, true).notices.len(), 2);
+        let report = super::report_from_cache(&cache, false);
         assert_eq!(report.notices.len(), 1);
         assert_eq!(report.notices[0].latest, "2.0.0");
-        assert_eq!(report.notices[0].command, "rpi extension update demo");
+        let command = format!("{} extension update demo", crate::COMMAND);
+        assert_eq!(report.notices[0].command, command);
         let mut other = record.clone();
         other.prebuilt.as_mut().unwrap().repository = "https://github.com/another/repo".into();
         assert_ne!(
@@ -2675,7 +2713,7 @@ mod tests {
             serde_json::to_vec(&[updated]).unwrap(),
         )
         .unwrap();
-        assert!(super::report_from_cache(&cache).notices.is_empty());
+        assert!(super::report_from_cache(&cache, false).notices.is_empty());
         other = record.clone();
         other.prebuilt.as_mut().unwrap().custom_repository = false;
         assert_ne!(
@@ -2685,10 +2723,7 @@ mod tests {
         let mut cargo = record.clone();
         cargo.source = None;
         cargo.prebuilt = None;
-        for (package, command) in [
-            (other, "rpi extension update demo"),
-            (cargo, "rpi extension update demo"),
-        ] {
+        for package in [other, cargo] {
             cache
                 .native_packages
                 .insert(super::native_cache_key(&package), "2.0.0".into());
@@ -2697,7 +2732,7 @@ mod tests {
                 serde_json::to_vec(&[package]).unwrap(),
             )
             .unwrap();
-            let report = super::report_from_cache(&cache);
+            let report = super::report_from_cache(&cache, false);
             assert_eq!(report.notices.len(), 1);
             assert_eq!(report.notices[0].command, command);
         }

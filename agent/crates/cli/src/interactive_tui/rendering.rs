@@ -162,7 +162,12 @@ pub(super) fn add_update_notices(
         add_update_panel(&group, "Update Failed", &body, colors.error);
     }
 
-    if let Some(notice) = report.notices.iter().find(|notice| notice.name == "rpi") {
+    let app_command = format!("{} update", crate::COMMAND);
+    if let Some(notice) = report
+        .notices
+        .iter()
+        .find(|notice| notice.command == app_command)
+    {
         let body = format!(
             "{} {}{}",
             colors
@@ -174,7 +179,11 @@ pub(super) fn add_update_notices(
         add_update_panel(&group, "Update Available", &body, colors.warning);
     }
 
-    for notice in report.notices.iter().filter(|notice| notice.name != "rpi") {
+    for notice in report
+        .notices
+        .iter()
+        .filter(|notice| notice.command != app_command)
+    {
         let body = format!(
             "{}\n{} {}",
             colors.muted.fg(&format!(
@@ -449,7 +458,7 @@ pub(super) fn format_resume_command(
     if session_id.is_empty() {
         return None;
     }
-    let mut args = vec![crate::APP_NAME.to_string()];
+    let mut args = vec![crate::COMMAND.to_string()];
     if let Some(dir) = session_dir {
         let default = crate::session::default_session_dir(cwd);
         if dir != default.as_path() {

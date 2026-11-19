@@ -110,6 +110,90 @@ pub fn enabled() -> bool {
         && std::env::var_os("SHOB_DISABLE_RESTORE").is_none()
 }
 
+pub(crate) fn tui_notice() -> Option<agent_cli::updates::UpdateNotice> {
+    let State::Available(update) = check().ok()? else {
+        return None;
+    };
+    Some(agent_cli::updates::UpdateNotice {
+        name: "shob".into(),
+        current: env!("CARGO_PKG_VERSION").into(),
+        latest: update.version().to_string(),
+        command: "shob update".into(),
+    })
+}
+
+pub(crate) fn run_cli(mut args: impl Iterator<Item = String>) -> Result<()> {
+    let option = args.next();
+    anyhow::ensure!(args.next().is_none(), "usage: shob update [--check]");
+    let check_only = match option.as_deref() {
+        Some("-h" | "--help") => {
+            println!(
+                "Usage: shob update [--check]\nInstall the latest stable Shob release, or check without installing."
+            );
+            return Ok(());
+        }
+        Some("--check") => true,
+        None => false,
+        _ => anyhow::bail!("usage: shob update [--check]"),
+    };
+    anyhow::ensure!(
+        enabled(),
+        "Self-updates require an official Shob build with updates enabled. Source installs can be rebuilt with `cargo install --path . --locked`."
+    );
+
+    match check()? {
+        State::Current => println!("Shob {} is up to date.", env!("CARGO_PKG_VERSION")),
+        State::External(message) => println!("{message}"),
+        State::Available(update) if check_only => {
+            println!("Shob {} is available. Run `shob update`.", update.version());
+        }
+        State::Available(update) => {
+            println!("Installing Shob {}…", update.version());
+            let ready = apply(*update)?;
+            #[cfg(windows)]
+            if let Some(files) = ready.installer_files {
+                schedule_msi_install(&ready.path)?;
+                let _ = files.keep();
+                println!(
+                    "Windows Installer will apply Shob {} after this command exits.",
+                    ready.version
+                );
+                return Ok(());
+            }
+            println!(
+                "Installed Shob {}. Restart any running Shob sessions to use it.",
+                ready.version
+            );
+        }
+        _ => unreachable!("release check returned a UI lifecycle state"),
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn schedule_msi_install(script: &Path) -> Result<()> {
+    use std::os::windows::process::CommandExt as _;
+    use std::process::Command;
+    use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+
+    let system_root = std::env::var_os("SystemRoot").context("missing Windows SystemRoot")?;
+    let powershell =
+        PathBuf::from(system_root).join("System32/WindowsPowerShell/v1.0/powershell.exe");
+    Command::new(powershell)
+        .creation_flags(CREATE_NO_WINDOW)
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Wait-Process -Id $env:SHOB_UPDATE_PID -ErrorAction SilentlyContinue; & $env:SHOB_UPDATE_SCRIPT",
+        ])
+        .env("SHOB_UPDATE_PID", std::process::id().to_string())
+        .env("SHOB_UPDATE_SCRIPT", script)
+        .spawn()
+        .context("could not schedule Windows Installer")?;
+    Ok(())
+}
+
 pub fn check() -> Result<State> {
     #[cfg(target_os = "windows")]
     remove_leftovers();
@@ -328,7 +412,7 @@ pub fn schedule_restart(path: &Path, app_image: bool) -> Result<()> {
     command
         .args([
             "-c",
-            r#"while kill -0 "$1" 2>/dev/null; do sleep 0.1; done; exec "$2""#,
+            r#"while kill -0 "$1" 2>/dev/null; do sleep 0.1; done; exec "$2" gui"#,
             "shob-restart",
             &std::process::id().to_string(),
         ])

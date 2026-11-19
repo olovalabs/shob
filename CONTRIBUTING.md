@@ -61,10 +61,12 @@ Ensure your machine has the required toolchains and dependencies installed:
    cargo build
    ```
 
-4. **Run the Application**:
+4. **Run the Desktop App**:
    ```bash
    cargo run
    ```
+
+   To try the agent TUI, run `cargo run -- tui`.
 
 ---
 

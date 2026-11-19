@@ -410,7 +410,7 @@ impl Provider for ConfiguredProvider {
         if let Err(error) = self.binding.renew_oauth(options).await {
             let id = &self.id;
             let message = format!(
-                "The stored OAuth login for \"{id}\" has expired and could not be refreshed: {error}. Run `rpi auth login --provider {id}`."
+                "The stored OAuth login for \"{id}\" has expired and could not be refreshed: {error}. Sign in again for this provider."
             );
             return error_stream(model, id, message).await;
         }

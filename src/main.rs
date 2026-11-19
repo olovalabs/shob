@@ -26,7 +26,9 @@ use gpui_kit::component::TitleBar;
 use parking_lot::Mutex;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use std::collections::{HashMap, HashSet};
+use std::io::IsTerminal as _;
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -5510,6 +5512,9 @@ impl AppState {
                 })
                 .map_err(|e| anyhow::anyhow!("PTY open error: {e}"))?;
             let mut cmd = CommandBuilder::new(&shell_cmd);
+            if launched_by_cargo() {
+                cmd.env_remove("CARGO_MANIFEST_DIR");
+            }
             if let Some(d) = &dir {
                 cmd.cwd(d);
             }
@@ -22202,7 +22207,7 @@ fn ensure_linux_desktop_entry() {
         Type=Application\n\
         Name=Shob\n\
         Comment=GPU-accelerated terminal\n\
-        Exec={exe_str}\n\
+        Exec={exe_str} gui\n\
         Icon=shob-brand-v3\n\
         Terminal=false\n\
         Categories=System;TerminalEmulator;\n\
@@ -22229,35 +22234,86 @@ fn startup_mark(label: &str) {
     }
 }
 
-fn main() -> Result<()> {
+fn main() -> Result<ExitCode> {
     startup_mark("process entry");
-    let mut args = std::env::args().skip(1);
-    match args.next().as_deref() {
-        Some("report") => return cli::run_report(&args.collect::<Vec<_>>()),
-        Some("skill") => return cli::run_skill(&args.collect::<Vec<_>>()),
-        Some("integration") => return integrations::run(&args.collect::<Vec<_>>()),
-        Some("status-hook") => return integrations::run_hook(&args.collect::<Vec<_>>()),
-        Some("status-event") => return cli::run_status_event(),
-        Some("status") => return cli::run_status(&args.collect::<Vec<_>>()),
+    let mut args = std::env::args().skip(1).peekable();
+    match args.peek().map(String::as_str) {
+        Some("report") => cli::run_report(&args.skip(1).collect::<Vec<_>>()),
+        Some("skill") => cli::run_skill(&args.skip(1).collect::<Vec<_>>()),
+        Some("integration") => integrations::run(&args.skip(1).collect::<Vec<_>>()),
+        Some("status-hook") => integrations::run_hook(&args.skip(1).collect::<Vec<_>>()),
+        Some("status-event") => cli::run_status_event(),
+        Some("status") => cli::run_status(&args.skip(1).collect::<Vec<_>>()),
+        Some("update") => updater::run_cli(args.skip(1)),
         Some("pane") => {
             #[cfg(unix)]
-            return shob_compat::run_cli(&args.collect::<Vec<_>>());
+            {
+                shob_compat::run_cli(&args.skip(1).collect::<Vec<_>>())
+            }
             #[cfg(not(unix))]
             anyhow::bail!("native reporting compatibility requires a Unix socket");
         }
         Some("--help" | "-h") => {
+            agent_cli::args::print_help();
             println!(
-                "Usage: shob [report|skill|integration|status|status-event|status-hook]\nNative compatibility: shob pane <report-agent|report-agent-session|release-agent> ..."
+                "\nShob commands:\n  gui                         Open the desktop workspace\n  tui [options]               Run the agent CLI explicitly\n  update [--check]            Check for or install a Shob update\n  report|skill|integration|status|status-event|status-hook\n  pane <report-agent|report-agent-session|release-agent> ..."
             );
-            return Ok(());
+            Ok(())
         }
-        Some("--version" | "-V") => {
+        Some("--version" | "-V" | "-v") => {
             println!("shob {}", env!("CARGO_PKG_VERSION"));
-            return Ok(());
+            Ok(())
         }
-        Some(command) => anyhow::bail!("unsupported Shob command: {command}"),
-        None => {}
+        Some("gui") => {
+            anyhow::ensure!(args.nth(1).is_none(), "usage: shob gui");
+            run_gui()
+        }
+        None if launched_by_cargo() || launched_without_terminal() => run_gui(),
+        _ => {
+            if args.peek().is_some_and(|arg| arg == "tui") {
+                args.next();
+            }
+            if args.peek().is_some_and(|arg| arg == "update") {
+                updater::run_cli(args.skip(1))?;
+                return Ok(ExitCode::SUCCESS);
+            }
+            if updater::enabled() {
+                agent_cli::updates::set_app_update_check(|| {
+                    Box::pin(smol::unblock(updater::tui_notice))
+                });
+            }
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            let code = runtime.block_on(agent_cli::app::run_with_args(args.collect()));
+            return Ok(ExitCode::from(code as u8));
+        }
     }
+    .map(|()| ExitCode::SUCCESS)
+}
+
+fn launched_by_cargo() -> bool {
+    std::env::var_os("CARGO_MANIFEST_DIR").is_some_and(|dir| dir == env!("CARGO_MANIFEST_DIR"))
+}
+
+fn launched_without_terminal() -> bool {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Console::GetConsoleProcessList;
+
+        // Explorer starts console binaries in a new console of their own.
+        let mut processes = [0; 1];
+        let count = unsafe { GetConsoleProcessList(processes.as_mut_ptr(), 1) };
+        if count != 0 {
+            return count == 1;
+        }
+    }
+    !std::io::stdin().is_terminal()
+        && !std::io::stdout().is_terminal()
+        && !std::io::stderr().is_terminal()
+}
+
+fn run_gui() -> Result<()> {
     embedded::set_tool_arrival_hook(crate::stream_timing::tool_arrived);
     embedded::set_tool_end_hook(crate::stream_timing::tool_finished);
     embedded::set_tool_output_hook(crate::stream_timing::tool_output_arrived);

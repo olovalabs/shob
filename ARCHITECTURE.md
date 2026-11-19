@@ -163,10 +163,10 @@ from the upstream library crates.
 - **Discovery and login.** Model catalogs and provider readiness are read
   in-process through `embedded::catalog`/`providers`. rpi-only API-key and
   OAuth logins are driven in-process through the embedded provider configuration.
-- **Baseline.** The old subprocess bridge is retained behind
-  `SHOB_RPI_BACKEND=rpc` for before/after measurements. The default is the
-  embedded backend. `SHOB_STREAM_TIMINGS=1` reports startup, UI drain/apply,
-  render, markdown parse and tool arrival→card/output percentiles for both.
+- **Baseline.** `SHOB_RPI_BACKEND=rpc` runs `shob --mode rpc` as a child process
+  for before/after measurements; no separate agent executable is needed.
+  `SHOB_STREAM_TIMINGS=1` reports startup, UI drain/apply, render, markdown parse
+  and tool arrival→card/output percentiles for both backends.
 - **Isolation.** Embedded sessions build with `no_extensions` because upstream
   extension identity is process-global. Built-in tools/providers, `models.json`,
   `auth.json`, environment credentials and session storage are reused.

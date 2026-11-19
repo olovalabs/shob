@@ -174,9 +174,10 @@ pub(super) async fn switch_to_session(
                     &state.notice_container(),
                     &format!(
                         "This session was created in {}. Tools still run in {}; \
-                         restart rpi in that directory to work there.",
+                         restart {} in that directory to work there.",
                         dir.display(),
-                        cwd.display()
+                        cwd.display(),
+                        crate::COMMAND
                     ),
                 ),
                 None => add_note_message(

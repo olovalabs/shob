@@ -1766,16 +1766,21 @@ fn valid_package_name(name: &str) -> bool {
 }
 
 fn help_requested() -> &'static str {
-    "use `rpi install --help` for usage"
+    if cfg!(feature = "shob") {
+        "use `shob install --help` for usage"
+    } else {
+        "use `rpi install --help` for usage"
+    }
 }
 
 pub fn print_help() {
-    println!("Usage: rpi install [<crate>] [options]\n\nInstall or upgrade a prebuilt Rust extension using the versioned rpi-extension.json protocol.\nRepository and latest stable version are resolved from crates.io metadata.\nNewer versions upgrade automatically; an already installed version is skipped.\n\nOptions:\n  --version <version>  Install an exact package version\n  --github <owner/repo> Use this GitHub repository; default version comes from package-specific tags\n  --cdn <URL>           Download release archives from this HTTPS CDN; manifests remain on GitHub\n  --build              Explicitly compile the extension with Cargo\n  --path <directory>   Build a local extension crate; crate name may be omitted\n  --locked             Require Cargo.lock to remain unchanged (with --build/--path)\n  --force, -f          Reinstall the same version or allow a downgrade/replacement\n  --help, -h           Show this help\n\nExamples:\n  rpi install rpi-todo\n  rpi install rpi-todo --version 0.2.0\n  rpi install my-extension --github owner/repo --version 1.2.3\n  rpi install rpi-todo --build\n  rpi install --path . --force\n\nA missing or incompatible prebuilt release is an error; Cargo compilation requires --build.");
+    println!("Usage: {command} install [<crate>] [options]\n\nInstall or upgrade a prebuilt Rust extension using the versioned rpi-extension.json protocol.\nRepository and latest stable version are resolved from crates.io metadata.\nNewer versions upgrade automatically; an already installed version is skipped.\n\nOptions:\n  --version <version>  Install an exact package version\n  --github <owner/repo> Use this GitHub repository; default version comes from package-specific tags\n  --cdn <URL>           Download release archives from this HTTPS CDN; manifests remain on GitHub\n  --build              Explicitly compile the extension with Cargo\n  --path <directory>   Build a local extension crate; crate name may be omitted\n  --locked             Require Cargo.lock to remain unchanged (with --build/--path)\n  --force, -f          Reinstall the same version or allow a downgrade/replacement\n  --help, -h           Show this help\n\nExamples:\n  {command} install rpi-todo\n  {command} install rpi-todo --version 0.2.0\n  {command} install my-extension --github owner/repo --version 1.2.3\n  {command} install rpi-todo --build\n  {command} install --path . --force\n\nA missing or incompatible prebuilt release is an error; Cargo compilation requires --build.", command = crate::COMMAND);
 }
 
 fn print_uninstall_help() {
     println!(
-        "Usage: rpi uninstall <crate>\n\nRemove a Rust cdylib extension installed by `rpi install`.\n\nOptions:\n  --help, -h           Show this help\n\nExample:\n  rpi uninstall rpi-extension-example"
+        "Usage: {command} uninstall <crate>\n\nRemove a Rust cdylib extension installed by `{command} install`.\n\nOptions:\n  --help, -h           Show this help\n\nExample:\n  {command} uninstall rpi-extension-example",
+        command = crate::COMMAND
     );
 }
 

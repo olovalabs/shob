@@ -43,10 +43,8 @@ pub fn maybe_first_time_setup(chat: &Arc<Container>) -> bool {
     let border = DynamicBorder::with_color(accent);
     let mut lines: Vec<String> = Vec::new();
     lines.extend(border.render(80));
-    lines.push(format!(
-        " {} Welcome to rpi!",
-        accent.fg(&bold("Welcome to rpi!"))
-    ));
+    let welcome = format!("Welcome to {}!", crate::COMMAND);
+    lines.push(format!(" {}", accent.fg(&bold(&welcome))));
     lines.push(format!(
         " {} Pick a theme with /theme (dark/light/monochrome).",
         muted.fg("Pick a theme with /theme (dark/light/monochrome).")

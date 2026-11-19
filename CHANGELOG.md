@@ -9,7 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `shob` opens the coding-agent TUI from the current terminal; `shob gui` opens the desktop workspace. Both ship in one executable, including the optional RPC backend. From source, `cargo run` opens the desktop and `cargo run -- tui` opens the TUI.
+
 ### Fixed
+- The terminal UI checks Shob releases and points to `shob update`, not the upstream engine's updater.
 - **New chat** and the active project’s **+** button focus the current empty chat instead of creating a duplicate session.
 - Show the workspace, branch, and project controls under the focused Agent composer only on the welcome screen.
 - Keep “Open project folder…” inside the project picker, below the scrollable project list.
@@ -37,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zed-style per-platform app data directories (`src/paths.rs`): workspace, scrollback, agent conversations and backups under the OS data dir; user settings under the OS config dir. Missing folders are created on launch.
 - Full session restoration: projects, sidebar tabs, nested split layouts, focused pane, per-pane working directories, tab titles/logos, input drafts, command history, sidebar width and window geometry are saved and restored after a restart.
 - Terminal scrollback is snapshotted per pane and seeded above the fresh shell prompt on restore.
-- Append-only agent conversation history in `conversations/<pane-uid>/*.jsonl`; restored transcripts match the previous UI, and rpi conversations resume via `rpi --session <id>` on the next prompt (OMP restores the transcript only).
+- Append-only agent conversation history in `conversations/<pane-uid>/*.jsonl`; restored transcripts match the previous UI, and native sessions resume on the next prompt (OMP restores the transcript only).
 - **Settings → Data & Sessions** section: shows the data folder, opens it in the file manager, toggles session/scrollback/agent-history restore, and clears saved sessions.
 - Synchronous save on window close and app quit, plus a 30-second autosave for crash recovery.
 - One-time migration from the legacy `workspace.json` (including the old Markup location) with a timestamped backup in `<data>/backups/`.

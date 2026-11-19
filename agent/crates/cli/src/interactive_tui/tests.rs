@@ -1013,22 +1013,24 @@ fn verbose_overrides_quiet_startup_listing() {
 fn resume_command_omits_the_default_session_dir() {
     let _env = crate::config::test_support::SessionDirEnv::new(None);
     let cwd = std::path::Path::new("/proj/demo");
+    let command = crate::COMMAND;
+    let default_resume = format!("{command} --session abc-123");
     assert_eq!(format_resume_command("", cwd, None), None);
     assert_eq!(
         format_resume_command("abc-123", cwd, None).as_deref(),
-        Some("rpi --session abc-123")
+        Some(default_resume.as_str())
     );
     // The default dir carries no flag (mirrors upstream).
     let default = crate::session::default_session_dir(cwd);
     assert_eq!(
         format_resume_command("abc-123", cwd, Some(default.as_path())).as_deref(),
-        Some("rpi --session abc-123")
+        Some(default_resume.as_str())
     );
     // A custom dir is echoed, quoting when needed.
     let custom = std::path::Path::new("/tmp/my sessions");
     assert_eq!(
         format_resume_command("abc-123", cwd, Some(custom)).as_deref(),
-        Some("rpi --session-dir \"/tmp/my sessions\" --session abc-123")
+        Some(format!("{command} --session-dir \"/tmp/my sessions\" --session abc-123").as_str())
     );
 }
 
@@ -1447,16 +1449,18 @@ fn welcome_header_renders_the_brand_mark() {
 #[test]
 fn update_notices_render_inside_the_transcript() {
     let chat = Arc::new(Container::new());
+    let app = crate::COMMAND;
+    let command = format!("{app} update");
     let report = crate::updates::UpdateReport {
         notices: vec![crate::updates::UpdateNotice {
-            name: "rpi".into(),
+            name: app.into(),
             current: "0.1.10".into(),
             latest: "0.1.11".into(),
-            command: "rpi update".into(),
+            command: command.clone(),
         }],
         warnings: vec![crate::updates::UpdateWarning {
-            message: "The previously scheduled rpi update failed: access denied".into(),
-            command: "rpi update".into(),
+            message: format!("The previously scheduled {app} update failed: access denied"),
+            command: command.clone(),
         }],
     };
 
@@ -1466,12 +1470,14 @@ fn update_notices_render_inside_the_transcript() {
     let plain = strip_ansi(&chat.render(80).join("\n"));
     assert!(plain.contains("Update Failed"), "{plain}");
     assert!(
-        plain.contains("rpi update failed: access denied"),
+        plain.contains(&format!("{app} update failed: access denied")),
         "{plain}"
     );
     assert!(plain.contains("Update Available"), "{plain}");
-    assert!(plain.contains("New version 0.1.11 is available"), "{plain}");
-    assert!(plain.contains("rpi update"), "{plain}");
+    assert!(
+        plain.contains(&format!("New version 0.1.11 is available. Run {command}.")),
+        "{plain}"
+    );
 }
 
 #[test]
@@ -1486,6 +1492,8 @@ fn empty_update_report_does_not_add_transcript_content() {
 #[test]
 fn package_updates_render_without_an_rpi_update() {
     let chat = Arc::new(Container::new());
+    let app = crate::COMMAND;
+    let command = format!("{app} update");
     let package_notice = crate::updates::UpdateNotice {
         name: "rpi-im-message".into(),
         current: "0.1.9".into(),
@@ -1501,10 +1509,10 @@ fn package_updates_render_without_an_rpi_update() {
         };
         if include_rpi {
             report.notices.push(crate::updates::UpdateNotice {
-                name: "rpi".into(),
+                name: app.into(),
                 current: "0.3.20".into(),
                 latest: "0.3.21".into(),
-                command: "rpi update".into(),
+                command: command.clone(),
             });
         }
 
@@ -1519,7 +1527,7 @@ fn package_updates_render_without_an_rpi_update() {
             !plain.contains(&format!("{}.", package_notice.command)),
             "{plain}"
         );
-        assert_eq!(plain.contains("rpi update"), include_rpi, "{plain}");
+        assert_eq!(plain.contains(&command), include_rpi, "{plain}");
     }
 }
 

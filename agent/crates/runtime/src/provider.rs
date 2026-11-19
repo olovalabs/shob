@@ -106,10 +106,9 @@ pub const ANTHROPIC_BASE_URL_ENV: &str = "ANTHROPIC_BASE_URL";
 /// `openai-completions` provider.
 pub const OPENAI_API_KEY_ENV: &str = "OPENAI_API_KEY";
 
-/// Hint text surfaced when no credential source is available. Lists every
-/// accepted source so the user can pick the one that fits their setup.
+/// Credential sources accepted directly by the model resolver.
 pub const NO_API_KEY_HINT: &str =
-    "models.json apiKey, OPENAI_API_KEY / ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN env, --api-key, or `rpi auth login`";
+    "models.json apiKey, OPENAI_API_KEY / ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN env, or --api-key";
 
 /// A resolution error. The TS resolver returns `{ error, warning }`; v1 folds
 /// both into a single enum since the CLI treats them the same (print + non-zero

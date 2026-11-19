@@ -549,7 +549,7 @@ fn no_api_key_errors_with_hint() {
     match err {
         ResolveError::NoApiKey { hint } => {
             assert!(hint.contains("ANTHROPIC_API_KEY"));
-            assert!(hint.contains("auth login"));
+            assert!(hint.contains("--api-key"));
         }
         other => panic!("expected NoApiKey, got {other:?}"),
     }

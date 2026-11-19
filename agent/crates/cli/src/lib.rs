@@ -98,3 +98,10 @@ pub const VERSION: &str = plugin_sdk::HOST_VERSION;
 /// identity, so an extension can label its output (a trace name, a tag) without
 /// hardcoding a brand that a rename would silently invalidate.
 pub const APP_NAME: &str = plugin_sdk::HOST_NAME;
+
+// Keep the plugin/protocol identity independent of the installed command.
+pub(crate) const COMMAND: &str = if cfg!(feature = "shob") {
+    "shob"
+} else {
+    APP_NAME
+};

@@ -66,7 +66,7 @@ pub(crate) struct RpcAgentBridge {
     next_id: u64,
     trace_id: u64,
     cwd: PathBuf,
-    binary: PathBuf,
+    binary: Option<PathBuf>,
     session_id: Arc<Mutex<Option<String>>>,
     model: Arc<Mutex<Option<String>>>,
 }
@@ -78,7 +78,11 @@ impl RpcAgentBridge {
         model: Option<&str>,
         trace_id: u64,
     ) -> Result<Self, String> {
-        Self::spawn_session_with(Path::new("rpi"), cwd, session, model, trace_id, None)
+        #[cfg(not(test))]
+        let binary: Option<PathBuf> = None;
+        #[cfg(test)]
+        let binary = std::env::var_os("SHOB_BENCH_CLI").map(PathBuf::from);
+        Self::spawn_session_with(binary.as_deref(), cwd, session, model, trace_id, None)
     }
 
     pub(crate) fn poll_requests(&self) -> Vec<Request> {
@@ -92,7 +96,7 @@ impl RpcAgentBridge {
     }
 
     fn spawn_session_with(
-        binary: &Path,
+        binary: Option<&Path>,
         cwd: &Path,
         session: Option<&str>,
         model: Option<&str>,
@@ -118,38 +122,24 @@ impl RpcAgentBridge {
         let (stop, stopped) = mpsc::channel();
         let cleanup = Arc::new(Cleanup::default());
         let cleaned = Arc::clone(&cleanup);
-        let mut command = Command::new(binary);
-        command
-            .args(["--mode", "rpc"])
-            .arg("--session-dir")
-            .arg(crate::paths::rpi_sessions_dir())
-            .current_dir(cwd)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        if let Some(session) = session {
-            command.args(["--session", session]);
-        }
-        if let Some(model) = model {
-            command.args(["--model", model]);
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            command.process_group(0);
-        }
+        let worker_binary = binary.map(Path::to_path_buf);
+        let session = session.map(str::to_owned);
+        let model = model.map(str::to_owned);
         let worker_events = Arc::clone(&events);
         let worker_writer = writer.clone();
         let worker_session = Arc::clone(&session_id);
         let worker_model = Arc::clone(&model_id);
         let reader_stop = stop.clone();
         let worker_cwd = cwd.to_path_buf();
-        if let Err(error) = thread::Builder::new().name("rpi-rpc-lifecycle".into()).spawn(move || {
+        let worker = move || {
             let _cleaned = CleanupSignal(cleaned);
             if let Some(predecessor) = after_cleanup {
                 let mut done = predecessor.done.lock().unwrap_or_else(|e| e.into_inner());
                 while !*done {
-                    done = predecessor.ready.wait(done).unwrap_or_else(|e| e.into_inner());
+                    done = predecessor
+                        .ready
+                        .wait(done)
+                        .unwrap_or_else(|e| e.into_inner());
                 }
             }
             if stopped.try_recv().is_ok() {
@@ -159,16 +149,43 @@ impl RpcAgentBridge {
                 return;
             }
             let start = std::time::Instant::now();
-            let mut child = match command.spawn() {
+            let spawned = (|| -> io::Result<Child> {
+                let binary = worker_binary.map_or_else(std::env::current_exe, Ok)?;
+                let mut command = Command::new(binary);
+                command
+                    .args(["--mode", "rpc"])
+                    .arg("--session-dir")
+                    .arg(crate::paths::rpi_sessions_dir())
+                    .current_dir(&worker_cwd)
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
+                if let Some(session) = session {
+                    command.args(["--session", &session]);
+                }
+                if let Some(model) = model {
+                    command.args(["--model", &model]);
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::process::CommandExt;
+                    command.process_group(0);
+                }
+                command.spawn()
+            })();
+            let mut child = match spawned {
                 Ok(child) => child,
                 Err(error) => {
                     // Disconnect deferred stdin before joining its writer.
                     worker_writer.close();
                     drop(stdin_tx);
-                    emit(&worker_events, AgentEvent::Error(format!(
-                        "Could not start rpi in {}: {error}. Install rpi and ensure it is on PATH.",
-                        worker_cwd.display()
-                    )));
+                    emit(
+                        &worker_events,
+                        AgentEvent::Error(format!(
+                            "Could not start the Shob agent in {}: {error}",
+                            worker_cwd.display()
+                        )),
+                    );
                     emit(&worker_events, AgentEvent::Done);
                     emit(&worker_events, AgentEvent::Closed);
                     worker_writer.shutdown();
@@ -187,12 +204,16 @@ impl RpcAgentBridge {
                 let mut bytes = [0u8; 4096];
                 use std::io::Read;
                 while let Ok(count) = reader.read(&mut bytes) {
-                    if count == 0 { break; }
+                    if count == 0 {
+                        break;
+                    }
                     let mut sink = stderr_sink.lock().unwrap_or_else(|e| e.into_inner());
                     sink.extend_from_slice(&bytes[..count]);
                     if sink.len() > 16_384 {
                         let mut start = sink.len() - 16_384;
-                        while start < sink.len() && sink[start] & 0xc0 == 0x80 { start += 1; }
+                        while start < sink.len() && sink[start] & 0xc0 == 0x80 {
+                            start += 1;
+                        }
                         sink.drain(..start);
                     }
                 }
@@ -209,14 +230,19 @@ impl RpcAgentBridge {
                     line.clear();
                     match reader.read_line(&mut line) {
                         Ok(0) => break None,
-                        Err(error) => break Some(format!("Failed reading rpi output: {error}")),
+                        Err(error) => {
+                            break Some(format!("Failed reading Shob RPC output: {error}"));
+                        }
                         Ok(_) => {}
                     }
                     let parse_start = std::time::Instant::now();
                     let record: Value = match serde_json::from_str(&line) {
                         Ok(record) => record,
                         Err(error) => {
-                            if !emit(&reader_events, AgentEvent::Error(format!("Invalid rpi RPC output: {error}"))) {
+                            if !emit(
+                                &reader_events,
+                                AgentEvent::Error(format!("Invalid Shob RPC output: {error}")),
+                            ) {
                                 break None;
                             }
                             continue;
@@ -229,16 +255,21 @@ impl RpcAgentBridge {
                     }
                     if record["type"] == "response" && record["command"] == "get_state" {
                         if let Some(id) = record["data"]["sessionId"].as_str() {
-                            *worker_session.lock().unwrap_or_else(|e| e.into_inner()) = Some(id.to_owned());
+                            *worker_session.lock().unwrap_or_else(|e| e.into_inner()) =
+                                Some(id.to_owned());
                         }
                         if let (Some(provider), Some(model)) = (
-                            record["data"]["provider"].as_str(), record["data"]["modelId"].as_str(),
+                            record["data"]["provider"].as_str(),
+                            record["data"]["modelId"].as_str(),
                         ) {
-                            *worker_model.lock().unwrap_or_else(|e| e.into_inner()) = Some(format!("{provider}/{model}"));
+                            *worker_model.lock().unwrap_or_else(|e| e.into_inner()) =
+                                Some(format!("{provider}/{model}"));
                         }
                     }
                     if record["type"] == "ui_dialog_request" {
-                        if let Some((id, close)) = handle_native_dialog(&record, &reply_writer, &request_tx) {
+                        if let Some((id, close)) =
+                            handle_native_dialog(&record, &reply_writer, &request_tx)
+                        {
                             active_dialogs.insert(id, close);
                         }
                     } else if record["type"] == "ui_dialog_closed" {
@@ -256,15 +287,26 @@ impl RpcAgentBridge {
                         crate::stream_timing::record_since("bridge.rpc.project", project_start);
                         for event in decoded {
                             match &event {
-                                AgentEvent::Text(text) if !text.is_empty() =>
-                                    crate::stream_timing::turn_delta_arrived(trace_id, crate::stream_timing::DeltaKind::Answer),
-                                AgentEvent::Thinking(text) if !text.is_empty() =>
-                                    crate::stream_timing::turn_delta_arrived(trace_id, crate::stream_timing::DeltaKind::Reasoning),
-                                AgentEvent::ToolEnd { id: Some(id), .. } =>
-                                    crate::stream_timing::turn_tool_finished(trace_id, id),
+                                AgentEvent::Text(text) if !text.is_empty() => {
+                                    crate::stream_timing::turn_delta_arrived(
+                                        trace_id,
+                                        crate::stream_timing::DeltaKind::Answer,
+                                    )
+                                }
+                                AgentEvent::Thinking(text) if !text.is_empty() => {
+                                    crate::stream_timing::turn_delta_arrived(
+                                        trace_id,
+                                        crate::stream_timing::DeltaKind::Reasoning,
+                                    )
+                                }
+                                AgentEvent::ToolEnd { id: Some(id), .. } => {
+                                    crate::stream_timing::turn_tool_finished(trace_id, id)
+                                }
                                 _ => {}
                             }
-                            if !emit(&reader_events, event) { break; }
+                            if !emit(&reader_events, event) {
+                                break;
+                            }
                         }
                     }
                 };
@@ -281,16 +323,27 @@ impl RpcAgentBridge {
             worker_writer.shutdown();
             let failure = reader.join().ok().flatten();
             let _ = stderr_thread.join();
-            let diagnostic = String::from_utf8_lossy(&stderr.lock().unwrap_or_else(|e| e.into_inner())).trim().to_owned();
-            let mut error = failure.unwrap_or_else(|| "rpi process exited".into());
-            if !diagnostic.is_empty() { error.push_str(&format!(": {diagnostic}")); }
+            let diagnostic =
+                String::from_utf8_lossy(&stderr.lock().unwrap_or_else(|e| e.into_inner()))
+                    .trim()
+                    .to_owned();
+            let mut error = failure.unwrap_or_else(|| "Shob RPC process exited".into());
+            if !diagnostic.is_empty() {
+                error.push_str(&format!(": {diagnostic}"));
+            }
             emit(&worker_events, AgentEvent::Error(error));
             emit(&worker_events, AgentEvent::Done);
             emit(&worker_events, AgentEvent::Closed);
-        }) {
+        };
+        if let Err(error) = thread::Builder::new()
+            .name("shob-rpc-lifecycle".into())
+            .spawn(worker)
+        {
             events.close();
             writer.close();
-            return Err(format!("Could not start rpi lifecycle worker: {error}"));
+            return Err(format!(
+                "Could not start Shob RPC lifecycle worker: {error}"
+            ));
         }
         Ok(Self {
             writer,
@@ -302,7 +355,7 @@ impl RpcAgentBridge {
             trace_id,
             cleanup,
             cwd: cwd.to_path_buf(),
-            binary: binary.to_path_buf(),
+            binary: binary.map(Path::to_path_buf),
             session_id,
             model: model_id,
         })
@@ -320,7 +373,7 @@ impl RpcAgentBridge {
             .ok_or("The agent model is still starting; try again shortly")?;
         let predecessor = Some(Arc::clone(&self.cleanup));
         let replacement = Self::spawn_session_with(
-            &self.binary,
+            self.binary.as_deref(),
             &self.cwd,
             Some(&session),
             Some(&model),
@@ -691,7 +744,7 @@ mod tests {
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         let mut bridge =
-            RpcAgentBridge::spawn_session_with(&script, &dir, None, None, 1, None).unwrap();
+            RpcAgentBridge::spawn_session_with(Some(&script), &dir, None, None, 1, None).unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
         while std::fs::read_to_string(dir.join("descendant"))
             .ok()
@@ -769,7 +822,7 @@ mod tests {
     #[test]
     fn asynchronous_start_failure_delivers_error_done_closed_in_order() {
         let mut bridge = RpcAgentBridge::spawn_session_with(
-            Path::new("/definitely-missing-rpi-binary"),
+            Some(Path::new("/definitely-missing-shob-binary")),
             &std::env::temp_dir(),
             None,
             None,
