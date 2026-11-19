@@ -3823,7 +3823,11 @@ pub struct TerminalPane {
     one_mode: bool,
     regular_focus: Option<usize>,
     tool_panel: bool,
-    tool_panel_picker: bool,
+    tool_panel_tab: Option<usize>,
+    tool_panel_hidden: bool,
+    tool_panel_chooser: Option<gpui::FocusHandle>,
+    tool_panel_file_restore: Option<PathBuf>,
+    tool_panel_scroll: Option<gpui::ScrollHandle>,
     tool_panel_chat_ratio: Option<f32>,
     /// Invalidates background work whenever the preview content is replaced.
     preview_generation: u64,
@@ -3994,7 +3998,11 @@ impl TerminalPane {
             one_mode: false,
             regular_focus: None,
             tool_panel: false,
-            tool_panel_picker: false,
+            tool_panel_tab: None,
+            tool_panel_hidden: false,
+            tool_panel_chooser: None,
+            tool_panel_file_restore: None,
+            tool_panel_scroll: None,
             tool_panel_chat_ratio: None,
             preview_generation: 0,
             status: SessionStatus::Idle,
@@ -4049,7 +4057,7 @@ impl TerminalPane {
         if self.chat.active {
             return true;
         }
-        if !self.bottom_input_visible {
+        if self.tool_panel || !self.bottom_input_visible {
             return false;
         }
 
@@ -4662,8 +4670,31 @@ impl AppState {
                                         .then_some(pane.preview_owner)
                                         .flatten(),
                                     tool_panel_changes: pane.tool_panel
-                                        && pane.diff_preview.is_some(),
-                                    tool_panel_picker: pane.tool_panel && pane.tool_panel_picker,
+                                        && pane
+                                            .diff_preview
+                                            .as_ref()
+                                            .is_some_and(|view| !view.file_only),
+                                    tool_panel_tab: pane.tool_panel_tab,
+                                    tool_panel_hidden: pane.tool_panel_hidden,
+                                    tool_panel_chooser_open: pane.tool_panel_chooser.is_some(),
+                                    tool_panel_file: if pane.tool_panel {
+                                        pane.markdown_preview
+                                            .as_ref()
+                                            .map(|(path, _)| path.clone())
+                                            .or_else(|| {
+                                                let view = pane
+                                                    .diff_preview
+                                                    .as_ref()
+                                                    .filter(|view| view.file_only)?;
+                                                Some(
+                                                    view.directory
+                                                        .join(&view.file_view.as_ref()?.path),
+                                                )
+                                            })
+                                            .or_else(|| pane.tool_panel_file_restore.clone())
+                                    } else {
+                                        None
+                                    },
                                     tool_panel_chat_ratio: pane.tool_panel_chat_ratio,
                                     files: pane
                                         .files_surface
@@ -4971,7 +5002,12 @@ impl AppState {
                     pane.regular_focus = saved_pane.regular_focus;
                     pane.preview_owner = saved_pane.tool_panel_owner;
                     pane.tool_panel = saved_pane.tool_panel_owner.is_some();
-                    pane.tool_panel_picker = pane.tool_panel && saved_pane.tool_panel_picker;
+                    pane.tool_panel_tab = saved_pane.tool_panel_tab;
+                    pane.tool_panel_hidden = saved_pane.tool_panel_hidden;
+                    pane.tool_panel_chooser = saved_pane
+                        .tool_panel_chooser_open
+                        .then(|| cx.focus_handle());
+                    pane.tool_panel_file_restore = saved_pane.tool_panel_file;
                     pane.tool_panel_chat_ratio = saved_pane
                         .tool_panel_chat_ratio
                         .filter(|ratio| ratio.is_finite())
@@ -5067,6 +5103,21 @@ impl AppState {
 
                 if panes.is_empty() {
                     continue;
+                }
+                for owner_index in 0..panes.len() {
+                    let owner = &panes[owner_index];
+                    let Some(tab) = owner.tool_panel_tab else {
+                        continue;
+                    };
+                    if let Some(position) = panes
+                        .iter()
+                        .filter(|pane| pane.tool_panel && pane.preview_owner == Some(owner.id))
+                        .position(|pane| pane.id == tab)
+                    {
+                        let scroll = gpui::ScrollHandle::new();
+                        scroll.scroll_to_item(position);
+                        panes[owner_index].tool_panel_scroll = Some(scroll);
+                    }
                 }
                 let tree = restore_pane_tree(&saved_session.tree);
                 let tree = if tree_matches_panes(&tree, &panes)
@@ -5374,15 +5425,38 @@ impl AppState {
         project.sessions.get(project.active_session_idx)
     }
 
+    fn one_mode_pane<'a>(&self, session: &'a Session) -> Option<&'a TerminalPane> {
+        let panes = || session.panes.iter().filter(|pane| !pane.tool_panel);
+        panes()
+            .find(|pane| pane.one_mode)
+            .or_else(|| {
+                panes().find(|pane| pane.chat.active && Some(pane.id) == self.focused_pane_id)
+            })
+            .or_else(|| panes().find(|pane| pane.chat.active))
+            .or_else(|| panes().find(|pane| Some(pane.id) == self.focused_pane_id))
+            .or_else(|| panes().next())
+    }
+
     /// Panes the person can actually see: the selected screen's panes, minus
     /// the siblings a maximized pane hides.
     fn visible_pane_ids(&self) -> HashSet<usize> {
+        if self.settings.agent_layout {
+            return self
+                .active_session()
+                .and_then(|session| self.one_mode_pane(session))
+                .map(|pane| {
+                    let panel = self.active_tool_panel(pane).map(|panel| panel.id);
+                    std::iter::once(pane.id).chain(panel).collect()
+                })
+                .unwrap_or_default();
+        }
         self.active_session()
             .map(|session| {
                 let max = session.maximized_pane_id;
                 session
                     .panes
                     .iter()
+                    .filter(|pane| !pane.tool_panel && !pane.one_mode)
                     .filter(|pane| max.is_none_or(|m| m == pane.id))
                     .map(|pane| pane.id)
                     .collect()
@@ -5600,12 +5674,18 @@ impl AppState {
         let Some(pane) = session.panes.get_mut(pane_idx) else {
             return;
         };
-        if pane.markdown_preview.is_some() || pane.diff_preview.is_some() || pane.title == trimmed {
+        if pane.files_active
+            || pane.markdown_preview.is_some()
+            || pane.diff_preview.is_some()
+            || pane.title == trimmed
+        {
             return;
         }
         pane.title = trimmed.to_string();
         let next_display = truncate_title(&SharedString::from(trimmed.to_string()));
-        pane.display_title = next_display.clone();
+        if !pane.tool_panel {
+            pane.display_title = next_display.clone();
+        }
         // Mirror the pane the user is working in onto the session's sidebar
         // entry. Either the focused pane or the first pane of the screen
         // (when focus has not moved yet) is the primary.
@@ -6014,10 +6094,17 @@ impl AppState {
                         let terminal = pane.terminal.read(cx);
                         let title = terminal.title().unwrap_or("");
                         let trimmed = title.trim();
-                        if !trimmed.is_empty() && pane.title.as_str() != trimmed {
+                        if !pane.files_active
+                            && pane.markdown_preview.is_none()
+                            && pane.diff_preview.is_none()
+                            && !trimmed.is_empty()
+                            && pane.title.as_str() != trimmed
+                        {
                             pane.title = trimmed.to_string();
-                            pane.display_title =
-                                truncate_title(&SharedString::from(trimmed.to_string()));
+                            if !pane.tool_panel {
+                                pane.display_title =
+                                    truncate_title(&SharedString::from(trimmed.to_string()));
+                            }
                             true
                         } else {
                             false
@@ -7265,6 +7352,25 @@ impl AppState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
+        if let Some(owner) = self.tool_panel_owner(source) {
+            let panel = self
+                .tool_panel_panes(owner)
+                .find(|pane| {
+                    pane.files_surface.is_none()
+                        && (pane.diff_preview.is_some() || pane.markdown_preview.is_some())
+                })
+                .map(|pane| pane.id);
+            let id = match panel {
+                Some(id) => id,
+                None => self.create_tool_panel_tab(owner, window, cx)?,
+            };
+            let pane = self.pane_mut(id)?;
+            pane.preview_generation = pane.preview_generation.wrapping_add(1);
+            pane.markdown_preview = None;
+            pane.diff_preview = None;
+            self.select_tool_panel_tab(owner, id, window, cx);
+            return Some(id);
+        }
         let &(project, session, _) = self.pane_index.get(&source)?;
         let screen = &self.projects[project].sessions[session];
         let existing = if screen
@@ -7277,7 +7383,7 @@ impl AppState {
             screen
                 .panes
                 .iter()
-                .find(|pane| pane.preview_owner == Some(source))
+                .find(|pane| !pane.tool_panel && pane.preview_owner == Some(source))
                 .map(|pane| pane.id)
         };
         let preview = if let Some(id) = existing {
@@ -7336,15 +7442,7 @@ impl AppState {
         let Some(path) = file_preview::local_link_path(target, &base) else {
             return false;
         };
-        if path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| {
-                matches!(
-                    ext.to_ascii_lowercase().as_str(),
-                    "md" | "markdown" | "mdown"
-                )
-            })
+        if file_preview::is_markdown_path(&path)
             && self.open_markdown_preview(source, &path.to_string_lossy(), window, cx)
         {
             return true;
@@ -7358,15 +7456,22 @@ impl AppState {
         let Some(new_id) = self.prepare_preview_pane(source, window, cx) else {
             return true;
         };
+        self.show_read_only_file(new_id, root, display_path, window, cx);
+        true
+    }
+
+    fn show_read_only_file(
+        &mut self,
+        new_id: usize,
+        root: PathBuf,
+        display_path: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(pane) = self.pane_mut(new_id) else {
-            return true;
+            return;
         };
-        pane.display_title = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string()
-            .into();
+        pane.display_title = file_name(&display_path).to_owned().into();
         pane.diff_preview = Some(DiffPreview {
             directory: root.clone(),
             result: Some(Ok(project_diff::ProjectDiff {
@@ -7382,7 +7487,7 @@ impl AppState {
             file_only: true,
         });
         self.open_changed_file(new_id, display_path, window, cx);
-        true
+        self.schedule_workspace_save(cx);
     }
 
     /// Open a local Markdown link beside its source, leaving the source running.
@@ -7404,16 +7509,7 @@ impl AppState {
         } else {
             PathBuf::from(target)
         };
-        if !path
-            .extension()
-            .and_then(|s| s.to_str())
-            .is_some_and(|ext| {
-                matches!(
-                    ext.to_ascii_lowercase().as_str(),
-                    "md" | "markdown" | "mdown"
-                )
-            })
-        {
+        if !file_preview::is_markdown_path(&path) {
             return false;
         }
         let Some(&(project, _, _)) = self.pane_index.get(&source) else {
@@ -7435,8 +7531,13 @@ impl AppState {
         let Some(new_id) = self.prepare_preview_pane(source, window, cx) else {
             return false;
         };
+        self.load_markdown_preview(new_id, path, cx);
+        true
+    }
+
+    fn load_markdown_preview(&mut self, new_id: usize, path: PathBuf, cx: &mut Context<Self>) {
         let Some(pane) = self.pane_mut(new_id) else {
-            return false;
+            return;
         };
         let generation = pane.preview_generation;
         pane.markdown_preview = Some((path.clone(), "<p>Loading…</p>".into()));
@@ -7464,7 +7565,7 @@ impl AppState {
         })
         .detach();
         cx.notify();
-        true
+        self.schedule_workspace_save(cx);
     }
 
     fn open_project_diff(&mut self, source: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -7482,13 +7583,7 @@ impl AppState {
         let Some(pane) = self.pane_mut(new_id) else {
             return;
         };
-        pane.tool_panel_picker = false;
-        pane.display_title = if pane.tool_panel {
-            "Files"
-        } else {
-            "Project changes"
-        }
-        .into();
+        pane.display_title = "Project changes".into();
         pane.diff_preview = Some(DiffPreview {
             directory,
             result: None,
@@ -7501,6 +7596,7 @@ impl AppState {
             file_only: false,
         });
         self.refresh_project_diff(new_id, cx);
+        self.schedule_workspace_save(cx);
     }
 
     fn build_files_surface(
@@ -7529,7 +7625,16 @@ impl AppState {
             .filter(|pane| pane.chat.active)
             .map(|pane| self.agent_working_directory(pane))
             .unwrap_or_else(|| self.projects[project].path.clone());
-        let Some(id) = self.prepare_preview_pane(source, window, cx) else {
+        let panel_owner = self.tool_panel_owner(source);
+        let Some(id) = (if let Some(owner) = panel_owner {
+            let existing = self
+                .tool_panel_panes(owner)
+                .find(|pane| pane.files_surface.is_some() || pane.files_restore.is_some())
+                .map(|pane| pane.id);
+            existing.or_else(|| self.create_tool_panel_tab(owner, window, cx))
+        } else {
+            self.prepare_preview_pane(source, window, cx)
+        }) else {
             return;
         };
         if self
@@ -7546,41 +7651,197 @@ impl AppState {
             self.pane_mut(id).unwrap().files_surface = Some(view);
         }
         if let Some(pane) = self.pane_mut(id) {
+            if pane.diff_preview.is_some() || pane.markdown_preview.is_some() {
+                pane.preview_generation = pane.preview_generation.wrapping_add(1);
+                pane.diff_preview = None;
+                pane.markdown_preview = None;
+            }
             pane.files_active = true;
-            pane.tool_panel_picker = false;
             pane.display_title = "Files".into();
         }
+        if let Some(owner) = panel_owner {
+            self.select_tool_panel_tab(owner, id, window, cx);
+        }
         self.schedule_workspace_save(cx);
         cx.notify();
     }
 
-    fn open_tool_panel(&mut self, source: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(id) = self.prepare_preview_pane(source, window, cx) else {
+    fn tool_panel_owner(&self, source: usize) -> Option<usize> {
+        if !self.settings.agent_layout {
+            return None;
+        }
+        let &(project, session, _) = self.pane_index.get(&source)?;
+        let owner = self.one_mode_pane(&self.projects[project].sessions[session])?;
+        let pane = self.pane_ref(source)?;
+        (owner.chat.active
+            && (pane.id == owner.id || (pane.tool_panel && pane.preview_owner == Some(owner.id))))
+        .then_some(owner.id)
+    }
+
+    fn tool_panel_panes(&self, owner: usize) -> impl Iterator<Item = &TerminalPane> {
+        self.pane_index
+            .get(&owner)
+            .into_iter()
+            .flat_map(move |&(project, session, _)| &self.projects[project].sessions[session].panes)
+            .filter(move |pane| pane.tool_panel && pane.preview_owner == Some(owner))
+    }
+
+    fn selected_tool_panel(&self, owner: &TerminalPane) -> Option<&TerminalPane> {
+        self.tool_panel_panes(owner.id)
+            .find(|pane| Some(pane.id) == owner.tool_panel_tab)
+            .or_else(|| self.tool_panel_panes(owner.id).next())
+    }
+
+    fn tool_panel_is_open(&self, owner: &TerminalPane) -> bool {
+        !owner.tool_panel_hidden
+            && (owner.tool_panel_chooser.is_some() || self.selected_tool_panel(owner).is_some())
+    }
+
+    fn active_tool_panel(&self, owner: &TerminalPane) -> Option<&TerminalPane> {
+        if owner.tool_panel_hidden
+            || owner.tool_panel_chooser.is_some()
+            || !owner.chat.active
+            || owner.diff_preview.is_some()
+            || owner.markdown_preview.is_some()
+        {
+            return None;
+        }
+        self.selected_tool_panel(owner)
+    }
+
+    fn create_tool_panel_tab(
+        &mut self,
+        owner: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let &(project, session, _) = self.pane_index.get(&owner)?;
+        let maximized = self.projects[project].sessions[session].maximized_pane_id;
+        let id = self.next_id + 1;
+        self.split_pane(owner, gpui::Axis::Horizontal, window, cx);
+        self.projects[project].sessions[session].maximized_pane_id = maximized;
+        let pane = self.pane_mut(id)?;
+        pane.tool_panel = true;
+        pane.preview_owner = Some(owner);
+        Some(id)
+    }
+
+    fn select_tool_panel_tab(
+        &mut self,
+        owner: usize,
+        id: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let position = self.tool_panel_panes(owner).position(|pane| pane.id == id);
+        let legacy_ratio = self
+            .tool_panel_panes(owner)
+            .next()
+            .and_then(|pane| pane.tool_panel_chat_ratio);
+        if let Some(pane) = self.pane_mut(owner) {
+            pane.tool_panel_tab = Some(id);
+            pane.tool_panel_hidden = false;
+            pane.tool_panel_chooser = None;
+            pane.tool_panel_chat_ratio = pane.tool_panel_chat_ratio.or(legacy_ratio);
+            if let Some(position) = position {
+                pane.tool_panel_scroll
+                    .get_or_insert_with(gpui::ScrollHandle::new)
+                    .scroll_to_item(position);
+            }
+        }
+        self.focus_pane(id, window, cx);
+        if let Some(view) = self
+            .pane_ref(id)
+            .filter(|pane| pane.files_active)
+            .and_then(|pane| pane.files_surface.as_ref())
+            .map(|(view, _)| view.clone())
+        {
+            window.blur(cx);
+            view.update(cx, |view, cx| view.focus_selected(window, cx));
+        }
+        self.schedule_workspace_save(cx);
+        cx.notify();
+    }
+
+    fn new_tool_panel_terminal(
+        &mut self,
+        owner: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let number = self
+            .tool_panel_panes(owner)
+            .filter_map(|pane| {
+                pane.display_title
+                    .strip_prefix("Terminal ")?
+                    .parse::<usize>()
+                    .ok()
+            })
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+        if let Some(id) = self.create_tool_panel_tab(owner, window, cx) {
+            if let Some(pane) = self.pane_mut(id) {
+                pane.display_title = format!("Terminal {number}").into();
+            }
+            self.select_tool_panel_tab(owner, id, window, cx);
+        }
+    }
+
+    fn open_tool_panel(&mut self, owner: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let existing = self
+            .pane_ref(owner)
+            .filter(|pane| pane.tool_panel_chooser.is_none())
+            .and_then(|pane| self.selected_tool_panel(pane))
+            .map(|pane| pane.id);
+        if let Some(id) = existing {
+            self.select_tool_panel_tab(owner, id, window, cx);
+        } else {
+            self.show_tool_panel_chooser(owner, window, cx);
+        }
+    }
+
+    fn show_tool_panel_chooser(
+        &mut self,
+        owner: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pane) = self.pane_mut(owner) else {
             return;
         };
-        if let Some(pane) = self.pane_mut(id) {
-            pane.tool_panel = true;
-            pane.chat.active = false;
-            pane.tool_panel_picker = true;
-            pane.display_title = "Open a surface".into();
-        }
+        pane.tool_panel_hidden = false;
+        pane.tool_panel_chooser
+            .get_or_insert_with(|| cx.focus_handle())
+            .focus(window, cx);
+        self.focused_pane_id = Some(owner);
         self.schedule_workspace_save(cx);
         cx.notify();
     }
 
-    fn show_panel_terminal(&mut self, pane_id: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(pane) = self.pane_mut(pane_id) {
-            pane.preview_generation = pane.preview_generation.wrapping_add(1);
-            pane.tool_panel_picker = false;
-            pane.files_active = false;
-            pane.chat.active = false;
-            pane.diff_preview = None;
-            pane.markdown_preview = None;
-            pane.display_title = "Terminal".into();
+    fn dismiss_tool_panel_chooser(
+        &mut self,
+        owner: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(id) = self
+            .pane_ref(owner)
+            .and_then(|pane| self.selected_tool_panel(pane))
+            .map(|pane| pane.id)
+        {
+            self.select_tool_panel_tab(owner, id, window, cx);
+        } else {
+            self.hide_tool_panel(owner, window, cx);
         }
-        self.focus_pane(pane_id, window, cx);
+    }
+
+    fn hide_tool_panel(&mut self, owner: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(pane) = self.pane_mut(owner) {
+            pane.tool_panel_hidden = true;
+        }
+        self.focus_pane(owner, window, cx);
         self.schedule_workspace_save(cx);
-        cx.notify();
     }
 
     fn refresh_project_diff(&mut self, pane_id: usize, cx: &mut Context<Self>) {
@@ -7650,6 +7911,7 @@ impl AppState {
                 .await;
             let _ = handle.update(cx, |_, window, cx| {
                 let _ = target.update(cx, |this, cx| {
+                    let focused = this.focused_pane_id == Some(pane_id);
                     let Some(view) = this
                         .pane_mut(pane_id)
                         .filter(|pane| pane.preview_generation == generation)
@@ -7674,7 +7936,9 @@ impl AppState {
                                     .line_changes(content.changes)
                                     .read_only(true)
                             });
-                            input.update(cx, |input, cx| input.focus(window, cx));
+                            if focused {
+                                input.update(cx, |input, cx| input.focus(window, cx));
+                            }
                             ReadOnlyFileState::Ready {
                                 input,
                                 deleted: content.deleted,
@@ -8254,6 +8518,10 @@ impl AppState {
     /// removes the session (screen) itself; an emptied project spawns a fresh
     /// session, like before.
     fn close_pane(&mut self, pane_id: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let panel_owner = self
+            .pane_ref(pane_id)
+            .filter(|pane| pane.tool_panel)
+            .and_then(|pane| pane.preview_owner);
         if let Some(view) = self
             .pane_ref(pane_id)
             .and_then(|pane| pane.files_surface.as_ref())
@@ -8262,8 +8530,12 @@ impl AppState {
         {
             if let Some(pane) = self.pane_mut(pane_id) {
                 pane.files_active = true;
-                pane.tool_panel_picker = false;
                 pane.display_title = "Files".into();
+            }
+            if self.settings.agent_layout
+                && let Some(owner) = panel_owner
+            {
+                self.select_tool_panel_tab(owner, pane_id, window, cx);
             }
             cx.notify();
             return;
@@ -8271,6 +8543,11 @@ impl AppState {
         let Some(&(p_idx, s_idx, _)) = self.pane_index.get(&pane_id) else {
             return;
         };
+        let closing_selected_tab = panel_owner.is_some_and(|owner| {
+            self.pane_ref(owner)
+                .and_then(|pane| self.active_tool_panel(pane))
+                .is_some_and(|pane| pane.id == pane_id)
+        });
 
         let mut session_removed = false;
         let mut needs_new_session = false;
@@ -8284,6 +8561,7 @@ impl AppState {
                 }
                 for pane in &mut session.panes {
                     if pane.tool_panel && pane.preview_owner == Some(pane_id) {
+                        pane.one_mode = false;
                         pane.tool_panel = false;
                         pane.preview_owner = None;
                     }
@@ -8302,7 +8580,9 @@ impl AppState {
                     project.active_session_idx =
                         project.active_session_idx.min(project.sessions.len() - 1);
                 }
-            } else if let Some(session) = project.sessions.get(s_idx) {
+            } else if panel_owner.is_none()
+                && let Some(session) = project.sessions.get(s_idx)
+            {
                 // Focus the surviving first pane of this screen.
                 let next_leaf = session
                     .pane_tree
@@ -8317,6 +8597,25 @@ impl AppState {
         }
 
         self.rebuild_session_index();
+        if let Some(owner) = panel_owner {
+            let next = self.tool_panel_panes(owner).next().map(|pane| pane.id);
+            if let Some(pane) = self.pane_mut(owner)
+                && (closing_selected_tab || pane.tool_panel_tab == Some(pane_id))
+            {
+                pane.tool_panel_tab = next;
+            }
+            if self.settings.agent_layout && closing_selected_tab && next.is_none() {
+                self.show_tool_panel_chooser(owner, window, cx);
+            } else if self.focused_pane_id == Some(pane_id) {
+                if self.settings.agent_layout
+                    && let Some(next) = next
+                {
+                    self.select_tool_panel_tab(owner, next, window, cx);
+                } else {
+                    self.focus_pane(owner, window, cx);
+                }
+            }
+        }
 
         if needs_new_session {
             self.create_new_session_in_project(p_idx, window, cx);
@@ -11185,9 +11484,13 @@ impl AppState {
 
     fn ensure_panes_input_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mut files = Vec::new();
+        let mut previews = Vec::new();
         for project in &mut self.projects {
             for session in &mut project.sessions {
                 for pane in &mut session.panes {
+                    if let Some(path) = pane.tool_panel_file_restore.take() {
+                        previews.push((pane.id, project.path.clone(), path));
+                    }
                     if let Some(saved) = pane.files_restore.take() {
                         files.push((pane.id, project.path.clone(), saved));
                     }
@@ -11198,6 +11501,18 @@ impl AppState {
             let view = self.build_files_surface(id, root, saved, window, cx);
             if let Some(pane) = self.pane_mut(id) {
                 pane.files_surface = Some(view);
+            }
+        }
+        for (id, root, path) in previews {
+            if file_preview::is_markdown_path(&path) {
+                self.load_markdown_preview(id, path, cx);
+            } else {
+                let display_path = path
+                    .strip_prefix(&root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .into_owned();
+                self.show_read_only_file(id, root, display_path, window, cx);
             }
         }
         let mut missing = Vec::new();
@@ -11241,6 +11556,12 @@ impl AppState {
                 || pane.chat.auth.is_some()
                 || pane.branch_picker.is_some()
                 || pane.chat.active && !pane.chat.requests.is_empty()
+                || (self.settings.agent_layout
+                    && !pane.tool_panel_hidden
+                    && pane
+                        .tool_panel_chooser
+                        .as_ref()
+                        .is_some_and(|focus| focus.is_focused(window)))
             {
                 return;
             }
@@ -17588,6 +17909,243 @@ impl AppState {
             })
     }
 
+    fn render_tool_panel_chooser(
+        &self,
+        owner: usize,
+        focus: &gpui::FocusHandle,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let tokens = self.tokens(cx);
+        let choices = [
+            (
+                "tool-panel-choose-terminal",
+                "Terminal",
+                "icons/terminal.svg",
+                "T",
+                Self::new_tool_panel_terminal
+                    as fn(&mut Self, usize, &mut Window, &mut Context<Self>),
+            ),
+            (
+                "tool-panel-choose-files",
+                "Files",
+                "ui_icons/file.svg",
+                "F",
+                Self::open_files_surface,
+            ),
+            (
+                "tool-panel-choose-diff",
+                "Diff",
+                "icons/git-branch.svg",
+                "D",
+                Self::open_project_diff,
+            ),
+        ];
+        let click_focus = focus.clone();
+        div()
+            .id(("tool-panel-chooser", owner))
+            .debug_selector(|| "tool-panel-chooser".into())
+            .track_focus(focus)
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                click_focus.focus(window, cx)
+            })
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                if event.keystroke.modifiers != gpui::Modifiers::none() {
+                    return;
+                }
+                let key = event.keystroke.key.as_str();
+                if key == "escape" {
+                    cx.stop_propagation();
+                    this.dismiss_tool_panel_chooser(owner, window, cx);
+                } else if let Some((_, _, _, _, open)) = choices
+                    .iter()
+                    .find(|(_, _, _, shortcut, _)| key.eq_ignore_ascii_case(shortcut))
+                {
+                    cx.stop_propagation();
+                    open(this, owner, window, cx);
+                }
+            }))
+            .child(
+                div()
+                    .w(px(310.0))
+                    .max_w_full()
+                    .px(px(8.0))
+                    .text_size(px(14.0))
+                    .text_color(tokens.text_primary)
+                    .child(div().pb(px(12.0)).text_center().child("Open a surface"))
+                    .children(choices.map(|(selector, label, icon, key, open)| {
+                        div()
+                            .id(selector)
+                            .debug_selector(move || selector.into())
+                            .h(px(34.0))
+                            .px(px(8.0))
+                            .rounded(px(5.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(10.0))
+                            .cursor_pointer()
+                            .hover(|row| row.bg(tokens.card_hover))
+                            .child(
+                                svg()
+                                    .path(icon)
+                                    .size(px(14.0))
+                                    .text_color(tokens.text_secondary)
+                                    .flex_shrink_0(),
+                            )
+                            .child(div().flex_1().min_w_0().truncate().child(label))
+                            .child(
+                                div()
+                                    .size(px(20.0))
+                                    .flex_shrink_0()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(px(4.0))
+                                    .bg(tokens.card_hover)
+                                    .text_color(tokens.text_secondary)
+                                    .text_size(px(11.0))
+                                    .child(key),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, window, cx| {
+                                    cx.stop_propagation();
+                                    open(this, owner, window, cx);
+                                }),
+                            )
+                    })),
+            )
+    }
+
+    fn render_tool_panel_tabs(
+        &self,
+        owner: &TerminalPane,
+        active: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let tokens = self.tokens(cx);
+        let owner_id = owner.id;
+        let has_tabs = self.tool_panel_panes(owner_id).next().is_some();
+        let tabs = div()
+            .id(("tool-panel-tabs", owner_id))
+            .debug_selector(|| "tool-panel-tabs".into())
+            .flex()
+            .min_w_0()
+            .gap(px(4.0))
+            .overflow_x_scroll()
+            .when_some(owner.tool_panel_scroll.as_ref(), |row, handle| {
+                row.track_scroll(handle)
+            })
+            .children(self.tool_panel_panes(owner_id).map(|pane| {
+                let id = pane.id;
+                let selected = Some(id) == active;
+                let icon = if pane.files_active
+                    || pane.diff_preview.is_some()
+                    || pane.markdown_preview.is_some()
+                {
+                    "ui_icons/file.svg"
+                } else {
+                    "icons/terminal.svg"
+                };
+                let foreground = if selected {
+                    tokens.text_primary
+                } else {
+                    tokens.text_secondary
+                };
+                div()
+                    .id(("tool-panel-tab", id))
+                    .h(px(24.0))
+                    .max_w(px(168.0))
+                    .min_w(px(64.0))
+                    .rounded(px(6.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(5.0))
+                    .pl(px(8.0))
+                    .pr(px(3.0))
+                    .cursor_pointer()
+                    .text_size(px(12.0))
+                    .text_color(foreground)
+                    .when(selected, |tab| tab.bg(tokens.card_hover))
+                    .hover(|tab| tab.bg(tokens.card_hover))
+                    .child(
+                        svg()
+                            .path(icon)
+                            .size(px(13.0))
+                            .text_color(foreground)
+                            .flex_shrink_0(),
+                    )
+                    .child(div().min_w_0().truncate().child(pane.display_title.clone()))
+                    .child(
+                        sidebar_icon_button(
+                            ("close-tool-panel-tab", id),
+                            "icons/x.svg",
+                            11.0,
+                            &tokens,
+                            cx.listener(move |this, _, window, cx| this.close_pane(id, window, cx)),
+                        )
+                        .tooltip(|window, cx| {
+                            gpui_component::tooltip::Tooltip::new("Close tab").build(window, cx)
+                        }),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, window, cx| {
+                            this.select_tool_panel_tab(owner_id, id, window, cx);
+                        }),
+                    )
+            }));
+
+        div()
+            .h(px(36.0))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .gap(px(4.0))
+            .px(px(7.0))
+            .when(has_tabs, |bar| {
+                bar.border_b_1().border_color(tokens.border_subtle)
+            })
+            .bg(tokens.pane_bg)
+            .child(tabs)
+            .when(has_tabs, |row| {
+                row.child(
+                    sidebar_icon_button(
+                        ("add-tool-panel-surface", owner_id),
+                        "icons/plus.svg",
+                        13.0,
+                        &tokens,
+                        cx.listener(move |this, _, window, cx| {
+                            this.show_tool_panel_chooser(owner_id, window, cx)
+                        }),
+                    )
+                    .debug_selector(|| "add-tool-panel-surface".into())
+                    .tooltip(|window, cx| {
+                        gpui_component::tooltip::Tooltip::new("Open a surface").build(window, cx)
+                    }),
+                )
+            })
+            .child(div().flex_1())
+            .child(
+                sidebar_icon_button(
+                    ("hide-tool-panel", owner_id),
+                    "icons/panel-right.svg",
+                    14.0,
+                    &tokens,
+                    cx.listener(move |this, _, window, cx| {
+                        this.hide_tool_panel(owner_id, window, cx)
+                    }),
+                )
+                .debug_selector(|| "hide-tool-panel".into())
+                .tooltip(|window, cx| {
+                    gpui_component::tooltip::Tooltip::new("Hide right panel").build(window, cx)
+                }),
+            )
+    }
+
     fn render_terminal_pane(
         &self,
         pane: &TerminalPane,
@@ -17598,17 +18156,26 @@ impl AppState {
         let pane_id = pane.id;
         let is_focused = self.focused_pane_id == Some(pane_id);
         let tokens = self.tokens(cx);
-        let preview_tab = if let Some((view, file)) = pane
-            .diff_preview
-            .as_ref()
-            .and_then(|view| view.file_view.as_ref().map(|file| (view, file)))
+        let preview_tab = if !pane.tool_panel
+            || pane
+                .diff_preview
+                .as_ref()
+                .is_some_and(|view| !view.file_only)
         {
-            let deleted = matches!(file.state, ReadOnlyFileState::Ready { deleted: true, .. });
-            Some(self.render_preview_tab(pane_id, &file.path, !view.file_only, deleted, cx))
+            if let Some((view, file)) = pane
+                .diff_preview
+                .as_ref()
+                .and_then(|view| view.file_view.as_ref().map(|file| (view, file)))
+            {
+                let deleted = matches!(file.state, ReadOnlyFileState::Ready { deleted: true, .. });
+                Some(self.render_preview_tab(pane_id, &file.path, !view.file_only, deleted, cx))
+            } else {
+                pane.markdown_preview.as_ref().map(|(path, _)| {
+                    self.render_preview_tab(pane_id, &path.to_string_lossy(), false, false, cx)
+                })
+            }
         } else {
-            pane.markdown_preview.as_ref().map(|(path, _)| {
-                self.render_preview_tab(pane_id, &path.to_string_lossy(), false, false, cx)
-            })
+            None
         };
 
         div()
@@ -17651,8 +18218,10 @@ impl AppState {
                     this.focus_pane(pane_id, window, cx);
                 }),
             )
-            .child(
-                (if pane.tool_panel { None } else { preview_tab }).unwrap_or_else(|| {
+            .children(if pane.tool_panel {
+                preview_tab
+            } else {
+                Some(preview_tab.unwrap_or_else(|| {
                     div()
                         .h(px(28.0))
                         .w_full()
@@ -17672,44 +18241,8 @@ impl AppState {
                                 .flex()
                                 .items_center()
                                 .gap(px(6.0))
-                                .when(pane.tool_panel, |row| {
-                                    row.child(
-                                        div()
-                                            .id(("panel-changes", pane_id))
-                                            .px(px(7.0))
-                                            .text_size(px(11.0))
-                                            .text_color(tokens.pane_header_fg)
-                                            .cursor_pointer()
-                                            .child("Files")
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                cx.listener(move |this, _, window, cx| {
-                                                    cx.stop_propagation();
-                                                    this.open_files_surface(pane_id, window, cx);
-                                                    this.schedule_workspace_save(cx);
-                                                }),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .id(("panel-terminal", pane_id))
-                                            .px(px(7.0))
-                                            .text_size(px(11.0))
-                                            .text_color(tokens.pane_header_fg)
-                                            .cursor_pointer()
-                                            .child("Terminal")
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                cx.listener(move |this, _, window, cx| {
-                                                    cx.stop_propagation();
-                                                    this.show_panel_terminal(pane_id, window, cx);
-                                                }),
-                                            ),
-                                    )
-                                })
                                 .when(
-                                    !pane.tool_panel
-                                        && pane.diff_preview.is_none()
+                                    pane.diff_preview.is_none()
                                         && pane.markdown_preview.is_none()
                                         && !pane.should_show_bottom_input(cx),
                                     |row| {
@@ -17737,9 +18270,6 @@ impl AppState {
                                     div()
                                         .id(("split-v-btn", pane_id))
                                         .size(px(22.0))
-                                        .when(pane.tool_panel, |button| {
-                                            button.size(px(0.0)).invisible()
-                                        })
                                         .flex()
                                         .items_center()
                                         .justify_center()
@@ -17772,9 +18302,6 @@ impl AppState {
                                     div()
                                         .id(("split-h-btn", pane_id))
                                         .size(px(22.0))
-                                        .when(pane.tool_panel, |button| {
-                                            button.size(px(0.0)).invisible()
-                                        })
                                         .flex()
                                         .items_center()
                                         .justify_center()
@@ -17807,9 +18334,6 @@ impl AppState {
                                     div()
                                         .id(("maximize-btn", pane_id))
                                         .size(px(22.0))
-                                        .when(pane.tool_panel, |button| {
-                                            button.size(px(0.0)).invisible()
-                                        })
                                         .flex()
                                         .items_center()
                                         .justify_center()
@@ -17863,34 +18387,7 @@ impl AppState {
                                         ),
                                 ),
                         )
-                }),
-            )
-            .when(pane.tool_panel, |container| {
-                if let Some((view, file)) = pane
-                    .diff_preview
-                    .as_ref()
-                    .and_then(|view| view.file_view.as_ref().map(|file| (view, file)))
-                {
-                    let deleted =
-                        matches!(file.state, ReadOnlyFileState::Ready { deleted: true, .. });
-                    container.child(self.render_preview_tab(
-                        pane_id,
-                        &file.path,
-                        !view.file_only,
-                        deleted,
-                        cx,
-                    ))
-                } else if let Some((path, _)) = &pane.markdown_preview {
-                    container.child(self.render_preview_tab(
-                        pane_id,
-                        &path.to_string_lossy(),
-                        false,
-                        false,
-                        cx,
-                    ))
-                } else {
-                    container
-                }
+                }))
             })
             .child(
                 div()
@@ -17907,8 +18404,7 @@ impl AppState {
                         MouseButton::Right,
                         cx.listener(move |this, event: &MouseDownEvent, window, cx| {
                             if this.pane_ref(pane_id).is_some_and(|pane| {
-                                !pane.tool_panel_picker
-                                    && !pane.files_active
+                                !pane.files_active
                                     && pane.diff_preview.is_none()
                                     && pane.markdown_preview.is_none()
                             }) {
@@ -17922,99 +18418,7 @@ impl AppState {
                             }
                         }),
                     )
-                    .child(if pane.tool_panel && pane.tool_panel_picker {
-                        div()
-                            .id(("tool-panel-picker", pane_id))
-                            .debug_selector(|| "tool-panel-picker".into())
-                            .size_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                div()
-                                    .w(px(220.0))
-                                    .max_w_full()
-                                    .flex_shrink_0()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(8.0))
-                                    .child(
-                                        div()
-                                            .w_full()
-                                            .text_center()
-                                            .pb(px(8.0))
-                                            .text_size(px(13.0))
-                                            .text_color(tokens.text_primary)
-                                            .child("Open a surface"),
-                                    )
-                                    .child(
-                                        div()
-                                            .id(("tool-panel-choose-terminal", pane_id))
-                                            .debug_selector(|| "tool-panel-choose-terminal".into())
-                                            .h(px(32.0))
-                                            .px(px(8.0))
-                                            .rounded(px(5.0))
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(10.0))
-                                            .cursor_pointer()
-                                            .hover(|style| style.bg(tokens.pane_header_btn_hover))
-                                            .child(
-                                                svg()
-                                                    .path("icons/terminal.svg")
-                                                    .size(px(15.0))
-                                                    .text_color(tokens.text_secondary),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_size(px(13.0))
-                                                    .text_color(tokens.text_primary)
-                                                    .child("Terminal"),
-                                            )
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                cx.listener(move |this, _, window, cx| {
-                                                    cx.stop_propagation();
-                                                    this.show_panel_terminal(pane_id, window, cx);
-                                                }),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .id(("tool-panel-choose-files", pane_id))
-                                            .debug_selector(|| "tool-panel-choose-files".into())
-                                            .h(px(32.0))
-                                            .px(px(8.0))
-                                            .rounded(px(5.0))
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(10.0))
-                                            .cursor_pointer()
-                                            .hover(|style| style.bg(tokens.pane_header_btn_hover))
-                                            .child(
-                                                svg()
-                                                    .path("icons/folder.svg")
-                                                    .size(px(15.0))
-                                                    .text_color(tokens.text_secondary),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_size(px(13.0))
-                                                    .text_color(tokens.text_primary)
-                                                    .child("Files"),
-                                            )
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                cx.listener(move |this, _, window, cx| {
-                                                    cx.stop_propagation();
-                                                    this.open_files_surface(pane_id, window, cx);
-                                                    this.schedule_workspace_save(cx);
-                                                }),
-                                            ),
-                                    ),
-                            )
-                            .into_any_element()
-                    } else if pane.files_active {
+                    .child(if pane.files_active {
                         div()
                             .size_full()
                             .capture_any_mouse_down(cx.listener(
@@ -18052,8 +18456,7 @@ impl AppState {
                     }),
             )
             .when(
-                !pane.tool_panel_picker
-                    && !pane.files_active
+                !pane.files_active
                     && pane.markdown_preview.is_none()
                     && pane.diff_preview.is_none()
                     && pane.should_show_bottom_input(cx)
@@ -21228,31 +21631,7 @@ impl Render for AppState {
             // pane) is rendered exclusively; other sessions' panes keep
             // running in the background.
             if self.settings.agent_layout {
-                let pane = session
-                    .panes
-                    .iter()
-                    .find(|pane| pane.one_mode && !pane.tool_panel)
-                    .or_else(|| {
-                        session.panes.iter().find(|pane| {
-                            pane.chat.active
-                                && !pane.tool_panel
-                                && Some(pane.id) == self.focused_pane_id
-                        })
-                    })
-                    .or_else(|| {
-                        session
-                            .panes
-                            .iter()
-                            .find(|pane| pane.chat.active && !pane.tool_panel)
-                    })
-                    .or_else(|| {
-                        session
-                            .panes
-                            .iter()
-                            .find(|pane| Some(pane.id) == self.focused_pane_id)
-                    })
-                    .or_else(|| session.panes.first());
-                if let Some(pane) = pane {
+                if let Some(pane) = self.one_mode_pane(session) {
                     if pane.chat.active
                         && pane.diff_preview.is_none()
                         && pane.markdown_preview.is_none()
@@ -21401,14 +21780,20 @@ impl Render for AppState {
                                 },
                             )
                             .into_any_element();
-                        if let Some(panel) = session.panes.iter().find(|candidate| {
-                            candidate.tool_panel && candidate.preview_owner == Some(pane.id)
-                        }) {
-                            let panel_id = panel.id;
+                        if self.tool_panel_is_open(pane) {
+                            let panel = self.active_tool_panel(pane);
+                            let panel_owner = pane.id;
                             let width = (workspace_width - px(8.0)).max(px(200.0));
-                            let ratio = panel.tool_panel_chat_ratio.unwrap_or(0.5);
+                            let ratio = pane
+                                .tool_panel_chat_ratio
+                                .or_else(|| {
+                                    self.tool_panel_panes(panel_owner)
+                                        .next()
+                                        .and_then(|pane| pane.tool_panel_chat_ratio)
+                                })
+                                .unwrap_or(0.5);
                             let owner = cx.entity().downgrade();
-                            h_resizable(("chat-tool-panel", panel_id))
+                            h_resizable(("chat-tool-panel", panel_owner))
                                 .child(
                                     resizable_panel()
                                         .size(width * ratio)
@@ -21420,7 +21805,43 @@ impl Render for AppState {
                                         .size(width * (1.0 - ratio))
                                         .size_range(px(100.0)..px(10000.0))
                                         .child(
-                                            self.render_terminal_pane(panel, false, _window, cx),
+                                            div()
+                                                .size_full()
+                                                .flex()
+                                                .flex_col()
+                                                .overflow_hidden()
+                                                .child(self.render_tool_panel_tabs(
+                                                    pane,
+                                                    panel.map(|tab| tab.id),
+                                                    cx,
+                                                ))
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .min_h_0()
+                                                        .overflow_hidden()
+                                                        .children(
+                                                            if let Some(focus) =
+                                                                &pane.tool_panel_chooser
+                                                            {
+                                                                Some(
+                                                                    self.render_tool_panel_chooser(
+                                                                        panel_owner,
+                                                                        focus,
+                                                                        cx,
+                                                                    )
+                                                                    .into_any_element(),
+                                                                )
+                                                            } else {
+                                                                panel.map(|tab| {
+                                                                    self.render_terminal_pane(
+                                                                        tab, false, _window, cx,
+                                                                    )
+                                                                    .into_any_element()
+                                                                })
+                                                            },
+                                                        ),
+                                                ),
                                         ),
                                 )
                                 .on_resize(move |state, _, cx| {
@@ -21430,7 +21851,7 @@ impl Render for AppState {
                                     }
                                     let ratio = (sizes[0] / (sizes[0] + sizes[1])).clamp(0.0, 1.0);
                                     let _ = owner.update(cx, |this, cx| {
-                                        if let Some(panel) = this.pane_mut(panel_id) {
+                                        if let Some(panel) = this.pane_mut(panel_owner) {
                                             panel.tool_panel_chat_ratio = Some(ratio);
                                         }
                                         this.schedule_workspace_save(cx);
@@ -21485,27 +21906,12 @@ impl Render for AppState {
             .agent_layout
             .then(|| self.active_session())
             .flatten()
-            .and_then(|session| {
-                session
-                    .panes
-                    .iter()
-                    .find(|pane| pane.one_mode && !pane.tool_panel)
-                    .or_else(|| {
-                        session.panes.iter().find(|pane| {
-                            pane.chat.active
-                                && !pane.tool_panel
-                                && Some(pane.id) == self.focused_pane_id
-                        })
-                    })
-                    .or_else(|| {
-                        session
-                            .panes
-                            .iter()
-                            .find(|pane| pane.chat.active && !pane.tool_panel)
-                    })
-                    .filter(|pane| pane.diff_preview.is_none() && pane.markdown_preview.is_none())
-                    .map(|pane| pane.id)
-            });
+            .and_then(|session| self.one_mode_pane(session))
+            .filter(|pane| {
+                pane.chat.active && pane.diff_preview.is_none() && pane.markdown_preview.is_none()
+            })
+            .filter(|pane| !self.tool_panel_is_open(pane))
+            .map(|pane| pane.id);
 
         let terminal_content = div()
             .flex()
@@ -24984,8 +25390,8 @@ mod pane_tests {
             assert_ne!(chat, 1);
             assert!(state.pane_ref(chat).unwrap().one_mode);
             state.open_tool_panel(chat, window, cx);
+            state.new_tool_panel_terminal(chat, window, cx);
             let panel = state.focused_pane_id.unwrap();
-            state.show_panel_terminal(panel, window, cx);
             state.set_chat_mode(panel, true, window, cx);
             assert!(!state.pane_ref(panel).unwrap().chat.active);
             state.switch_agent_layout(window, cx);
@@ -25011,64 +25417,107 @@ mod pane_tests {
     }
 
     #[test]
-    fn tool_panel_switches_views_and_saves_its_state() {
+    fn tool_panel_switches_tabs_without_replacing_terminals() {
         let mut cx = TestAppContext::new();
         let (mut cx, app_state) = open_app(&mut cx);
-        cx.update_window_entity(&app_state, |state, window, cx| {
-            state.settings.agent_layout = true;
-            state.pane_mut(1).unwrap().chat.active = true;
-            state.open_tool_panel(1, window, cx);
-            let panel = state.focused_pane_id.unwrap();
-            assert_eq!(state.pane_ref(panel).unwrap().preview_owner, Some(1));
-            assert!(state.pane_ref(panel).unwrap().tool_panel_picker);
-            assert!(
-                state.saved_workspace(cx).projects[0].sessions[0]
-                    .panes
-                    .iter()
-                    .find(|pane| pane.id == panel)
-                    .unwrap()
-                    .tool_panel_picker
-            );
-            state.show_panel_terminal(panel, window, cx);
-            assert!(state.pane_ref(panel).unwrap().diff_preview.is_none());
-            let saved = state.saved_workspace(cx);
-            let saved_panel = saved.projects[0].sessions[0]
-                .panes
-                .iter()
-                .find(|pane| pane.id == panel)
-                .unwrap();
-            assert_eq!(saved_panel.tool_panel_owner, Some(1));
-            assert!(!saved_panel.tool_panel_changes);
-            state.open_project_diff(panel, window, cx);
-            assert!(state.pane_ref(panel).unwrap().diff_preview.is_some());
-            assert!(
-                state.saved_workspace(cx).projects[0].sessions[0]
-                    .panes
-                    .iter()
-                    .find(|pane| pane.id == panel)
-                    .unwrap()
-                    .tool_panel_changes
-            );
-            assert_eq!(state.active_project().unwrap().sessions[0].panes.len(), 2);
-        });
-        cx.draw_frame().expect("tool panel draws beside chat");
-        assert!(cx.debug_bounds("open-tool-panel").is_some());
-        cx.update_window_entity(&app_state, |state, window, cx| {
-            state.open_tool_panel(1, window, cx);
-            state.settings.agent_layout = false;
-            let panel = state.focused_pane_id.unwrap();
-            state.focus_pane(panel, window, cx);
-            assert_eq!(state.focused_pane_id, Some(1));
-        });
-        cx.draw_frame().expect("regular layout hides One panel");
-        assert!(cx.debug_bounds("tool-panel-picker").is_none());
-        assert!(cx.debug_bounds("open-tool-panel").is_none());
         cx.update_window_entity(&app_state, |state, _, cx| {
             state.settings.agent_layout = true;
+            state.pane_mut(1).unwrap().chat.active = true;
             cx.notify();
         });
-        cx.draw_frame().expect("One layout restores panel");
-        assert!(cx.debug_bounds("tool-panel-picker").is_some());
+        fn click(cx: &mut gpui::VisualTestContext, selector: &'static str) {
+            cx.draw_frame().unwrap();
+            let center = cx.debug_bounds(selector).expect(selector).center();
+            cx.simulate_mouse_move(center, None, Modifiers::none());
+            cx.simulate_click(center, Modifiers::none());
+        }
+        click(&mut cx, "open-tool-panel");
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("tool-panel-chooser").is_some());
+        app_state.read_with(&cx, |state, _| {
+            assert_eq!(state.active_session().unwrap().panes.len(), 1)
+        });
+        cx.simulate_keystrokes("t");
+        let first = app_state.read_with(&cx, |state, _| state.focused_pane_id.unwrap());
+        click(&mut cx, "add-tool-panel-surface");
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("tool-panel-chooser").is_some());
+        cx.simulate_keystrokes("escape");
+        app_state.read_with(&cx, |state, _| {
+            assert_eq!(state.focused_pane_id, Some(first))
+        });
+        click(&mut cx, "add-tool-panel-surface");
+        click(&mut cx, "tool-panel-choose-terminal");
+        let second = app_state.read_with(&cx, |state, _| state.focused_pane_id.unwrap());
+        assert_ne!(first, second);
+        app_state.read_with(&cx, |state, _| {
+            let visible = state.visible_pane_ids();
+            assert!(!visible.contains(&first));
+            assert!(visible.contains(&second));
+        });
+        click(&mut cx, "add-tool-panel-surface");
+        click(&mut cx, "tool-panel-choose-files");
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("files-workspace").is_some());
+        let files = app_state.read_with(&cx, |state, _| state.focused_pane_id.unwrap());
+        click(&mut cx, "hide-tool-panel");
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("tool-panel-tabs").is_none());
+        let workspace = app_state.read_with(&cx, |state, cx| {
+            let saved = state.saved_workspace(cx);
+            let panes = &saved.projects[0].sessions[0].panes;
+            let owner = panes.iter().find(|pane| pane.id == 1).unwrap();
+            assert!(owner.tool_panel_hidden);
+            assert_eq!(owner.tool_panel_tab, Some(files));
+            for id in [first, second, files] {
+                assert_eq!(
+                    panes
+                        .iter()
+                        .find(|pane| pane.id == id)
+                        .unwrap()
+                        .tool_panel_owner,
+                    Some(1)
+                );
+            }
+            serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap()
+        });
+        cx.update_window_entity(&app_state, |state, window, cx| {
+            state.startup_loaded = false;
+            state.settings.restore.agent_history = false;
+            state.apply_saved_workspace(
+                RestoreData {
+                    workspace,
+                    scrollbacks: HashMap::new(),
+                    transcripts: HashMap::new(),
+                    usage: HashMap::new(),
+                },
+                cx,
+            );
+            state.ensure_panes_input_state(window, cx);
+        });
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("tool-panel-tabs").is_none());
+        click(&mut cx, "open-tool-panel");
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("files-workspace").is_some());
+        cx.update_window_entity(&app_state, |state, window, cx| {
+            state.select_tool_panel_tab(1, second, window, cx);
+            state.open_project_diff(second, window, cx);
+            let changes = state.focused_pane_id.unwrap();
+            assert_ne!(changes, second);
+            assert!(state.pane_ref(changes).unwrap().diff_preview.is_some());
+            state.select_tool_panel_tab(1, second, window, cx);
+            state.close_pane(changes, window, cx);
+            assert_eq!(state.focused_pane_id, Some(second));
+            state.close_pane(second, window, cx);
+            assert_eq!(state.focused_pane_id, Some(first));
+            state.settings.agent_layout = false;
+            state.focus_pane(first, window, cx);
+            assert_eq!(state.focused_pane_id, Some(1));
+        });
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("tool-panel-tabs").is_none());
+        assert!(cx.debug_bounds("open-tool-panel").is_none());
     }
 
     #[test]

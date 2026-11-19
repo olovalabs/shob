@@ -5,6 +5,16 @@ use std::process::Command;
 
 const MAX_BYTES: u64 = 4 * 1024 * 1024;
 
+pub(super) fn is_markdown_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            ["md", "markdown", "mdown"]
+                .iter()
+                .any(|markdown| ext.eq_ignore_ascii_case(markdown))
+        })
+}
+
 pub fn read_markdown(path: &Path) -> Result<String, &'static str> {
     let file = std::fs::File::open(path).map_err(|_| "Could not open Markdown file.")?;
     let mut bytes = Vec::new();

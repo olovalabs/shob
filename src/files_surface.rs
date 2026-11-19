@@ -597,7 +597,7 @@ impl FilesSurface {
                 && owner.pane_ref(self.pane_id).is_some_and(|p| p.files_active)
         })
     }
-    fn focus_selected(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn focus_selected(&self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(editor) = self
             .editors
             .iter()
@@ -1465,6 +1465,7 @@ mod tests {
     fn files_workspace_restores_drafts_and_renders_both_themes() {
         use crate::resize_tests::{DrawFrame as _, TestAppContext, open_app};
         let fixture = tempfile::tempdir().unwrap();
+        let captures = tempfile::tempdir().unwrap();
         std::fs::create_dir(fixture.path().join("src")).unwrap();
         std::fs::write(fixture.path().join("src/main.rs"), "fn main() {}\n").unwrap();
         let mut app = TestAppContext::new();
@@ -1478,6 +1479,9 @@ mod tests {
         cx.update_window_entity(&state, |state, window, cx| {
             state.projects[0].path = root.clone();
             state.settings.agent_layout = true;
+            let chat = &mut state.pane_mut(1).unwrap().chat;
+            chat.active = true;
+            chat.workspace_override = Some(root.clone());
             state.open_tool_panel(1, window, cx);
         });
         cx.draw_frame().unwrap();
@@ -1485,7 +1489,7 @@ mod tests {
             window
                 .render_to_image()
                 .unwrap()
-                .save("/tmp/shob-files-before.png")
+                .save(captures.path().join("before.png"))
                 .unwrap()
         });
         cx.update_window_entity(&state, |state, window, cx| {
@@ -1538,8 +1542,6 @@ mod tests {
             serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
         cx.update_window_entity(&state, |state, window, cx| {
             let panel = state.focused_pane_id.unwrap();
-            state.show_panel_terminal(panel, window, cx);
-            state.pane_mut(panel).unwrap().files_surface = None;
             let files = state.build_files_surface(panel, root.clone(), saved, window, cx);
             state.pane_mut(panel).unwrap().files_surface = Some(files);
             state.pane_mut(panel).unwrap().files_active = true;
@@ -1561,7 +1563,7 @@ mod tests {
                 window
                     .render_to_image()
                     .unwrap()
-                    .save(format!("/tmp/shob-files-after-{name}.png"))
+                    .save(captures.path().join(format!("after-{name}.png")))
                     .unwrap()
             });
         }
@@ -1622,7 +1624,7 @@ mod tests {
             window
                 .render_to_image()
                 .unwrap()
-                .save("/tmp/shob-files-git.png")
+                .save(captures.path().join("git.png"))
                 .unwrap()
         });
     }

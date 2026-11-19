@@ -78,6 +78,8 @@ Keep your development environment organized.
 - Restore previous workspaces
 - Preserve terminal scrollback and conversations
 
+An empty right panel in One mode opens a surface picker for Terminal, Files, and Diff. **+** opens the same picker from an existing tab. Terminal tabs take input directly at the shell prompt. Hiding the panel keeps its shells running; restarting Shob restores the tabs and their selection, not the shell processes.
+
 The Files surface restores open files, unsaved drafts, expanded folders, and the commit message. Use Refresh to pick up external changes. Editing supports UTF-8 files up to 1 MiB and eight open tabs; saves refuse to overwrite a file changed on disk. Read-only diff snapshots and scroll positions are transient.
 
 ### Make It Yours
