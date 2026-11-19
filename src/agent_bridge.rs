@@ -208,6 +208,19 @@ impl QueuedEvent for AgentEvent {
 pub struct AgentBridge {
     backend: Backend,
     trace_id: u64,
+    first_prompt: Option<FirstPrompt>,
+}
+
+enum FirstPrompt {
+    Waiting(embedded::SessionTitleRequest, DeferredPrompt),
+    Ready(DeferredPrompt),
+    Cancelled,
+}
+
+struct DeferredPrompt {
+    text: String,
+    resume: Option<String>,
+    context: Option<String>,
 }
 
 enum Backend {
@@ -259,12 +272,14 @@ impl AgentBridge {
                 |backend| Self {
                     backend: Backend::Rpc(backend),
                     trace_id,
+                    first_prompt: None,
                 },
             )
         } else {
             EmbeddedBridge::spawn_session(cwd, session, model, trace_id).map(|backend| Self {
                 backend: Backend::Embedded(backend),
                 trace_id,
+                first_prompt: None,
             })
         }
     }
@@ -313,6 +328,29 @@ impl AgentBridge {
         self.send_prompt_with_context(prompt, None, None)
     }
 
+    pub(crate) fn send_first_prompt(
+        &mut self,
+        prompt: &str,
+        resume: Option<&str>,
+        context: Option<String>,
+        cwd: &Path,
+        selector: &str,
+    ) -> Result<(), String> {
+        let Ok(title) = embedded::SessionTitleRequest::spawn(cwd, selector, prompt, signal_wake)
+        else {
+            return self.send_prompt_with_context(prompt, resume, context);
+        };
+        self.first_prompt = Some(FirstPrompt::Waiting(
+            title,
+            DeferredPrompt {
+                text: prompt.to_owned(),
+                resume: resume.map(str::to_owned),
+                context,
+            },
+        ));
+        Ok(())
+    }
+
     pub fn send_prompt_with_context(
         &mut self,
         prompt: &str,
@@ -357,6 +395,11 @@ impl AgentBridge {
     }
 
     pub fn cancel(&mut self) -> Result<(), String> {
+        if self.first_prompt.is_some() {
+            self.first_prompt = Some(FirstPrompt::Cancelled);
+            signal_wake();
+            return Ok(());
+        }
         match &mut self.backend {
             Backend::Embedded(bridge) => {
                 if bridge.closed {
@@ -385,9 +428,44 @@ impl AgentBridge {
     }
 
     pub fn poll(&mut self) -> Vec<AgentEvent> {
-        match &mut self.backend {
+        let mut events = match &mut self.backend {
             Backend::Embedded(bridge) => bridge.poll(),
             Backend::Rpc(bridge) => bridge.poll(),
+        };
+        let Some(first_prompt) = self.first_prompt.take() else {
+            return events;
+        };
+        if events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::Done | AgentEvent::Closed))
+        {
+            return events;
+        }
+        match first_prompt {
+            FirstPrompt::Waiting(mut title, prompt) => match title.poll() {
+                std::task::Poll::Pending => {
+                    self.first_prompt = Some(FirstPrompt::Waiting(title, prompt));
+                }
+                std::task::Poll::Ready(Some(title)) => {
+                    // Let the host apply the sidebar title before starting the answer.
+                    events.push(AgentEvent::Title(title));
+                    self.first_prompt = Some(FirstPrompt::Ready(prompt));
+                    signal_wake();
+                }
+                std::task::Poll::Ready(None) => self.dispatch_first_prompt(prompt, &mut events),
+            },
+            FirstPrompt::Ready(prompt) => self.dispatch_first_prompt(prompt, &mut events),
+            FirstPrompt::Cancelled => events.push(AgentEvent::Done),
+        }
+        events
+    }
+
+    fn dispatch_first_prompt(&mut self, prompt: DeferredPrompt, events: &mut Vec<AgentEvent>) {
+        if let Err(error) =
+            self.send_prompt_with_context(&prompt.text, prompt.resume.as_deref(), prompt.context)
+        {
+            events.push(AgentEvent::Error(error));
+            events.push(AgentEvent::Done);
         }
     }
 }

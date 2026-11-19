@@ -2175,8 +2175,7 @@ fn provider_featured_rank(id: &str) -> usize {
     }
 }
 
-/// A readable conversation name from the first prompt, used to label the
-/// session in the sidebar. Backends that generate their own title replace it.
+/// Fallback sidebar title when the first prompt's title request fails.
 fn agent_title_from_prompt(prompt: &str) -> Option<String> {
     let line = prompt
         .lines()
@@ -10469,6 +10468,7 @@ impl AppState {
                                 agent_bridge::AgentEvent::Title(title) => {
                                     pane.chat.set_agent_title(title);
                                     titled_panes.push(pane.id);
+                                    session_changed = true;
                                 }
                                 other => push_chat_event(&mut pane.chat.messages, other),
                             }
@@ -10588,7 +10588,7 @@ impl AppState {
             self.send_queued_follow_up(pane_id, cx);
         }
         for pane_id in titled_panes {
-            self.sync_session_title(pane_id, cx);
+            self.sync_session_title(pane_id);
         }
         for pane_id in done_panes {
             if let Some(pane) = self.pane_ref(pane_id) {
@@ -10612,7 +10612,7 @@ impl AppState {
     /// Mirror a pane's conversation name onto its session, so the sidebar names
     /// the agent by what it is working on. Panes without a conversation title
     /// (plain shells) keep the OSC-derived title.
-    fn sync_session_title(&mut self, pane_id: usize, cx: &mut Context<Self>) {
+    fn sync_session_title(&mut self, pane_id: usize) {
         let Some(&(p_idx, s_idx, _)) = self.pane_index.get(&pane_id) else {
             return;
         };
@@ -10623,6 +10623,14 @@ impl AppState {
         else {
             return;
         };
+        let primary = self
+            .focused_pane_id
+            .filter(|id| session.panes.iter().any(|pane| pane.id == *id))
+            .or_else(|| session.pane_tree.as_ref().map(|tree| tree.first_leaf()))
+            .or_else(|| session.panes.first().map(|pane| pane.id));
+        if primary != Some(pane_id) {
+            return;
+        }
         let Some(title) = session
             .panes
             .iter()
@@ -10637,7 +10645,6 @@ impl AppState {
         }
         session.title = SharedString::from(title);
         session.display_title = truncate_title(&session.title);
-        self.mark_dirty(cx);
     }
 
     fn submit_agent_prompt(&mut self, pane_id: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -10848,11 +10855,6 @@ impl AppState {
         // A submitted turn (including a startup error) belongs at the live end.
         pane.chat.autoscroll = true;
         pane.chat.scroll_to_end();
-        if pane.chat.conversation_title().is_none()
-            && let Some(title) = agent_title_from_prompt(prompt.trim())
-        {
-            pane.chat.set_prompt_title(title);
-        }
         pane.chat.startup_error = None;
         if save_history && pane.chat.conversation.is_none() {
             pane.chat.conversation = Some(conversations::Log::open(
@@ -10905,14 +10907,30 @@ impl AppState {
             None
         };
         let resume = pane.chat.bridge_resume.as_deref();
-        let sent = match pane
-            .chat
-            .bridge
-            .as_mut()
-            .unwrap()
-            .send_prompt_with_context(&prompt, resume, context)
-        {
+        let needs_title = pane.chat.conversation_title().is_none()
+            && pane.chat.first_response_provider.is_none()
+            && !pane
+                .chat
+                .messages
+                .iter()
+                .any(|message| message.role == ChatRole::User);
+        let bridge = pane.chat.bridge.as_mut().unwrap();
+        let sent = if needs_title {
+            bridge.send_first_prompt(
+                &prompt,
+                resume,
+                context,
+                pane.chat.cwd.as_deref().unwrap(),
+                &agent_model_selector(pane.chat.selected_model.as_ref().unwrap()),
+            )
+        } else {
+            bridge.send_prompt_with_context(&prompt, resume, context)
+        };
+        let sent = match sent {
             Ok(()) => {
+                if needs_title && let Some(title) = agent_title_from_prompt(&prompt) {
+                    pane.chat.set_prompt_title(title);
+                }
                 pane.chat.bridge_needs_context = false;
                 if let Some(log) = pane.chat.conversation.as_mut() {
                     log.append_user(&prompt);
@@ -24421,13 +24439,19 @@ mod resize_tests {
             let chat = &mut s.pane_mut(pane_id).unwrap().chat;
             chat.set_prompt_title("Refactor the auth module".into());
             chat.set_agent_title("🔐 AUTH: Add token refresh".into());
-            let foregrounds: HashMap<u32, Arc<[String]>> = HashMap::new();
-            s.poll_sessions_status_with(&foregrounds, cx);
+            s.sync_session_title(pane_id);
         });
-        state.read_with(&cx, |s, _| {
+        state.read_with(&cx, |s, cx| {
+            let title = "🔐 AUTH: Add token refresh";
+            let session = &s.projects[0].sessions[0];
+            assert_eq!(session.display_title.as_str(), title);
+            let saved = s.saved_workspace(cx);
             assert_eq!(
-                s.projects[0].sessions[0].title.as_str(),
-                "🔐 AUTH: Add token refresh"
+                saved.projects[0].sessions[0].panes[0]
+                    .chat
+                    .agent_title
+                    .as_deref(),
+                Some(title)
             );
         });
     }
