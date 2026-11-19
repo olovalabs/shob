@@ -71,6 +71,7 @@ mod status_bus;
 mod stream_timing;
 mod subagent_chat;
 mod theme;
+mod token_efficiency;
 mod updater;
 mod workspace_state;
 mod workspace_switcher;
@@ -22239,6 +22240,13 @@ fn main() -> Result<()> {
         Some("status-hook") => return integrations::run_hook(&args.collect::<Vec<_>>()),
         Some("status-event") => return cli::run_status_event(),
         Some("status") => return cli::run_status(&args.collect::<Vec<_>>()),
+        Some("token-bench") => {
+            let code = token_efficiency::bench_main::main();
+            return match code {
+                std::process::ExitCode::SUCCESS => Ok(()),
+                _ => anyhow::bail!("token-efficiency benchmark failed"),
+            };
+        }
         Some("pane") => {
             #[cfg(unix)]
             return shob_compat::run_cli(&args.collect::<Vec<_>>());
@@ -22247,7 +22255,7 @@ fn main() -> Result<()> {
         }
         Some("--help" | "-h") => {
             println!(
-                "Usage: shob [report|skill|integration|status|status-event|status-hook]\nNative compatibility: shob pane <report-agent|report-agent-session|release-agent> ..."
+                "Usage: shob [report|skill|integration|status|status-event|status-hook|token-bench]\nNative compatibility: shob pane <report-agent|report-agent-session|release-agent> ..."
             );
             return Ok(());
         }
