@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **New chat** and the active project’s **+** button focus the current empty chat instead of creating a duplicate session.
 - Show the workspace, branch, and project controls under the focused Agent composer only on the welcome screen.
 - Keep “Open project folder…” inside the project picker, below the scrollable project list.
 - Keep keyboard focus in the Git branch picker and make the whole search box clickable, including its padding.
@@ -22,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Restored CI formatting compliance and removed a non-looping PTY benchmark readiness loop rejected by Clippy.
 
 ### Added
+- Add flat **New chat** and **Search** rows above the sidebar projects. Search opens in place and matches session titles across all open projects, including collapsed projects and sessions below the preview limit.
 - Show conversation input/output tokens, cache reads/writes, and estimated USD cost beneath the Agent input. Totals update after each model response, survive history restoration, and show unavailable pricing as unknown rather than free; hover for exact token counts.
 - Added native provider/model discovery for all 67 OMP README integrations while preserving existing provider/model identities: 104 catalog providers, 6,279 frozen model entries, and real local/account model discovery. Chat selection excludes non-chat task models without deleting their metadata.
 - Added native Rust API-key and browser/device OAuth flows, request-time renewal and vendor-specific inference transports; providers supporting both methods expose both. No OMP executable or runtime is required.

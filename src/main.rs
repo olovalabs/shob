@@ -4364,6 +4364,12 @@ fn sidebar_visible_sessions(count: usize, visible: usize, active: Option<usize>)
     indices
 }
 
+struct SidebarSearch {
+    input: Entity<InputState>,
+    previous_focus: Option<gpui::FocusHandle>,
+    _subscription: gpui::Subscription,
+}
+
 #[derive(Clone)]
 struct FocusedChatScrollbar {
     pane_id: usize,
@@ -4458,6 +4464,7 @@ struct AppState {
     default_agent_model: Option<agent_auth::AgentModel>,
     pub sidebar_visible: bool,
     compact_sidebar_open: bool,
+    sidebar_search: Option<SidebarSearch>,
     integration_panel_visible: bool,
     integration_feedback: SharedString,
     pub sidebar_width: Pixels,
@@ -6797,6 +6804,9 @@ impl AppState {
                 project.active_session_idx = project.sessions.len() - 1;
                 project.expanded = true;
             }
+            self.active_view = ActiveView::Workspace;
+            self.compact_sidebar_open = false;
+            self.sidebar_search = None;
             self.active_project_idx = project_idx;
             self.focused_pane_id = Some(next_id);
             self.rebuild_session_index();
@@ -6808,21 +6818,55 @@ impl AppState {
         }
     }
 
-    /// New session in whichever project is currently open in the workspace.
-    #[allow(dead_code)]
-    fn create_new_session_for_active_project(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let project_idx = self.active_project_idx;
-        if self.projects.get(project_idx).is_none() {
-            // With no project open there is nothing to add a session to, so
-            // the request turns into "open a project first".
-            self.select_folder_and_add_project(window, cx);
+    fn focus_empty_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if let Some(pane) = self.active_session().and_then(|session| {
+            session
+                .panes
+                .iter()
+                .find(|pane| self.settings.agent_layout && pane.one_mode && !pane.tool_panel)
+                .or_else(|| {
+                    session
+                        .panes
+                        .iter()
+                        .find(|pane| Some(pane.id) == self.focused_pane_id)
+                })
+        }) && pane.chat.active
+            && pane.chat.messages.is_empty()
+            && !pane.chat.running
+            && pane.attachments.is_empty()
+            && pane
+                .input_state
+                .as_ref()
+                .is_some_and(|input| input.read(cx).text().len() == 0)
+        {
+            let pane_id = pane.id;
+            self.sidebar_search = None;
+            self.compact_sidebar_open = false;
+            self.focus_pane(pane_id, window, cx);
+            return true;
+        }
+        false
+    }
+
+    fn create_new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.focus_empty_chat(window, cx) {
             return;
         }
-        self.create_new_session_in_project(project_idx, window, cx);
+
+        if self.active_project().is_some() {
+            self.create_project_session(self.active_project_idx, true, window, cx);
+            return;
+        }
+
+        self.select_folder_and_add_project(window, cx);
+        if !self.settings.agent_layout
+            && let Some(pane_id) = self
+                .active_session()
+                .and_then(|session| session.panes.first())
+                .map(|pane| pane.id)
+        {
+            self.set_chat_mode(pane_id, true, window, cx);
+        }
     }
 
     /// Close one session (all of its panes) without touching the other
@@ -11186,6 +11230,7 @@ impl AppState {
         // Workspace input must not steal focus from a transient modal.
         if self.active_view == ActiveView::Workspace
             && self.history_search.is_none()
+            && !self.sidebar_search_focused(window, cx)
             && let Some(pane_id) = self.focused_pane_id
             && let Some(&(p_idx, s_idx, pane_idx)) = self.pane_index.get(&pane_id)
             && let Some(project) = self.projects.get(p_idx)
@@ -18292,15 +18337,223 @@ impl AppState {
         cx.notify();
     }
 
-    /// The whole left rail: a toolbar, the Projects header with its "Open
-    /// project" action, and one collapsible block per open project.
+    fn open_sidebar_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let previous_focus = window.focused(cx);
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search sessions"));
+        let subscription = cx.subscribe(&input, |_, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        });
+        input.update(cx, |state, cx| state.focus(window, cx));
+        self.sidebar_search = Some(SidebarSearch {
+            input,
+            previous_focus,
+            _subscription: subscription,
+        });
+        cx.notify();
+    }
+
+    fn close_sidebar_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(search) = self.sidebar_search.take() {
+            if search.input.read(cx).focus_handle().is_focused(window)
+                && let Some(previous_focus) = search.previous_focus
+            {
+                window.focus(&previous_focus, cx);
+            }
+            cx.notify();
+        }
+    }
+
+    fn sidebar_search_handles_key(
+        &mut self,
+        key: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let focused = self.sidebar_search_focused(window, cx);
+        if focused && key == "escape" {
+            cx.stop_propagation();
+            self.close_sidebar_search(window, cx);
+        }
+        focused
+    }
+
+    fn sidebar_search_focused(&self, window: &Window, cx: &App) -> bool {
+        self.sidebar_search
+            .as_ref()
+            .is_some_and(|search| search.input.read(cx).focus_handle().is_focused(window))
+    }
+
+    fn render_sidebar_actions(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let tokens = self.tokens(cx);
+        let menu_row =
+            |id, label, icon, activate: fn(&mut Self, &mut Window, &mut Context<Self>)| {
+                div()
+                    .id(id)
+                    .debug_selector(move || String::from(id))
+                    .h(px(30.0))
+                    .px(px(6.0))
+                    .rounded(px(6.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .cursor(CursorStyle::PointingHand)
+                    .hover(move |row| row.bg(tokens.sidebar_item_hover))
+                    .text_size(px(13.0))
+                    .text_color(tokens.sidebar_fg)
+                    .child(
+                        svg()
+                            .path(icon)
+                            .size(px(15.0))
+                            .flex_none()
+                            .text_color(tokens.sidebar_icon),
+                    )
+                    .child(label)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            activate(this, window, cx);
+                        }),
+                    )
+            };
+        div()
+            .flex()
+            .flex_col()
+            .flex_shrink_0()
+            .gap(px(4.0))
+            .px(px(8.0))
+            .pt(px(8.0))
+            .child(menu_row(
+                "sidebar-new-thread",
+                "New chat",
+                "session-create.svg",
+                Self::create_new_chat,
+            ))
+            .child(if let Some(search) = &self.sidebar_search {
+                div()
+                    .id("sidebar-search-field")
+                    .debug_selector(|| "sidebar-search-field".into())
+                    .h(px(30.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(4.0))
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            Input::new(&search.input)
+                                .w_full()
+                                .with_size(gpui_component::Size::Small),
+                        ),
+                    )
+                    .child(
+                        sidebar_icon_button(
+                            "sidebar-search-close",
+                            "icons/x.svg",
+                            12.0,
+                            &tokens,
+                            cx.listener(|this, _, window, cx| {
+                                this.close_sidebar_search(window, cx);
+                            }),
+                        )
+                        .tooltip(|window, cx| {
+                            gpui_component::tooltip::Tooltip::new("Close search").build(window, cx)
+                        }),
+                    )
+                    .into_any_element()
+            } else {
+                menu_row(
+                    "sidebar-search",
+                    "Search",
+                    "ui_icons/search.svg",
+                    Self::open_sidebar_search,
+                )
+                .into_any_element()
+            })
+    }
+
+    fn render_sidebar_search_results(
+        &self,
+        query: &str,
+        cx: &mut Context<Self>,
+    ) -> Vec<gpui::AnyElement> {
+        let tokens = self.tokens(cx);
+        let mut rows = Vec::new();
+        for (project_idx, project) in self.projects.iter().enumerate() {
+            let mut matches = project
+                .sessions
+                .iter()
+                .enumerate()
+                .rev()
+                .filter(|(_, session)| {
+                    let title = session.title.as_str();
+                    if title.is_ascii() {
+                        title
+                            .as_bytes()
+                            .windows(query.len())
+                            .any(|part| part.eq_ignore_ascii_case(query.as_bytes()))
+                    } else {
+                        title.to_lowercase().contains(query)
+                    }
+                })
+                .peekable();
+            if matches.peek().is_none() {
+                continue;
+            }
+            rows.push(
+                div()
+                    .px(px(14.0))
+                    .pt(px(12.0))
+                    .pb(px(4.0))
+                    .truncate()
+                    .text_size(px(13.0))
+                    .text_color(tokens.sidebar_section_header)
+                    .child(project.name.clone())
+                    .into_any_element(),
+            );
+            for (session_idx, session) in matches {
+                rows.push(self.render_session_entry(
+                    project_idx,
+                    session_idx,
+                    session,
+                    project_idx == self.active_project_idx
+                        && session_idx == project.active_session_idx,
+                    cx,
+                ));
+            }
+        }
+        if rows.is_empty() {
+            rows.push(
+                div()
+                    .id("sidebar-search-empty")
+                    .debug_selector(|| "sidebar-search-empty".into())
+                    .px(px(14.0))
+                    .py(px(12.0))
+                    .text_size(px(12.0))
+                    .text_color(tokens.sidebar_muted)
+                    .child("No matching sessions")
+                    .into_any_element(),
+            );
+        }
+        rows
+    }
+
     fn render_sidebar(&self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let project_rows: Vec<gpui::AnyElement> = self
-            .projects
-            .iter()
-            .enumerate()
-            .map(|(p_idx, project)| self.render_project_entry(p_idx, project, cx))
-            .collect();
+        let value = self
+            .sidebar_search
+            .as_ref()
+            .map(|search| search.input.read(cx).value());
+        let query = value.as_ref().map_or("", |value| value.trim());
+        let searching = !query.is_empty();
+        let project_rows = if searching {
+            self.render_sidebar_search_results(&query.to_lowercase(), cx)
+        } else {
+            self.projects
+                .iter()
+                .enumerate()
+                .map(|(p_idx, project)| self.render_project_entry(p_idx, project, cx))
+                .collect()
+        };
 
         let tokens = self.tokens(cx);
 
@@ -18331,6 +18584,7 @@ impl AppState {
                     .priority(100),
                 )
             })
+            .child(self.render_sidebar_actions(cx))
             .child(
                 div()
                     .flex_1()
@@ -18349,8 +18603,12 @@ impl AppState {
                             .justify_between()
                             .text_size(px(13.0))
                             .text_color(tokens.sidebar_section_header)
-                            .child("Projects")
-                            .when(!self.projects.is_empty(), |this| {
+                            .child(if searching {
+                                "Search results"
+                            } else {
+                                "Projects"
+                            })
+                            .when(!searching && !self.projects.is_empty(), |this| {
                                 let all_expanded = self.projects.iter().all(|p| p.expanded);
                                 let label = if all_expanded {
                                     "Collapse all projects"
@@ -18388,7 +18646,7 @@ impl AppState {
                     )
                     .pb(px(10.0))
                     .children(project_rows)
-                    .when(self.projects.is_empty(), |this| {
+                    .when(!searching && self.projects.is_empty(), |this| {
                         this.child(self.render_sidebar_empty_state(cx))
                     }),
             )
@@ -18396,14 +18654,15 @@ impl AppState {
                 this.child(self.render_integrations_panel(cx))
             })
             .when(
-                self.projects.iter().any(|project| {
-                    project.sessions.iter().any(|session| {
-                        session
-                            .panes
-                            .iter()
-                            .any(|pane| pane.status == SessionStatus::Working)
-                    })
-                }),
+                !searching
+                    && self.projects.iter().any(|project| {
+                        project.sessions.iter().any(|session| {
+                            session
+                                .panes
+                                .iter()
+                                .any(|pane| pane.status == SessionStatus::Working)
+                        })
+                    }),
                 |this| this.child(self.render_running_sessions(cx)),
             )
             .child(self.render_sidebar_footer(cx));
@@ -19777,6 +20036,7 @@ impl AppState {
                 16.0,
                 &tokens,
                 cx.listener::<MouseDownEvent>(|this, _, window, cx| {
+                    this.close_sidebar_search(window, cx);
                     if window.viewport_size().width < COMPACT_WINDOW_WIDTH {
                         this.compact_sidebar_open = false;
                         cx.notify();
@@ -20203,7 +20463,11 @@ impl AppState {
                         13.0,
                         &tokens,
                         cx.listener::<MouseDownEvent>(move |this, _, window, cx| {
-                            this.create_new_session_in_project(project_idx, window, cx);
+                            if project_idx != this.active_project_idx
+                                || !this.focus_empty_chat(window, cx)
+                            {
+                                this.create_new_session_in_project(project_idx, window, cx);
+                            }
                         }),
                     )
                     .invisible()
@@ -20724,6 +20988,7 @@ impl AppState {
         if session_idx >= project.sessions.len() {
             return;
         }
+        self.sidebar_search = None;
         project.active_session_idx = session_idx;
         project.expanded = true;
         self.active_project_idx = project_idx;
@@ -20880,6 +21145,9 @@ impl Render for AppState {
         }
         let sidebar_docked =
             Self::sidebar_docked(self.sidebar_visible, _window.viewport_size().width);
+        if !sidebar_docked && !self.compact_sidebar_open {
+            self.close_sidebar_search(_window, cx);
+        }
         self.ensure_panes_input_state(_window, cx);
 
         let tokens = self.tokens(cx);
@@ -21389,6 +21657,10 @@ impl Render for AppState {
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 let keystroke = &event.keystroke;
 
+                if this.sidebar_search_handles_key(&keystroke.key, window, cx) {
+                    return;
+                }
+
                 if this.compact_sidebar_open && keystroke.key == "escape" {
                     this.compact_sidebar_open = false;
                     cx.stop_propagation();
@@ -21487,7 +21759,8 @@ impl Render for AppState {
                         .bg(rgba(0x00000080))
                         .on_mouse_down(
                             MouseButton::Left,
-                            cx.listener(|this, _, _, cx| {
+                            cx.listener(|this, _, window, cx| {
+                                this.close_sidebar_search(window, cx);
                                 this.compact_sidebar_open = false;
                                 cx.notify();
                             }),
@@ -21888,6 +22161,7 @@ fn main() -> Result<()> {
                         focused_pane_id: None,
                         sidebar_visible: app_settings.sidebar.visible,
                         compact_sidebar_open: false,
+                        sidebar_search: None,
                         active_view: ActiveView::Workspace,
                         theme_preference: app_settings.theme,
                         palette_scheme: app_settings.palette_scheme,
@@ -22553,6 +22827,7 @@ mod resize_tests {
             focused_pane_id: Some(1),
             sidebar_visible: true,
             compact_sidebar_open: false,
+            sidebar_search: None,
             active_view: ActiveView::Workspace,
             theme_preference: ThemePreference::System,
             palette_scheme: PaletteScheme::default(),
@@ -23199,6 +23474,7 @@ mod resize_tests {
             s.rebuild_session_index();
             cx.notify();
         });
+        cx.simulate_resize(size(px(1200.0), px(900.0)));
         cx.simulate_mouse_move(point(px(600.0), px(400.0)), None, Modifiers::none());
         cx.run_until_parked();
         cx.draw_frame().unwrap();
@@ -25207,7 +25483,7 @@ mod pane_tests {
         let new_pane_id = app_state.read_with(&cx, |state, _| state.focused_pane_id.unwrap());
 
         cx.update_window_entity(&app_state, |state, window, cx| {
-            state.create_new_session_for_active_project(window, cx);
+            state.create_new_session_in_project(0, window, cx);
         });
         cx.draw_frame().expect("frame after adding a session");
 
@@ -25549,44 +25825,73 @@ mod pane_tests {
     fn new_sidebar_session_renders_first_and_stays_on_the_first_page() {
         let mut cx = TestAppContext::new();
         let (mut cx, app_state) = open_app(&mut cx);
-        let (oldest_id, newest_id, previous_id) =
-            cx.update_window_entity(&app_state, |state, window, cx| {
-                for idx in 2..=6 {
-                    let title: SharedString = format!("Session {idx}").into();
-                    state.projects[0].sessions.push(Session {
-                        id: idx,
-                        uid: paths::uid("s"),
-                        title: title.clone(),
-                        display_title: title,
-                        logo: logos::default_logo(),
-                        pane_tree: None,
-                        maximized_pane_id: None,
-                        panes: Vec::new(),
-                        status: SessionStatus::Idle,
-                    });
-                }
-                state.next_id = 7;
-                state.rebuild_session_index();
-                state.create_new_session_in_project(0, window, cx);
-                let project = &state.projects[0];
-                let newest = project.sessions.last().unwrap().id;
-                assert_eq!(project.active_session_idx, project.sessions.len() - 1);
-                assert_eq!(
-                    sidebar_session_indices(project.sessions.len(), project.visible_session_count)
-                        .next(),
-                    Some(project.active_session_idx)
-                );
-                (project.sessions[0].id, newest, 6)
-            });
-        assert_eq!((oldest_id, newest_id, previous_id), (1, 7, 6));
+        cx.update_window_entity(&app_state, |state, _, cx| {
+            for idx in 2..=6 {
+                let title: SharedString = format!("Session {idx}").into();
+                state.projects[0].sessions.push(Session {
+                    id: idx,
+                    uid: paths::uid("s"),
+                    title: title.clone(),
+                    display_title: title,
+                    logo: logos::default_logo(),
+                    pane_tree: None,
+                    maximized_pane_id: None,
+                    panes: Vec::new(),
+                    status: SessionStatus::Idle,
+                });
+            }
+            state.next_id = 7;
+            state.rebuild_session_index();
+            cx.notify();
+        });
+        cx.draw_frame().expect("sidebar with New chat");
+        let new_thread = cx.debug_bounds("sidebar-new-thread").unwrap();
+        cx.simulate_click(new_thread.center(), Modifiers::default());
+        app_state.read_with(&cx, |state, _| {
+            let chat = state.active_session().unwrap();
+            assert!(chat.panes.iter().any(|pane| pane.chat.active));
+            assert_eq!(chat.id, 7);
+        });
+        cx.draw_frame().expect("first fresh chat");
+        let new_thread = cx.debug_bounds("sidebar-new-thread").unwrap();
+        cx.simulate_click(new_thread.center(), Modifiers::default());
+        app_state.read_with(&cx, |state, _| {
+            assert_eq!(state.active_session().unwrap().id, 7);
+            assert_eq!(state.active_project().unwrap().sessions.len(), 7);
+        });
+        let project_plus = cx.debug_bounds("project-new-session").unwrap().center();
+        cx.simulate_mouse_move(project_plus, None, Modifiers::default());
+        cx.draw_frame().unwrap();
+        cx.simulate_click(project_plus, Modifiers::default());
+        app_state.read_with(&cx, |state, _| {
+            assert_eq!(state.active_session().unwrap().id, 7);
+            assert_eq!(state.active_project().unwrap().sessions.len(), 7);
+        });
+        cx.update_window_entity(&app_state, |state, _, cx| {
+            state
+                .pane_mut(7)
+                .unwrap()
+                .chat
+                .messages
+                .push(Arc::new(ChatMessage::new(ChatRole::User, "Hello".into())));
+            cx.notify();
+        });
+        cx.draw_frame().expect("chat with a message");
+        let new_thread = cx.debug_bounds("sidebar-new-thread").unwrap();
+        cx.simulate_click(new_thread.center(), Modifiers::default());
+        app_state.read_with(&cx, |state, _| {
+            let chat = state.active_session().unwrap();
+            assert_eq!(chat.id, 8);
+            assert!(chat.panes.iter().any(|pane| pane.chat.active));
+        });
         cx.draw_frame()
             .expect("sidebar with the newest session first");
 
         let newest = cx
-            .debug_bounds("session-row-7")
+            .debug_bounds("session-row-8")
             .expect("newest session row");
         let previous = cx
-            .debug_bounds("session-row-6")
+            .debug_bounds("session-row-7")
             .expect("previous session row");
         assert!(
             newest.top() < previous.top(),
@@ -25596,6 +25901,59 @@ mod pane_tests {
             cx.debug_bounds("session-row-1").is_none(),
             "the oldest session must leave the first page instead of hiding the new one"
         );
+    }
+
+    #[test]
+    fn sidebar_search_opens_a_match_from_a_collapsed_project() {
+        let mut cx = TestAppContext::new();
+        let (mut cx, app_state) = open_app(&mut cx);
+        cx.update_window_entity(&app_state, |state, _, cx| {
+            let title = SharedString::from(format!("{} Release Notes", "Long title ".repeat(16)));
+            state.projects.push(Project {
+                id: 2,
+                name: "Other project".into(),
+                path: state.projects[0].path.clone(),
+                sessions: vec![Session {
+                    id: 3,
+                    uid: paths::uid("s"),
+                    display_title: truncate_title(&title),
+                    title,
+                    logo: logos::default_logo(),
+                    pane_tree: None,
+                    maximized_pane_id: None,
+                    panes: Vec::new(),
+                    status: SessionStatus::Idle,
+                }],
+                active_session_idx: 0,
+                expanded: false,
+                visible_session_count: 5,
+            });
+            state.rebuild_session_index();
+            cx.notify();
+        });
+        cx.draw_frame().unwrap();
+        let search = cx.debug_bounds("sidebar-search").unwrap();
+        assert!(cx.debug_bounds("session-row-3").is_none());
+        cx.simulate_click(search.center(), Modifiers::default());
+        cx.draw_frame().unwrap();
+        assert_eq!(
+            cx.debug_bounds("sidebar-search-field").unwrap().top(),
+            search.top()
+        );
+
+        cx.simulate_input("NOTESz");
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("sidebar-search-empty").is_some());
+        cx.simulate_keystrokes("backspace");
+        cx.draw_frame().unwrap();
+        let result = cx.debug_bounds("session-row-3").expect("full title match");
+        assert!(cx.debug_bounds("session-row-1").is_none());
+        cx.simulate_click(result.center(), Modifiers::default());
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("sidebar-search-field").is_none());
+        app_state.read_with(&cx, |state, _| {
+            assert_eq!(state.active_session().unwrap().id, 3);
+        });
     }
 
     #[test]
