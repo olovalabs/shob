@@ -5215,14 +5215,14 @@ impl AppState {
         for pane_id in restored_changes {
             self.refresh_project_diff(pane_id, cx);
         }
-        if let Some(pane_id) = self.focused_pane_id
-            && let Some(pane) = self.pane_ref(pane_id)
-        {
-            if pane.chat.active && pane.chat.selected_model.is_none() {
+        if let Some(pane_id) = self.focused_pane_id {
+            if self.pane_ref(pane_id).is_some_and(|pane| pane.chat.active) {
                 self.warm_agent_bridge(pane_id);
             }
-            let dir = self.agent_working_directory(pane);
-            self.schedule_git_refresh(dir, cx);
+            if let Some(pane) = self.pane_ref(pane_id) {
+                let dir = self.agent_working_directory(pane);
+                self.schedule_git_refresh(dir, cx);
+            }
         }
         self.schedule_workspace_save(cx);
         cx.notify();
@@ -11194,6 +11194,7 @@ impl AppState {
         {
             if pane.files_active
                 || pane.chat.auth.is_some()
+                || pane.branch_picker.is_some()
                 || pane.chat.active && !pane.chat.requests.is_empty()
             {
                 return;
@@ -12643,7 +12644,7 @@ impl AppState {
     fn render_shob_input_bar(
         &self,
         pane: &TerminalPane,
-        _is_focused: bool,
+        show_welcome_context: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
@@ -13375,7 +13376,7 @@ impl AppState {
             .when(pane.chat.active && pane.chat.info_open && !self.settings.agent_layout, |this| {
                 this.child(self.render_agent_info(pane, cx))
             }))
-            .when(focused_composer, |stack| {
+            .when(show_welcome_context, |stack| {
                 stack.child(self.render_composer_context_strip(pane, &tokens, false, window, cx))
             })
     }
@@ -18015,7 +18016,7 @@ impl AppState {
                     && pane.diff_preview.is_none()
                     && pane.should_show_bottom_input(cx)
                     && pane.chat.worker_view.is_none(),
-                |this| this.child(self.render_shob_input_bar(pane, is_focused, window, cx)),
+                |this| this.child(self.render_shob_input_bar(pane, false, window, cx)),
             )
     }
 
@@ -21096,7 +21097,7 @@ impl Render for AppState {
                                                     .px(px(16.0))
                                                     .pb(px(8.0))
                                                     .child(self.render_shob_input_bar(
-                                                        pane, true, _window, cx,
+                                                        pane, false, _window, cx,
                                                     )),
                                             )
                                         },
@@ -30263,6 +30264,18 @@ First report
             cx.draw_frame().unwrap();
             assert!(cx.debug_bounds("agent-workspace-menu").is_none());
         }
+
+        cx.update_window_entity(&state, |s, _, cx| {
+            let pane = s.pane_mut(pane_id).unwrap();
+            pane.chat.messages.push(Arc::new(ChatMessage::new(
+                ChatRole::User,
+                "First prompt".into(),
+            )));
+            cx.notify();
+        });
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("composer-context-strip").is_none());
+        assert!(cx.debug_bounds("agent-composer-input").is_some());
     }
 
     #[test]
@@ -30287,7 +30300,7 @@ First report
                 pane.cwd = Some(repo.clone());
                 pane.chat.messages.push(Arc::new(ChatMessage::new(
                     ChatRole::User,
-                    "preserve this session",
+                    "preserve this session".into(),
                 )));
                 pane.chat.agent_draft = "draft text".into();
             }
@@ -30373,9 +30386,10 @@ First report
             if let Some(pane) = s.pane_mut(pane_a) {
                 pane.pid = None;
                 pane.cwd = Some(repo_a.clone());
-                pane.chat
-                    .messages
-                    .push(Arc::new(ChatMessage::new(ChatRole::User, "alpha prompt")));
+                pane.chat.messages.push(Arc::new(ChatMessage::new(
+                    ChatRole::User,
+                    "alpha prompt".into(),
+                )));
             }
             s.open_project_path(repo_b.clone(), window, cx);
             let pane_b = s.focused_pane_id.unwrap();
@@ -30383,9 +30397,10 @@ First report
             if let Some(pane) = s.pane_mut(pane_b) {
                 pane.pid = None;
                 pane.cwd = Some(repo_b.clone());
-                pane.chat
-                    .messages
-                    .push(Arc::new(ChatMessage::new(ChatRole::User, "beta prompt")));
+                pane.chat.messages.push(Arc::new(ChatMessage::new(
+                    ChatRole::User,
+                    "beta prompt".into(),
+                )));
             }
             s.schedule_git_refresh(repo_b.clone(), cx);
             cx.notify();
@@ -30396,7 +30411,10 @@ First report
         let proj_btn = cx.debug_bounds("agent-project-selector").unwrap();
         cx.simulate_click(proj_btn.center(), Modifiers::none());
         cx.draw_frame().unwrap();
-        assert!(cx.debug_bounds("agent-project-menu").is_some());
+        let menu = cx.debug_bounds("agent-project-menu").unwrap();
+        let open_folder = cx.debug_bounds("project-option-open-folder").unwrap();
+        assert!(menu.contains(&open_folder.origin));
+        assert!(menu.contains(&open_folder.bottom_right()));
         let opt_alpha = cx.debug_bounds("project-option-0").unwrap();
         cx.simulate_click(opt_alpha.center(), Modifiers::none());
         cx.run_until_parked();
@@ -30431,6 +30449,10 @@ First report
             s.projects[0].path = repo.clone();
             s.projects[0].name = SharedString::from("branch-repo");
             s.set_chat_mode(pane_id, true, window, cx);
+            s.settings.agent_layout = true;
+            s.palette_scheme = PaletteScheme::MidnightGarden;
+            s.theme_preference = ThemePreference::Dark;
+            s.apply_theme_preference(Some(window), cx);
             if let Some(pane) = s.pane_mut(pane_id) {
                 pane.pid = None;
                 pane.cwd = Some(repo.clone());
@@ -30447,21 +30469,10 @@ First report
         assert!(cx.debug_bounds("agent-branch-menu").is_some());
         assert!(cx.debug_bounds("agent-branch-search").is_some());
 
-        // Branches sorted: [0] main (current), [1] feat/test (no worktree), [2] shob/... (has worktree)
-        // Or let's click whichever item corresponds to feat/test vs wt branch cleanly via index:
-        let (feat_idx, wt_idx) = state.read_with(&cx, |s, _| {
-            let branches = &s.git_snapshots.get(&repo).unwrap().branches;
-            let feat = branches.iter().position(|b| b.name == "feat/test").unwrap();
-            let wt_b = branches
-                .iter()
-                .position(|b| b.name == wt.branch.as_deref().unwrap())
-                .unwrap();
-            (feat, wt_b)
-        });
-
-        let feat_btn = cx
-            .debug_bounds(&format!("branch-option-{feat_idx}"))
-            .unwrap();
+        cx.simulate_input("feat/test");
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("branch-option-1").is_none());
+        let feat_btn = cx.debug_bounds("branch-option-0").unwrap();
         cx.simulate_click(feat_btn.center(), Modifiers::none());
         cx.run_until_parked();
         cx.draw_frame().unwrap();
@@ -30474,7 +30485,40 @@ First report
         let branch_btn = cx.debug_bounds("agent-branch-selector").unwrap();
         cx.simulate_click(branch_btn.center(), Modifiers::none());
         cx.draw_frame().unwrap();
-        let wt_branch_btn = cx.debug_bounds(&format!("branch-option-{wt_idx}")).unwrap();
+        cx.update_window_entity(&state, |s, window, cx| {
+            let pane = s.pane_ref(pane_id).unwrap();
+            assert!(pane.branch_picker.is_some());
+            pane.input_state
+                .as_ref()
+                .unwrap()
+                .update(cx, |input, cx| input.focus(window, cx));
+        });
+        cx.draw_frame().unwrap();
+        let search = cx.debug_bounds("agent-branch-search").unwrap();
+        cx.simulate_click(
+            point(search.left() + px(3.0), search.center().y),
+            Modifiers::none(),
+        );
+        cx.draw_frame().unwrap();
+        cx.simulate_input(wt.branch.as_deref().unwrap());
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("branch-option-1").is_none());
+        let search = cx.debug_bounds("agent-branch-search").unwrap();
+        cx.simulate_click(
+            point(search.left() + px(24.0), search.center().y),
+            Modifiers::none(),
+        );
+        cx.simulate_input("x");
+        state.read_with(&cx, |s, cx| {
+            let picker = s.pane_ref(pane_id).unwrap().branch_picker.as_ref().unwrap();
+            assert_eq!(
+                picker.input.read(cx).value().as_str(),
+                format!("x{}", wt.branch.as_deref().unwrap())
+            );
+        });
+        cx.simulate_keystrokes("backspace");
+        cx.draw_frame().unwrap();
+        let wt_branch_btn = cx.debug_bounds("branch-option-0").unwrap();
         cx.simulate_click(wt_branch_btn.center(), Modifiers::none());
         cx.run_until_parked();
         cx.draw_frame().unwrap();

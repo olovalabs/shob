@@ -52,13 +52,6 @@ pub struct GitWorkspaceSnapshot {
     pub branches: Vec<BranchInfo>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum BranchSelectionTarget {
-    SwitchWorktree(PathBuf),
-    CheckoutLocal(String),
-    CheckoutRemote(String),
-}
-
 impl GitWorkspaceSnapshot {
     pub fn secondary_worktrees(&self) -> Vec<&WorktreeInfo> {
         self.worktrees
@@ -403,24 +396,6 @@ fn parse_branches(
     branches
 }
 
-pub fn resolve_branch_selection(
-    branches: &[BranchInfo],
-    branch_name: &str,
-    current_dir: &Path,
-) -> Option<BranchSelectionTarget> {
-    let branch = branches.iter().find(|b| b.name == branch_name)?;
-    if let Some(worktree_path) = &branch.worktree_path
-        && !paths_equal(worktree_path, current_dir)
-    {
-        return Some(BranchSelectionTarget::SwitchWorktree(worktree_path.clone()));
-    }
-    if branch.is_remote {
-        Some(BranchSelectionTarget::CheckoutRemote(branch.name.clone()))
-    } else {
-        Some(BranchSelectionTarget::CheckoutLocal(branch.name.clone()))
-    }
-}
-
 pub fn sanitize_new_ref_name(raw: &str) -> String {
     let collapsed = raw
         .split_whitespace()
@@ -667,53 +642,6 @@ detached
     }
 
     #[test]
-    fn resolves_branch_target_to_other_worktree_when_checked_out_elsewhere() {
-        let branches = vec![
-            BranchInfo {
-                name: "main".into(),
-                is_current: false,
-                is_remote: false,
-                remote_name: None,
-                is_default: true,
-                worktree_path: Some(PathBuf::from("/repo/main")),
-            },
-            BranchInfo {
-                name: "feat/x".into(),
-                is_current: true,
-                is_remote: false,
-                remote_name: None,
-                is_default: false,
-                worktree_path: Some(PathBuf::from("/repo/wt-x")),
-            },
-            BranchInfo {
-                name: "origin/other".into(),
-                is_current: false,
-                is_remote: true,
-                remote_name: Some("origin".into()),
-                is_default: false,
-                worktree_path: None,
-            },
-        ];
-
-        assert_eq!(
-            resolve_branch_selection(&branches, "main", Path::new("/repo/wt-x")),
-            Some(BranchSelectionTarget::SwitchWorktree(PathBuf::from(
-                "/repo/main"
-            )))
-        );
-        assert_eq!(
-            resolve_branch_selection(&branches, "feat/x", Path::new("/repo/wt-x")),
-            Some(BranchSelectionTarget::CheckoutLocal("feat/x".into()))
-        );
-        assert_eq!(
-            resolve_branch_selection(&branches, "origin/other", Path::new("/repo/wt-x")),
-            Some(BranchSelectionTarget::CheckoutRemote(
-                "origin/other".into()
-            ))
-        );
-    }
-
-    #[test]
     fn inspect_create_worktree_and_branch_checkout_on_real_repo() {
         let temp = tempfile::tempdir().expect("tempdir");
         let repo = temp.path().join("demo");
@@ -747,13 +675,8 @@ detached
         assert_eq!(wt_snap.worktrees.len(), 2);
         assert_eq!(wt_snap.secondary_worktrees().len(), 1);
 
-        // Branch checked out in main worktree resolves to switching worktrees.
-        assert_eq!(
-            resolve_branch_selection(&wt_snap.branches, "main", &wt.path),
-            Some(BranchSelectionTarget::SwitchWorktree(
-                wt_snap.main_worktree_path.clone().unwrap()
-            ))
-        );
+        let main = wt_snap.branches.iter().find(|b| b.name == "main").unwrap();
+        assert_eq!(main.worktree_path, wt_snap.main_worktree_path);
 
         let created = create_and_checkout_branch(&wt.path, "feat new api").expect("new branch");
         assert_eq!(created, "feat-new-api");

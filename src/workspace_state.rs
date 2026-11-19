@@ -849,6 +849,7 @@ mod tests {
                                 prompt_title: None,
                                 rpi_session_id: Some("session-1".into()),
                                 conversation_key: None,
+                                workspace_override: None,
                                 models: vec![SavedModelChat {
                                     model: Some(AgentModel {
                                         provider: "commandcode".into(),

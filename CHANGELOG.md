@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Show the workspace, branch, and project controls under the focused Agent composer only on the welcome screen.
+- Keep “Open project folder…” inside the project picker, below the scrollable project list.
+- Keep keyboard focus in the Git branch picker and make the whole search box clickable, including its padding.
 - Center focused Agent completion menus above the composer at both wide and narrow window sizes.
 - Group batched tool calls under a per-tool count summary (Read, Write, Shell, etc.); show calls while running, collapse on completion, and retain independently expandable output and per-call failures.
 - Preserve nested Markdown emphasis, links, inline code and hard line breaks in Agent replies; keep prompts and tool output literal instead of interpreting their Markdown characters.

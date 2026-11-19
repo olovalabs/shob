@@ -1252,6 +1252,15 @@ impl AppState {
                                 .border_1()
                                 .border_color(tokens.border_subtle)
                                 .bg(tokens.pane_bg)
+                                .cursor_text()
+                                .on_mouse_down(MouseButton::Left, {
+                                    let input = picker.input.clone();
+                                    move |_, window, cx| {
+                                        if !input.read(cx).focus_handle().is_focused(window) {
+                                            input.update(cx, |state, cx| state.focus(window, cx));
+                                        }
+                                    }
+                                })
                                 .child(
                                     Input::new(&picker.input)
                                         .w_full()
@@ -1547,6 +1556,8 @@ impl AppState {
                     .debug_selector(|| "agent-project-menu".into())
                     .w(px(260.0))
                     .max_w((window.viewport_size().width - px(24.0)).max(px(0.0)))
+                    .flex()
+                    .flex_col()
                     .p(px(5.0))
                     .rounded(px(10.0))
                     .border_1()
@@ -1569,6 +1580,7 @@ impl AppState {
                     }))
                     .child(
                         div()
+                            .flex_shrink_0()
                             .px(px(8.0))
                             .pt(px(4.0))
                             .pb(px(4.0))
@@ -1580,8 +1592,11 @@ impl AppState {
                     .child(
                         div()
                             .id(("project-switcher-list", pane_id))
-                            .max_h(px(200.0))
-                            .overflow_y_scrollbar()
+                            .min_h_0()
+                            .max_h(
+                                (window.viewport_size().height - px(96.0)).clamp(px(0.0), px(200.0)),
+                            )
+                            .overflow_y_scroll()
                             .flex()
                             .flex_col()
                             .children(self.projects.iter().enumerate().map(|(idx, project)| {
@@ -1590,6 +1605,7 @@ impl AppState {
                                 div()
                                     .id(("project-switcher-item", project.id))
                                     .debug_selector(move || format!("project-option-{idx}"))
+                                    .flex_shrink_0()
                                     .px(px(8.0))
                                     .py(px(5.0))
                                     .rounded(px(6.0))
@@ -1597,6 +1613,7 @@ impl AppState {
                                     .items_center()
                                     .gap(px(8.0))
                                     .cursor_pointer()
+                                    .when(is_active, |row| row.bg(hover_bg))
                                     .hover(move |s| s.bg(hover_bg))
                                     .child(
                                         svg()
@@ -1651,7 +1668,13 @@ impl AppState {
                                     )
                             })),
                     )
-                    .child(div().my(px(4.0)).h(px(1.0)).bg(tokens.border_subtle))
+                    .child(
+                        div()
+                            .my(px(4.0))
+                            .h(px(1.0))
+                            .flex_shrink_0()
+                            .bg(tokens.border_subtle),
+                    )
                     .child(
                         div()
                             .id(("project-option-open-folder", pane_id))
@@ -1659,6 +1682,7 @@ impl AppState {
                             .px(px(8.0))
                             .py(px(5.0))
                             .min_h(px(28.0))
+                            .flex_shrink_0()
                             .rounded(px(6.0))
                             .flex()
                             .items_center()
