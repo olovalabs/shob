@@ -73,6 +73,7 @@ mod status_bus;
 mod stream_timing;
 mod subagent_chat;
 mod theme;
+mod token_efficiency;
 mod updater;
 mod workspace_state;
 mod workspace_switcher;
@@ -22245,6 +22246,13 @@ fn main() -> Result<ExitCode> {
         Some("status-event") => cli::run_status_event(),
         Some("status") => cli::run_status(&args.skip(1).collect::<Vec<_>>()),
         Some("update") => updater::run_cli(args.skip(1)),
+        Some("token-bench") => {
+            let code = token_efficiency::bench_main::run(args.skip(1));
+            return match code {
+                std::process::ExitCode::SUCCESS => Ok(ExitCode::SUCCESS),
+                _ => anyhow::bail!("token-efficiency benchmark failed"),
+            };
+        }
         Some("pane") => {
             #[cfg(unix)]
             {
@@ -22256,7 +22264,7 @@ fn main() -> Result<ExitCode> {
         Some("--help" | "-h") => {
             agent_cli::args::print_help();
             println!(
-                "\nShob commands:\n  gui                         Open the desktop workspace\n  tui [options]               Run the agent CLI explicitly\n  update [--check]            Check for or install a Shob update\n  report|skill|integration|status|status-event|status-hook\n  pane <report-agent|report-agent-session|release-agent> ..."
+                "\nShob commands:\n  gui                         Open the desktop workspace\n  tui [options]               Run the agent CLI explicitly\n  update [--check]            Check for or install a Shob update\n  token-bench [--fixtures DIR] [--out FILE] Run token-efficiency benchmarks\n  report|skill|integration|status|status-event|status-hook\n  pane <report-agent|report-agent-session|release-agent> ..."
             );
             Ok(())
         }

@@ -788,14 +788,37 @@ pub async fn build_with_tool_hook(
     ),
     BuildError,
 > {
+    build_with_tool_hooks(resolved, args, cwd, project_trusted, before_tool_call, None).await
+}
+
+/// `build_with_tool_hook` plus the result-rewriting hook. Hosts that want to
+/// reduce token spend (dedupe repeated reads, compress noisy output) install
+/// `after_tool_call`; the loop already supports it, this is the seam that
+/// carries it from the host into `AgentHarnessOptions`.
+pub async fn build_with_tool_hooks(
+    resolved: &ResolvedModel,
+    args: &Args,
+    cwd: &Path,
+    project_trusted: bool,
+    before_tool_call: Option<agent::BeforeToolCall>,
+    after_tool_call: Option<agent::AfterToolCall>,
+) -> Result<
+    (
+        AgentHarness,
+        tokio::sync::broadcast::Receiver<agent::AgentEvent>,
+        ReloadContext,
+    ),
+    BuildError,
+> {
     let prepared = prepare_extensions(args, cwd, project_trusted)?;
-    build_prepared_with_tool_hook(
+    build_prepared_with_tool_hook_full(
         resolved,
         args,
         cwd,
         project_trusted,
         prepared,
         before_tool_call,
+        after_tool_call,
     )
     .await
 }
@@ -824,6 +847,34 @@ async fn build_prepared_with_tool_hook(
     project_trusted: bool,
     prepared: PreparedExtensions,
     host_tool_hook: Option<agent::BeforeToolCall>,
+) -> Result<
+    (
+        AgentHarness,
+        tokio::sync::broadcast::Receiver<agent::AgentEvent>,
+        ReloadContext,
+    ),
+    BuildError,
+> {
+    build_prepared_with_tool_hook_full(
+        resolved,
+        args,
+        cwd,
+        project_trusted,
+        prepared,
+        host_tool_hook,
+        None,
+    )
+    .await
+}
+
+async fn build_prepared_with_tool_hook_full(
+    resolved: &ResolvedModel,
+    args: &Args,
+    cwd: &Path,
+    project_trusted: bool,
+    prepared: PreparedExtensions,
+    host_tool_hook: Option<agent::BeforeToolCall>,
+    host_after_tool_call: Option<agent::AfterToolCall>,
 ) -> Result<
     (
         AgentHarness,
@@ -1367,10 +1418,10 @@ async fn build_prepared_with_tool_hook(
         agent_emitter: Some(emitter),
         // B3b loop hooks. `before_tool_call` dispatches the pi `on("tool_call")`
         // extension event and honors a veto (a permission gate can block a tool
-        // before it runs). `after_tool_call`/`transform_context` remain `None`
-        // (their host-side adapters are not wired yet).
+        // before it runs). `after_tool_call` is the host's token-reduction seam
+        // (read dedupe, output minimization); `transform_context` remains `None`.
         before_tool_call,
-        after_tool_call: None,
+        after_tool_call: host_after_tool_call,
         transform_context: None,
         entry_transforms: Vec::new(),
         // Extension provider hooks (B4): plugins subscribing to the

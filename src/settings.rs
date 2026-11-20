@@ -141,6 +141,9 @@ pub struct AppSettings {
     pub project_scripts: std::collections::BTreeMap<PathBuf, Vec<ProjectScript>>,
     pub window: Option<SavedWindow>,
     pub restore: RestoreOptions,
+    /// Token-reduction layer. Every field defaults to a working value, so an
+    /// older `settings.json` without this key behaves as intended.
+    pub token_efficiency: crate::token_efficiency::TokenEfficiencySettings,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -166,6 +169,7 @@ impl Default for AppSettings {
             project_scripts: Default::default(),
             window: None,
             restore: RestoreOptions::default(),
+            token_efficiency: crate::token_efficiency::TokenEfficiencySettings::default(),
         }
     }
 }

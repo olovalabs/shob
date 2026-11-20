@@ -195,7 +195,41 @@ SHOB_DATA_DIR=/absolute/path
 SHOB_DISABLE_RESTORE=1
 ```
 
+**Disable the token-reduction layer**
+
+```bash
+SHOB_TOKEN_EFFICIENCY=0
+```
+
 Settings are stored in your platform's configuration directory.
+
+### Token Efficiency
+
+Native agent chat runs a token-reduction layer: it answers repeated file reads and
+identical searches with an "unchanged since turn N" note instead of re-sending
+content, accepts line-anchored edits, compresses noisy tool output, and routes
+conversation titles to a cheaper model. Per-turn token and cache-hit-rate rows are
+appended to `<data>/token-efficiency/turns.jsonl`.
+
+Every capability is switchable from `settings.json`:
+
+```jsonc
+"token_efficiency": {
+  "enabled": true,
+  "read_dedupe": true,
+  "search_cache": true,
+  "anchor_edits": true,
+  "minimize_output": true,
+  "route_cheap_tasks": true,
+  "metrics": true,
+  "dedupe_window_turns": 8,
+  "smol_model": null   // e.g. "anthropic/claude-haiku-4-5"
+}
+```
+
+A stubbed read or search can be forced back to a real one with `{"fresh": true}`.
+The design, the cache's invalidation rules, and the measured savings are in
+[`docs/token-efficiency/`](docs/token-efficiency/).
 
 ## Built With
 

@@ -240,6 +240,11 @@ struct EmbeddedBridge {
     trace_id: u64,
     requests: smol::channel::Receiver<Request>,
     permission: Arc<AtomicU8>,
+    /// `None` when the layer is disabled, so the usage path stays a single
+    /// `Option` check.
+    efficiency: Option<Arc<crate::token_efficiency::TokenEfficiency>>,
+    /// Provider turns seen, used as the cache's conversation clock.
+    turn: u64,
 }
 
 impl AgentBridge {
@@ -336,8 +341,18 @@ impl AgentBridge {
         cwd: &Path,
         selector: &str,
     ) -> Result<(), String> {
-        let Ok(title) = embedded::SessionTitleRequest::spawn(cwd, selector, prompt, signal_wake)
-        else {
+        // Naming a conversation is a cheap task: route it to the configured
+        // `smol` model and fall back to the conversation's own selector when
+        // none is configured (`Router` returns the primary in that case, which
+        // reproduces the previous behavior exactly).
+        let title_selector = crate::token_efficiency::route_title_model(selector);
+        let Ok(title) = embedded::SessionTitleRequest::spawn_routed(
+            cwd,
+            &title_selector,
+            selector,
+            prompt,
+            signal_wake,
+        ) else {
             return self.send_prompt_with_context(prompt, resume, context);
         };
         self.first_prompt = Some(FirstPrompt::Waiting(
@@ -526,6 +541,19 @@ impl EmbeddedBridge {
             permission.clone(),
             cwd.to_path_buf(),
         ));
+        // The token-efficiency layer. One instance per conversation, shared by
+        // both hooks. Installed only when a feature is on, and disabled
+        // wholesale by `SHOB_TOKEN_EFFICIENCY=0`, so an inert layer costs
+        // nothing on the tool path.
+        let efficiency = crate::token_efficiency::layer_for_session();
+        if let Some(layer) = &efficiency {
+            options.before_tool_call = Some(crate::token_efficiency::compose_before_hook(
+                Arc::clone(layer),
+                options.before_tool_call.take(),
+            ));
+            options.after_tool_call =
+                Some(crate::token_efficiency::after_tool_call(Arc::clone(layer)));
+        }
         let spawn_start = std::time::Instant::now();
         let mut session = EmbeddedSession::spawn(options).map_err(|error| {
             format!(
@@ -544,7 +572,40 @@ impl EmbeddedBridge {
             trace_id,
             requests,
             permission,
+            efficiency,
+            turn: 0,
         })
+    }
+
+    /// Feed one provider usage report into the token-efficiency metrics.
+    ///
+    /// `Usage` events arrive once per finalized assistant message, so the turn
+    /// counter here is one per provider turn. This is the only place the two
+    /// halves of the layer meet: the cache counts bytes it kept out of the
+    /// prompt, and the provider reports the tokens it actually billed.
+    fn record_usage(&mut self, usage: &embedded::AgentUsage) {
+        let Some(layer) = &self.efficiency else {
+            return;
+        };
+        self.turn += 1;
+        layer.begin_turn(self.turn);
+        let saved = layer.take_bytes_saved();
+        if !layer.settings().metrics {
+            return;
+        }
+        let counters = layer.counters();
+        let row = crate::token_efficiency::MetricsSink::row(
+            self.turn,
+            usage.input,
+            usage.output,
+            usage.cache_read,
+            usage.cache_write,
+            &counters,
+            saved,
+            0,
+            false,
+        );
+        crate::token_efficiency::record_turn(row);
     }
 
     fn session_id(&self) -> Option<String> {
@@ -565,7 +626,9 @@ impl EmbeddedBridge {
         replacement
             .permission
             .store(self.permission.load(Ordering::Relaxed), Ordering::Relaxed);
+        let turn = self.turn;
         *self = replacement;
+        self.turn = turn;
         Ok(())
     }
 
@@ -576,7 +639,10 @@ impl EmbeddedBridge {
                 SessionEvent::Text(text) => events.push(AgentEvent::Text(text)),
                 SessionEvent::Thinking(text) => events.push(AgentEvent::Thinking(text)),
                 SessionEvent::Status(text) => events.push(AgentEvent::Status(text)),
-                SessionEvent::Usage(usage) => events.push(AgentEvent::Usage(usage)),
+                SessionEvent::Usage(usage) => {
+                    self.record_usage(&usage);
+                    events.push(AgentEvent::Usage(usage));
+                }
                 SessionEvent::ToolStart { id, name, input } => {
                     events.push(AgentEvent::ToolStart { id, name, input })
                 }
