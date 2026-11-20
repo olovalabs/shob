@@ -82,13 +82,8 @@ pub mod trust;
 pub mod tui_shell;
 pub mod updates;
 
-/// Crate version, surfaced by `shob --version`. Mirrors the TS `VERSION` export
-/// (sourced from `package.json`; here from `env!("CARGO_PKG_VERSION")`).
-///
-/// Aliases [`plugin_sdk::HOST_VERSION`] so the version the CLI prints and
-/// the version handed to plugins (and, through it, the version extensions stamp
-/// on their own telemetry) can never disagree.
-pub const VERSION: &str = plugin_sdk::HOST_VERSION;
+/// Application version from Shob's root package, independent of SDK versions.
+pub const VERSION: &str = env!("SHOB_APP_VERSION");
 
 /// The application name used in help + version output. Mirrors TS `APP_NAME`
 /// (the TS bin is `"pi"`; the Rust crate publishes under the `shob-` namespace,

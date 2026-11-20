@@ -5,12 +5,11 @@
 //! source checkout or network request. Optional remote fetching remains
 //! available to consumers, with the same versioned-entry parser.
 //!
-//! The remote URL is overridable with `SHOB_CHANGELOG_URL` so a fork can point at
-//! its own changelog without a rebuild.
+//! `SHOB_CHANGELOG_URL` overrides the remote release-notes source.
 
 use serde::{Deserialize, Serialize};
 
-const BUNDLED_CHANGELOG: &str = include_str!("../embedded-docs/changelog.md");
+const BUNDLED_CHANGELOG: &str = include_str!("../../../../CHANGELOG.md");
 
 /// One released version's changelog section.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,7 +23,7 @@ pub struct ChangelogEntry {
 
 /// Default remote changelog URL. Overridable via `SHOB_CHANGELOG_URL`.
 pub const DEFAULT_CHANGELOG_URL: &str =
-    "https://raw.githubusercontent.com/bigfish1913/pi-rust/main/CHANGELOG.md";
+    "https://raw.githubusercontent.com/olovalabs/shob/main/CHANGELOG.md";
 
 /// The remote changelog URL to use, honoring `SHOB_CHANGELOG_URL`.
 pub fn changelog_url() -> String {
@@ -321,7 +320,15 @@ mod tests {
         );
         assert!(entries[0].content.contains("reply spacing"));
         assert!(!entries[0].content.contains("previous"));
-        assert!(!bundled_entries().is_empty());
+        let bundled = bundled_entries();
+        assert!(!bundled.is_empty());
+        assert!(BUNDLED_CHANGELOG.contains("All notable changes to Shob"));
+        assert!(!BUNDLED_CHANGELOG.contains("bigfish1913"));
+        assert_eq!(
+            DEFAULT_CHANGELOG_URL,
+            "https://raw.githubusercontent.com/olovalabs/shob/main/CHANGELOG.md"
+        );
+        assert!(!latest_release(&bundled, crate::VERSION).is_empty());
     }
 
     #[test]

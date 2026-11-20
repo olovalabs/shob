@@ -23,7 +23,11 @@ fn changelog_command_shows_current_release_and_all_is_explicit() {
     add_changelog_message(&chat);
     let output = strip_ansi(&chat.render(120).join("\n"));
     assert!(output.lines().any(|line| line.trim() == latest_heading));
-    assert!(!output.lines().any(|line| line.trim() == historical_heading));
+    if historical_heading != latest_heading {
+        assert!(!output.lines().any(|line| line.trim() == historical_heading));
+    }
+    assert!(!output.contains("bigfish1913"));
+    assert!(!output.contains("0.21.0"));
     assert!(!output.contains("Native parity phase 1"));
     let chat = Arc::new(Container::new());
     add_changelog_message_with_scope(&chat, true);
@@ -67,7 +71,9 @@ fn startup_changelog_foreign_profile_is_shown_once_and_persisted() {
             assert!(output.lines().any(|line| line.trim() == crate::VERSION));
             let old = crate::changelog::bundled_entries().pop().unwrap();
             let old_version = format!("{}.{}.{}", old.major, old.minor, old.patch);
-            assert!(!output.lines().any(|line| line.trim() == old_version));
+            if old_version != crate::VERSION {
+                assert!(!output.lines().any(|line| line.trim() == old_version));
+            }
             let settings = crate::settings::load_settings().unwrap();
             assert_eq!(
                 settings.last_shob_changelog_version.as_deref(),
@@ -85,19 +91,7 @@ fn startup_changelog_foreign_profile_is_shown_once_and_persisted() {
             // A newer process may save a marker after this startup read its settings.
             let mut stale = settings.clone();
             let current_version = semver::Version::parse(crate::VERSION).unwrap();
-            let old = crate::changelog::bundled_entries()
-                .into_iter()
-                .find(|entry| {
-                    (entry.major, entry.minor, entry.patch)
-                        < (
-                            current_version.major,
-                            current_version.minor,
-                            current_version.patch,
-                        )
-                })
-                .unwrap();
-            stale.last_shob_changelog_version =
-                Some(format!("{}.{}.{}", old.major, old.minor, old.patch));
+            stale.last_shob_changelog_version = Some("0.0.0".into());
             let mut newer = settings;
             let mut next_version = current_version;
             next_version.patch += 1;

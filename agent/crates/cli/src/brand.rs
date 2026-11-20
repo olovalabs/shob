@@ -172,7 +172,7 @@ impl Component for BrandLockup {
         ]
         .iter()
         .map(|row| c.text.fg(&tui_bold(row)))
-        .chain([c.muted.fg(&format!("SHOB v{}", env!("CARGO_PKG_VERSION")))])
+        .chain([c.muted.fg(&format!("SHOB v{}", crate::VERSION))])
         .collect()
     }
 
