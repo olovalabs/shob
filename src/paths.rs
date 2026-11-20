@@ -100,12 +100,7 @@ pub fn sessions_dir() -> PathBuf {
 }
 
 pub fn shob_sessions_dir() -> PathBuf {
-    let root = data_dir();
-    let legacy = root.join("rpi").join("sessions");
-    if legacy.is_dir() {
-        return legacy;
-    }
-    root.join("shob").join("sessions")
+    agent_cli::session::session_dir_in(&data_dir())
 }
 
 pub fn conversations_dir() -> PathBuf {

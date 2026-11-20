@@ -439,6 +439,15 @@ pub(crate) fn shob_session_dir() -> PathBuf {
             }
             .unwrap_or_else(|| std::env::temp_dir().join("shob"))
         });
+    session_dir_in(&data)
+}
+
+/// Shared durable agent-session root for the terminal and desktop frontends.
+pub fn session_dir_in(data: &Path) -> PathBuf {
+    let legacy = data.join("rpi").join("sessions");
+    if legacy.is_dir() {
+        return legacy;
+    }
     data.join("shob").join("sessions")
 }
 
@@ -5724,12 +5733,29 @@ mod tests {
         let _env = crate::config::test_support::SessionDirEnv::new(None);
         let tmp = tempfile::tempdir().unwrap();
         let cwd = tmp.path();
+        assert_eq!(default_session_dir(cwd), shob_session_dir());
+        assert!(!cwd.join(".shob").exists());
+        assert!(!cwd.join(".rpi").exists());
         std::fs::create_dir_all(cwd.join(".shob/sessions")).unwrap();
         assert_eq!(default_session_dir(cwd), shob_session_dir());
         assert_eq!(
             default_session_dir(Path::new("/another/project")),
             shob_session_dir()
         );
+    }
+
+    #[test]
+    fn shared_session_root_keeps_existing_global_sessions() {
+        let data = tempfile::tempdir().unwrap();
+        assert_eq!(
+            session_dir_in(data.path()),
+            data.path().join("shob/sessions")
+        );
+        let legacy = data.path().join("rpi/sessions");
+        std::fs::create_dir_all(&legacy).unwrap();
+        assert_eq!(session_dir_in(data.path()), legacy);
+        std::fs::create_dir_all(data.path().join("shob/sessions")).unwrap();
+        assert_eq!(session_dir_in(data.path()), legacy);
     }
 
     #[test]

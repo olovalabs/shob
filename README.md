@@ -179,7 +179,7 @@ Terminal-based agents manage their own permissions independently.
 
 > **Note:** The legacy `SHOB_AGENT_BACKEND=rpc` backend does not enforce Shob's approval modes.
 
-The agent CLI uses `.shob/` for project resources, `~/.shob/agent/` for global configuration, and `SHOB_*` environment variables. `SHOB_CODING_AGENT_DIR` overrides the global agent directory. Existing `.rpi` configuration and saved sessions remain readable as a compatibility fallback; `SHOB_RPI_BACKEND` is also accepted for older setups. Native extensions must be rebuilt against the renamed Shob plugin SDK.
+The agent CLI uses `.shob/` for project resources, `~/.shob/agent/` for global configuration, and `SHOB_*` environment variables. TUI sessions use the same global session storage as desktop Agent chat (`~/.local/share/shob/shob/sessions` on Linux), not a folder inside the project. `SHOB_DATA_DIR` relocates that shared storage; `--session-dir`, the saved `sessionDir` setting, or `SHOB_CODING_AGENT_SESSION_DIR` can explicitly override the TUI session location. `SHOB_CODING_AGENT_DIR` overrides the global agent directory. Existing `.rpi` configuration and saved sessions remain readable as a compatibility fallback; `SHOB_RPI_BACKEND` is also accepted for older setups. Native extensions must be rebuilt against the renamed Shob plugin SDK.
 
 ## Configuration
 
