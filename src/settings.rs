@@ -164,7 +164,7 @@ impl Default for AppSettings {
             favorite_agent_models: Vec::new(),
             trusted_shob_workspaces: Vec::new(),
             sidebar: SavedSidebar::default(),
-            agent_layout: false,
+            agent_layout: true,
             preferred_editor: None,
             project_scripts: Default::default(),
             window: None,
@@ -441,6 +441,13 @@ mod tests {
         assert!(settings.restore.scrollback);
         assert!(settings.restore.sessions);
         assert!(settings.sidebar.visible);
+        assert!(settings.agent_layout);
+        assert!(parse_jsonc::<AppSettings>("{}").unwrap().agent_layout);
+        assert!(
+            !parse_jsonc::<AppSettings>(r#"{"agent_layout": false}"#)
+                .unwrap()
+                .agent_layout
+        );
     }
 
     #[test]

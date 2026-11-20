@@ -19131,9 +19131,9 @@ impl AppState {
                     .hover(move |s| s.bg(tokens.sidebar_item_hover))
                     .tooltip({
                         let label = if self.settings.agent_layout {
-                            "One view on · Switch to split view"
+                            "Agent mode on · Switch to split view"
                         } else {
-                            "One view off · Switch to One view"
+                            "Agent mode off · Switch to Agent mode"
                         };
                         move |window, cx| {
                             gpui_component::tooltip::Tooltip::new(label).build(window, cx)
@@ -19146,19 +19146,21 @@ impl AppState {
                             this.switch_agent_layout(window, cx);
                         }),
                     )
-                    .child(svg().path("icons/one-view.svg").size(px(15.0)).text_color(
-                        if self.settings.agent_layout {
-                            tokens.ring
-                        } else {
-                            tokens.sidebar_icon
-                        },
-                    ))
+                    .child(
+                        gpui_component::Icon::new(gpui_component::IconName::Bot)
+                            .size(px(15.0))
+                            .text_color(if self.settings.agent_layout {
+                                tokens.ring
+                            } else {
+                                tokens.sidebar_icon
+                            }),
+                    )
                     .when(self.sidebar_width >= px(248.0), |pill| {
                         pill.child(
                             div()
                                 .text_size(px(11.0))
                                 .text_color(tokens.sidebar_fg)
-                                .child("One"),
+                                .child("Agent"),
                         )
                     }),
             )
@@ -23120,7 +23122,10 @@ mod resize_tests {
             terminal_context_menu: None,
             history_search: None,
             image_viewer: None,
-            settings: settings::AppSettings::default(),
+            settings: settings::AppSettings {
+                agent_layout: false,
+                ..Default::default()
+            },
             dirty: false,
             last_window_bounds: None,
             persistence_enabled: false,

@@ -45,7 +45,7 @@ Run your favorite AI coding agents side by side.
 - Command Code
 - Shob's built-in AI agent
 
-Split view is terminal-only. Enable One mode from the sidebar to use Shob’s built-in agent. Switching back to Split view keeps your conversations and drafts. Terminal-based agents still work in either layout.
+Agent mode opens by default with Shob’s built-in agent. Split view is terminal-only; switching layouts keeps your conversations and drafts, and your choice is saved. Terminal-based agents still work in either layout.
 
 ### Native Performance
 
@@ -78,7 +78,7 @@ Keep your development environment organized.
 - Restore previous workspaces
 - Preserve terminal scrollback and conversations
 
-An empty right panel in One mode opens a surface picker for Terminal, Files, and Diff. **+** opens the same picker from an existing tab. Terminal tabs take input directly at the shell prompt. Hiding the panel keeps its shells running; restarting Shob restores the tabs and their selection, not the shell processes.
+An empty right panel in Agent mode opens a surface picker for Terminal, Files, and Diff. **+** opens the same picker from an existing tab. Terminal tabs take input directly at the shell prompt. Hiding the panel keeps its shells running; restarting Shob restores the tabs and their selection, not the shell processes.
 
 The Files surface restores open files, unsaved drafts, expanded folders, and the commit message. Use Refresh to pick up external changes. Editing supports UTF-8 files up to 1 MiB and eight open tabs; saves refuse to overwrite a file changed on disk. Read-only diff snapshots and scroll positions are transient.
 
