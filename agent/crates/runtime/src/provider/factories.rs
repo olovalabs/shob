@@ -359,6 +359,54 @@ impl Provider for RoutedProvider {
     }
 }
 
+/// OpenCode's gateways (zen, go, inference) refuse any request that arrives
+/// without a conversation id, answering 400 `MissingSessionID`.
+const OPENCODE_SESSION_HEADER: &str = "x-opencode-session";
+
+/// Stamp the conversation id on requests to OpenCode endpoints. Applied above
+/// the protocol layer so every wire API OpenCode serves carries it, and a
+/// header the caller set always wins.
+fn apply_opencode_session_header(model: &Model, options: &mut SimpleStreamOptions) {
+    if !is_opencode_endpoint(&model.base_url) {
+        return;
+    }
+    let headers = options.headers.get_or_insert_with(BTreeMap::new);
+    let already_set = headers
+        .keys()
+        .any(|name| name.eq_ignore_ascii_case(OPENCODE_SESSION_HEADER));
+    if already_set {
+        return;
+    }
+    let id = options
+        .session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(process_session_id);
+    headers.insert(OPENCODE_SESSION_HEADER.to_string(), id);
+}
+
+fn is_opencode_endpoint(base_url: &str) -> bool {
+    reqwest::Url::parse(base_url.trim())
+        .ok()
+        .and_then(|url| url.host_str().map(|host| host.to_ascii_lowercase()))
+        .is_some_and(|host| host == "opencode.ai" || host.ends_with(".opencode.ai"))
+}
+
+/// Utility calls without a durable conversation still need an id; one per
+/// process keeps gateway affinity stable within a run.
+fn process_session_id() -> String {
+    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ID.get_or_init(|| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos());
+        format!("shob-{}-{nanos}", std::process::id())
+    })
+    .clone()
+}
+
 async fn unbound_model_error(model: &Model, provider_id: &str) -> AssistantMessageEventStream {
     error_stream(
         model,
@@ -452,6 +500,7 @@ impl Provider for ConfiguredProvider {
                 Err(error) => return error_stream(&model, &self.id, error).await,
             }
         }
+        apply_opencode_session_header(&model, &mut options);
         self.inner.stream_simple(&model, context, &options).await
     }
 }
@@ -578,6 +627,70 @@ mod tests {
             .result()
             .await
             .unwrap()
+    }
+
+    fn opencode_provider(base_url: &str, calls: Calls) -> Arc<dyn Provider> {
+        let api = Api::OpenaiCompletions;
+        let mut factories = RuntimeFactories::default();
+        factories
+            .protocols
+            .insert(api.as_str().into(), Arc::new(RecordingFactory(calls)));
+        let model = Model::new("glm-5", "GLM 5", api.clone(), "opencode-zen", base_url);
+        factories
+            .configure(
+                "opencode-zen",
+                &api,
+                vec![model],
+                RequestAuth::ApiKey("key".into()),
+                &crate::RuntimeSettings::default(),
+                &BTreeMap::<String, String>::new(),
+            )
+            .unwrap()
+            .0
+    }
+
+    #[tokio::test]
+    async fn opencode_requests_carry_the_conversation_session_header() {
+        let calls = Calls::default();
+        let provider = opencode_provider("https://opencode.ai/zen/v1", calls.clone());
+        let options = SimpleStreamOptions {
+            session_id: Some("sess-1".into()),
+            ..Default::default()
+        };
+        request(&provider, &options).await;
+        let recorded = calls.lock().unwrap();
+        assert_eq!(
+            recorded[0].1.headers.as_ref().unwrap()["x-opencode-session"],
+            "sess-1"
+        );
+    }
+
+    #[tokio::test]
+    async fn opencode_session_header_keeps_caller_header_and_skips_other_hosts() {
+        let caller = Calls::default();
+        let provider = opencode_provider("https://opencode.ai/inference/go/v1", caller.clone());
+        let options = SimpleStreamOptions {
+            session_id: Some("sess-1".into()),
+            headers: Some(BTreeMap::from([(
+                "x-opencode-session".into(),
+                "caller".into(),
+            )])),
+            ..Default::default()
+        };
+        request(&provider, &options).await;
+        assert_eq!(
+            caller.lock().unwrap()[0].1.headers.as_ref().unwrap()["x-opencode-session"],
+            "caller"
+        );
+
+        let other = Calls::default();
+        let provider = opencode_provider("https://gateway.example.test/v1", other.clone());
+        let options = SimpleStreamOptions {
+            session_id: Some("sess-1".into()),
+            ..Default::default()
+        };
+        request(&provider, &options).await;
+        assert!(other.lock().unwrap()[0].1.headers.is_none());
     }
 
     #[tokio::test]
