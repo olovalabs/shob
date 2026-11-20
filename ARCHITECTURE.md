@@ -276,7 +276,19 @@ AWS SDK credentials or Google ADC at request time, not during local discovery.
 See [STREAMING_PERFORMANCE.md](STREAMING_PERFORMANCE.md) for evidence,
 reproduction commands and measurement limitations.
 
+### 2.10 Token Efficiency Layer (`src/token_efficiency/`)
 
+- A host-side token-reduction layer that runs inside the embedded agent loop via
+  the `before_tool_call` / `after_tool_call` hook slots, mapping
+  `AgentToolResult` → text → pure decision → `AfterToolCallResult`.
+- The decisions live in pure functions over plain data so they test without a
+  harness; the module is the only place that names rpi types, and it stays a client
+  of the hooks. The dependency direction is `shob → token-efficiency → embedded`,
+  never the reverse, so upstream subtree syncs stay merge-clean.
+- Covers read dedupe, search cache, anchor edits, output minimization, cheap-task
+  routing, the prompt-prefix guard, and per-turn token/cache-hit metrics. All
+  switchable via `AppSettings::token_efficiency` / `SHOB_TOKEN_EFFICIENCY=0`.
+- Design record and invalidation contract: `src/token_efficiency/README.md`.
 
 ---
 

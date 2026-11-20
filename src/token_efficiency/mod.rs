@@ -1,8 +1,7 @@
 //! Token-efficiency layer: prompt-cache hygiene, a tool-result cache, anchor
 //! edits, output minimization, cheap-task routing, and per-turn measurement.
 //!
-//! Design: `docs/token-efficiency/02-design.md`. Reference analysis:
-//! `docs/token-efficiency/01-reference-analysis.md`.
+//! Design and reference analysis live in `src/token_efficiency/README.md`.
 //!
 //! # Shape
 //!

@@ -22,7 +22,7 @@ reduce prompt spend without hurting task success.
 | Prompt-prefix guard | Detects a volatile system prompt or reordered tools, which silently invalidate the provider cache | `src/token_efficiency/prefix.rs` |
 | Measurement | Per-turn input/output/cache tokens and cache hit rate, as JSONL | `src/token_efficiency/metrics.rs` |
 
-Measured on the two recorded tasks in `bench/token-efficiency/fixtures/`:
+Measured on the two recorded tasks in `src/token_efficiency/fixtures/`:
 **310,104 → 185,264 prompt tokens, a 40.3% reduction**, of which read dedupe is
 79% and output minimization 20%.
 

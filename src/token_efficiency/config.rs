@@ -5,7 +5,7 @@
 //! reasons: `trust_mtime` trades correctness for a stat, so it must be opted
 //! into; `anchor_edits` is pure savings once the ledger exists, so it is on —
 //! but the *prompt hint* that tells the model the syntax exists is separate
-//! (see `docs/token-efficiency/02-design.md` §2.7).
+//! (see the design notes in `src/token_efficiency/README.md`).
 
 use serde::{Deserialize, Serialize};
 

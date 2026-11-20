@@ -42,7 +42,7 @@ pub struct ReadInput {
     /// Return the content even when this conversation has already been given a
     /// byte-identical copy of it. A host-side read cache uses this to answer a
     /// repeat with "unchanged since turn N" instead of the body; `true` opts out
-    /// (`docs/token-efficiency/02-design.md`).
+    /// (`src/token_efficiency/README.md`).
     #[serde(default)]
     pub fresh: Option<bool>,
 }

@@ -229,7 +229,7 @@ Every capability is switchable from `settings.json`:
 
 A stubbed read or search can be forced back to a real one with `{"fresh": true}`.
 The design, the cache's invalidation rules, and the measured savings are in
-[`docs/token-efficiency/`](docs/token-efficiency/).
+[`src/token_efficiency/`](src/token_efficiency/).
 
 ## Built With
 

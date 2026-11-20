@@ -1,13 +1,13 @@
-//! `token-efficiency-bench`: run the replay benchmark over the recorded tasks.
+//! `shob token-bench`: run the replay benchmark over the recorded tasks.
 //!
 //! Usage:
 //!
 //! ```text
-//! cargo run --bin token-efficiency-bench -- [--fixtures DIR] [--out FILE]
+//! shob token-bench [--fixtures DIR] [--out FILE]
 //! ```
 //!
 //! The benchmark does not call a provider. It replays the recorded tool results
-//! in `bench/token-efficiency/fixtures/` through both pipelines and reports the
+//! in `src/token_efficiency/fixtures/` through both pipelines and reports the
 //! prompt tokens each would send.
 
 use std::path::PathBuf;
@@ -23,8 +23,8 @@ pub fn main() -> ExitCode {
 
 pub fn run(args: impl IntoIterator<Item = String>) -> ExitCode {
     let mut fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("bench")
-        .join("token-efficiency")
+        .join("src")
+        .join("token_efficiency")
         .join("fixtures");
     let mut out: Option<PathBuf> = None;
 
@@ -40,7 +40,7 @@ pub fn run(args: impl IntoIterator<Item = String>) -> ExitCode {
                 None => return usage("--out needs a file path"),
             },
             "--help" | "-h" => {
-                println!("usage: token-efficiency-bench [--fixtures DIR] [--out FILE]");
+                println!("usage: shob token-bench [--fixtures DIR] [--out FILE]");
                 return ExitCode::SUCCESS;
             }
             other => return usage(&format!("unrecognised argument {other:?}")),
@@ -103,6 +103,6 @@ pub fn run(args: impl IntoIterator<Item = String>) -> ExitCode {
 
 fn usage(message: &str) -> ExitCode {
     eprintln!("{message}");
-    eprintln!("usage: token-efficiency-bench [--fixtures DIR] [--out FILE]");
+    eprintln!("usage: shob token-bench [--fixtures DIR] [--out FILE]");
     ExitCode::FAILURE
 }

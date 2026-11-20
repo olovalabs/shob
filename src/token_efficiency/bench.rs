@@ -545,7 +545,7 @@ mod tests {
 
     #[test]
     fn fixtures_load_and_every_task_improves() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("bench/token-efficiency/fixtures");
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/token_efficiency/fixtures");
         let tasks = load_tasks(&dir).expect("fixtures must load");
         assert!(tasks.len() >= 2, "the fixed set has at least two tasks");
         for task in &tasks {
