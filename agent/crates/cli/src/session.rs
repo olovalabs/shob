@@ -788,15 +788,7 @@ pub async fn build_with_tool_hook(
     ),
     BuildError,
 > {
-    build_with_tool_hooks(
-        resolved,
-        args,
-        cwd,
-        project_trusted,
-        before_tool_call,
-        None,
-    )
-    .await
+    build_with_tool_hooks(resolved, args, cwd, project_trusted, before_tool_call, None).await
 }
 
 /// `build_with_tool_hook` plus the result-rewriting hook. Hosts that want to
