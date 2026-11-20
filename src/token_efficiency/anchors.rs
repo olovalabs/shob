@@ -57,9 +57,18 @@ impl AnchorOp {
     fn max_line(&self) -> Option<usize> {
         match self {
             AnchorOp::Put { range, .. } | AnchorOp::Cut { range } => Some(range.end),
-            AnchorOp::Insert { cursor: Cursor::Before(line), .. }
-            | AnchorOp::Insert { cursor: Cursor::After(line), .. } => Some(*line),
-            AnchorOp::Insert { cursor: Cursor::Bof | Cursor::Eof, .. } => None,
+            AnchorOp::Insert {
+                cursor: Cursor::Before(line),
+                ..
+            }
+            | AnchorOp::Insert {
+                cursor: Cursor::After(line),
+                ..
+            } => Some(*line),
+            AnchorOp::Insert {
+                cursor: Cursor::Bof | Cursor::Eof,
+                ..
+            } => None,
         }
     }
 }
@@ -110,10 +119,9 @@ impl std::fmt::Display for AnchorError {
                 "{path} has not been read in this session, so it has no anchors. \
                  Read it first, or use the `edits` form with `oldText`."
             ),
-            AnchorError::OutOfRange { line, lines } => write!(
-                f,
-                "line {line} is past the end of the file ({lines} lines)"
-            ),
+            AnchorError::OutOfRange { line, lines } => {
+                write!(f, "line {line} is past the end of the file ({lines} lines)")
+            }
             AnchorError::BadRange { range } => write!(
                 f,
                 "invalid line range {}.={}: ranges are 1-based and inclusive, with start <= end",
@@ -163,7 +171,11 @@ pub fn expand(content: &str, ops: &[AnchorOp]) -> Result<Vec<ExpandedEdit>, Anch
     Ok(edits)
 }
 
-fn expand_one(op: &AnchorOp, lines: &[&str], line_count: usize) -> Result<ExpandedEdit, AnchorError> {
+fn expand_one(
+    op: &AnchorOp,
+    lines: &[&str],
+    line_count: usize,
+) -> Result<ExpandedEdit, AnchorError> {
     match op {
         AnchorOp::Put { range, text } => {
             check_range(*range, line_count)?;
@@ -192,13 +204,24 @@ fn expand_one(op: &AnchorOp, lines: &[&str], line_count: usize) -> Result<Expand
             match cursor {
                 Cursor::Bof => Ok(ExpandedEdit {
                     old_text: lines.first().copied().unwrap_or("").to_string(),
-                    new_text: format!("{}\n{}", text.trim_end_matches('\n'), lines.first().copied().unwrap_or("")),
+                    new_text: format!(
+                        "{}\n{}",
+                        text.trim_end_matches('\n'),
+                        lines.first().copied().unwrap_or("")
+                    ),
                     lines: LineRange { start: 1, end: 1 },
                 }),
                 Cursor::Eof => Ok(ExpandedEdit {
                     old_text: lines.last().copied().unwrap_or("").to_string(),
-                    new_text: format!("{}\n{}", lines.last().copied().unwrap_or(""), text.trim_end_matches('\n')),
-                    lines: LineRange { start: line_count, end: line_count },
+                    new_text: format!(
+                        "{}\n{}",
+                        lines.last().copied().unwrap_or(""),
+                        text.trim_end_matches('\n')
+                    ),
+                    lines: LineRange {
+                        start: line_count,
+                        end: line_count,
+                    },
                 }),
                 Cursor::Before(line) => {
                     check_line(*line, line_count)?;
@@ -206,7 +229,10 @@ fn expand_one(op: &AnchorOp, lines: &[&str], line_count: usize) -> Result<Expand
                     Ok(ExpandedEdit {
                         old_text: target.to_string(),
                         new_text: format!("{}\n{}", text.trim_end_matches('\n'), target),
-                        lines: LineRange { start: *line, end: *line },
+                        lines: LineRange {
+                            start: *line,
+                            end: *line,
+                        },
                     })
                 }
                 Cursor::After(line) => {
@@ -215,7 +241,10 @@ fn expand_one(op: &AnchorOp, lines: &[&str], line_count: usize) -> Result<Expand
                     Ok(ExpandedEdit {
                         old_text: target.to_string(),
                         new_text: format!("{}\n{}", target, text.trim_end_matches('\n')),
-                        lines: LineRange { start: *line, end: *line },
+                        lines: LineRange {
+                            start: *line,
+                            end: *line,
+                        },
                     })
                 }
             }
@@ -300,8 +329,11 @@ pub fn parse(body: &str) -> Result<AnchorPatch, AnchorError> {
 
     let flush = |pending: &mut Option<(AnchorOp, Vec<String>)>, ops: &mut Vec<AnchorOp>| {
         if let Some((mut op, payload)) = pending.take() {
-            if let AnchorOp::Put { text, .. } = &mut op {
-                *text = payload.join("\n");
+            match &mut op {
+                AnchorOp::Put { text, .. } | AnchorOp::Insert { text, .. } => {
+                    *text = payload.join("\n");
+                }
+                _ => {}
             }
             ops.push(op);
         }
@@ -454,66 +486,113 @@ mod tests {
 
     #[test]
     fn cut_removes_the_named_lines() {
-        let edits = expand(FILE, &[AnchorOp::Cut { range: LineRange { start: 4, end: 5 } }])
-            .expect("expand");
+        let edits = expand(
+            FILE,
+            &[AnchorOp::Cut {
+                range: LineRange { start: 4, end: 5 },
+            }],
+        )
+        .expect("expand");
         assert_eq!(edits[0].old_text, "four\nfive");
         assert_eq!(edits[0].new_text, "");
     }
 
     #[test]
     fn inserts_keep_the_anchor_line_in_the_pre_image() {
-        let after = expand(FILE, &[AnchorOp::Insert {
-            cursor: Cursor::After(2),
-            text: "two-and-a-half".into(),
-        }])
+        let after = expand(
+            FILE,
+            &[AnchorOp::Insert {
+                cursor: Cursor::After(2),
+                text: "two-and-a-half".into(),
+            }],
+        )
         .expect("expand");
         assert_eq!(after[0].old_text, "two");
         assert_eq!(after[0].new_text, "two\ntwo-and-a-half");
 
-        let before = expand(FILE, &[AnchorOp::Insert {
-            cursor: Cursor::Before(2),
-            text: "one-and-a-half".into(),
-        }])
+        let before = expand(
+            FILE,
+            &[AnchorOp::Insert {
+                cursor: Cursor::Before(2),
+                text: "one-and-a-half".into(),
+            }],
+        )
         .expect("expand");
         assert_eq!(before[0].old_text, "two");
         assert_eq!(before[0].new_text, "one-and-a-half\ntwo");
 
-        let at_bof = expand(FILE, &[AnchorOp::Insert {
-            cursor: Cursor::Bof,
-            text: "zero".into(),
-        }])
+        let at_bof = expand(
+            FILE,
+            &[AnchorOp::Insert {
+                cursor: Cursor::Bof,
+                text: "zero".into(),
+            }],
+        )
         .expect("expand");
         assert_eq!(at_bof[0].new_text, "zero\none");
 
-        let at_eof = expand(FILE, &[AnchorOp::Insert {
-            cursor: Cursor::Eof,
-            text: "six".into(),
-        }])
+        let at_eof = expand(
+            FILE,
+            &[AnchorOp::Insert {
+                cursor: Cursor::Eof,
+                text: "six".into(),
+            }],
+        )
         .expect("expand");
         assert_eq!(at_eof[0].new_text, "five\nsix");
     }
 
     #[test]
     fn out_of_range_and_bad_ranges_are_rejected() {
-        let past_end = expand(FILE, &[AnchorOp::Cut { range: LineRange { start: 4, end: 9 } }]);
-        assert_eq!(past_end.unwrap_err(), AnchorError::OutOfRange { line: 9, lines: 5 });
+        let past_end = expand(
+            FILE,
+            &[AnchorOp::Cut {
+                range: LineRange { start: 4, end: 9 },
+            }],
+        );
+        assert_eq!(
+            past_end.unwrap_err(),
+            AnchorError::OutOfRange { line: 9, lines: 5 }
+        );
 
-        let inverted = expand(FILE, &[AnchorOp::Cut { range: LineRange { start: 4, end: 2 } }]);
-        assert!(matches!(inverted.unwrap_err(), AnchorError::BadRange { .. }));
+        let inverted = expand(
+            FILE,
+            &[AnchorOp::Cut {
+                range: LineRange { start: 4, end: 2 },
+            }],
+        );
+        assert!(matches!(
+            inverted.unwrap_err(),
+            AnchorError::BadRange { .. }
+        ));
 
-        let zero = expand(FILE, &[AnchorOp::Cut { range: LineRange { start: 0, end: 1 } }]);
+        let zero = expand(
+            FILE,
+            &[AnchorOp::Cut {
+                range: LineRange { start: 0, end: 1 },
+            }],
+        );
         assert!(matches!(zero.unwrap_err(), AnchorError::BadRange { .. }));
 
-        let zero_insert = expand(FILE, &[AnchorOp::Insert {
-            cursor: Cursor::After(0),
-            text: "x".into(),
-        }]);
-        assert_eq!(zero_insert.unwrap_err(), AnchorError::OutOfRange { line: 0, lines: 5 });
+        let zero_insert = expand(
+            FILE,
+            &[AnchorOp::Insert {
+                cursor: Cursor::After(0),
+                text: "x".into(),
+            }],
+        );
+        assert_eq!(
+            zero_insert.unwrap_err(),
+            AnchorError::OutOfRange { line: 0, lines: 5 }
+        );
     }
 
     #[test]
     fn empty_patch_is_an_error() {
-        assert!(matches!(expand(FILE, &[]).unwrap_err(), AnchorError::Invalid { .. }));
+        assert!(matches!(
+            expand(FILE, &[]).unwrap_err(),
+            AnchorError::Invalid { .. }
+        ));
     }
 
     #[test]
@@ -532,7 +611,10 @@ mod tests {
         ];
         let edits = expand(FILE, &ops).expect("expand");
         let five = edits.iter().find(|edit| edit.lines.start == 5).unwrap();
-        assert_eq!(five.old_text, "five", "line 5 is still 'five', not shifted by the line-1 edit");
+        assert_eq!(
+            five.old_text, "five",
+            "line 5 is still 'five', not shifted by the line-1 edit"
+        );
         let one = edits.iter().find(|edit| edit.lines.start == 1).unwrap();
         assert_eq!(one.old_text, "one");
     }
@@ -584,14 +666,22 @@ mod tests {
             ops: vec![],
         };
         // Tag matches what was delivered, but the bytes on disk differ.
-        let error = verify("a.rs", &patch, Some(delivered), stamp("one\ntwo\nTHREE\nfour\nfive"))
-            .unwrap_err();
+        let error = verify(
+            "a.rs",
+            &patch,
+            Some(delivered),
+            stamp("one\ntwo\nTHREE\nfour\nfive"),
+        )
+        .unwrap_err();
         assert!(matches!(error, AnchorError::Moved { .. }));
     }
 
     #[test]
     fn an_unread_file_has_no_anchors() {
-        let patch = AnchorPatch { tag: "abcd".into(), ops: vec![] };
+        let patch = AnchorPatch {
+            tag: "abcd".into(),
+            ops: vec![],
+        };
         let error = verify("a.rs", &patch, None, stamp(FILE)).unwrap_err();
         assert!(matches!(error, AnchorError::NotDelivered { .. }));
         // The message tells the model exactly what to do.
@@ -601,16 +691,26 @@ mod tests {
     #[test]
     fn every_error_message_is_actionable() {
         for error in [
-            AnchorError::Stale { expected: "aaaa".into(), got: "bbbb".into() },
-            AnchorError::Moved { expected: "aaaa".into(), got: "bbbb".into() },
-            AnchorError::NotDelivered { path: "a.rs".into() },
+            AnchorError::Stale {
+                expected: "aaaa".into(),
+                got: "bbbb".into(),
+            },
+            AnchorError::Moved {
+                expected: "aaaa".into(),
+                got: "bbbb".into(),
+            },
+            AnchorError::NotDelivered {
+                path: "a.rs".into(),
+            },
             AnchorError::OutOfRange { line: 9, lines: 5 },
-            AnchorError::BadRange { range: LineRange { start: 4, end: 2 } },
+            AnchorError::BadRange {
+                range: LineRange { start: 4, end: 2 },
+            },
         ] {
             let message = error.to_string();
             assert!(!message.is_empty());
             assert!(
-                message.contains("re-read")
+                message.to_lowercase().contains("re-read")
                     || message.contains("Read it")
                     || message.contains("1-based")
                     || message.contains("past the end"),
@@ -624,45 +724,63 @@ mod tests {
     #[test]
     fn parses_put_with_payload() {
         let patch = parse("PUT 2.==3:\nTWO\nTHREE").expect("parse");
-        assert_eq!(patch.ops, vec![AnchorOp::Put {
-            range: LineRange { start: 2, end: 3 },
-            text: "TWO\nTHREE".into(),
-        }]);
+        assert_eq!(
+            patch.ops,
+            vec![AnchorOp::Put {
+                range: LineRange { start: 2, end: 3 },
+                text: "TWO\nTHREE".into(),
+            }]
+        );
     }
 
     #[test]
     fn parses_multiple_hunks_and_cut() {
         let patch = parse("PUT 1:\nONE\nCUT 4.==5").expect("parse");
         assert_eq!(patch.ops.len(), 2);
-        assert_eq!(patch.ops[0], AnchorOp::Put {
-            range: LineRange { start: 1, end: 1 },
-            text: "ONE".into(),
-        });
-        assert_eq!(patch.ops[1], AnchorOp::Cut {
-            range: LineRange { start: 4, end: 5 }
-        });
+        assert_eq!(
+            patch.ops[0],
+            AnchorOp::Put {
+                range: LineRange { start: 1, end: 1 },
+                text: "ONE".into(),
+            }
+        );
+        assert_eq!(
+            patch.ops[1],
+            AnchorOp::Cut {
+                range: LineRange { start: 4, end: 5 }
+            }
+        );
     }
 
     #[test]
     fn parses_insertion_cursors() {
         let patch = parse("PUT >$:\nsix\nPUT <1:\nzero").expect("parse");
-        assert_eq!(patch.ops[0], AnchorOp::Insert {
-            cursor: Cursor::Eof,
-            text: "six".into()
-        });
-        assert_eq!(patch.ops[1], AnchorOp::Insert {
-            cursor: Cursor::Before(1),
-            text: "zero".into()
-        });
+        assert_eq!(
+            patch.ops[0],
+            AnchorOp::Insert {
+                cursor: Cursor::Eof,
+                text: "six".into()
+            }
+        );
+        assert_eq!(
+            patch.ops[1],
+            AnchorOp::Insert {
+                cursor: Cursor::Before(1),
+                text: "zero".into()
+            }
+        );
     }
 
     #[test]
     fn tolerates_the_single_equals_typo() {
         let patch = parse("PUT 2.=3:\nx").expect("parse");
-        assert_eq!(patch.ops[0], AnchorOp::Put {
-            range: LineRange { start: 2, end: 3 },
-            text: "x".into()
-        });
+        assert_eq!(
+            patch.ops[0],
+            AnchorOp::Put {
+                range: LineRange { start: 2, end: 3 },
+                text: "x".into()
+            }
+        );
     }
 
     #[test]
@@ -673,7 +791,10 @@ mod tests {
 
     #[test]
     fn rejects_an_empty_body() {
-        assert!(matches!(parse("   \n\n").unwrap_err(), AnchorError::Invalid { .. }));
+        assert!(matches!(
+            parse("   \n\n").unwrap_err(),
+            AnchorError::Invalid { .. }
+        ));
     }
 
     #[test]
@@ -688,7 +809,10 @@ mod tests {
         verify("a.rs", &patch, Some(ledger_for(FILE)), stamp(FILE)).expect("verified");
         let edits = expand(FILE, &patch.ops).expect("expand");
         assert_eq!(edits.len(), 2);
-        assert_eq!(edits.iter().map(|e| e.old_text.len()).sum::<usize>(), "two\nthree".len() + "five".len());
+        assert_eq!(
+            edits.iter().map(|e| e.old_text.len()).sum::<usize>(),
+            "two\nthree".len() + "five".len()
+        );
     }
 
     #[test]

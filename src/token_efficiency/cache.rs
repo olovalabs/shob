@@ -233,14 +233,16 @@ impl ToolCache {
     /// Advance the conversation clock. Called once per provider turn.
     pub fn begin_turn(&mut self, turn: u64) {
         self.turn = turn;
-        // Entries older than the window can never be reused; dropping them here
-        // keeps the maps bounded by session length rather than by file count.
+        // Entries older than twice the window can never be reused and have
+        // already had a chance to report Expired; dropping them here keeps the
+        // maps bounded by session length rather than by file count.
         let window = u64::from(self.settings.dedupe_window_turns);
+        let prune_window = window.saturating_mul(2).max(window + 1);
         let turn = self.turn;
         self.reads
-            .retain(|_, (_, delivered)| turn.saturating_sub(delivered.turn) <= window);
+            .retain(|_, (_, delivered)| turn.saturating_sub(delivered.turn) <= prune_window);
         self.searches
-            .retain(|_, (_, cached)| turn.saturating_sub(cached.turn) <= window);
+            .retain(|_, (_, cached)| turn.saturating_sub(cached.turn) <= prune_window);
     }
 
     // ---- read dedupe -----------------------------------------------------
@@ -251,7 +253,7 @@ impl ToolCache {
     /// `delivered_bytes` is the length of the body the tool just produced; it
     /// is the number the savings metric credits. This method reads the file to
     /// stamp it but never trusts the caller for content.
-    pub fn observe_read<P: FileProbe>(
+    pub fn observe_read<P: FileProbe + ?Sized>(
         &mut self,
         probe: &P,
         raw_path: &Path,
@@ -271,10 +273,14 @@ impl ToolCache {
 
         // The key records the canonical path so `./a.rs` and `a.rs` share one
         // entry; `delivered` records what was actually sent.
-        let canonical_key = ReadKey::new(&path, ReadRange {
-            start: key.range.0,
-            end: key.range.1,
-        }, key.fresh);
+        let canonical_key = ReadKey::new(
+            &path,
+            ReadRange {
+                start: key.range.0,
+                end: key.range.1,
+            },
+            key.fresh,
+        );
         let map_key = canonical_key.digest();
 
         let previous = self.reads.get(&map_key).map(|(_, delivered)| *delivered);
@@ -295,7 +301,8 @@ impl ToolCache {
                             // Opt-in fast path: same length and same mtime means
                             // "assume unchanged". Documented as unsafe on
                             // same-millisecond same-length rewrites.
-                            stamp.len == previous.stamp.len && meta.mtime_ms == previous.meta.mtime_ms
+                            stamp.len == previous.stamp.len
+                                && meta.mtime_ms == previous.meta.mtime_ms
                         } else {
                             stamp == previous.stamp
                         }
@@ -326,9 +333,12 @@ impl ToolCache {
 
         // On a hit the recorded delivery stays as it is; its turn is not
         // refreshed, so a body cannot be kept alive forever by re-reading it.
-        if !lookup.is_hit() {
-            if let (Some(stamp), Some(meta)) = (stamp, meta) {
-                self.reads.insert(map_key, (
+        if !lookup.is_hit()
+            && let (Some(stamp), Some(meta)) = (stamp, meta)
+        {
+            self.reads.insert(
+                map_key,
+                (
                     canonical_key,
                     DeliveredRead {
                         stamp,
@@ -336,9 +346,9 @@ impl ToolCache {
                         delivered_bytes,
                         turn: self.turn,
                     },
-                ));
-                self.set_anchor(path, stamp);
-            }
+                ),
+            );
+            self.set_anchor(path, stamp);
         }
 
         (lookup, previous)
@@ -348,11 +358,14 @@ impl ToolCache {
         let tag = stamp.digest.as_bytes()[..4]
             .try_into()
             .expect("SHA-256 is 32 bytes");
-        self.anchors.insert(path, AnchorLedger {
-            tag,
-            stamp,
-            delivered_turn: self.turn,
-        });
+        self.anchors.insert(
+            path,
+            AnchorLedger {
+                tag,
+                stamp,
+                delivered_turn: self.turn,
+            },
+        );
     }
 
     /// The anchor tag for `path` as of the last delivery, if any.
@@ -374,7 +387,7 @@ impl ToolCache {
     /// every scanned file still exists at the same `mtime`, that no new file
     /// appeared in any scanned directory, and that the scanned set is small
     /// enough to be worth validating.
-    pub fn observe_search<P: FileProbe>(
+    pub fn observe_search<P: FileProbe + ?Sized>(
         &mut self,
         probe: &P,
         key: &SearchKey,
@@ -384,7 +397,10 @@ impl ToolCache {
             return None;
         }
         let map_key = key.digest();
-        let cached = self.searches.get(&map_key).map(|(_, cached)| cached.clone())?;
+        let cached = self
+            .searches
+            .get(&map_key)
+            .map(|(_, cached)| cached.clone())?;
 
         if cached.scanned.len() > self.settings.max_validate_files {
             // Too big to validate cheaply: a miss, which is always correct.
@@ -427,7 +443,13 @@ impl ToolCache {
     }
 
     /// Record a search result so a later identical request can be validated.
-    pub fn record_search(&mut self, key: SearchKey, scanned: Vec<(PathBuf, i64)>, answer: &[u8], matches: usize) {
+    pub fn record_search(
+        &mut self,
+        key: SearchKey,
+        scanned: Vec<(PathBuf, i64)>,
+        answer: &[u8],
+        matches: usize,
+    ) {
         if !self.settings.search_cache {
             return;
         }
@@ -486,7 +508,14 @@ mod tests {
     }
 
     fn key(path: &str) -> ReadKey {
-        ReadKey::new(path, ReadRange { start: 0, end: None }, false)
+        ReadKey::new(
+            path,
+            ReadRange {
+                start: 0,
+                end: None,
+            },
+            false,
+        )
     }
 
     fn read(cache: &mut ToolCache, fs: &FakeFs, path: &str, bytes: &[u8]) -> Lookup {
@@ -500,8 +529,14 @@ mod tests {
         fs.write("/a.rs", "fn main() {}\n");
         let mut cache = cache();
 
-        assert_eq!(read(&mut cache, &fs, "/a.rs", b"fn main() {}\n"), Lookup::Miss);
-        assert_eq!(read(&mut cache, &fs, "/a.rs", b"fn main() {}\n"), Lookup::Hit);
+        assert_eq!(
+            read(&mut cache, &fs, "/a.rs", b"fn main() {}\n"),
+            Lookup::Miss
+        );
+        assert_eq!(
+            read(&mut cache, &fs, "/a.rs", b"fn main() {}\n"),
+            Lookup::Hit
+        );
         assert_eq!(cache.counters().read_hits, 1);
         assert_eq!(cache.counters().read_misses, 1);
     }
@@ -583,9 +618,17 @@ mod tests {
         cache.begin_turn(1);
         read(&mut cache, &fs, "/a.rs", b"body\n");
         cache.begin_turn(3);
-        assert_eq!(read(&mut cache, &fs, "/a.rs", b"body\n"), Lookup::Hit, "turns 1→3 is a distance of 2");
+        assert_eq!(
+            read(&mut cache, &fs, "/a.rs", b"body\n"),
+            Lookup::Hit,
+            "turns 1→3 is a distance of 2"
+        );
         cache.begin_turn(4);
-        assert_eq!(read(&mut cache, &fs, "/a.rs", b"body\n"), Lookup::Expired, "distance 3 exceeds the window of 2");
+        assert_eq!(
+            read(&mut cache, &fs, "/a.rs", b"body\n"),
+            Lookup::Expired,
+            "distance 3 exceeds the window of 2"
+        );
     }
 
     #[test]
@@ -604,9 +647,16 @@ mod tests {
         cache.begin_turn(2);
         assert!(read(&mut cache, &fs, "/a.rs", b"body\n").is_hit());
         cache.begin_turn(3);
-        assert!(read(&mut cache, &fs, "/a.rs", b"body\n").is_hit(), "still inside 1→3");
+        assert!(
+            read(&mut cache, &fs, "/a.rs", b"body\n").is_hit(),
+            "still inside 1→3"
+        );
         cache.begin_turn(4);
-        assert_eq!(read(&mut cache, &fs, "/a.rs", b"body\n"), Lookup::Expired, "measured from turn 1, not turn 3");
+        assert_eq!(
+            read(&mut cache, &fs, "/a.rs", b"body\n"),
+            Lookup::Expired,
+            "measured from turn 1, not turn 3"
+        );
     }
 
     #[test]
@@ -616,7 +666,14 @@ mod tests {
         let mut cache = cache();
         read(&mut cache, &fs, "/a.rs", b"body\n");
 
-        let forced = ReadKey::new("/a.rs", ReadRange { start: 0, end: None }, true);
+        let forced = ReadKey::new(
+            "/a.rs",
+            ReadRange {
+                start: 0,
+                end: None,
+            },
+            true,
+        );
         let (lookup, _) = cache.observe_read(&fs, Path::new("/a.rs"), forced, 6);
         assert_eq!(lookup, Lookup::Forced);
     }
@@ -658,7 +715,14 @@ mod tests {
         let mut cache = cache();
         read(&mut cache, &fs, "/a.rs", b"line1\nline2\n");
 
-        let ranged = ReadKey::new("/a.rs", ReadRange { start: 1, end: None }, false);
+        let ranged = ReadKey::new(
+            "/a.rs",
+            ReadRange {
+                start: 1,
+                end: None,
+            },
+            false,
+        );
         let (lookup, _) = cache.observe_read(&fs, Path::new("/a.rs"), ranged, 6);
         assert_eq!(lookup, Lookup::Miss);
         assert_eq!(cache.read_entries(), 2);
@@ -753,7 +817,10 @@ mod tests {
         fs.write("/a.rs", "two\n");
         read(&mut cache, &fs, "/a.rs", b"two\n");
         let second = cache.anchor(Path::new("/a.rs")).expect("anchor updated");
-        assert_ne!(first.stamp, second.stamp, "a new version must not keep the old tag");
+        assert_ne!(
+            first.stamp, second.stamp,
+            "a new version must not keep the old tag"
+        );
     }
 
     // ---- search ----------------------------------------------------------
@@ -869,7 +936,12 @@ mod tests {
             search_cache: false,
             ..TokenEfficiencySettings::default()
         });
-        cache.record_search(search_key("one"), vec![(PathBuf::from("/work/a.rs"), 1)], b"hit", 1);
+        cache.record_search(
+            search_key("one"),
+            vec![(PathBuf::from("/work/a.rs"), 1)],
+            b"hit",
+            1,
+        );
         assert!(cache.observe_search(&fs, &search_key("one")).is_none());
         assert_eq!(cache.search_entries(), 0);
     }

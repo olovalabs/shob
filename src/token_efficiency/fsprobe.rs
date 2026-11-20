@@ -165,12 +165,24 @@ pub(crate) mod testing {
 
     impl FileProbe for FakeFs {
         fn metadata(&self, path: &Path) -> Option<FileMeta> {
-            self.files.lock().unwrap().get(path).map(|(bytes, mtime)| {
-                FileMeta {
+            let files = self.files.lock().unwrap();
+            if let Some((bytes, mtime)) = files.get(path) {
+                return Some(FileMeta {
                     len: bytes.len() as u64,
                     mtime_ms: *mtime,
+                });
+            }
+            let mut max_mtime = None;
+            for (file_path, (_, mtime)) in files.iter() {
+                if file_path.starts_with(path) && file_path != path {
+                    max_mtime = Some(max_mtime.map_or(*mtime, |max: i64| max.max(*mtime)));
                 }
-            })
+            }
+            max_mtime.map(|mtime_ms| FileMeta { len: 0, mtime_ms })
+        }
+
+        fn read(&self, path: &Path) -> Option<Vec<u8>> {
+            self.read(path)
         }
 
         fn canonicalize(&self, path: &Path) -> PathBuf {

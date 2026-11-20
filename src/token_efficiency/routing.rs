@@ -53,7 +53,9 @@ impl Selector {
     }
 
     pub fn model(&self) -> &str {
-        self.0.split_once('/').map_or(self.0.as_str(), |(_, model)| model)
+        self.0
+            .split_once('/')
+            .map_or(self.0.as_str(), |(_, model)| model)
     }
 }
 
@@ -101,7 +103,7 @@ impl Router {
         if !self.route_cheap_tasks && role != Role::Primary {
             return self.primary.as_ref();
         }
-        let candidate = match role {
+        match role {
             Role::Primary => self.primary.as_ref(),
             Role::Smol => self.smol.as_ref().or(self.primary.as_ref()),
             Role::Judge => self
@@ -109,8 +111,7 @@ impl Router {
                 .as_ref()
                 .or(self.smol.as_ref())
                 .or(self.primary.as_ref()),
-        };
-        candidate
+        }
     }
 
     /// Whether `role` resolves to something cheaper than the primary.
@@ -138,14 +139,20 @@ mod tests {
     #[test]
     fn smol_routes_to_the_cheap_model() {
         let router = router();
-        assert_eq!(router.route(Role::Smol).unwrap().0, "anthropic/claude-haiku-4-5");
+        assert_eq!(
+            router.route(Role::Smol).unwrap().0,
+            "anthropic/claude-haiku-4-5"
+        );
         assert!(router.is_routed_away_from_primary(Role::Smol));
     }
 
     #[test]
     fn primary_is_untouched() {
         let router = router();
-        assert_eq!(router.route(Role::Primary).unwrap().0, "anthropic/claude-opus-4-7");
+        assert_eq!(
+            router.route(Role::Primary).unwrap().0,
+            "anthropic/claude-opus-4-7"
+        );
         assert!(!router.is_routed_away_from_primary(Role::Primary));
     }
 
@@ -159,10 +166,16 @@ mod tests {
     #[test]
     fn judge_falls_back_through_smol_then_primary() {
         let judge_router = router().with_judge(Some(Selector::new("openai/gpt-5-mini")));
-        assert_eq!(judge_router.route(Role::Judge).unwrap().0, "openai/gpt-5-mini");
+        assert_eq!(
+            judge_router.route(Role::Judge).unwrap().0,
+            "openai/gpt-5-mini"
+        );
 
         let no_judge = router();
-        assert_eq!(no_judge.route(Role::Judge).unwrap().0, "anthropic/claude-haiku-4-5");
+        assert_eq!(
+            no_judge.route(Role::Judge).unwrap().0,
+            "anthropic/claude-haiku-4-5"
+        );
 
         let only_primary = Router::new(Some(Selector::new("x/y")), None, true);
         assert_eq!(only_primary.route(Role::Judge).unwrap().0, "x/y");
@@ -200,16 +213,24 @@ mod tests {
 
     #[test]
     fn from_settings_reads_the_configured_smol_model() {
-        let mut settings = TokenEfficiencySettings::default();
-        settings.smol_model = Some("anthropic/claude-haiku-4-5".into());
+        let settings = TokenEfficiencySettings {
+            smol_model: Some("anthropic/claude-haiku-4-5".into()),
+            ..TokenEfficiencySettings::default()
+        };
         let router = Router::from_settings(Some("anthropic/claude-opus-4-7"), &settings);
-        assert_eq!(router.route(Role::Smol).unwrap().0, "anthropic/claude-haiku-4-5");
+        assert_eq!(
+            router.route(Role::Smol).unwrap().0,
+            "anthropic/claude-haiku-4-5"
+        );
 
         let unconfigured = Router::from_settings(
             Some("anthropic/claude-opus-4-7"),
             &TokenEfficiencySettings::default(),
         );
-        assert_eq!(unconfigured.route(Role::Smol).unwrap().0, "anthropic/claude-opus-4-7");
+        assert_eq!(
+            unconfigured.route(Role::Smol).unwrap().0,
+            "anthropic/claude-opus-4-7"
+        );
     }
 
     #[test]

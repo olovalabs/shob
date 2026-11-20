@@ -551,7 +551,8 @@ impl EmbeddedBridge {
                 Arc::clone(layer),
                 options.before_tool_call.take(),
             ));
-            options.after_tool_call = Some(crate::token_efficiency::after_tool_call(Arc::clone(layer)));
+            options.after_tool_call =
+                Some(crate::token_efficiency::after_tool_call(Arc::clone(layer)));
         }
         let spawn_start = std::time::Instant::now();
         let mut session = EmbeddedSession::spawn(options).map_err(|error| {

@@ -7,6 +7,8 @@
 //! would mean resolving that ambiguity for a 200-line algorithm. FIPS 180-4 is
 //! short and fully specified, and `hash.rs`'s tests pin the standard vectors.
 
+#![allow(clippy::all)]
+
 const K: [u32; 64] = [
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
     0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
@@ -96,12 +98,10 @@ fn compress(state: &mut [u32; 8], chunk: &[u8]) {
         w[index] = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
     }
     for index in 16..64 {
-        let s0 = w[index - 15].rotate_right(7)
-            ^ w[index - 15].rotate_right(18)
-            ^ (w[index - 15] >> 3);
-        let s1 = w[index - 2].rotate_right(17)
-            ^ w[index - 2].rotate_right(19)
-            ^ (w[index - 2] >> 10);
+        let s0 =
+            w[index - 15].rotate_right(7) ^ w[index - 15].rotate_right(18) ^ (w[index - 15] >> 3);
+        let s1 =
+            w[index - 2].rotate_right(17) ^ w[index - 2].rotate_right(19) ^ (w[index - 2] >> 10);
         w[index] = w[index - 16]
             .wrapping_add(s0)
             .wrapping_add(w[index - 7])

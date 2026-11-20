@@ -121,13 +121,13 @@ pub fn estimate_tokens(text: &str) -> u64 {
     let flush_word = |word_chars: &mut u64, tokens: &mut u64| {
         if *word_chars > 0 {
             // One token up to ~5 chars, then one per 5.
-            *tokens += 1 + (*word_chars.saturating_sub(5)) / 5;
+            *tokens += 1 + word_chars.saturating_sub(5) / 5;
             *word_chars = 0;
         }
     };
     let flush_punctuation = |punctuation: &mut u64, tokens: &mut u64| {
         if *punctuation > 0 {
-            *tokens += (*punctuation * 6 + 9) / 10;
+            *tokens += (*punctuation * 6).div_ceil(10);
             *punctuation = 0;
         }
     };
@@ -163,7 +163,11 @@ pub fn estimate_tokens(text: &str) -> u64 {
 fn baseline_payload(step: &Step) -> String {
     match step.tool.as_str() {
         "edit" => {
-            let old = step.args.get("oldText").and_then(|v| v.as_str()).unwrap_or("");
+            let old = step
+                .args
+                .get("oldText")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             format!("{}\n{}", old, step.result)
         }
         _ => step.result.clone(),
@@ -207,7 +211,8 @@ pub fn run_optimized(task: &Task, settings: &TokenEfficiencySettings) -> ArmResu
         // The tool-call arguments are part of the prompt, and for `edit` they are
         // where the anchor saving lives.
         let mut args = step.args.clone();
-        let mut arg_tokens = estimate_tokens(&baseline_payload(step)) - estimate_tokens(&step.result);
+        let mut arg_tokens =
+            estimate_tokens(&baseline_payload(step)) - estimate_tokens(&step.result);
 
         // ---- before: anchor expansion, search short-circuit ----
         let mut short_circuit: Option<String> = None;
@@ -242,7 +247,7 @@ pub fn run_optimized(task: &Task, settings: &TokenEfficiencySettings) -> ArmResu
             }
         };
 
-        history_tokens += arg_tokens.max(0) as u64 + estimate_tokens(&payload);
+        history_tokens += arg_tokens + estimate_tokens(&payload);
         result.prompt_tokens += history_tokens;
         result.result_bytes += payload.len() as u64;
         result.final_prompt_tokens = history_tokens;
@@ -324,7 +329,8 @@ pub fn ablate(tasks: &[Task], settings: &TokenEfficiencySettings) -> Vec<Ablatio
         .map(|task| run_optimized(task, settings).prompt_tokens)
         .sum();
 
-    let features: [(&'static str, fn(&mut TokenEfficiencySettings)); 4] = [
+    type FeatureToggle = (&'static str, fn(&mut TokenEfficiencySettings));
+    let features: [FeatureToggle; 4] = [
         ("read_dedupe", |s| s.read_dedupe = false),
         ("search_cache", |s| s.search_cache = false),
         ("anchor_edits", |s| s.anchor_edits = false),
@@ -352,7 +358,9 @@ pub fn ablate(tasks: &[Task], settings: &TokenEfficiencySettings) -> Vec<Ablatio
 /// Render the ablation table.
 pub fn ablation_report(ablations: &[Ablation], baseline: u64) -> String {
     let mut out = String::new();
-    out.push_str("| Feature disabled | Prompt tokens | Contribution | Share of the total saving |\n");
+    out.push_str(
+        "| Feature disabled | Prompt tokens | Contribution | Share of the total saving |\n",
+    );
     out.push_str("| --- | ---: | ---: | ---: |\n");
     let total_saving = ablations
         .iter()
@@ -439,7 +447,11 @@ mod tests {
 
     #[test]
     fn the_estimator_is_monotone_and_nonzero() {
-        assert_eq!(estimate_tokens(""), 1, "a single empty line is still a line");
+        assert_eq!(
+            estimate_tokens(""),
+            1,
+            "a single empty line is still a line"
+        );
         assert!(estimate_tokens("hello world") > 0);
         assert!(estimate_tokens(&"hello ".repeat(100)) > estimate_tokens(&"hello ".repeat(10)));
     }
@@ -464,25 +476,29 @@ mod tests {
         let one = "pub fn count(x: usize) -> usize { x }";
         let ten: String = (0..10).map(|_| format!("{one}\n")).collect();
         let ratio = estimate_tokens(&ten) as f64 / estimate_tokens(one) as f64;
-        assert!(ratio > 8.0, "ten copies must cost ~ten times one, got {ratio}");
+        assert!(
+            ratio > 8.0,
+            "ten copies must cost ~ten times one, got {ratio}"
+        );
     }
 
     fn task() -> Task {
+        let content = "fn example() {\n    println!(\"hello world\");\n}\n".repeat(10);
         Task {
             name: "t".into(),
-            files: BTreeMap::from([("src/a.rs".to_string(), "a\nb\nc\n".to_string())]),
+            files: BTreeMap::from([("src/a.rs".to_string(), content.clone())]),
             steps: vec![
                 Step {
                     desc: "read".into(),
                     tool: "read".into(),
                     args: serde_json::json!({"path": "src/a.rs"}),
-                    result: "a\nb\nc\n".into(),
+                    result: content.clone(),
                 },
                 Step {
                     desc: "read again".into(),
                     tool: "read".into(),
                     args: serde_json::json!({"path": "src/a.rs"}),
-                    result: "a\nb\nc\n".into(),
+                    result: content,
                 },
             ],
         }
@@ -546,8 +562,10 @@ mod tests {
 
     #[test]
     fn the_report_is_markdown_with_a_total_row() {
-        let text = report(&[compare(&task(), &TokenEfficiencySettings::default())],
-                          &TokenEfficiencySettings::default());
+        let text = report(
+            &[compare(&task(), &TokenEfficiencySettings::default())],
+            &TokenEfficiencySettings::default(),
+        );
         assert!(text.starts_with("| Task |"));
         assert!(text.contains("| **Total** |"));
         assert!(text.contains("Fixed prefix:"));

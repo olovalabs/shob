@@ -26,12 +26,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::anchors::{self, AnchorPatch};
-use super::cache::{
-    CacheCounters, ContentStamp, Lookup, ReadKey, ReadRange, SearchKey, ToolCache,
-};
+use super::cache::{CacheCounters, ContentStamp, Lookup, ReadKey, ReadRange, SearchKey, ToolCache};
 use super::config::TokenEfficiencySettings;
 use super::fsprobe::{FileProbe, OsFileProbe};
 use super::minimize;
@@ -76,7 +74,10 @@ impl TokenEfficiency {
 
     /// Bytes kept out of the prompt since the last [`Self::take_bytes_saved`].
     pub fn take_bytes_saved(&self) -> u64 {
-        let mut saved = self.turn_bytes_saved.lock().unwrap_or_else(|error| error.into_inner());
+        let mut saved = self
+            .turn_bytes_saved
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         std::mem::take(&mut *saved)
     }
 
@@ -91,7 +92,10 @@ impl TokenEfficiency {
     }
 
     fn add_saved(&self, bytes: usize) {
-        let mut saved = self.turn_bytes_saved.lock().unwrap_or_else(|error| error.into_inner());
+        let mut saved = self
+            .turn_bytes_saved
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         *saved += bytes as u64;
     }
 }
@@ -131,10 +135,11 @@ pub fn intercept(layer: &TokenEfficiency, tool: &str, args: &Value) -> Before {
         }
     }
 
-    if layer.settings.search_cache && matches!(tool, "grep" | "find" | "ls") {
-        if let Some(hit) = try_search_hit(layer, tool, args) {
-            return Before::ShortCircuit(hit);
-        }
+    if layer.settings.search_cache
+        && matches!(tool, "grep" | "find" | "ls")
+        && let Some(hit) = try_search_hit(layer, tool, args)
+    {
+        return Before::ShortCircuit(hit);
     }
 
     Before::Continue
@@ -342,7 +347,10 @@ fn observe_read(layer: &TokenEfficiency, args: &Value, text: &str) -> After {
         .and_then(Value::as_u64)
         .map(|offset| offset as usize)
         .unwrap_or(1);
-    let limit = args.get("limit").and_then(Value::as_u64).map(|l| l as usize);
+    let limit = args
+        .get("limit")
+        .and_then(Value::as_u64)
+        .map(|l| l as usize);
     let fresh = args.get("fresh").and_then(Value::as_bool).unwrap_or(false);
 
     let range = ReadRange {
@@ -351,13 +359,15 @@ fn observe_read(layer: &TokenEfficiency, args: &Value, text: &str) -> After {
     };
     let key = ReadKey::new(path, range, fresh);
 
-    let (lookup, previous) = layer
-        .lock()
-        .observe_read(layer.probe.as_ref(), Path::new(path), key, text.len());
+    let (lookup, previous) =
+        layer
+            .lock()
+            .observe_read(layer.probe.as_ref(), Path::new(path), key, text.len());
 
     match lookup {
         Lookup::Hit => {
             let delivered = previous.expect("a hit implies a previous delivery");
+            layer.add_saved(delivered.delivered_bytes);
             After::Replace(stub_text(path, delivered))
         }
         _ => After::Continue,
@@ -369,8 +379,7 @@ fn observe_read(layer: &TokenEfficiency, args: &Value, text: &str) -> After {
 fn stub_text(path: &str, delivered: super::cache::DeliveredRead) -> String {
     format!(
         "[unchanged since turn {}: {path} — {} lines, {}, sha {}. \
-         The content is byte-identical to that read, so it was not sent again. \
-         Re-issue this read with {{\"fresh\": true}} if you need the text in front of you.]",
+         Content is identical to that read; re-issue read with {{\"fresh\": true}} to force a resend.]",
         delivered.turn,
         delivered.stamp.lines,
         human_bytes(delivered.stamp.len as usize),
@@ -480,12 +489,19 @@ mod tests {
         layer.begin_turn(3);
 
         let first = observe_result(&layer, "read", &read_args("/a.rs"), "fn main() {}\n", false);
-        assert_eq!(first, After::Continue, "the first read must return the body");
+        assert_eq!(
+            first,
+            After::Continue,
+            "the first read must return the body"
+        );
 
         let second = observe_result(&layer, "read", &read_args("/a.rs"), "fn main() {}\n", false);
         match second {
             After::Replace(stub) => {
-                assert!(stub.starts_with("[unchanged since turn 3: /a.rs"), "got {stub:?}");
+                assert!(
+                    stub.starts_with("[unchanged since turn 3: /a.rs"),
+                    "got {stub:?}"
+                );
                 assert!(stub.contains("sha "));
                 assert!(stub.contains("fresh"));
                 assert!(stub.len() < 40 + "/a.rs".len() + 120);
@@ -502,7 +518,11 @@ mod tests {
 
         fs.write("/a.rs", "two\n");
         let after_edit = observe_result(&layer, "read", &read_args("/a.rs"), "two\n", false);
-        assert_eq!(after_edit, After::Continue, "changed content is never stubbed");
+        assert_eq!(
+            after_edit,
+            After::Continue,
+            "changed content is never stubbed"
+        );
     }
 
     #[test]
@@ -553,7 +573,11 @@ mod tests {
             "l2\n",
             false,
         );
-        assert_eq!(ranged, After::Continue, "a different range is a different answer");
+        assert_eq!(
+            ranged,
+            After::Continue,
+            "a different range is a different answer"
+        );
     }
 
     #[test]
@@ -563,7 +587,11 @@ mod tests {
         observe_result(&layer, "read", &read_args("/a.rs"), "body\n", false);
         layer.invalidate_all();
         let next = observe_result(&layer, "read", &read_args("/a.rs"), "body\n", false);
-        assert_eq!(next, After::Continue, "after compaction the body is gone from context");
+        assert_eq!(
+            next,
+            After::Continue,
+            "after compaction the body is gone from context"
+        );
     }
 
     #[test]
@@ -603,7 +631,10 @@ mod tests {
             observe_result(&layer, "read", &read_args("/a.rs"), "body\n", false),
             After::Continue
         );
-        assert_eq!(intercept(&layer, "grep", &json!({"pattern": "x"})), Before::Continue);
+        assert_eq!(
+            intercept(&layer, "grep", &json!({"pattern": "x"})),
+            Before::Continue
+        );
     }
 
     // ---- anchors ---------------------------------------------------------
@@ -614,7 +645,13 @@ mod tests {
         fs.write("/a.rs", "one\ntwo\nthree");
         let body = "one\ntwo\nthree";
         observe_result(&layer, "read", &read_args("/a.rs"), body, false);
-        let tag = layer.lock().anchor(Path::new("/a.rs")).expect("ledger").stamp.digest.tag(4);
+        let tag = layer
+            .lock()
+            .anchor(Path::new("/a.rs"))
+            .expect("ledger")
+            .stamp
+            .digest
+            .tag(4);
 
         let before = intercept(
             &layer,
@@ -698,7 +735,13 @@ mod tests {
         let body = "one\ntwo\nthree\nfour";
         fs.write("/a.rs", body);
         observe_result(&layer, "read", &read_args("/a.rs"), body, false);
-        let tag = layer.lock().anchor(Path::new("/a.rs")).expect("ledger").stamp.digest.tag(4);
+        let tag = layer
+            .lock()
+            .anchor(Path::new("/a.rs"))
+            .expect("ledger")
+            .stamp
+            .digest
+            .tag(4);
         layer.take_bytes_saved();
 
         let ops = "PUT 2.==3:\nTWO\nTHREE";
@@ -737,7 +780,10 @@ mod tests {
         fs.write("/work/a.rs", "fn one() {}\n");
         let args = json!({ "pattern": "fn ", "path": "/work/a.rs" });
         let result = "/work/a.rs:1:fn one() {}";
-        assert_eq!(observe_result(&layer, "grep", &args, result, false), After::Continue);
+        assert_eq!(
+            observe_result(&layer, "grep", &args, result, false),
+            After::Continue
+        );
 
         match intercept(&layer, "grep", &args) {
             Before::ShortCircuit(message) => {
@@ -755,7 +801,10 @@ mod tests {
         fs.write("/work/a.rs", "fn one() {}\n");
         let args = json!({ "pattern": "fn ", "path": "/work/a.rs" });
         observe_result(&layer, "grep", &args, "/work/a.rs:1:fn one() {}", false);
-        assert!(matches!(intercept(&layer, "grep", &args), Before::ShortCircuit(_)));
+        assert!(matches!(
+            intercept(&layer, "grep", &args),
+            Before::ShortCircuit(_)
+        ));
 
         fs.write("/work/a.rs", "fn one() {}\nfn two() {}\n");
         assert_eq!(intercept(&layer, "grep", &args), Before::Continue);
@@ -787,7 +836,10 @@ mod tests {
         assert_eq!(intercept(&layer, "grep", &fresh), Before::Continue);
         // And a fresh run does not overwrite the cached entry with a duplicate.
         observe_result(&layer, "grep", &fresh, "/work/a.rs:1:fn one() {}", false);
-        assert!(matches!(intercept(&layer, "grep", &args), Before::ShortCircuit(_)));
+        assert!(matches!(
+            intercept(&layer, "grep", &args),
+            Before::ShortCircuit(_)
+        ));
     }
 
     #[test]
@@ -802,7 +854,11 @@ mod tests {
             false,
         );
         assert_eq!(
-            intercept(&layer, "grep", &json!({ "pattern": "other", "path": "/work/a.rs" })),
+            intercept(
+                &layer,
+                "grep",
+                &json!({ "pattern": "other", "path": "/work/a.rs" })
+            ),
             Before::Continue
         );
         assert_eq!(
@@ -855,7 +911,11 @@ mod tests {
         let body = "x\n".repeat(5000);
         fs.write("/big.txt", &body);
         let after = observe_result(&layer, "read", &read_args("/big.txt"), &body, false);
-        assert_eq!(after, After::Continue, "read's own truncation is authoritative");
+        assert_eq!(
+            after,
+            After::Continue,
+            "read's own truncation is authoritative"
+        );
     }
 
     #[test]
@@ -865,7 +925,10 @@ mod tests {
             ..TokenEfficiencySettings::default()
         });
         let text = "y\n".repeat(5000);
-        assert_eq!(observe_result(&layer, "bash", &json!({}), &text, false), After::Continue);
+        assert_eq!(
+            observe_result(&layer, "bash", &json!({}), &text, false),
+            After::Continue
+        );
     }
 
     #[test]

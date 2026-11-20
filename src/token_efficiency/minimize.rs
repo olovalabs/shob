@@ -41,12 +41,12 @@ pub fn is_minimizable_tool(name: &str) -> bool {
 /// Path fragments whose lines are noise in agent context: reading them costs
 /// tokens and tells the model nothing it can act on.
 const NOISE_FRAGMENTS: [&str; 8] = [
-    "/node_modules/",
-    "/.git/",
-    "/target/debug/",
-    "/target/release/",
-    "/dist/",
-    "/.venv/",
+    "node_modules/",
+    ".git/",
+    "target/debug/",
+    "target/release/",
+    "dist/",
+    ".venv/",
     "Cargo.lock",
     "package-lock.json",
 ];
@@ -67,8 +67,33 @@ pub fn minimize(text: &str, max_bytes: usize) -> (String, Minimized) {
     let mut repeat = 0usize;
     let mut blanks = 0usize;
 
+    let flush_repeat = |repeat: &mut usize,
+                        previous: Option<&str>,
+                        out: &mut Vec<String>,
+                        stats: &mut Minimized| {
+        if *repeat > 0 {
+            if let Some(prev) = previous {
+                let saved_bytes = *repeat * (prev.len() + 1);
+                let marker = format!("  … ×{}", *repeat + 1);
+                if saved_bytes > marker.len() {
+                    if let Some(last) = out.last_mut() {
+                        last.push_str(&marker);
+                    }
+                    stats.duplicate_runs += 1;
+                } else {
+                    for _ in 0..*repeat {
+                        out.push(prev.to_string());
+                    }
+                }
+            }
+            *repeat = 0;
+        }
+    };
+
     for line in text.lines() {
         if line.trim().is_empty() {
+            flush_repeat(&mut repeat, previous, &mut out, &mut stats);
+            previous = None;
             blanks += 1;
             // At most one blank line survives, and never leading blanks.
             if blanks == 2 && !out.is_empty() {
@@ -85,15 +110,7 @@ pub fn minimize(text: &str, max_bytes: usize) -> (String, Minimized) {
             repeat += 1;
             continue;
         }
-        if repeat > 0 {
-            // The first occurrence is already in `out`; record how many
-            // repetitions were dropped after it.
-            if let Some(last) = out.last_mut() {
-                last.push_str(&format!("  … ×{}", repeat + 1));
-            }
-            stats.duplicate_runs += 1;
-            repeat = 0;
-        }
+        flush_repeat(&mut repeat, previous, &mut out, &mut stats);
 
         if is_noise(line) {
             stats.noise_lines += 1;
@@ -103,12 +120,7 @@ pub fn minimize(text: &str, max_bytes: usize) -> (String, Minimized) {
         out.push(line.to_string());
         previous = Some(line);
     }
-    if repeat > 0 {
-        if let Some(last) = out.last_mut() {
-            last.push_str(&format!("  … ×{}", repeat + 1));
-        }
-        stats.duplicate_runs += 1;
-    }
+    flush_repeat(&mut repeat, previous, &mut out, &mut stats);
 
     let mut joined = out.join("\n");
     if text.ends_with('\n') && !joined.is_empty() {
@@ -169,7 +181,10 @@ mod tests {
         assert!(is_minimizable_tool("grep"));
         assert!(is_minimizable_tool("find"));
         assert!(is_minimizable_tool("ls"));
-        assert!(!is_minimizable_tool("read"), "read's truncation is load-bearing");
+        assert!(
+            !is_minimizable_tool("read"),
+            "read's truncation is load-bearing"
+        );
         assert!(!is_minimizable_tool("edit"));
         assert!(!is_minimizable_tool("write"));
     }
@@ -220,8 +235,15 @@ mod tests {
         let input: String = (0..1000).map(|i| format!("line {i}\n")).collect();
         let (out, stats) = minimize(&input, 500);
         assert!(stats.capped);
-        assert!(out.len() <= 500 + 80, "cap plus its notice: {} bytes", out.len());
-        assert!(out.contains("lines elided"), "the elision must be visible: {out:?}");
+        assert!(
+            out.len() <= 500 + 80,
+            "cap plus its notice: {} bytes",
+            out.len()
+        );
+        assert!(
+            out.contains("lines elided"),
+            "the elision must be visible: {out:?}"
+        );
         assert!(out.starts_with("line 0"));
     }
 
@@ -233,7 +255,11 @@ mod tests {
         assert!(out.is_char_boundary(out.len() - out.len()), "valid UTF-8");
         // Round-tripping through from_utf8 is implicit in `String`; assert the
         // elided tail is all `é` characters.
-        assert!(out.trim_end().chars().all(|c| c == 'é' || c == '[' || c.is_ascii()));
+        assert!(
+            out.trim_end()
+                .chars()
+                .all(|c| c == 'é' || c == '…' || c.is_ascii())
+        );
     }
 
     #[test]
@@ -272,7 +298,10 @@ Untracked files:
 ";
         let (out, stats) = minimize(input, 10_000);
         assert!(!out.contains("target/debug"), "build noise must go");
-        assert!(out.contains("modified:   src/a.rs"), "real signal must stay");
+        assert!(
+            out.contains("modified:   src/a.rs"),
+            "real signal must stay"
+        );
         assert!(stats.saved() > 0);
     }
 }

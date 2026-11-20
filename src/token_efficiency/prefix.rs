@@ -34,7 +34,8 @@ impl PrefixSnapshot {
         sorted.sort();
         sorted.dedup();
         let system_digest = Digest::from_bytes(system.as_bytes());
-        let mut parts: Vec<&str> = vec![&system_digest.hex()];
+        let hex = system_digest.hex();
+        let mut parts: Vec<&str> = vec![&hex];
         parts.extend(sorted.iter().map(String::as_str));
         let digest = Digest::from_bytes(key_digest(&parts).as_bytes());
         Self {
@@ -186,9 +187,16 @@ mod tests {
     #[test]
     fn tool_order_alone_is_not_drift() {
         let mut guard = PrefixGuard::new();
-        guard.observe(PrefixSnapshot::new("sys", &tools(&["read", "bash", "grep"])));
+        guard.observe(PrefixSnapshot::new(
+            "sys",
+            &tools(&["read", "bash", "grep"]),
+        ));
         let reordered = PrefixSnapshot::new("sys", &tools(&["grep", "bash", "read"]));
-        assert_eq!(guard.observe(reordered), Drift::None, "tool order must not invalidate the cache");
+        assert_eq!(
+            guard.observe(reordered),
+            Drift::None,
+            "tool order must not invalidate the cache"
+        );
     }
 
     #[test]
@@ -196,7 +204,10 @@ mod tests {
         let mut guard = PrefixGuard::new();
         guard.observe(PrefixSnapshot::new("sys", &tools(&["read", "bash"])));
         assert_eq!(
-            guard.observe(PrefixSnapshot::new("sys", &tools(&["bash", "read", "read"]))),
+            guard.observe(PrefixSnapshot::new(
+                "sys",
+                &tools(&["bash", "read", "read"])
+            )),
             Drift::None
         );
     }
@@ -209,7 +220,11 @@ mod tests {
             guard.observe(PrefixSnapshot::new("sys", &tools(&["read", "write"]))),
             Drift::ToolSetChanged
         );
-        assert_eq!(guard.drift_count(), 0, "a deliberate tool edit is not suspected drift");
+        assert_eq!(
+            guard.drift_count(),
+            0,
+            "a deliberate tool edit is not suspected drift"
+        );
     }
 
     #[test]
@@ -217,7 +232,10 @@ mod tests {
         let mut guard = PrefixGuard::new();
         guard.observe(PrefixSnapshot::new("You are Shob.", &tools(&["read"])));
         assert_eq!(
-            guard.observe(PrefixSnapshot::new("You are Shob. It is 12:00.", &tools(&["read"]))),
+            guard.observe(PrefixSnapshot::new(
+                "You are Shob. It is 12:00.",
+                &tools(&["read"])
+            )),
             Drift::SystemChanged
         );
         assert_eq!(guard.drift_count(), 1);

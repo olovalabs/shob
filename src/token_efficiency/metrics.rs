@@ -147,6 +147,7 @@ impl MetricsSink {
     /// pass the live cache state without a second lock acquisition at the call
     /// site; the per-turn figure is what belongs in the row, since the cumulative
     /// total would double-count across turns.
+    #[allow(clippy::too_many_arguments)]
     pub fn row(
         turn: u64,
         input: i64,
@@ -206,7 +207,11 @@ mod tests {
     #[test]
     fn hit_rate_ignores_negative_usage() {
         assert_eq!(hit_rate(-5, 0), 0.0);
-        assert_eq!(hit_rate(10, -10), 1.0, "a negative denominator is clamped to zero");
+        assert_eq!(
+            hit_rate(10, -10),
+            1.0,
+            "a negative denominator is clamped to zero"
+        );
     }
 
     #[test]
@@ -283,16 +288,17 @@ mod tests {
     fn a_bad_path_does_not_panic_or_disturb_the_summary() {
         let mut sink = MetricsSink::with_file("/proc/definitely-not-writable/x.jsonl", 4);
         sink.record(row(1, 10, 90));
-        assert_eq!(sink.summary().turns, 1, "measurement survives a failed write");
+        assert_eq!(
+            sink.summary().turns,
+            1,
+            "measurement survives a failed write"
+        );
     }
 
     #[test]
     fn default_path_lives_under_the_data_dir() {
         let path = MetricsSink::default_path(Path::new("/data/shob"));
-        assert_eq!(
-            path,
-            Path::new("/data/shob/token-efficiency/turns.jsonl")
-        );
+        assert_eq!(path, Path::new("/data/shob/token-efficiency/turns.jsonl"));
     }
 
     #[test]

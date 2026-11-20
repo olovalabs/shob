@@ -30,6 +30,8 @@
 //! replay benchmark drive the real cache without touching the disk; production
 //! uses [`fsprobe::OsFileProbe`].
 
+#![allow(dead_code)]
+
 pub mod anchors;
 pub mod bench;
 pub mod bench_main;
@@ -46,8 +48,9 @@ pub mod routing;
 pub use config::TokenEfficiencySettings;
 pub use hooks::{After, Before, TokenEfficiency};
 pub use metrics::{MetricsSink, Summary, TurnRow};
+#[allow(unused_imports)]
 pub use prefix::{PrefixGuard, PrefixSnapshot};
-pub use routing::{Role, Router, Selector};
+pub use routing::{Role, Router};
 
 use std::sync::Arc;
 
@@ -144,7 +147,7 @@ pub fn compose_before_hook(
             }
         }
 
-        match existing {
+        match &existing {
             Some(gate) => gate(call, cancelled),
             None => Box::pin(async { None }),
         }
@@ -193,10 +196,7 @@ pub fn record_turn(row: TurnRow) {
 
 fn metrics_sink() -> MetricsSink {
     // 64 rows is enough for a UI status line and bounds memory on a long run.
-    MetricsSink::with_file(
-        MetricsSink::default_path(&crate::paths::data_dir()),
-        64,
-    )
+    MetricsSink::with_file(MetricsSink::default_path(&crate::paths::data_dir()), 64)
 }
 
 /// A snapshot of the current session's metrics, for the UI.
