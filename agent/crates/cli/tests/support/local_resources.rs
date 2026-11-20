@@ -3,11 +3,11 @@ use super::*;
 async fn cli(root: &Path, args: &[&str]) -> (bool, Value) {
     let out = tokio::time::timeout(
         Duration::from_secs(25),
-        tokio::process::Command::new(env!("CARGO_BIN_EXE_rpi"))
+        tokio::process::Command::new(env!("CARGO_BIN_EXE_shob"))
             .current_dir(root)
-            .env("RPI_CODING_AGENT_DIR", root.join("agent"))
+            .env("SHOB_CODING_AGENT_DIR", root.join("agent"))
             .env(
-                "RPI_PLUGIN_STUB_REGISTRATION_LOG",
+                "SHOB_PLUGIN_STUB_REGISTRATION_LOG",
                 root.join("registrations.log"),
             )
             .args(args)
@@ -54,7 +54,7 @@ fn snapshot(root: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
         }
     }
     let mut result = std::collections::BTreeMap::new();
-    walk(&root.join(".rpi"), &mut result);
+    walk(&root.join(".shob"), &mut result);
     walk(&root.join("agent"), &mut result);
     result
 }
@@ -146,7 +146,7 @@ async fn installed_packages_scopes_snapshots_actual_model_tools_and_host_leases(
         .join("agent/packages/demo/prompts/template.md")
         .is_file());
     assert!(root
-        .join(".rpi/packages/demo/skills/review/references/data.txt")
+        .join(".shob/packages/demo/skills/review/references/data.txt")
         .is_file());
     assert!(root
         .join("agent/skills/extra/references/keep.txt")
@@ -208,7 +208,7 @@ async fn installed_packages_scopes_snapshots_actual_model_tools_and_host_leases(
         let base = if scope == "global" {
             root.join("agent")
         } else {
-            root.join(".rpi")
+            root.join(".shob")
         };
         let mut selection = json!({"version":1,"main_package":{"name":"demo","scope":scope,"instructions":["prompts/persistent.md"]},"skills":[base.join("skills/extra")],"tools":{"mode":"only","names":["read","echo"]}});
         if scope == "project" {
@@ -336,13 +336,13 @@ async fn readonly_catalog_unmanaged_candidates_corruption_and_concurrent_request
         let (ok, v) = cli(root, &["resource", "list", "--scope", scope]).await;
         assert!(ok, "{v}");
     }
-    assert!(!root.join(".rpi").exists() && !root.join("agent").exists());
+    assert!(!root.join(".shob").exists() && !root.join("agent").exists());
     put(
-        root.join(".rpi/packages/suspicious/Cargo.toml"),
+        root.join(".shob/packages/suspicious/Cargo.toml"),
         "intentionally invalid Cargo metadata",
     );
     put(
-        root.join(".rpi/extensions")
+        root.join(".shob/extensions")
             .join(format!("incompatible.{}", std::env::consts::DLL_EXTENSION)),
         "not a library",
     );
@@ -355,12 +355,12 @@ async fn readonly_catalog_unmanaged_candidates_corruption_and_concurrent_request
         .iter()
         .all(|r| r["ownership"] == "unmanaged"));
     assert_eq!(snapshot(root), before);
-    assert!(!root.join(".rpi/.resource-lease").exists());
+    assert!(!root.join(".shob/.resource-lease").exists());
     assert!(!root.join("registrations.log").exists());
     let source = root.join("source");
     skill(source.join("SKILL.md"), "standalone", "safe");
-    put(root.join(".rpi/packages.json"), "{broken");
-    let bytes = std::fs::read(root.join(".rpi/packages.json")).unwrap();
+    put(root.join(".shob/packages.json"), "{broken");
+    let bytes = std::fs::read(root.join(".shob/packages.json")).unwrap();
     assert!(
         !cli(
             root,
@@ -380,9 +380,9 @@ async fn readonly_catalog_unmanaged_candidates_corruption_and_concurrent_request
     );
     assert_eq!(
         bytes,
-        std::fs::read(root.join(".rpi/packages.json")).unwrap()
+        std::fs::read(root.join(".shob/packages.json")).unwrap()
     );
-    std::fs::remove_file(root.join(".rpi/packages.json")).unwrap();
+    std::fs::remove_file(root.join(".shob/packages.json")).unwrap();
     let args = [
         "resource",
         "install",
@@ -405,7 +405,7 @@ async fn readonly_catalog_unmanaged_candidates_corruption_and_concurrent_request
             ["installed"]
             == true
     );
-    put(root.join(".rpi/skills/safe/unmanaged.txt"), "keep");
+    put(root.join(".shob/skills/safe/unmanaged.txt"), "keep");
     assert!(
         !cli(
             root,
@@ -415,7 +415,7 @@ async fn readonly_catalog_unmanaged_candidates_corruption_and_concurrent_request
         .0
     );
     assert_eq!(
-        std::fs::read(root.join(".rpi/skills/safe/unmanaged.txt")).unwrap(),
+        std::fs::read(root.join(".shob/skills/safe/unmanaged.txt")).unwrap(),
         b"keep"
     );
 }

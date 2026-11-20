@@ -3,7 +3,7 @@
 //! # Why this module has no `agent::` types in it
 //!
 //! The hooks the harness calls (`BeforeToolCall`, `AfterToolCall`) take
-//! `&AgentContext` and `&AgentToolResult`, which are rpi types. Those belong in
+//! `&AgentContext` and `&AgentToolResult`, which are shob types. Those belong in
 //! the wiring seam (`mod.rs`), not in the logic that decides whether a read is
 //! unchanged. Keeping the decision here as pure functions over
 //! `(tool name, arguments, text)` means the cache, the anchor expander and the

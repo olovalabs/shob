@@ -116,7 +116,7 @@ mod tests {
         let prepared = PreparedJsonRequest::new(
             client
                 .post("http://127.0.0.1/request")
-                .header("Content-Type", "application/x-rpi-json")
+                .header("Content-Type", "application/x-shob-json")
                 .header("x-test", "kept")
                 .timeout(std::time::Duration::from_secs(7)),
             &Counted(&calls),
@@ -140,7 +140,7 @@ mod tests {
                 serde_json::from_slice::<String>(bytes).unwrap(),
                 "history 🐈\n".repeat(4096)
             );
-            assert_eq!(request.headers()["content-type"], "application/x-rpi-json");
+            assert_eq!(request.headers()["content-type"], "application/x-shob-json");
             assert_eq!(request.headers()["x-test"], "kept");
             assert_eq!(request.timeout(), Some(&std::time::Duration::from_secs(7)));
         }
@@ -166,7 +166,7 @@ mod tests {
         let custom = PreparedJsonRequest::new_body(
             client
                 .post("http://127.0.0.1/request")
-                .header("content-type", "application/x-rpi-json"),
+                .header("content-type", "application/x-shob-json"),
             body.clone(),
             false,
         )
@@ -184,7 +184,7 @@ mod tests {
         );
         assert_eq!(
             custom.0.request.headers().get("content-type").unwrap(),
-            "application/x-rpi-json"
+            "application/x-shob-json"
         );
     }
 

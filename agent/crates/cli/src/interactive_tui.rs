@@ -980,7 +980,7 @@ pub async fn interactive_tui(
     let show_images = tui_settings.show_images;
     let cache_miss_notices = tui_settings.cache_miss_notices;
     let quiet_startup = tui_settings.quiet_startup;
-    // rpi only checks its own update channel.
+    // shob only checks its own update channel.
     // Session display preferences (durable, latest-wins) override the
     // settings-file defaults. These are per-session facts stored as custom
     // entries (see `harness::session::values`), so resuming a session with
@@ -1040,6 +1040,7 @@ pub async fn interactive_tui(
     // components keep styled text, so doing this after the welcome banner left
     // the first screen in the dark palette until it was rebuilt.
     let theme_manager = Arc::new(ThemeManager::new());
+    tui::apply_theme_preset(tui::ThemePreset::Dark);
     // Build the discovery registry before resolving the saved spec: selector
     // and settings persist a registry name (e.g. "ocean"), which only
     // resolves to its file when the registry is already in scope.
@@ -1114,13 +1115,13 @@ pub async fn interactive_tui(
         add_note_message(&history_page.header, notice);
     }
 
-    // First-launch gate: if `~/.rpi/.setup_done` is absent, show the welcome
+    // First-launch gate: if `~/.shob/.setup_done` is absent, show the welcome
     // banner once, then write the sentinel. The banner covers the theme hint;
     // the theme stays pickable via `/theme`. See `extras.rs`.
     // Capture this before first-time setup writes its sentinel.
     let existing_profile = crate::extras::setup_done()
         || saved_settings.last_changelog_version.is_some()
-        || saved_settings.last_rpi_changelog_version.is_some();
+        || saved_settings.last_shob_changelog_version.is_some();
     crate::extras::maybe_first_time_setup(&history_page.header);
     let collapse_changelog =
         preferred_project_setting(&project_settings, |settings| settings.collapse_changelog)
@@ -1836,7 +1837,7 @@ pub async fn interactive_tui(
         let mut windows_paste_run = WindowsPasteRun::default();
         if crate::key_trace::enabled() {
             crate::key_trace::note(&format!(
-                "--- rpi TUI key trace start pid={} TERM={} raw_mode={} ---",
+                "--- shob TUI key trace start pid={} TERM={} raw_mode={} ---",
                 std::process::id(),
                 std::env::var("TERM").unwrap_or_else(|_| "(unset)".to_string()),
                 crossterm::terminal::is_raw_mode_enabled().unwrap_or(false),
@@ -2101,7 +2102,7 @@ pub async fn interactive_tui(
                 }
                 windows_paste_run.end_paste_session();
             }
-            // Diagnostic trace (off unless RPI_DEBUG_KEYS is set): records what
+            // Diagnostic trace (off unless SHOB_DEBUG_KEYS is set): records what
             // actually arrived before any routing decision, so a client that
             // sends LF for Enter is visible as `Char('j') mods=CONTROL`.
             crate::key_trace::key(&key, "");
@@ -3069,7 +3070,7 @@ pub async fn interactive_tui(
     )
     .await
     {
-        tracing::warn!("[rpi] extension vetoed SessionStart (advisory): {reason}");
+        tracing::warn!("[shob] extension vetoed SessionStart (advisory): {reason}");
     }
 
     // ---- Initial prompts (run before reading from the channel) ----

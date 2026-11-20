@@ -58,9 +58,9 @@ mod integrations;
 mod logos;
 mod paths;
 mod project_diff;
-mod rpi_storage;
 #[cfg(unix)]
 mod shob_compat;
+mod shob_storage;
 use terminal::pty_session;
 mod settings;
 mod shell_history;
@@ -3235,7 +3235,7 @@ struct PaneChat {
     thinking_by_model: HashMap<String, String>,
     pub autoscroll: bool,
     expanded_tool_groups: HashMap<String, HashSet<usize>>,
-    rpi_session_id: Option<String>,
+    shob_session_id: Option<String>,
     conversation: Option<conversations::Log>,
     startup_error: Option<String>,
 }
@@ -3299,7 +3299,7 @@ impl Default for PaneChat {
             thinking_by_model: HashMap::new(),
             autoscroll: true,
             expanded_tool_groups: HashMap::new(),
-            rpi_session_id: None,
+            shob_session_id: None,
             conversation: None,
             startup_error: None,
         }
@@ -3475,7 +3475,7 @@ impl PaneChat {
         }
         self.bridge = None;
         let selector = self.selected_model.as_ref().map(agent_model_selector);
-        self.bridge_resume = self.rpi_session_id.clone();
+        self.bridge_resume = self.shob_session_id.clone();
         let bridge = ModelBridge::spawn_with_permissions(
             &cwd,
             self.bridge_resume.as_deref(),
@@ -4721,7 +4721,7 @@ impl AppState {
                                         model_explicit: pane.chat.model_explicit,
                                         agent_title: pane.chat.agent_title.clone(),
                                         prompt_title: pane.chat.prompt_title.clone(),
-                                        rpi_session_id: pane.chat.rpi_session_id.clone(),
+                                        shob_session_id: pane.chat.shob_session_id.clone(),
                                         conversation_key: (self.settings.restore.agent_history
                                             || pane.chat.conversation_key != "default")
                                             .then(|| pane.chat.conversation_key.clone()),
@@ -5055,7 +5055,7 @@ impl AppState {
                     pane.chat.permission_mode = self.settings.permission_mode;
                     pane.chat.first_response_provider =
                         saved_pane.chat.first_response_provider.clone();
-                    pane.chat.rpi_session_id = saved_pane.chat.rpi_session_id.clone();
+                    pane.chat.shob_session_id = saved_pane.chat.shob_session_id.clone();
                     pane.chat.workspace_override = saved_pane
                         .chat
                         .workspace_override
@@ -5084,11 +5084,11 @@ impl AppState {
                         })
                     {
                         let key = conversations::legacy_conversation_key(legacy.model.as_ref());
-                        if legacy.rpi_session_id.is_some()
+                        if legacy.shob_session_id.is_some()
                             || transcripts.contains_key(&transcript_key(&pane.uid, &key))
                         {
                             pane.chat.conversation_key = key;
-                            pane.chat.rpi_session_id = legacy.rpi_session_id.clone();
+                            pane.chat.shob_session_id = legacy.shob_session_id.clone();
                             pane.chat.agent_title = legacy.agent_title.clone();
                             pane.chat.prompt_title = legacy.prompt_title.clone();
                         }
@@ -5107,7 +5107,7 @@ impl AppState {
                     if !pane.one_mode && !pane.tool_panel {
                         pane.legacy_chat |= !pane.chat.agent_draft.is_empty()
                             || !pane.chat.messages.is_empty()
-                            || pane.chat.rpi_session_id.is_some();
+                            || pane.chat.shob_session_id.is_some();
                     }
 
                     pane.terminal_subscription = Some(terminal_subscription);
@@ -6999,11 +6999,11 @@ impl AppState {
                 .filter(|pane| !live_pane_uids.contains(pane.uid.as_str()))
                 .map(|pane| pane.uid.clone())
                 .collect(),
-            rpi_session_ids: session
+            shob_session_ids: session
                 .panes
                 .iter()
                 .filter(|pane| !live_pane_uids.contains(pane.uid.as_str()))
-                .filter_map(|pane| pane.chat.rpi_session_id.clone())
+                .filter_map(|pane| pane.chat.shob_session_id.clone())
                 .filter(|id| {
                     !self
                         .projects
@@ -7017,7 +7017,7 @@ impl AppState {
                                 .filter(move |(s, _)| p != project_idx || *s != session_idx)
                                 .flat_map(|(_, session)| session.panes.iter())
                         })
-                        .any(|pane| pane.chat.rpi_session_id.as_ref() == Some(id))
+                        .any(|pane| pane.chat.shob_session_id.as_ref() == Some(id))
                 })
                 .collect(),
         };
@@ -10491,11 +10491,11 @@ impl AppState {
                         }
                         if !pane.chat.bridge_needs_context
                             && let Some(id) = bridge.session_id()
-                            && pane.chat.rpi_session_id.as_ref() != Some(&id)
+                            && pane.chat.shob_session_id.as_ref() != Some(&id)
                         {
                             session_changed = true;
                             changed = true;
-                            pane.chat.rpi_session_id = Some(id);
+                            pane.chat.shob_session_id = Some(id);
                         }
                         if closed {
                             pane.chat.cwd = None;
@@ -19741,7 +19741,7 @@ impl AppState {
             (
                 "restore-agent-history",
                 "Save agent history",
-                "Keep conversation transcripts and resume rpi sessions after a restart.",
+                "Keep conversation transcripts and resume shob sessions after a restart.",
                 restore.agent_history,
             ),
         ];
@@ -19816,7 +19816,7 @@ impl AppState {
                         div()
                             .text_size(px(12.5))
                             .text_color(tokens.text_secondary)
-                            .child("Shob data and RPI sessions are stored in this folder."),
+                            .child("Shob data and SHOB sessions are stored in this folder."),
                     ),
             )
             .child(
@@ -19909,7 +19909,7 @@ impl AppState {
                                 div()
                                     .text_size(px(11.0))
                                     .text_color(tokens.text_secondary)
-                                    .child("Deletes saved layouts, scrollback and Shob-owned RPI sessions. Settings are kept."),
+                                    .child("Deletes saved layouts, scrollback and Shob-owned SHOB sessions. Settings are kept."),
                             ),
                     )
                     .child(
@@ -19973,17 +19973,17 @@ impl AppState {
                     workspace_state::PendingDeletion {
                         session_uid: session.uid,
                         pane_uids: Vec::new(),
-                        rpi_session_ids: Vec::new(),
+                        shob_session_ids: Vec::new(),
                     }
                 });
                 for pane in session.panes {
                     record.pane_uids.push(pane.uid);
-                    record.rpi_session_ids.extend(pane.chat.rpi_session_id);
-                    record.rpi_session_ids.extend(
+                    record.shob_session_ids.extend(pane.chat.shob_session_id);
+                    record.shob_session_ids.extend(
                         pane.chat
                             .models
                             .into_iter()
-                            .filter_map(|model| model.rpi_session_id),
+                            .filter_map(|model| model.shob_session_id),
                     );
                 }
             }
@@ -19993,14 +19993,14 @@ impl AppState {
                 workspace_state::PendingDeletion {
                     session_uid: session.uid.clone(),
                     pane_uids: Vec::new(),
-                    rpi_session_ids: Vec::new(),
+                    shob_session_ids: Vec::new(),
                 }
             });
             for pane in &session.panes {
                 record.pane_uids.push(pane.uid.clone());
                 record
-                    .rpi_session_ids
-                    .extend(pane.chat.rpi_session_id.clone());
+                    .shob_session_ids
+                    .extend(pane.chat.shob_session_id.clone());
             }
         }
         let mut deletions = Vec::new();
@@ -20025,7 +20025,7 @@ impl AppState {
         {
             pane.chat.bridge = None;
             pane.chat.bridge_resume = None;
-            pane.chat.rpi_session_id = None;
+            pane.chat.shob_session_id = None;
         }
         if let Err(error) = std::fs::remove_file(paths::workspace_path())
             && error.kind() != std::io::ErrorKind::NotFound
@@ -20041,7 +20041,7 @@ impl AppState {
         }
         for (path, deletion) in deletions {
             if let Err(error) = workspace_state::finish_deletion(&path, &deletion) {
-                eprintln!("failed to clear RPI session; cleanup will retry: {error}");
+                eprintln!("failed to clear SHOB session; cleanup will retry: {error}");
             }
         }
         self.dirty = false;
@@ -27505,7 +27505,7 @@ First report
         let model = |id: &str| agent_auth::AgentModel {
             provider: "test".into(),
             id: id.into(),
-            backend: agent_auth::ModelBackend::Rpi,
+            backend: agent_auth::ModelBackend::Embedded,
         };
         chat.thinking_by_model
             .insert("test/first".into(), "medium".into());
@@ -27562,7 +27562,7 @@ First report
             s.pane_mut(id).unwrap().chat.selected_model = Some(agent_auth::AgentModel {
                 provider: "google-antigravity".into(),
                 id: "gemini-3.8-flash".into(),
-                backend: agent_auth::ModelBackend::Rpi,
+                backend: agent_auth::ModelBackend::Embedded,
             });
             s.set_reasoning_effort(id, "medium", cx);
             s.set_reasoning_effort(id, "unsupported", cx);
@@ -27587,7 +27587,7 @@ First report
         let model = agent_auth::AgentModel {
             provider: "google".into(),
             id: "gemini-3.8-flash".into(),
-            backend: agent_auth::ModelBackend::Rpi,
+            backend: agent_auth::ModelBackend::Embedded,
         };
         cx.update_window_entity(&state, |s, _, _| {
             let chat = &mut s.pane_mut(id).unwrap().chat;
@@ -28004,7 +28004,7 @@ First report
         let model = agent_auth::AgentModel {
             provider: "openai".into(),
             id: "example-model".into(),
-            backend: agent_auth::ModelBackend::Rpi,
+            backend: agent_auth::ModelBackend::Embedded,
         };
         cx.update_window_entity(&state, |s, window, cx| {
             s.set_chat_mode(id, true, window, cx);
@@ -28073,12 +28073,12 @@ First report
         let disconnected = agent_auth::AgentModel {
             provider: "anthropic".into(),
             id: "claude-disconnected".into(),
-            backend: agent_auth::ModelBackend::Rpi,
+            backend: agent_auth::ModelBackend::Embedded,
         };
         let local = agent_auth::AgentModel {
             provider: "ollama".into(),
             id: "example-local-model".into(),
-            backend: agent_auth::ModelBackend::Rpi,
+            backend: agent_auth::ModelBackend::Embedded,
         };
         cx.update_window_entity(&state, |s, window, cx| {
             s.set_chat_mode(id, true, window, cx);
@@ -30062,7 +30062,7 @@ First report
             chat.selected_model = Some(agent_auth::AgentModel {
                 provider: provider.into(),
                 id: model.into(),
-                backend: agent_auth::ModelBackend::Rpi,
+                backend: agent_auth::ModelBackend::Embedded,
             });
             chat.ensure_agent(cwd.clone()).unwrap();
             let context = chat.context_prompt(prompt);
@@ -30087,11 +30087,11 @@ First report
             }
             assert_eq!(answer, "x".repeat(16));
             finish_chat_streaming(&mut chat.messages);
-            let actual_id = bridge.session_id().expect("durable rpi session");
+            let actual_id = bridge.session_id().expect("durable shob session");
             if let Some(expected) = &session_id {
                 assert_eq!(&actual_id, expected);
             }
-            chat.rpi_session_id = Some(actual_id.clone());
+            chat.shob_session_id = Some(actual_id.clone());
             session_id = Some(actual_id);
         }
         assert_eq!(chat.messages.len(), 4);
@@ -30220,7 +30220,7 @@ First report
             selected_model: Some(agent_auth::AgentModel {
                 provider: "google".into(),
                 id: "gemini-3.8-flash".into(),
-                backend: agent_auth::ModelBackend::Rpi,
+                backend: agent_auth::ModelBackend::Embedded,
             }),
             ..Default::default()
         };

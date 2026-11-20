@@ -49,8 +49,8 @@ static PROVIDER_DIAGNOSTICS_DETAIL: OnceLock<bool> = OnceLock::new();
 
 fn provider_diagnostics_enabled() -> bool {
     *PROVIDER_DIAGNOSTICS.get_or_init(|| {
-        std::env::var_os("RPI_PROVIDER_DIAGNOSTICS")
-            .or_else(|| std::env::var_os("RPI_AGENT_DIAGNOSTICS"))
+        std::env::var_os("SHOB_PROVIDER_DIAGNOSTICS")
+            .or_else(|| std::env::var_os("SHOB_AGENT_DIAGNOSTICS"))
             .is_some_and(|value| value != "0")
     })
 }
@@ -58,7 +58,8 @@ fn provider_diagnostics_enabled() -> bool {
 fn provider_diagnostics_detail_enabled() -> bool {
     *PROVIDER_DIAGNOSTICS_DETAIL.get_or_init(|| {
         provider_diagnostics_enabled()
-            && std::env::var_os("RPI_PROVIDER_DIAGNOSTICS_DETAIL").is_some_and(|value| value != "0")
+            && std::env::var_os("SHOB_PROVIDER_DIAGNOSTICS_DETAIL")
+                .is_some_and(|value| value != "0")
     })
 }
 
@@ -137,7 +138,7 @@ impl Drop for ProviderRequestDiagnostics {
             return;
         }
         eprintln!(
-            "RPI_PROVIDER_DIAGNOSTICS provider=anthropic detail={} params_build_ns={} normalize_ns={} deferred_tools_ns={} convert_messages_ns={} convert_tools_ns={} context_tokens_ns={} preencoded_json_ns={} build_total_ns={} request_encode_ns={} request_json_ns={} request_build_ns={} request_body_bytes={} messages_bytes={} tools_bytes={} system_bytes={} message_count={} http_wait_ns={} sse_events={} mapper_ns={} mapper_pull_ns={} mapper_parse_ns={} mapper_apply_ns={} sse_first_event_ns={} total_ns={}",
+            "SHOB_PROVIDER_DIAGNOSTICS provider=anthropic detail={} params_build_ns={} normalize_ns={} deferred_tools_ns={} convert_messages_ns={} convert_tools_ns={} context_tokens_ns={} preencoded_json_ns={} build_total_ns={} request_encode_ns={} request_json_ns={} request_build_ns={} request_body_bytes={} messages_bytes={} tools_bytes={} system_bytes={} message_count={} http_wait_ns={} sse_events={} mapper_ns={} mapper_pull_ns={} mapper_parse_ns={} mapper_apply_ns={} sse_first_event_ns={} total_ns={}",
             self.detail,
             self.params_build_ns,
             self.normalize_ns,
@@ -378,7 +379,7 @@ fn prepare_params(
             is_oauth,
             opts,
             !is_vertex_anthropic(model)
-                && std::env::var("RPI_ANTHROPIC_NON_STREAM").ok().as_deref() != Some("1"),
+                && std::env::var("SHOB_ANTHROPIC_NON_STREAM").ok().as_deref() != Some("1"),
         ),
         api_key_for_header,
     })
@@ -419,7 +420,7 @@ async fn run_anthropic_stream(
         diagnostics.preencoded_json_ns = built.diagnostics.preencoded_json_ns;
         diagnostics.build_total_ns = built.diagnostics.total_ns;
     }
-    let non_stream = std::env::var("RPI_ANTHROPIC_NON_STREAM").ok().as_deref() == Some("1");
+    let non_stream = std::env::var("SHOB_ANTHROPIC_NON_STREAM").ok().as_deref() == Some("1");
     if diagnostics.detail {
         diagnostics.messages_bytes = serde_json::to_vec(&built.request.messages)
             .map(|value| value.len())
@@ -859,7 +860,7 @@ fn assemble_headers(
     // Anthropic clients (including matrixcode). Some gateways use this
     // identity when classifying requests from coding-agent clients.
     headers.push(("user-agent".into(), "curl/8.0".into()));
-    if std::env::var("RPI_ANTHROPIC_NON_STREAM").ok().as_deref() != Some("1") {
+    if std::env::var("SHOB_ANTHROPIC_NON_STREAM").ok().as_deref() != Some("1") {
         headers.push((
             "anthropic-dangerous-direct-browser-access".into(),
             "true".into(),

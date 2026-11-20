@@ -3,7 +3,7 @@
 //! # Why this exists
 //!
 //! `tool_started` is the record that lets recovery say *which tool's side effect
-//! is unknown* after a crash. It cannot be written from rpi's old model, where a
+//! is unknown* after a crash. It cannot be written from shob's old model, where a
 //! whole run's messages were persisted in one pass at the end: the reducer's
 //! `validate_tool_start` requires `assistant_entry_id` to **already exist** with
 //! a matching tool call at `tool_index`, and a tool runs long before the run
@@ -53,8 +53,9 @@ use crate::session::types::{
 static SETTLE_DIAGNOSTICS: OnceLock<bool> = OnceLock::new();
 
 fn settle_diagnostics_enabled() -> bool {
-    *SETTLE_DIAGNOSTICS
-        .get_or_init(|| std::env::var_os("RPI_AGENT_DIAGNOSTICS").is_some_and(|value| value != "0"))
+    *SETTLE_DIAGNOSTICS.get_or_init(|| {
+        std::env::var_os("SHOB_AGENT_DIAGNOSTICS").is_some_and(|value| value != "0")
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -141,7 +142,7 @@ impl SettleDiagnostics {
                 self.elapsed_ns[index].load(Ordering::Relaxed),
             );
         }
-        eprintln!("RPI_SETTLE_DIAGNOSTICS run_id={}{}", run_id, fields);
+        eprintln!("SHOB_SETTLE_DIAGNOSTICS run_id={}{}", run_id, fields);
     }
 }
 
@@ -589,7 +590,7 @@ impl SettleState {
                 "nested invocation requires a checkpointed Never-replay parent",
             ));
         }
-        harness.append_custom_entry("rpi.tool_program.intent.v1", Some(serde_json::json!({"runId":self.run_id,"rootToolCallId":parent.root_id,"parentToolCallId":parent.parent_id,"requestId":id,"name":name,"arguments":args,"replay":"never"}))).await?;
+        harness.append_custom_entry("shob.tool_program.intent.v1", Some(serde_json::json!({"runId":self.run_id,"rootToolCallId":parent.root_id,"parentToolCallId":parent.parent_id,"requestId":id,"name":name,"arguments":args,"replay":"never"}))).await?;
         Ok(())
     }
 

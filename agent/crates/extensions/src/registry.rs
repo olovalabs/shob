@@ -1,5 +1,5 @@
 //! The extension registry — accumulates registrations during a plugin's
-//! `rpi_plugin_register` call, then snapshots for the host session.
+//! `shob_plugin_register` call, then snapshots for the host session.
 //!
 //! `HostApi` (in [`crate`]) holds an `ExtensionRegistry` behind a `Mutex` while
 //! the plugin's register trampolines run; after register completes the host
@@ -382,7 +382,7 @@ pub fn platform_allows(platforms: &[String]) -> bool {
 // ExtensionRegistry — accumulated during register, then snapshotted
 // ---------------------------------------------------------------------------
 
-/// Accumulates registrations from one or more plugins' `rpi_plugin_register`
+/// Accumulates registrations from one or more plugins' `shob_plugin_register`
 /// calls. Held by [`HostApi`](crate::HostApi) during register; the host then
 /// [`take_registry`](crate::HostApi::take_registry) and builds a snapshot.
 ///

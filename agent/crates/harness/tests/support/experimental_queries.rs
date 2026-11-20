@@ -263,7 +263,7 @@ async fn tool_outbox_record_filters_and_pending_queue_matrix_match_memory() {
     let outbox = agent::message::AgentMessage::Custom(agent::message::CustomMessage::new(
         "host",
         vec![],
-        json!({"__rpiOutbox":{"key":"outbox-key"}}),
+        json!({"__shobOutbox":{"key":"outbox-key"}}),
         42,
     ));
     let tool_result:agent::message::AgentMessage=serde_json::from_value(json!({"kind":"tool_result","role":"toolResult","toolCallId":"call","toolName":"fixture","content":[],"isError":false,"timestamp":42})).unwrap();

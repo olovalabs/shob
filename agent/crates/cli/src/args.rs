@@ -31,7 +31,7 @@ use ai::ThinkingLevel;
 /// upstream's process-wide offline flag. The CLI normalizes a truthy value
 /// to `1` before dispatch so early subcommands and the regular app path share
 /// the same network gate.
-pub(crate) const RPI_OFFLINE_ENV: &str = "RPI_OFFLINE";
+pub(crate) const SHOB_OFFLINE_ENV: &str = "SHOB_OFFLINE";
 
 /// Match upstream's environment-flag contract exactly: empty values and
 /// values other than `1`, `true`, or `yes` are false; words are ASCII
@@ -43,7 +43,7 @@ pub(crate) fn is_truthy_env_flag(value: Option<&str>) -> bool {
 }
 
 pub(crate) fn offline_env_enabled() -> bool {
-    is_truthy_env_flag(std::env::var(RPI_OFFLINE_ENV).ok().as_deref())
+    is_truthy_env_flag(std::env::var(SHOB_OFFLINE_ENV).ok().as_deref())
 }
 
 pub(crate) fn offline_mode_enabled(cli_offline: bool) -> bool {
@@ -51,18 +51,18 @@ pub(crate) fn offline_mode_enabled(cli_offline: bool) -> bool {
 }
 
 /// Resolve and normalize offline mode before top-level subcommand dispatch.
-/// This mirrors upstream setting `RPI_OFFLINE=1` after either input enables it,
+/// This mirrors upstream setting `SHOB_OFFLINE=1` after either input enables it,
 /// allowing downstream code to use the same process-wide gate.
 pub(crate) fn normalize_offline_mode(args: &[String]) -> bool {
     let enabled = offline_mode_enabled(args.iter().any(|arg| arg == "--offline"));
     if enabled {
-        std::env::set_var(RPI_OFFLINE_ENV, "1");
+        std::env::set_var(SHOB_OFFLINE_ENV, "1");
     }
     enabled
 }
 
 /// Drop the global `--offline` flag before an early-dispatched subcommand parses
-/// its own arguments (`rpi update --offline` must not see it as a stray arg).
+/// its own arguments (`shob update --offline` must not see it as a stray arg).
 pub(crate) fn without_offline_flag(args: &[String]) -> Vec<String> {
     args.iter()
         .filter(|arg| arg.as_str() != "--offline")
@@ -70,7 +70,7 @@ pub(crate) fn without_offline_flag(args: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// Output mode. Mirrors rpi's text/json/rpc modes.
+/// Output mode. Mirrors shob's text/json/rpc modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Mode {
     #[default]
@@ -206,11 +206,11 @@ pub struct Args {
     /// Built-in presets remain available unless a custom `--theme` is given.
     pub no_themes: bool,
     /// `--extensions-dir`/`-ed`: an extra directory to scan for cdylib plugins
-    /// (`.dll`/`.so`/`.dylib`), in addition to project `.rpi/extensions`
+    /// (`.dll`/`.so`/`.dylib`), in addition to project `.shob/extensions`
     /// and global
     /// `agent_dir()/extensions` defaults. May be repeated; scanned after
     /// the defaults (so a same-named tool in a default dir wins first, mirroring
-    /// pi's registration order). `RPI_EXTENSIONS_DIR` (colon-separated on Unix,
+    /// pi's registration order). `SHOB_EXTENSIONS_DIR` (colon-separated on Unix,
     /// semicolon on Windows) provides the same list via env.
     pub extensions_dir: Vec<PathBuf>,
     /// `--extension`/`-e <path>`: load an explicit extension cdylib file (may
@@ -288,11 +288,11 @@ fn file_arg(arg: &str) -> Option<PathBuf> {
 pub fn parse_args(args: &[String]) -> Args {
     let mut result = Args::default();
     result.offline = offline_env_enabled();
-    // `RPI_EXTENSIONS_DIR` env: an extra list of plugin dirs prepended to any
+    // `SHOB_EXTENSIONS_DIR` env: an extra list of plugin dirs prepended to any
     // `--extensions-dir` flags. Semicolon-separated on Windows, colon-separated
     // on Unix (PATH-style). Empty entries skipped. `--no-extensions` still wins.
     let mut env_extension_dirs = Vec::new();
-    if let Ok(raw) = std::env::var("RPI_EXTENSIONS_DIR") {
+    if let Ok(raw) = std::env::var("SHOB_EXTENSIONS_DIR") {
         if !raw.is_empty() {
             let sep = if cfg!(windows) { ';' } else { ':' };
             for part in raw.split(sep) {
@@ -658,7 +658,7 @@ pub fn print_help() {
     let update_help = if cfg!(feature = "shob") {
         ""
     } else {
-        "  update                       Update the rpi CLI from crates.io\n"
+        "  update                       Update the shob CLI from crates.io\n"
     };
     println!(
         "{name} - AI coding assistant with read, bash, edit, write, docs tools
@@ -687,10 +687,10 @@ pub fn print_help() {
   --connect <host:port>          Remote client: connect to a `--server` instance and run the TUI
                                  (no local provider/tools/session; all agent work is remote)
   --token <token>                Auth token for `--connect` (printed by `--server`; may also
-                                 be provided via the RPI_SERVER_TOKEN env var)
+                                 be provided via the SHOB_SERVER_TOKEN env var)
   --tui-mode <mode>              TUI buffer: regular or fullscreen (macOS default: regular)
   --list-models [search]         List available models (with optional fuzzy search)
-  --offline                      Disable startup network operations (same as RPI_OFFLINE=1)
+  --offline                      Disable startup network operations (same as SHOB_OFFLINE=1)
   --export <file>                Export a JSONL session to HTML and exit
   --approve, -a                  Force-enable current-project resources
   --no-approve, -na              Disable current-project resources
@@ -712,10 +712,10 @@ pub fn print_help() {
   --no-context-files, -nc        Skip AGENTS.md/CLAUDE.md discovery (no <project_context>)
   --no-extensions, -ne           Skip Rust cdylib extension loading
   --extensions-dir, -ed <dir>    Extra dir to scan for plugins (.dll/.so/.dylib); repeatable
-                                 (also via RPI_EXTENSIONS_DIR env: ';' on Windows, ':' on Unix)
+                                 (also via SHOB_EXTENSIONS_DIR env: ';' on Windows, ':' on Unix)
   --local-only                   Skip automatic extension discovery: load only
                                  --extensions-dir / --extension paths (no project
-                                 .rpi/extensions, no global extensions)
+                                 .shob/extensions, no global extensions)
   --package-only, --project-only Load project skills/prompts/extensions/packages
                                  from the active project; exclude global resources
   --debug-system-prompt          Print the resolved system-prompt sections to stderr (verification)
@@ -727,7 +727,7 @@ pub fn print_help() {
 {update_help}  auth login|check|logout        Manage persisted credentials
                                 (see `{name} auth --help`)
   events path|tail               Inspect the extension event journal (needs
-                                RPI_EVENT_LOG=1; see `{name} events --help`)
+                                SHOB_EVENT_LOG=1; see `{name} events --help`)
   install <crate>                Install a prebuilt Rust extension (--build for source)
                                 (see `{name} install --help`)
   uninstall <crate>              Remove an installed Rust cdylib extension
@@ -770,15 +770,15 @@ pub fn print_help() {
   ANTHROPIC_AUTH_TOKEN           Bearer token (Authorization: Bearer) for third-party gateways
   ANTHROPIC_BASE_URL             Override the Anthropic endpoint (e.g. a compatible proxy)
   OPENAI_API_KEY                 Bearer token for openai-completions/responses
-  RPI_OFFLINE                     Disable startup network operations when set to 1/true/yes
-  RPI_CODING_AGENT_DIR           Override the ~/.rpi config directory (auth.json + models.json)
-  RPI_SESSION_ID                 Session id served by a plugin (set by the host; also honored as an override)
-  RPI_NO_EMOJI                   Render the brand lockup without the crab (1/true/yes)
+  SHOB_OFFLINE                     Disable startup network operations when set to 1/true/yes
+  SHOB_CODING_AGENT_DIR           Override the ~/.shob config directory (auth.json + models.json)
+  SHOB_SESSION_ID                 Session id served by a plugin (set by the host; also honored as an override)
+  SHOB_NO_EMOJI                   Render the brand lockup without the crab (1/true/yes)
 
 {u}Notes:{r}
   Supported HTTP protocols are Anthropic Messages and OpenAI Chat Completions.
   Define custom model catalogs and provider apiKey values in
-  ~/.rpi/agent/models.json. The interactive TUI, Rust extensions, skills,
+  ~/.shob/agent/models.json. The interactive TUI, Rust extensions, skills,
   prompt templates, themes, model cycling, session fork/export, and trust
   commands are available in the current build. OAuth, RPC, and full model
   cycling remain outside the current implementation.
@@ -849,8 +849,8 @@ mod tests {
     impl Drop for RestoreOfflineEnv {
         fn drop(&mut self) {
             match self.0.take() {
-                Some(value) => std::env::set_var(RPI_OFFLINE_ENV, value),
-                None => std::env::remove_var(RPI_OFFLINE_ENV),
+                Some(value) => std::env::set_var(SHOB_OFFLINE_ENV, value),
+                None => std::env::remove_var(SHOB_OFFLINE_ENV),
             }
         }
     }
@@ -1052,18 +1052,18 @@ mod tests {
     #[test]
     fn pi_offline_env_and_cli_flag_share_one_normalized_gate() {
         let _guard = crate::config::test_support::env_lock().lock().unwrap();
-        let _restore = RestoreOfflineEnv(std::env::var_os(RPI_OFFLINE_ENV));
+        let _restore = RestoreOfflineEnv(std::env::var_os(SHOB_OFFLINE_ENV));
 
-        std::env::set_var(RPI_OFFLINE_ENV, "YeS");
+        std::env::set_var(SHOB_OFFLINE_ENV, "YeS");
         assert!(parse_args(&[]).offline);
         assert!(normalize_offline_mode(&[]));
-        assert_eq!(std::env::var(RPI_OFFLINE_ENV).as_deref(), Ok("1"));
+        assert_eq!(std::env::var(SHOB_OFFLINE_ENV).as_deref(), Ok("1"));
 
-        std::env::set_var(RPI_OFFLINE_ENV, "0");
+        std::env::set_var(SHOB_OFFLINE_ENV, "0");
         assert!(!parse_args(&[]).offline);
         let argv = s(&["--offline"]);
         assert!(normalize_offline_mode(&argv));
-        assert_eq!(std::env::var(RPI_OFFLINE_ENV).as_deref(), Ok("1"));
+        assert_eq!(std::env::var(SHOB_OFFLINE_ENV).as_deref(), Ok("1"));
     }
 
     #[test]
@@ -1136,7 +1136,7 @@ mod tests {
 
     #[test]
     fn local_only_flag_is_honored_on_the_regular_parser() {
-        // The plain `rpi --local-only` form sets the same scope `rpi dev
+        // The plain `shob --local-only` form sets the same scope `shob dev
         // --local-only` uses, without the build/watch layer.
         let a = parse_args(&s(&["--local-only"]));
         assert!(a.errors.is_empty());

@@ -12,7 +12,7 @@
 //! - Project-local context files are not loaded
 //! - Certain settings are ignored
 //!
-//! Trust decisions are persisted in `.rpi/trust.json` and can be managed via
+//! Trust decisions are persisted in `.shob/trust.json` and can be managed via
 //! the `/trust` slash command or the `--approve`/`--no-approve` CLI flags.
 
 use serde::{Deserialize, Serialize};
@@ -206,7 +206,7 @@ impl std::error::Error for TrustError {}
 ///
 /// This function implements automatic trust detection based on:
 /// - Whether the project is in a known safe directory (e.g., home directory)
-/// - Whether the project has a `.rpi/trust.json` file with a positive decision
+/// - Whether the project has a `.shob/trust.json` file with a positive decision
 /// - Whether the user has explicitly approved the project via CLI flag
 pub fn should_trust_project(
     project_path: &Path,

@@ -1,7 +1,7 @@
 //! Project-local Rust extension packages.
 //!
 //! A package is a built cdylib plus optional `skills`, `prompts`, and `themes`
-//! directories under `.rpi/packages/<name>`. The registry is deliberately
+//! directories under `.shob/packages/<name>`. The registry is deliberately
 //! separate from the global native package registry.
 
 use std::path::{Path, PathBuf};
@@ -120,7 +120,7 @@ fn link(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let native_root = project_root.join(".rpi");
+    let native_root = crate::resource_dirs::project_root(&project_root);
     let _lease = match crate::resource_management::shared_lease(&native_root) {
         Ok(lease) => lease,
         Err(error) => {
@@ -204,7 +204,7 @@ fn link(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let root = project_root.join(".rpi/packages").join(&package_name);
+    let root = project_root.join(".shob/packages").join(&package_name);
     let ext = root.join("extensions");
     let file = match artifact.file_name().and_then(|n| n.to_str()) {
         Some(n) => n.to_string(),
@@ -329,7 +329,7 @@ fn link(args: &[String]) -> i32 {
         eprintln!("error: {e}");
         return 1;
     }
-    println!("linked project package `{package_name}`; run `rpi` in this directory to load it");
+    println!("linked project package `{package_name}`; run `shob` in this directory to load it");
     0
 }
 
@@ -410,14 +410,16 @@ fn update_at(
             return 1;
         }
     };
-    let resource_owned =
-        match crate::resource_management::resource_owned_names(&cwd.join(".rpi"), "package") {
-            Ok(names) => names,
-            Err(error) => {
-                eprintln!("error: {error}");
-                return 1;
-            }
-        };
+    let resource_owned = match crate::resource_management::resource_owned_names(
+        &crate::resource_dirs::project_root(cwd),
+        "package",
+    ) {
+        Ok(names) => names,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return 1;
+        }
+    };
     if name
         .as_ref()
         .is_some_and(|name| resource_owned.contains(name))
@@ -436,8 +438,8 @@ fn update_at(
         .cloned()
         .collect::<Vec<_>>();
 
-    // Global extensions installed by `rpi install` are also packages. This is
-    // the path used by crates.io extensions such as rpi-im-message; delegate to
+    // Global extensions installed by `shob install` are also packages. This is
+    // the path used by crates.io extensions such as shob-im-message; delegate to
     // the existing transactional installer so artifact and registry updates
     // remain atomic and version resolution stays in one place.
     let global_packages = match crate::install::installed_native_packages_strict() {
@@ -564,7 +566,7 @@ fn unlink(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let native_root = cwd.join(".rpi");
+    let native_root = crate::resource_dirs::project_root(&cwd);
     let _lease = match crate::resource_management::mutation_lease(&native_root) {
         Ok(lease) => lease,
         Err(error) => {
@@ -587,7 +589,7 @@ fn unlink(args: &[String]) -> i32 {
         eprintln!("error: project package `{name}` is not installed");
         return 1;
     }
-    let dir = cwd.join(".rpi/packages").join(name);
+    let dir = cwd.join(".shob/packages").join(name);
     if let Err(e) = std::fs::remove_dir_all(&dir) {
         eprintln!("error: could not remove package: {e}");
         return 1;
@@ -762,7 +764,7 @@ fn value(args: &[String], i: usize, flag: &str) -> Option<String> {
     }
 }
 fn read_registry(cwd: &Path) -> Result<PackageRegistry, String> {
-    let path = cwd.join(".rpi").join(REGISTRY);
+    let path = crate::resource_dirs::project_root(cwd).join(REGISTRY);
     let registry = match std::fs::read_to_string(path) {
         Ok(s) => serde_json::from_str(&s)
             .map_err(|e| format!("invalid project package registry: {e}"))?,
@@ -799,7 +801,7 @@ fn validate_registry(registry: &PackageRegistry) -> Result<(), String> {
     Ok(())
 }
 fn write_registry(cwd: &Path, r: &PackageRegistry) -> Result<(), String> {
-    let dir = cwd.join(".rpi");
+    let dir = crate::resource_dirs::project_root(cwd);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join(REGISTRY);
     let tmp = dir.join(".packages.json.tmp");
@@ -808,7 +810,7 @@ fn write_registry(cwd: &Path, r: &PackageRegistry) -> Result<(), String> {
     std::fs::rename(tmp, path).map_err(|e| e.to_string())
 }
 pub fn selected_project_package(cwd: &Path, name: &str) -> Result<ProjectPackage, String> {
-    selected_package_at(&cwd.join(".rpi"), name)
+    selected_package_at(&crate::resource_dirs::project_root(cwd), name)
 }
 
 pub(crate) fn selected_package_at(root: &Path, name: &str) -> Result<ProjectPackage, String> {
@@ -833,7 +835,7 @@ pub(crate) fn selected_package_at(root: &Path, name: &str) -> Result<ProjectPack
         .packages
         .into_iter()
         .find(|p| p.name == name)
-        .ok_or_else(|| format!("main package `{name}` not in .rpi/packages.json"))
+        .ok_or_else(|| format!("main package `{name}` not in .shob/packages.json"))
 }
 
 pub fn project_package_dirs(cwd: &Path, kind: &str) -> Vec<PathBuf> {
@@ -841,7 +843,7 @@ pub fn project_package_dirs(cwd: &Path, kind: &str) -> Vec<PathBuf> {
         Ok(registry) => registry
             .packages
             .into_iter()
-            .map(|p| cwd.join(".rpi/packages").join(p.name).join(kind))
+            .map(|p| cwd.join(".shob/packages").join(p.name).join(kind))
             .collect(),
         Err(error) => {
             eprintln!("warning: could not load project package registry: {error}");
@@ -862,7 +864,7 @@ pub fn active_project_package_artifacts(cwd: &Path) -> Vec<PathBuf> {
         .into_iter()
         .flat_map(|package| {
             package.artifacts.into_iter().map(move |artifact| {
-                cwd.join(".rpi/packages")
+                cwd.join(".shob/packages")
                     .join(package.name.clone())
                     .join("extensions")
                     .join(artifact)
@@ -900,7 +902,7 @@ mod tests {
 
     fn prebuilt_package(custom_repository: bool) -> crate::install::InstalledNativePackage {
         serde_json::from_value(serde_json::json!({
-            "name": "rpi-im-message", "version": "0.1.11",
+            "name": "shob-im-message", "version": "0.1.11",
             "source": "prebuilt:https://github.com/owner/extensions",
             "prebuilt": {
                 "repository": "https://github.com/owner/extensions",
@@ -957,12 +959,12 @@ mod tests {
             assert_eq!(
                 commands,
                 [
-                    vec!["install", "rpi-im-message"],
+                    vec!["install", "shob-im-message"],
                     vec!["install", "cargo-extension", "--build"],
                 ]
             );
 
-            for wanted in ["rpi-im-message", "cargo-extension"] {
+            for wanted in ["shob-im-message", "cargo-extension"] {
                 commands.clear();
                 assert_eq!(
                     update_at(cwd, &[wanted.into(), "--locked".into()], |package, args| {
@@ -1005,7 +1007,7 @@ mod tests {
                 commands,
                 [vec![
                     "install",
-                    "rpi-im-message",
+                    "shob-im-message",
                     "--github",
                     "https://github.com/owner/extensions"
                 ]]
@@ -1024,11 +1026,11 @@ mod tests {
             assert_eq!(
                 update_at(cwd, &[], |package, _| {
                     visited.push(package.name.clone());
-                    package.name != "rpi-im-message"
+                    package.name != "shob-im-message"
                 }),
                 1
             );
-            assert_eq!(visited, ["rpi-im-message", "other-extension"]);
+            assert_eq!(visited, ["shob-im-message", "other-extension"]);
         });
     }
 
@@ -1049,7 +1051,7 @@ mod tests {
             )
             .unwrap();
             assert_eq!(update_at(cwd, &[], |_, _| panic!("invalid registry")), 1);
-            assert!(!cwd.join(".rpi/packages/project-extension").exists());
+            assert!(!cwd.join(".shob/packages/project-extension").exists());
         });
     }
 

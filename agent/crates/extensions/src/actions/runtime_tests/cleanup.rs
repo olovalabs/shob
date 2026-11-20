@@ -17,7 +17,7 @@ async fn cancelled_parent_can_reclaim_children_but_never_start_more_work() {
         ] {
             let reply = call(
                 bridge.user_data() as usize,
-                json!({"op":op,"childId":"retained","__rpiRuntimeKey":key}),
+                json!({"op":op,"childId":"retained","__shobRuntimeKey":key}),
             );
             assert_eq!(reply.0, expected, "{op}: {reply:?}");
         }
@@ -25,7 +25,7 @@ async fn cancelled_parent_can_reclaim_children_but_never_start_more_work() {
     assert_eq!(
         call(
             parent.user_data() as usize,
-            json!({"op":"start","__rpiRuntimeKey":parent.invocation_key()})
+            json!({"op":"start","__shobRuntimeKey":parent.invocation_key()})
         )
         .0,
         1

@@ -144,7 +144,7 @@ pub(crate) fn build_session_context_owned(
         return build_session_context(&path_entries, options);
     }
 
-    let diagnostics = std::env::var_os("RPI_AGENT_DIAGNOSTICS").is_some_and(|value| value != "0");
+    let diagnostics = std::env::var_os("SHOB_AGENT_DIAGNOSTICS").is_some_and(|value| value != "0");
     let started = diagnostics.then(Instant::now);
     let path_entry_count = path_entries.len();
     let mut ctx = derive_session_context_state(path_entries.iter().rev());
@@ -188,7 +188,7 @@ pub(crate) fn build_session_context_owned(
     ctx.messages = messages;
     if let Some(started) = started {
         eprintln!(
-            "RPI_CONTEXT_DIAGNOSTICS path_entries={} context_entries={} messages={} build_ns={}",
+            "SHOB_CONTEXT_DIAGNOSTICS path_entries={} context_entries={} messages={} build_ns={}",
             path_entry_count,
             path_entry_count.saturating_sub(start),
             ctx.messages.len(),
@@ -202,7 +202,7 @@ pub(crate) fn build_session_context_owned(
 /// owns the entries, so only model-visible messages and retained-tail messages
 /// are cloned; old entries before the latest compaction are never cloned.
 pub(crate) fn build_session_context_from_borrowed(path_entries: &[&Entry]) -> SessionContext {
-    let diagnostics = std::env::var_os("RPI_AGENT_DIAGNOSTICS").is_some_and(|value| value != "0");
+    let diagnostics = std::env::var_os("SHOB_AGENT_DIAGNOSTICS").is_some_and(|value| value != "0");
     let started = diagnostics.then(Instant::now);
     let mut ctx = derive_session_context_state(path_entries.iter().copied().rev());
     let start = path_entries
@@ -242,7 +242,7 @@ pub(crate) fn build_session_context_from_borrowed(path_entries: &[&Entry]) -> Se
     ctx.messages = messages;
     if let Some(started) = started {
         eprintln!(
-            "RPI_CONTEXT_DIAGNOSTICS path_entries={} context_entries={} messages={} build_ns={}",
+            "SHOB_CONTEXT_DIAGNOSTICS path_entries={} context_entries={} messages={} build_ns={}",
             path_entries.len(),
             path_entries.len().saturating_sub(start),
             ctx.messages.len(),
@@ -374,7 +374,7 @@ pub fn build_session_context(
     path_entries: &[Entry],
     options: &SessionContextBuildOptions,
 ) -> SessionContext {
-    let diagnostics = std::env::var_os("RPI_AGENT_DIAGNOSTICS").is_some_and(|value| value != "0");
+    let diagnostics = std::env::var_os("SHOB_AGENT_DIAGNOSTICS").is_some_and(|value| value != "0");
     let started = diagnostics.then(Instant::now);
     let mut ctx = derive_session_context_state(path_entries.iter().rev());
     let context_entries = context_entries(path_entries, options);
@@ -391,7 +391,7 @@ pub fn build_session_context(
     ctx.messages = messages;
     if let Some(started) = started {
         eprintln!(
-            "RPI_CONTEXT_DIAGNOSTICS path_entries={} context_entries={} messages={} build_ns={}",
+            "SHOB_CONTEXT_DIAGNOSTICS path_entries={} context_entries={} messages={} build_ns={}",
             path_entries.len(),
             context_entry_count,
             ctx.messages.len(),

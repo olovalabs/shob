@@ -5,7 +5,7 @@
 
 The provider-agnostic agent runtime: the agent loop, the `AgentTool` trait,
 events, hooks, queues and cancellation. This is the layer you embed when you
-want to build your own agent rather than use the `rpi` CLI.
+want to build your own agent rather than use the `shob` CLI.
 
 ## Install
 
@@ -177,7 +177,7 @@ run (`AgentStart`/`AgentEnd`), each assistant message
 | [`ai`](https://crates.io/crates/rpi-ai) | Provider-agnostic message and streaming types |
 | [`tools`](https://crates.io/crates/rpi-tools) | `read`/`write`/`edit`/`bash` and friends |
 | [`harness`](https://crates.io/crates/rpi-harness) | Sessions, JSONL persistence, compaction |
-| [`cli`](https://crates.io/crates/rpi-cli) | The `rpi` terminal agent built on all of the above |
+| [`cli`](https://crates.io/crates/rpi-cli) | The `shob` terminal agent built on all of the above |
 
 ## Documentation
 

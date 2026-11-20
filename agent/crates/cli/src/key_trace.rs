@@ -1,8 +1,8 @@
 //! Env-gated key-event tracing for diagnosing terminal input problems
 //! (remote/mobile clients, "Enter inserted a newline", paste-vs-typed Enter…).
 //!
-//! Enable with `RPI_DEBUG_KEYS=1` (appends to `<temp>/rpi-keys.log`) or
-//! `RPI_DEBUG_KEYS=<path>` to pick the file. Every key the TUI dispatches is
+//! Enable with `SHOB_DEBUG_KEYS=1` (appends to `<temp>/shob-keys.log`) or
+//! `SHOB_DEBUG_KEYS=<path>` to pick the file. Every key the TUI dispatches is
 //! appended as one line — wall clock, key code, modifiers, event kind, plus a
 //! caller-supplied note (the paste-burst decision, for example):
 //!
@@ -33,13 +33,13 @@ fn target() -> Option<&'static std::path::PathBuf> {
     static TARGET: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
     TARGET
         .get_or_init(|| {
-            let value = std::env::var("RPI_DEBUG_KEYS").ok()?;
+            let value = std::env::var("SHOB_DEBUG_KEYS").ok()?;
             let value = value.trim();
             if value.is_empty() || value == "0" {
                 return None;
             }
             if value == "1" || value.eq_ignore_ascii_case("true") {
-                Some(std::env::temp_dir().join("rpi-keys.log"))
+                Some(std::env::temp_dir().join("shob-keys.log"))
             } else {
                 Some(std::path::PathBuf::from(value))
             }
@@ -87,16 +87,16 @@ pub fn note(text: &str) {
 
 /// Paste-boundary diagnostics, independent of the per-key/content trace.
 /// Only caller-supplied counts and decisions are recorded, never clipboard text.
-/// Enable with RPI_DEBUG_PASTE=1 or a log file path for one test session.
+/// Enable with SHOB_DEBUG_PASTE=1 or a log file path for one test session.
 pub fn paste_note(note: impl FnOnce() -> String) {
     static TARGET: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
     let path = TARGET.get_or_init(|| {
-        let value = std::env::var("RPI_DEBUG_PASTE").ok()?;
+        let value = std::env::var("SHOB_DEBUG_PASTE").ok()?;
         let value = value.trim();
         let path = if value.is_empty() || value == "0" {
             return None;
         } else if value == "1" || value.eq_ignore_ascii_case("true") {
-            std::env::temp_dir().join("rpi-paste.log")
+            std::env::temp_dir().join("shob-paste.log")
         } else {
             std::path::PathBuf::from(value)
         };

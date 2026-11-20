@@ -48,7 +48,7 @@ use tools::{
     InMemoryExecutionEnv, MutationQueueRegistry,
 };
 
-// `RPI_MAX_TURNS_PER_RUN` is process-global, so tests that change it must not
+// `SHOB_MAX_TURNS_PER_RUN` is process-global, so tests that change it must not
 // overlap. The guard stays held across the async harness run, not just the
 // set/remove call, because the harness reads the variable while starting a run.
 static RUN_BUDGET_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -1119,7 +1119,7 @@ async fn run_budget_stops_a_looping_run_and_records_why() {
     );
 }
 
-/// Upstream parity: with no `RPI_MAX_TURNS_PER_RUN`, a run has **no** turn
+/// Upstream parity: with no `SHOB_MAX_TURNS_PER_RUN`, a run has **no** turn
 /// ceiling — it ends only because the model stopped asking for tools. This is
 /// the counterpart of the opt-in test above: it fails if anyone re-enables the
 /// guard by default.
@@ -1380,7 +1380,7 @@ async fn a_completed_run_leaves_no_frames_to_salvage() {
 
 /// Reopen an existing session in a fresh harness.
 ///
-/// This is what a user does after a crash (`rpi` again on the same session), and
+/// This is what a user does after a crash (`shob` again on the same session), and
 /// opening the harness is what runs `finish_interrupted_operation`.
 async fn reopen_harness(session: harness::session::session::Session) -> AgentHarness {
     let provider = FauxProvider::new(FauxScript::new().with_text("unused"));

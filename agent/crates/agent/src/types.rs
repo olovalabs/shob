@@ -327,7 +327,7 @@ mod result_codec_tests {
     #[test]
     fn canonical_result_preserves_images_business_details_usage_and_batch_hints() {
         let details = json!({"runtimeKey":"customer", "runtimeHandle":{"id":7},
-            "__rpi":{"owner":"business"}, "__rpiRuntimeKey":["nested", {"runtimeKey":true}]});
+            "__shob":{"owner":"business"}, "__shobRuntimeKey":["nested", {"runtimeKey":true}]});
         let mut usage = Usage::zero();
         usage.input = 7;
         usage.output = 3;

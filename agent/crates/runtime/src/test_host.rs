@@ -25,7 +25,7 @@ fn read<T: DeserializeOwned + Default>(path: PathBuf) -> Result<T, crate::config
 }
 pub mod config {
     pub use crate::config::*;
-    pub const CONFIG_DIR_ENV: &str = "RPI_RUNTIME_TEST_CONFIG_DIR";
+    pub const CONFIG_DIR_ENV: &str = "SHOB_RUNTIME_TEST_CONFIG_DIR";
     pub fn models_path() -> Result<std::path::PathBuf, ConfigError> {
         Ok(std::path::PathBuf::from(std::env::var_os(CONFIG_DIR_ENV).unwrap()).join("models.json"))
     }

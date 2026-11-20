@@ -77,7 +77,7 @@ impl std::fmt::Display for Record {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "RPI_STARTUP_DIAGNOSTICS pid={} span={} phase={} event={} at_ns={} elapsed_ns={}",
+            "SHOB_STARTUP_DIAGNOSTICS pid={} span={} phase={} event={} at_ns={} elapsed_ns={}",
             std::process::id(),
             self.span,
             self.phase.name(),
@@ -134,7 +134,7 @@ impl StartupSpan {
     pub(crate) fn start(phase: Phase) -> Self {
         Self::with_sink(
             phase,
-            enabled(std::env::var_os("RPI_STARTUP_DIAGNOSTICS").as_deref()),
+            enabled(std::env::var_os("SHOB_STARTUP_DIAGNOSTICS").as_deref()),
             emit,
         )
     }
@@ -252,7 +252,7 @@ mod tests {
         };
         assert_eq!(
             record.to_string(),
-            format!("RPI_STARTUP_DIAGNOSTICS pid={} span=17 phase=metadata_lookup event=end at_ns=123 elapsed_ns=99", std::process::id())
+            format!("SHOB_STARTUP_DIAGNOSTICS pid={} span=17 phase=metadata_lookup event=end at_ns=123 elapsed_ns=99", std::process::id())
         );
     }
 }

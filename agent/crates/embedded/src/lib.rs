@@ -1,22 +1,22 @@
-//! Embeddable rpi sessions for a host UI.
+//! Embeddable shob sessions for a host UI.
 //!
 //! The host supplies a working directory plus an optional `provider/model`
 //! selection and session id. This crate reuses `cli`'s startup path — model
 //! and credential resolution, built-in tools, system prompt, JSONL session
-//! storage and `AgentHarness` — but never spawns the `rpi` executable and never
+//! storage and `AgentHarness` — but never spawns the `shob` executable and never
 //! speaks the RPC JSONL protocol.
 //!
 //! - [`EmbeddedSession`] owns one conversation on a background Tokio runtime.
 //!   [`EmbeddedSession::poll`] drains typed [`SessionEvent`]s, so a host can keep
 //!   its existing polling UI loop.
-//! - [`catalog`] and [`providers`] replace `rpi --list-models` and `rpi auth
+//! - [`catalog`] and [`providers`] replace `shob --list-models` and `shob auth
 //!   check` with in-process reads of the same `models.json`, `auth.json`,
 //!   `settings.json` and environment sources.
-//! - [`Login`] replaces `rpi auth login` with native API-key, PKCE browser and
+//! - [`Login`] replaces `shob auth login` with native API-key, PKCE browser and
 //!   device-code sign-in, while preserving extension-owned OAuth actions.
 //!
 //! Sessions run with `no_extensions` so several conversations can coexist in one
-//! process without sharing rpi's process-global plugin session identity. Model
+//! process without sharing shob's process-global plugin session identity. Model
 //! discovery and login still load extensions when they need an OAuth provider.
 
 use std::future::Future;
@@ -27,7 +27,7 @@ use std::sync::{mpsc, Arc, Mutex, OnceLock};
 #[cfg(test)]
 use std::time::Duration;
 
-use agent::events::AgentEvent as RpiEvent;
+use agent::events::AgentEvent as ShobEvent;
 use agent::message::AgentMessage;
 pub use agent::{
     AfterToolCall, AfterToolCallResult, BeforeToolCall, BeforeToolCallContext,
@@ -862,7 +862,7 @@ struct HostEmitter {
 }
 
 impl agent::AgentEmitter for HostEmitter {
-    fn emit(&self, event: RpiEvent) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
+    fn emit(&self, event: ShobEvent) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
         let pending = Arc::clone(&self.pending);
         let usage = finalized_usage(&event);
         let event = pending_event(event);
@@ -888,8 +888,8 @@ impl agent::AgentEmitter for HostEmitter {
             }
         })
     }
-    fn try_emit(&self, event: RpiEvent) {
-        if matches!(event, RpiEvent::ToolExecutionUpdate { .. }) {
+    fn try_emit(&self, event: ShobEvent) {
+        if matches!(event, ShobEvent::ToolExecutionUpdate { .. }) {
             if let Some(event) = pending_event(event) {
                 let _ = self.pending.try_send(event);
             }
@@ -907,7 +907,7 @@ pub struct SessionOptions {
     pub provider: Option<String>,
     /// Model id from the host's model picker. May itself contain `/`.
     pub model: Option<String>,
-    /// Restore this durable rpi session when present. If it no longer exists,
+    /// Restore this durable shob session when present. If it no longer exists,
     /// the worker starts a fresh session instead of failing the pane.
     pub session_id: Option<String>,
     /// Extra system-prompt text appended after the base prompt. The host uses
@@ -1100,7 +1100,7 @@ impl EmbeddedSession {
         let wake = Wake::default();
         let worker_wake = wake.clone();
         std::thread::Builder::new()
-            .name("rpi-embedded".into())
+            .name("shob-embedded".into())
             .spawn(move || {
                 run_worker(
                     options,
@@ -1277,7 +1277,7 @@ fn run_worker(
         // RSS/latency evidence, not a speculative streaming-path rewrite.
         .worker_threads(2)
         .enable_all()
-        .thread_name("rpi-embedded-rt")
+        .thread_name("shob-embedded-rt")
         .build()
     {
         Ok(runtime) => runtime,
@@ -1370,7 +1370,7 @@ async fn run_session(
 
     let mut args = Args::default();
     args.mode = Mode::Rpc;
-    // Several embedded conversations share one process. rpi's extension layer
+    // Several embedded conversations share one process. shob's extension layer
     // publishes a process-global session id, so keep the embedded core on the
     // built-in tool set and its provider runtimes. Login still loads extensions
     // when it needs an OAuth provider.
@@ -1628,8 +1628,8 @@ async fn send_fatal(events: &EventQueue<SessionEvent>, wake: &Wake, message: Str
     }
 }
 
-fn finalized_usage(event: &RpiEvent) -> Option<AgentUsage> {
-    let RpiEvent::MessageEnd {
+fn finalized_usage(event: &ShobEvent) -> Option<AgentUsage> {
+    let ShobEvent::MessageEnd {
         message: AgentMessage::Assistant(assistant),
         ..
     } = event
@@ -1646,9 +1646,9 @@ fn finalized_usage(event: &RpiEvent) -> Option<AgentUsage> {
     })
 }
 
-fn pending_event(event: RpiEvent) -> Option<PendingEvent> {
+fn pending_event(event: ShobEvent) -> Option<PendingEvent> {
     let event = match event {
-        RpiEvent::MessageUpdate {
+        ShobEvent::MessageUpdate {
             assistant_message_event,
             ..
         } => match assistant_message_event {
@@ -1656,7 +1656,7 @@ fn pending_event(event: RpiEvent) -> Option<PendingEvent> {
             AssistantMessageEvent::ThinkingDelta { delta, .. } => SessionEvent::Thinking(delta),
             _ => return None,
         },
-        RpiEvent::ToolExecutionStart {
+        ShobEvent::ToolExecutionStart {
             tool_call_id,
             tool_name,
             args,
@@ -1670,7 +1670,7 @@ fn pending_event(event: RpiEvent) -> Option<PendingEvent> {
                 input: serde_json::to_string(&args).unwrap_or_default(),
             }
         }
-        RpiEvent::ToolExecutionUpdate {
+        ShobEvent::ToolExecutionUpdate {
             tool_call_id,
             tool_name,
             partial_result,
@@ -1685,7 +1685,7 @@ fn pending_event(event: RpiEvent) -> Option<PendingEvent> {
                 bytes,
             });
         }
-        RpiEvent::ToolExecutionEnd {
+        ShobEvent::ToolExecutionEnd {
             tool_call_id,
             tool_name,
             result,
@@ -1704,7 +1704,7 @@ fn pending_event(event: RpiEvent) -> Option<PendingEvent> {
                 bytes,
             });
         }
-        RpiEvent::MessageEnd {
+        ShobEvent::MessageEnd {
             message: AgentMessage::Assistant(assistant),
             ..
         } if assistant.stop_reason == StopReason::Error => SessionEvent::Error(
@@ -1712,7 +1712,7 @@ fn pending_event(event: RpiEvent) -> Option<PendingEvent> {
                 .error_message
                 .unwrap_or_else(|| "The agent encountered an error".into()),
         ),
-        RpiEvent::RetryScheduled {
+        ShobEvent::RetryScheduled {
             attempt,
             max_retries,
             delay_ms,
@@ -1743,7 +1743,7 @@ fn tool_output_arrived(id: &str, result: &agent::AgentToolResult) {
 }
 
 #[cfg(test)]
-async fn forward_event(event: RpiEvent, events: &EventQueue<SessionEvent>) -> bool {
+async fn forward_event(event: ShobEvent, events: &EventQueue<SessionEvent>) -> bool {
     let sent_usage = if let Some(usage) = finalized_usage(&event) {
         if events.send(SessionEvent::Usage(usage)).await.is_err() {
             return false;
@@ -1796,7 +1796,7 @@ pub enum LoginEvent {
     Finished(Result<(), String>),
 }
 
-/// In-process replacement for `rpi auth login`.
+/// In-process replacement for `shob auth login`.
 ///
 /// API keys and native browser/device grants use the CLI's atomic `auth.json`
 /// writer and the inference runtime's renewal binding. [`Login::start`] prefers
@@ -1857,7 +1857,7 @@ impl Login {
         let provider = provider.to_string();
         let cwd = cwd.to_path_buf();
         std::thread::Builder::new()
-            .name("rpi-embedded-login".into())
+            .name("shob-embedded-login".into())
             .spawn(move || login_worker(provider, cwd, method, event_tx, input_rx))
             .map_err(|error| format!("Could not start in-process authentication: {error}"))?;
         Ok(Self {
@@ -2381,7 +2381,7 @@ mod tests {
             let partial = Arc::new(assistant.clone());
             agent::AgentEmitter::emit(
                 &emitter,
-                RpiEvent::MessageUpdate {
+                ShobEvent::MessageUpdate {
                     message_id: None,
                     message: Arc::clone(&partial),
                     assistant_message_event: AssistantMessageEvent::TextDelta {
@@ -2394,7 +2394,7 @@ mod tests {
             .await;
             agent::AgentEmitter::emit(
                 &emitter,
-                RpiEvent::MessageEnd {
+                ShobEvent::MessageEnd {
                     message: AgentMessage::Assistant(Box::new(assistant)),
                     message_id: None,
                 },
@@ -2649,13 +2649,13 @@ mod tests {
             delta_arrival: None,
         };
         emitter
-            .emit(RpiEvent::ToolExecutionStart {
+            .emit(ShobEvent::ToolExecutionStart {
                 tool_call_id: "a".into(),
                 tool_name: "bash".into(),
                 args: serde_json::json!({}),
             })
             .await;
-        let update = |text: &str| RpiEvent::ToolExecutionUpdate {
+        let update = |text: &str| ShobEvent::ToolExecutionUpdate {
             tool_call_id: "a".into(),
             tool_name: "bash".into(),
             args: serde_json::json!({}),
@@ -2670,7 +2670,7 @@ mod tests {
         emitter.try_emit(update("latest"));
         assert_eq!(pending.state.lock().unwrap().events.len(), 2);
         emitter
-            .emit(RpiEvent::RetryScheduled {
+            .emit(ShobEvent::RetryScheduled {
                 attempt: 1,
                 max_retries: 2,
                 delay_ms: 1,
@@ -2679,7 +2679,7 @@ mod tests {
             .await;
         emitter.try_emit(update("after"));
         emitter
-            .emit(RpiEvent::ToolExecutionEnd {
+            .emit(ShobEvent::ToolExecutionEnd {
                 tool_call_id: "a".into(),
                 tool_name: "bash".into(),
                 is_error: false,
@@ -2763,11 +2763,14 @@ mod tests {
 
     #[test]
     fn environment_value_source_reads_the_process_environment() {
-        std::env::set_var("RPI_EMBEDDED_TEST_VALUE", "ok");
+        std::env::set_var("SHOB_EMBEDDED_TEST_VALUE", "ok");
         let values = EnvironmentValues;
-        assert_eq!(values.env("RPI_EMBEDDED_TEST_VALUE").as_deref(), Some("ok"));
-        assert_eq!(values.env("RPI_EMBEDDED_TEST_MISSING"), None);
-        std::env::remove_var("RPI_EMBEDDED_TEST_VALUE");
+        assert_eq!(
+            values.env("SHOB_EMBEDDED_TEST_VALUE").as_deref(),
+            Some("ok")
+        );
+        assert_eq!(values.env("SHOB_EMBEDDED_TEST_MISSING"), None);
+        std::env::remove_var("SHOB_EMBEDDED_TEST_VALUE");
     }
 
     #[tokio::test]
@@ -2775,7 +2778,7 @@ mod tests {
         let tx = EventQueue::default();
         let partial = Arc::new(ai::AssistantMessage::empty(ai::Api::Faux, "faux", "m", 0));
         forward_event(
-            RpiEvent::MessageUpdate {
+            ShobEvent::MessageUpdate {
                 message_id: None,
                 message: Arc::clone(&partial),
                 assistant_message_event: AssistantMessageEvent::TextDelta {
@@ -2788,7 +2791,7 @@ mod tests {
         )
         .await;
         forward_event(
-            RpiEvent::ToolExecutionStart {
+            ShobEvent::ToolExecutionStart {
                 tool_call_id: "t1".into(),
                 tool_name: "bash".into(),
                 args: serde_json::json!({"command": "printf hi"}),
@@ -2804,7 +2807,7 @@ mod tests {
             terminate: false,
         };
         forward_event(
-            RpiEvent::ToolExecutionEnd {
+            ShobEvent::ToolExecutionEnd {
                 tool_call_id: "t1".into(),
                 tool_name: "bash".into(),
                 result,
@@ -2814,7 +2817,7 @@ mod tests {
         )
         .await;
         forward_event(
-            RpiEvent::RetryScheduled {
+            ShobEvent::RetryScheduled {
                 attempt: 1,
                 max_retries: 3,
                 delay_ms: 250,
@@ -2824,7 +2827,7 @@ mod tests {
         )
         .await;
         forward_event(
-            RpiEvent::AgentEnd {
+            ShobEvent::AgentEnd {
                 messages: Vec::new(),
             },
             &tx,
@@ -2910,7 +2913,7 @@ mod tests {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             match tokio::time::timeout(remaining, event_rx.recv()).await {
                 Ok(Ok(event)) => {
-                    let end = matches!(event, RpiEvent::AgentEnd { .. });
+                    let end = matches!(event, ShobEvent::AgentEnd { .. });
                     forward_event(event, &mapped_tx).await;
                     if end {
                         break;

@@ -239,7 +239,7 @@ fn parse_result_envelope_with(
         return Err("exceeds 1 MiB".into());
     }
     let value: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
-    if value["$rpiToolResult"].as_u64() != Some(1) {
+    if value["$shobToolResult"].as_u64() != Some(1) {
         return Err("unsupported or missing version".into());
     }
     let is_error = value["isError"]
@@ -641,7 +641,7 @@ impl AgentTool for PluginToolAdapter {
     fn execution_mode(&self) -> ToolExecutionMode {
         // Old SDKs can opt in via a JSON Schema extension; missing or unknown
         // values stay exclusive because plugin effects are not host-audited.
-        if self.schema.parameters.as_value()["x-rpi-execution-mode"] == "parallel" {
+        if self.schema.parameters.as_value()["x-shob-execution-mode"] == "parallel" {
             ToolExecutionMode::Parallel
         } else {
             ToolExecutionMode::Sequential
@@ -723,7 +723,7 @@ impl AgentTool for PluginToolAdapter {
         let cancel_fn = self.handle.cancel_fn;
         let destroy_fn = self.handle.destroy_fn;
 
-        let result_envelope = self.schema.parameters.as_value()["x-rpi-result-envelope"] == 1;
+        let result_envelope = self.schema.parameters.as_value()["x-shob-result-envelope"] == 1;
         let schema_name = self.schema.name.clone();
         let schema_name_for_error = schema_name.clone();
 
@@ -1104,7 +1104,7 @@ mod tests {
             serde_json::Value::Null,
         ] {
             adapter.schema.parameters = ai::types::Schema::new(serde_json::json!({
-                "type": "object", "x-rpi-execution-mode": mode
+                "type": "object", "x-shob-execution-mode": mode
             }));
             let expected = if mode == "parallel" {
                 ToolExecutionMode::Parallel
@@ -1186,10 +1186,10 @@ mod tests {
             .unwrap_or("no-binding-secret");
         let business = json!({
             "runtimeKey":"business-key", "runtimeHandle":42,
-            "__rpi":{"runtimeKey":"business-nested"},
-            "__rpiRuntimeKey":"business-legacy",
+            "__shob":{"runtimeKey":"business-nested"},
+            "__shobRuntimeKey":"business-legacy",
             "schema":{"type":"object", "properties":{
-                "runtimeKey":{"type":"string"}, "__rpi":{"type":"object"}}}
+                "runtimeKey":{"type":"string"}, "__shob":{"type":"object"}}}
         });
         let mut details = json!({
             "alias":metadata, "secretAlias":key, "business":business,
@@ -1230,7 +1230,7 @@ mod tests {
             "legacy" => StepResult::done(StbString::from_string(payload.to_string())),
             mode => StepResult::done(StbString::from_string(
                 json!({
-                    "$rpiToolResult":1, "isError":mode == "structured-error", "result":payload
+                    "$shobToolResult":1, "isError":mode == "structured-error", "result":payload
                 })
                 .to_string(),
             )),
@@ -1248,11 +1248,11 @@ mod tests {
         assert_eq!(result.details["business"]["runtimeKey"], "business-key");
         assert_eq!(result.details["business"]["runtimeHandle"], 42);
         assert_eq!(
-            result.details["business"]["__rpi"]["runtimeKey"],
+            result.details["business"]["__shob"]["runtimeKey"],
             "business-nested"
         );
         assert_eq!(
-            result.details["business"]["__rpiRuntimeKey"],
+            result.details["business"]["__shobRuntimeKey"],
             "business-legacy"
         );
         assert_eq!(
@@ -1302,7 +1302,7 @@ mod tests {
                 }
                 if mode != "legacy" {
                     adapter.schema.parameters =
-                        ai::types::Schema::new(json!({"x-rpi-result-envelope":1}));
+                        ai::types::Schema::new(json!({"x-shob-result-envelope":1}));
                 }
                 let observed = Arc::new(Mutex::new(Vec::new()));
                 let updates = observed.clone();
@@ -1316,14 +1316,14 @@ mod tests {
                             let params: Value =
                                 serde_json::from_str(LAST_PARAMS.lock().unwrap().as_ref().unwrap())
                                     .unwrap();
-                            let key = params["__rpi"]["runtimeKey"].as_str().unwrap();
+                            let key = params["__shob"]["runtimeKey"].as_str().unwrap();
                             assert_public_binding_result(&partial, key, false);
                             updates.lock().unwrap().push(partial);
                         }),
                     )
                     .await;
                 let params = take_last_params();
-                let key = params["__rpi"]["runtimeKey"].as_str().unwrap();
+                let key = params["__shob"]["runtimeKey"].as_str().unwrap();
                 assert_eq!(observed.lock().unwrap().len(), 3); // 2 callbacks + Pending.
                 match result {
                     Ok(result) => {
@@ -1358,11 +1358,11 @@ mod tests {
                 }
                 if mode != "legacy" {
                     adapter.schema.parameters =
-                        ai::types::Schema::new(json!({"x-rpi-result-envelope":1}));
+                        ai::types::Schema::new(json!({"x-shob-result-envelope":1}));
                 }
-                let params = json!({"mode":mode, "__rpi":{
+                let params = json!({"mode":mode, "__shob":{
                     "runtimeKey":"business-invocation-key", "runtimeHandle":37,
-                    "__rpiRuntimeKey":"business-old-key"
+                    "__shobRuntimeKey":"business-old-key"
                 }});
                 let payload = binding_payload(&params);
                 let expected_partial = json_to_result(&payload.to_string());
@@ -1423,7 +1423,7 @@ mod tests {
                     }
                     if opt_in {
                         adapter.schema.parameters =
-                            ai::types::Schema::new(json!({"x-rpi-result-envelope":1}));
+                            ai::types::Schema::new(json!({"x-shob-result-envelope":1}));
                     }
                     let result = adapter
                         .execute("id", json!({}), CancellationToken::new(), Arc::new(|_| {}))
@@ -1449,7 +1449,7 @@ mod tests {
             }
             // A registration opting in must not silently accept a legacy payload.
             let mut adapter = echo_adapter();
-            adapter.schema.parameters = ai::types::Schema::new(json!({"x-rpi-result-envelope":1}));
+            adapter.schema.parameters = ai::types::Schema::new(json!({"x-shob-result-envelope":1}));
             adapter.handle.poll_fn = envelope_poll;
             if wake {
                 adapter.handle.set_waker_fn = Some(no_wake);
@@ -1629,12 +1629,12 @@ mod tests {
 
         let merged = inject_tool_context(json!({"action": "list"}), &context);
         assert_eq!(merged["action"], "list", "model arguments survive");
-        assert_eq!(merged["__rpi"]["sessionId"], "s");
+        assert_eq!(merged["__shob"]["sessionId"], "s");
 
         // A no-argument call arrives as `null`; it should still receive the
         // context instead of being left unusable as an object.
         let merged = inject_tool_context(Value::Null, &context);
-        assert_eq!(merged["__rpi"]["cwd"], "/proj");
+        assert_eq!(merged["__shob"]["cwd"], "/proj");
 
         // Array/scalar parameters cannot carry a key — pass through untouched.
         let array = json!([1, 2]);
@@ -1647,11 +1647,11 @@ mod tests {
         let context = ToolCallContext::new("/real");
         context.set_session_id("real-session");
         let merged = inject_tool_context(
-            json!({"action": "list", "__rpi": {"cwd": "/forged", "sessionId": "forged"}}),
+            json!({"action": "list", "__shob": {"cwd": "/forged", "sessionId": "forged"}}),
             &context,
         );
-        assert_eq!(merged["__rpi"]["cwd"], "/real");
-        assert_eq!(merged["__rpi"]["sessionId"], "real-session");
+        assert_eq!(merged["__shob"]["cwd"], "/real");
+        assert_eq!(merged["__shob"]["sessionId"], "real-session");
     }
 
     #[test]
@@ -1683,8 +1683,8 @@ mod tests {
 
         let seen = take_last_params();
         assert_eq!(seen["action"], "list");
-        assert_eq!(seen["__rpi"]["cwd"], "D:\\proj");
-        assert_eq!(seen["__rpi"]["sessionId"], "sess-42");
+        assert_eq!(seen["__shob"]["cwd"], "D:\\proj");
+        assert_eq!(seen["__shob"]["sessionId"], "sess-42");
     }
 }
 
@@ -1693,7 +1693,7 @@ mod result_envelope_tests {
     use super::*;
     use serde_json::json;
     pub(super) fn envelope(is_error: bool) -> Value {
-        json!({"$rpiToolResult":1,"isError":is_error,"result":{
+        json!({"$shobToolResult":1,"isError":is_error,"result":{
             "content":[{"type":"text","text":"bounded failure summary"},{"type":"image","mimeType":"image/png","data":"AA=="}],
             "details":{"summary":"retained"},"terminate":true,
             "usage":{"input":1,"output":2,"cacheRead":0,"cacheWrite":0,"totalTokens":3,
@@ -1727,7 +1727,7 @@ mod result_envelope_tests {
             json!([{"content":[]}]),
             json!([{"content":[{"type":"text","text":"inline"}]}]),
         ] {
-            let value = json!({"$rpiToolResult":1,"isError":false,"result":{"details":null,"terminate":false},"contentParts":parts});
+            let value = json!({"$shobToolResult":1,"isError":false,"result":{"details":null,"terminate":false},"contentParts":parts});
             assert!(parse_result_envelope(&value.to_string())
                 .unwrap_err()
                 .contains("live invocation bridge"));
@@ -1791,14 +1791,14 @@ mod result_envelope_tests {
     #[test]
     fn malformed_opted_in_envelopes_fail_closed_but_legacy_remains_lenient() {
         let mut bad = vec![json!(null), json!({}), json!({"content":[]}), json!([])];
-        for path in ["$rpiToolResult", "isError", "result"] {
+        for path in ["$shobToolResult", "isError", "result"] {
             let mut value = envelope(false);
             value.as_object_mut().unwrap().remove(path);
             bad.push(value);
         }
         for version in [json!(2), json!("1"), json!(1.0), json!(null)] {
             let mut value = envelope(false);
-            value["$rpiToolResult"] = version;
+            value["$shobToolResult"] = version;
             bad.push(value);
         }
         for (field, invalid) in [

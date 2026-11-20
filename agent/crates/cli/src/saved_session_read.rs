@@ -18,7 +18,7 @@ use std::{
 const MAX_REQUEST: usize = 64 * 1024;
 const MAX_RESPONSE: usize = 8 * 1024 * 1024;
 pub(crate) fn capabilities() -> Value {
-    json!({"versions":[1],"flag":"--resource-session-read","maxRequestBytes":MAX_REQUEST,"maxResponseBytes":MAX_RESPONSE,"maxReadBytes":64*1024*1024,"maxMessages":128,"maxMessageBytes":5*1024*1024,"maxMutations":65536,"maxProgressRecords":65536,"maxProgressFrames":65536,"maxLanes":32,"maxCustomTypes":8,"forbiddenCustomTypes":["rpi.value"],"maxCustomEntries":1024,"maxCustomBytes":2*1024*1024,"deadlineMs":10000,"nonexecuting":true,"noncreatingObservationLock":true,"strict":true})
+    json!({"versions":[1],"flag":"--resource-session-read","maxRequestBytes":MAX_REQUEST,"maxResponseBytes":MAX_RESPONSE,"maxReadBytes":64*1024*1024,"maxMessages":128,"maxMessageBytes":5*1024*1024,"maxMutations":65536,"maxProgressRecords":65536,"maxProgressFrames":65536,"maxLanes":32,"maxCustomTypes":8,"forbiddenCustomTypes":["shob.value"],"maxCustomEntries":1024,"maxCustomBytes":2*1024*1024,"deadlineMs":10000,"nonexecuting":true,"noncreatingObservationLock":true,"strict":true})
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

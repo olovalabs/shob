@@ -13,13 +13,13 @@ impl Drop for RestoreSmokeConfig {
 /// A real separately-built plugin crosses the SDK ABI and runtime action bridge.
 /// No provider/network request or background goal worker is used.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "set RPI_GOAL_SMOKE_DLL to the matching rpi-goal cdylib"]
+#[ignore = "set SHOB_GOAL_SMOKE_DLL to the matching shob-goal cdylib"]
 async fn native_goal_outbox_smoke() {
     use harness::agent_harness::AgentLane;
     use harness::session::types::{BranchBounds, EntryOrder, EntryQuery};
     use plugin_sdk::EventTag;
     use serde_json::json;
-    let dll = std::env::var_os("RPI_GOAL_SMOKE_DLL").expect("RPI_GOAL_SMOKE_DLL is required");
+    let dll = std::env::var_os("SHOB_GOAL_SMOKE_DLL").expect("SHOB_GOAL_SMOKE_DLL is required");
     let temporary = tempfile::tempdir().unwrap();
     let _config = RestoreSmokeConfig(std::env::var_os(crate::config::CONFIG_DIR_ENV));
     let agent = temporary.path().join("agent");

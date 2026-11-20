@@ -230,7 +230,7 @@ impl Keybindings {
         map.insert(
             "app.clipboard.pasteImage",
             KeybindingDefinition {
-                // Upstream: `alt+v` on Windows, `ctrl+v` elsewhere. rpi keeps
+                // Upstream: `alt+v` on Windows, `ctrl+v` elsewhere. shob keeps
                 // `ctrl+v` on Windows too — its clipboard *text* fallback
                 // (crossterm never emits `Event::Paste` on the Windows console)
                 // rides the same binding, so native's key is added, not swapped.
@@ -260,7 +260,7 @@ impl Keybindings {
         map.insert(
             "app.message.followUp",
             KeybindingDefinition {
-                // Upstream: `ctrl+q` on Windows, `alt+enter` elsewhere. rpi
+                // Upstream: `ctrl+q` on Windows, `alt+enter` elsewhere. shob
                 // keeps `alt+enter` on Windows as well (it already worked) and
                 // adds native's key alongside it.
                 default_keys: if cfg!(windows) {

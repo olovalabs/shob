@@ -46,13 +46,13 @@ impl AgentTool for Probe {
                 invoke(
                     &invocation,
                     op,
-                    json!({"op":"list","__rpiRuntimeKey":"forged"})
+                    json!({"op":"list","__shobRuntimeKey":"forged"})
                 )
                 .0,
                 1
             );
             let key = invocation.invocation_key().unwrap();
-            let (rc, result) = invoke(&invocation, op, json!({"op":"list","__rpiRuntimeKey":key}));
+            let (rc, result) = invoke(&invocation, op, json!({"op":"list","__shobRuntimeKey":key}));
             assert_eq!(rc, 0);
             assert_eq!(result["protocolVersion"], 1);
             assert_eq!(result["tools"], json!([]));
@@ -68,7 +68,7 @@ impl AgentTool for Probe {
             driver_signal.cancel();
             assert!(invocation.resolve_content_parts(vec![]).is_err());
             assert_eq!(
-                invoke(&invocation, op, json!({"op":"list","__rpiRuntimeKey":key})).0,
+                invoke(&invocation, op, json!({"op":"list","__shobRuntimeKey":key})).0,
                 1
             );
             // Cleanup is still authenticated and available after cancellation.
@@ -76,7 +76,7 @@ impl AgentTool for Probe {
                 invoke(
                     &invocation,
                     op,
-                    json!({"op":"dispose","requestId":"unused","__rpiRuntimeKey":key})
+                    json!({"op":"dispose","requestId":"unused","__shobRuntimeKey":key})
                 )
                 .0,
                 0
@@ -84,7 +84,7 @@ impl AgentTool for Probe {
             registration.invalidate();
             assert!(invocation.resolve_content_parts(vec![]).is_err());
             assert_eq!(
-                invoke(&invocation, op, json!({"op":"list","__rpiRuntimeKey":key})).0,
+                invoke(&invocation, op, json!({"op":"list","__shobRuntimeKey":key})).0,
                 1
             );
         })
@@ -149,13 +149,13 @@ extern "C" fn receipt_poll(
     let drive = unsafe { &*(handle as *const ReceiptDrive) };
     if let Some(ids) = drive.0.get("resultIds").and_then(Value::as_array) {
         let bridge = ActionBridge::resolve_handle(
-            drive.0["__rpi"]["runtimeHandle"].as_u64().unwrap() as usize,
+            drive.0["__shob"]["runtimeHandle"].as_u64().unwrap() as usize,
         )
         .unwrap();
         let (rc, measured) = invoke(
             &bridge,
             RuntimeActionId::ToolProgram,
-            json!({"op":"measure_result_content","resultId":ids[0],"__rpiRuntimeKey":drive.0["__rpi"]["runtimeKey"]}),
+            json!({"op":"measure_result_content","resultId":ids[0],"__shobRuntimeKey":drive.0["__shob"]["runtimeKey"]}),
         );
         assert_eq!(rc, 0);
         assert_eq!(measured["contentBlocks"], 3);
@@ -170,7 +170,7 @@ extern "C" fn receipt_destroy(handle: StepHandle) {
     let drive = unsafe { Box::from_raw(handle as *mut ReceiptDrive) };
     let args = drive.0;
     let bridge =
-        ActionBridge::resolve_handle(args["__rpi"]["runtimeHandle"].as_u64().unwrap() as usize)
+        ActionBridge::resolve_handle(args["__shob"]["runtimeHandle"].as_u64().unwrap() as usize)
             .unwrap();
     let ids = args
         .get("resultIds")
@@ -181,7 +181,7 @@ extern "C" fn receipt_destroy(handle: StepHandle) {
         let (rc, _) = invoke(
             &bridge,
             RuntimeActionId::ToolProgram,
-            json!({"op":"release_result","resultId":id,"__rpiRuntimeKey":args["__rpi"]["runtimeKey"]}),
+            json!({"op":"release_result","resultId":id,"__shobRuntimeKey":args["__shob"]["runtimeKey"]}),
         );
         assert_eq!(
             rc, 0,
@@ -234,7 +234,7 @@ impl AgentTool for ReceiptParent {
                 .is_err(),
             "registration cannot select receipts"
         );
-        let mut done = json!({"$rpiToolResult":1,"isError":self.error,"resultReference":{"version":1,"id":id}});
+        let mut done = json!({"$shobToolResult":1,"isError":self.error,"resultReference":{"version":1,"id":id}});
         match self.invalid {
             1 => done["isError"] = json!(!self.error),
             2 => done["result"] = json!({}),
@@ -242,7 +242,7 @@ impl AgentTool for ReceiptParent {
             4 => done["resultReference"]["id"] = json!("tp-foreign"),
             5 => done["resultReference"] = json!(null),
             6 => done["resultReference"]["id"] = json!(7),
-            7 => done["$rpiToolResult"] = json!(2),
+            7 => done["$shobToolResult"] = json!(2),
             _ => {}
         }
         let adapter = PluginToolAdapter::new(
@@ -338,7 +338,7 @@ async fn native_receipt_attachment_crosses_both_drivers_before_destroy_with_auth
                 .for_plugin("receipt");
             let schema: Tool =
                 serde_json::from_value(json!({"name":"codemode","description":"program",
-                "parameters":{"type":"object","x-rpi-result-envelope":1}}))
+                "parameters":{"type":"object","x-shob-result-envelope":1}}))
                 .unwrap();
             let effect = ReceiptEffect {
                 schema: serde_json::from_value(
@@ -487,7 +487,7 @@ impl AgentTool for ContentParent {
         assert!(self.bridge.resolve_content_parts(vec![]).is_err());
         let mut usage = ai::types::Usage::zero();
         usage.total_tokens = 5;
-        let mut done = json!({"$rpiToolResult":1,"isError":self.case==25,
+        let mut done = json!({"$shobToolResult":1,"isError":self.case==25,
         "result":{"details":{"outer":"retained"},"terminate":false,"usage":usage,"addedToolNames":["outer-added"]},
         "contentParts":[
             {"content":[{"type":"text","text":"prefix","textSignature":"inline-signature"}]},
@@ -634,7 +634,7 @@ async fn mixed_content_plans_resolve_before_destroy_in_both_drivers() {
             let bridge = ActionBridge::new(Handle::current(), Arc::new(Host::default()))
                 .for_plugin("receipt");
             let context=agent::AgentContext {tools:vec![
-                Arc::new(ContentParent {schema:serde_json::from_value(json!({"name":"codemode","description":"program","parameters":{"type":"object","x-rpi-result-envelope":1}})).unwrap(),bridge,wake,case}),
+                Arc::new(ContentParent {schema:serde_json::from_value(json!({"name":"codemode","description":"program","parameters":{"type":"object","x-shob-result-envelope":1}})).unwrap(),bridge,wake,case}),
                 Arc::new(ContentEffect {schema:serde_json::from_value(json!({"name":"effect","description":"source","parameters":{"type":"object"}})).unwrap(),native}),
             ],..Default::default()};
             let (events, messages) = agent_common::run_and_collect(

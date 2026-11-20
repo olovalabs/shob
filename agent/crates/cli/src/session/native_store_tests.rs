@@ -6,8 +6,8 @@ impl Environment {
         Self(
             [
                 crate::config::CONFIG_DIR_ENV,
-                "RPI_FORCE_TUI",
-                "RPI_SESSION_ID",
+                "SHOB_FORCE_TUI",
+                "SHOB_SESSION_ID",
             ]
             .into_iter()
             .map(|key| (key, std::env::var_os(key)))
@@ -85,7 +85,7 @@ async fn native_build_is_fresh_and_routing_policy_survives_both_reload_hosts() {
     let old = temp.path().join("old");
     let _env = crate::config::test_support::SessionDirEnv::new(Some(&old));
     let _restore = Environment::new();
-    std::env::remove_var("RPI_FORCE_TUI");
+    std::env::remove_var("SHOB_FORCE_TUI");
     let agent = temp.path().join("agent");
     std::fs::create_dir_all(&agent).unwrap();
     std::env::set_var(crate::config::CONFIG_DIR_ENV, &agent);
@@ -124,7 +124,7 @@ async fn native_build_is_fresh_and_routing_policy_survives_both_reload_hosts() {
     assert!(temp
         .path()
         .join("native")
-        .join(format!("{id}.rpinative"))
+        .join(format!("{id}.shobnative"))
         .is_file());
     for step in 0..3 {
         if step > 0 {
@@ -150,10 +150,10 @@ async fn native_build_is_fresh_and_routing_policy_survives_both_reload_hosts() {
             context.tool_context.session_id().as_deref(),
             Some(id.as_str())
         );
-        assert_eq!(std::env::var("RPI_SESSION_ID").unwrap(), id);
+        assert_eq!(std::env::var("SHOB_SESSION_ID").unwrap(), id);
         assert_eq!(tree(&old), before);
     }
-    assert!(!temp.path().join(".rpi/sessions").exists());
+    assert!(!temp.path().join(".shob/sessions").exists());
     let (second, _events, _ctx) = build(&resolved(), &arguments, temp.path(), false)
         .await
         .unwrap();
@@ -167,7 +167,7 @@ async fn native_prepare_build_reject_bypasses_and_stdio_before_artifact_creation
     let agent = temp.path().join("agent");
     std::fs::create_dir_all(&agent).unwrap();
     std::env::set_var(crate::config::CONFIG_DIR_ENV, &agent);
-    std::env::remove_var("RPI_FORCE_TUI");
+    std::env::remove_var("SHOB_FORCE_TUI");
     let mut arguments = args();
     arguments.continue_session = true;
     assert!(prepare_extensions(&arguments, temp.path(), false).is_err());
@@ -194,16 +194,16 @@ async fn native_prepare_build_reject_bypasses_and_stdio_before_artifact_creation
             .is_err()
     );
     arguments = args();
-    std::env::set_var("RPI_FORCE_TUI", "1");
+    std::env::set_var("SHOB_FORCE_TUI", "1");
     assert!(prepare_extensions(&arguments, temp.path(), false).is_err());
-    std::env::remove_var("RPI_FORCE_TUI");
+    std::env::remove_var("SHOB_FORCE_TUI");
     std::fs::write(temp.path().join("native"), "file sentinel").unwrap();
     assert!(prepare_extensions(&arguments, temp.path(), false).is_err());
     assert_eq!(
         std::fs::read(temp.path().join("native")).unwrap(),
         b"file sentinel"
     );
-    assert!(!temp.path().join(".rpi/sessions").exists());
+    assert!(!temp.path().join(".shob/sessions").exists());
 }
 #[path = "native_store_tests/guards.rs"]
 mod guards;

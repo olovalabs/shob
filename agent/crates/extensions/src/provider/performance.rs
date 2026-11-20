@@ -147,12 +147,12 @@ fn parameter(name: &str, default: usize) -> usize {
 #[test]
 #[ignore = "release-build offline benchmark; run alone with --nocapture"]
 fn offline_provider_pipeline() {
-    let bytes = parameter("RPI_BENCH_BYTES", 4096);
-    let chunk = parameter("RPI_BENCH_CHUNK", 64);
-    let concurrency = parameter("RPI_BENCH_STREAMS", 1);
-    let delay = parameter("RPI_BENCH_DELAY_MS", 0);
-    let result_only = parameter("RPI_BENCH_RESULT_ONLY", 0) != 0;
-    let sdk_only = parameter("RPI_BENCH_SDK_ONLY", 0) != 0;
+    let bytes = parameter("SHOB_BENCH_BYTES", 4096);
+    let chunk = parameter("SHOB_BENCH_CHUNK", 64);
+    let concurrency = parameter("SHOB_BENCH_STREAMS", 1);
+    let delay = parameter("SHOB_BENCH_DELAY_MS", 0);
+    let result_only = parameter("SHOB_BENCH_RESULT_ONLY", 0) != 0;
+    let sdk_only = parameter("SHOB_BENCH_SDK_ONLY", 0) != 0;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -243,5 +243,5 @@ fn offline_provider_pipeline() {
     let wire = WIRE.load(Ordering::Relaxed);
     let queue = Some(super::queue::peak_occupancy());
     let queue = serde_json::to_string(&queue).unwrap();
-    println!("RPI_BENCH {{\"bytes\":{bytes},\"chunk\":{chunk},\"streams\":{concurrency},\"delay_ms\":{delay},\"result_only\":{result_only},\"sdk_only\":{sdk_only},\"elapsed_s\":{elapsed},\"allocations\":{allocations},\"allocated_bytes\":{allocated_bytes},\"peak_live_bytes\":{peak},\"wire_bytes\":{wire},\"bridge_peak_count_bytes\":{queue}}}");
+    println!("SHOB_BENCH {{\"bytes\":{bytes},\"chunk\":{chunk},\"streams\":{concurrency},\"delay_ms\":{delay},\"result_only\":{result_only},\"sdk_only\":{sdk_only},\"elapsed_s\":{elapsed},\"allocations\":{allocations},\"allocated_bytes\":{allocated_bytes},\"peak_live_bytes\":{peak},\"wire_bytes\":{wire},\"bridge_peak_count_bytes\":{queue}}}");
 }

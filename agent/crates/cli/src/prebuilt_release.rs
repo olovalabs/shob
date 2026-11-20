@@ -45,7 +45,7 @@ fn validate<'a>(
 ) -> Result<&'a Distribution, String> {
     semver::Version::parse(version).map_err(|_| "invalid CLI release version")?;
     if manifest.schema_version != 1
-        || manifest.name != "rpi-cli"
+        || manifest.name != "shob-cli"
         || manifest.version != version
         || canonical_repository(&manifest.repository)? != REPOSITORY
         || manifest.tag != format!("v{version}")
@@ -73,12 +73,12 @@ fn validate<'a>(
     }
     if distribution.binary.path
         != if target.contains("windows") {
-            "rpi.exe"
+            "shob.exe"
         } else {
-            "rpi"
+            "shob"
         }
     {
-        return Err("CLI manifest must declare the flat rpi executable filename".into());
+        return Err("CLI manifest must declare the flat shob executable filename".into());
     }
     for sha in [&distribution.sha256, &distribution.binary.sha256] {
         if sha.len() != 64
@@ -102,11 +102,11 @@ pub(crate) async fn download_to(
     let target = host_target()?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(180))
-        .user_agent(format!("rpi/{}", crate::VERSION))
+        .user_agent(format!("shob/{}", crate::VERSION))
         .build()
         .map_err(|e| e.to_string())?;
-    let url = format!("{REPOSITORY}/releases/download/v{version}/rpi-release.json");
-    println!("downloading prebuilt rpi {version} for {target}");
+    let url = format!("{REPOSITORY}/releases/download/v{version}/shob-release.json");
+    println!("downloading prebuilt shob {version} for {target}");
     let response = client
         .get(url)
         .timeout(std::time::Duration::from_secs(15))
@@ -115,12 +115,12 @@ pub(crate) async fn download_to(
         .map_err(|e| format!("CLI manifest request failed: {e}"))?;
     let manifest = read_manifest(response, version).await?;
     let path = download_manifest_to(&client, &manifest, version, target, staging, cdn_base).await?;
-    crate::updates::validate_downloaded_rpi(&path, staging, version)
+    crate::updates::validate_downloaded_shob(&path, staging, version)
 }
 
 async fn read_manifest(response: reqwest::Response, version: &str) -> Result<Manifest, String> {
     if response.status() == reqwest::StatusCode::NOT_FOUND {
-        return Err(format!("prebuilt CLI release {version} is not ready (rpi-release.json is missing); retry later or select --build explicitly"));
+        return Err(format!("prebuilt CLI release {version} is not ready (shob-release.json is missing); retry later or select --build explicitly"));
     }
     if !response.status().is_success() {
         return Err(format!(
@@ -129,7 +129,7 @@ async fn read_manifest(response: reqwest::Response, version: &str) -> Result<Man
         ));
     }
     serde_json::from_slice(&body_limited(response, MAX_MANIFEST).await?)
-        .map_err(|e| format!("invalid rpi-release.json: {e}"))
+        .map_err(|e| format!("invalid shob-release.json: {e}"))
 }
 
 async fn download_manifest_to(
@@ -204,9 +204,9 @@ mod tests {
     async fn missing_and_malformed_manifests_report_errors_without_staging() {
         use std::io::Read;
         for (status, body, expected) in [
-            ("404 Not Found", "missing", "rpi-release.json is missing"),
+            ("404 Not Found", "missing", "shob-release.json is missing"),
             ("403 Forbidden", "denied", "403 Forbidden"),
-            ("200 OK", "not json", "invalid rpi-release.json"),
+            ("200 OK", "not json", "invalid shob-release.json"),
         ] {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let url = format!("http://{}", listener.local_addr().unwrap());
@@ -240,14 +240,14 @@ mod tests {
     /// Opt-in network smoke uses a local manifest assembled from actual Release
     /// assets. It downloads/stages/executes --version, never replaces the host.
     #[tokio::test]
-    #[ignore = "requires RPI_RELEASE_SMOKE_MANIFEST and GitHub access"]
+    #[ignore = "requires SHOB_RELEASE_SMOKE_MANIFEST and GitHub access"]
     async fn live_github_release_download_and_exact_version_validation() {
-        let path = std::env::var("RPI_RELEASE_SMOKE_MANIFEST").unwrap();
+        let path = std::env::var("SHOB_RELEASE_SMOKE_MANIFEST").unwrap();
         let manifest: Manifest = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         let staging = tempfile::tempdir().unwrap();
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(180))
-            .user_agent("rpi-release-smoke")
+            .user_agent("shob-release-smoke")
             .build()
             .unwrap();
         let executable = download_manifest_to(
@@ -260,10 +260,10 @@ mod tests {
         )
         .await
         .unwrap();
-        crate::updates::validate_downloaded_rpi(&executable, staging.path(), &manifest.version)
+        crate::updates::validate_downloaded_shob(&executable, staging.path(), &manifest.version)
             .unwrap();
         assert!(
-            crate::updates::validate_downloaded_rpi(&executable, staging.path(), "999.0.0")
+            crate::updates::validate_downloaded_shob(&executable, staging.path(), "999.0.0")
                 .is_err()
         );
     }
@@ -277,11 +277,11 @@ mod tests {
         executable[86] = 2;
         let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         writer
-            .start_file("rpi.exe", zip::write::SimpleFileOptions::default())
+            .start_file("shob.exe", zip::write::SimpleFileOptions::default())
             .unwrap();
         writer.write_all(&executable).unwrap();
         let archive = writer.finish().unwrap().into_inner();
-        let manifest = serde_json::json!({"schema_version":1,"name":"rpi-cli","version":"1.2.3","repository":REPOSITORY,"tag":"v1.2.3","source_commit":"a".repeat(40),"targets":{"x86_64-pc-windows-msvc":{"url":format!("{REPOSITORY}/releases/download/v1.2.3/rpi.zip"),"format":"zip","size":archive.len(),"sha256":hash(&archive),"binary":{"path":"rpi.exe","sha256":hash(&executable)}}}});
+        let manifest = serde_json::json!({"schema_version":1,"name":"shob-cli","version":"1.2.3","repository":REPOSITORY,"tag":"v1.2.3","source_commit":"a".repeat(40),"targets":{"x86_64-pc-windows-msvc":{"url":format!("{REPOSITORY}/releases/download/v1.2.3/shob.zip"),"format":"zip","size":archive.len(),"sha256":hash(&archive),"binary":{"path":"shob.exe","sha256":hash(&executable)}}}});
         (manifest, archive)
     }
 
@@ -300,11 +300,11 @@ mod tests {
                 "/repository",
                 serde_json::json!("https://github.com/other/repo"),
             ),
-            ("/tag", serde_json::json!("rpi-cli-v1.2.3")),
+            ("/tag", serde_json::json!("shob-cli-v1.2.3")),
             ("/source_commit", serde_json::json!("short")),
             (
                 "/targets/x86_64-pc-windows-msvc/binary/path",
-                serde_json::json!("../rpi.exe"),
+                serde_json::json!("../shob.exe"),
             ),
             (
                 "/targets/x86_64-pc-windows-msvc/sha256",

@@ -318,7 +318,9 @@ impl SideQuestions {
             op,
             "start" | "new" | "clear" | "status" | "cancel" | "hide" | "show"
         ) {
-            return Err("unknown side question operation; upgrade rpi and rpi-btw together".into());
+            return Err(
+                "unknown side question operation; upgrade shob and shob-btw together".into(),
+            );
         }
         let question = if matches!(op, "start" | "new") {
             Some(

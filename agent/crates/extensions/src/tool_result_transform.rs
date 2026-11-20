@@ -3,7 +3,7 @@
 //!
 //! pi lets a `tool_result` handler return a changed `content`/`details`
 //! (`ToolResultEventResult`), and the agent records that instead of what the
-//! tool produced. rpi broadcasts [`EventTag::ToolResult`] to observers only;
+//! tool produced. shob broadcasts [`EventTag::ToolResult`] to observers only;
 //! this module carries the return channel, the way
 //! [`prompt_transform`](crate::prompt_transform) does for `before_agent_start`.
 //!

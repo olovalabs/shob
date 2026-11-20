@@ -3,7 +3,7 @@
 //!
 //! This is deliberately independent of any local agent harness — it is the
 //! client analogue of the TS `packages/coding-agent/src/client/` remote-session
-//! layer, built on rpi's own protocol types.
+//! layer, built on shob's own protocol types.
 
 use serde_json::Value;
 

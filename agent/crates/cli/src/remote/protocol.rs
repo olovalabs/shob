@@ -1,4 +1,4 @@
-//! Shared wire protocol for rpi's headless RPC mode (`--mode rpc`, the server)
+//! Shared wire protocol for shob's headless RPC mode (`--mode rpc`, the server)
 //! and the remote client (`--connect`).
 //!
 //! Single source of truth: the server serializes these types and the client
@@ -424,7 +424,7 @@ mod tests {
                 ),
             ],
             details: serde_json::json!({"runtimeKey":"business", "runtimeHandle":{"id":7},
-                "__rpi":{"owner":"customer"}, "__rpiRuntimeKey":"unchanged"}),
+                "__shob":{"owner":"customer"}, "__shobRuntimeKey":"unchanged"}),
             usage: Some(ai::types::Usage::zero()),
             added_tool_names: vec!["read".into(), "read".into()],
             terminate: true,

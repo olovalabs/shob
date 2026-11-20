@@ -39,7 +39,7 @@ pub(crate) fn capabilities() -> Value {
         "management":crate::resource_management::capabilities(),
         "transition":transition_capability(),"savedSessionRead":crate::saved_session_read::capabilities(),"loadedFacts":false})
 }
-const SESSION_KEY: &str = "rpi.resource-selection.v1";
+const SESSION_KEY: &str = "shob.resource-selection.v1";
 
 /// Only public generic append APIs are restricted. Native SessionValueWriter
 /// remains available for the host's atomic declaration/inventory persistence.
@@ -49,8 +49,8 @@ pub(crate) fn validate_public_entry(custom_type: &str, data: Option<&Value>) -> 
             .and_then(|d| d.get("key"))
             .and_then(Value::as_str)
             .is_some_and(|key| {
-                key.starts_with("rpi.resource-selection.")
-                    || key.starts_with("rpi.resource-inventory.")
+                key.starts_with("shob.resource-selection.")
+                    || key.starts_with("shob.resource-inventory.")
             })
     {
         return Err(
@@ -323,7 +323,7 @@ impl ResolvedSelection {
             let root = std::fs::canonicalize(packages_root.join(&main.name))
                 .map_err(|e| format!("missing package directory: {e}"))?;
             if !root.is_dir() || !root.starts_with(&packages_root) || root == packages_root {
-                return Err("package root escapes .rpi/packages".into());
+                return Err("package root escapes .shob/packages".into());
             }
             let skill_dir = root.join("skills");
             if skill_dir.exists() {
@@ -898,9 +898,9 @@ mod tests {
         assert_eq!(read_limited(&input).unwrap().len(), MAX_SELECTION_BYTES);
         std::fs::write(&input, vec![b'x'; MAX_SELECTION_BYTES + 1]).unwrap();
         assert!(read_limited(&input).unwrap_err().contains("exceeds 64 KiB"));
-        std::fs::create_dir(root.join(".rpi")).unwrap();
+        std::fs::create_dir(root.join(".shob")).unwrap();
         std::fs::write(
-            root.join(".rpi/packages.json"),
+            root.join(".shob/packages.json"),
             vec![b' '; MAX_STATE_BYTES + 1],
         )
         .unwrap();

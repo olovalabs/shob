@@ -7,7 +7,7 @@ version.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "In-process agent sessions, catalog and login for embedding rpi in a host UI"
+description = "In-process agent sessions, catalog and login for embedding shob in a host UI"
 
 [dependencies]
 base64 = { workspace = true }

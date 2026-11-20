@@ -2,14 +2,14 @@ use crate::prebuilt_extensions::{body_limited, check_hash};
 use percent_encoding::percent_decode_str;
 use reqwest::Url;
 
-const CDN_ENV: &str = "RPI_CDN_BASE_URL";
+const CDN_ENV: &str = "SHOB_CDN_BASE_URL";
 const CLI_REPOSITORY: &str = "https://github.com/bigfish1913/pi-rust";
 const PACKAGE_REPOSITORY: &str = "https://github.com/pi-rust/rpi-package";
 
 /// Resolve and validate the optional CDN base. The CDN is only a transport;
 /// manifests and all release identity fields still come from GitHub.
 ///
-/// Precedence is explicit CLI (`--cdn`), environment (`RPI_CDN_BASE_URL`), then
+/// Precedence is explicit CLI (`--cdn`), environment (`SHOB_CDN_BASE_URL`), then
 /// global `settings.json` (`cdnBaseUrl`). Settings are a convenience default;
 /// they never override an explicit invocation or environment configuration.
 pub(crate) fn resolve_base(cli_value: Option<&str>) -> Result<Option<Url>, String> {
@@ -69,8 +69,8 @@ pub(crate) fn resolve_base(cli_value: Option<&str>) -> Result<Option<Url>, Strin
 
 fn repository_prefix(repository: &str) -> Option<&'static str> {
     match repository {
-        CLI_REPOSITORY => Some("rpi"),
-        PACKAGE_REPOSITORY => Some("rpi-package"),
+        CLI_REPOSITORY => Some("shob"),
+        PACKAGE_REPOSITORY => Some("shob-package"),
         _ => None,
     }
 }

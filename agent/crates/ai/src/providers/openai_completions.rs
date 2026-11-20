@@ -117,7 +117,7 @@ where
         }
     }
     apply_api_key(&mut headers, api_key);
-    // Identify rpi on provider requests (native `getPiUserAgent`), unless the
+    // Identify shob on provider requests (native `getPiUserAgent`), unless the
     // caller/model already set a User-Agent.
     crate::http::ensure_user_agent(&mut headers);
     if require_auth && !has_auth_header(&headers) {

@@ -34,7 +34,7 @@ fn changelog_command_shows_current_release_and_all_is_explicit() {
 
 #[test]
 fn startup_changelog_foreign_profile_is_shown_once_and_persisted() {
-    const CHILD: &str = "RPI_CHANGELOG_REGRESSION_CHILD";
+    const CHILD: &str = "SHOB_CHANGELOG_REGRESSION_CHILD";
     if std::env::var_os(CHILD).is_none() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -70,7 +70,7 @@ fn startup_changelog_foreign_profile_is_shown_once_and_persisted() {
             assert!(!output.lines().any(|line| line.trim() == old_version));
             let settings = crate::settings::load_settings().unwrap();
             assert_eq!(
-                settings.last_rpi_changelog_version.as_deref(),
+                settings.last_shob_changelog_version.as_deref(),
                 Some(crate::VERSION)
             );
             assert_eq!(settings.last_changelog_version.as_deref(), Some("0.85.1"));
@@ -96,19 +96,19 @@ fn startup_changelog_foreign_profile_is_shown_once_and_persisted() {
                         )
                 })
                 .unwrap();
-            stale.last_rpi_changelog_version =
+            stale.last_shob_changelog_version =
                 Some(format!("{}.{}.{}", old.major, old.minor, old.patch));
             let mut newer = settings;
             let mut next_version = current_version;
             next_version.patch += 1;
-            newer.last_rpi_changelog_version = Some(next_version.to_string());
+            newer.last_shob_changelog_version = Some(next_version.to_string());
             crate::settings::save_settings(&newer).unwrap();
             maybe_add_startup_changelog(&harness, &Arc::new(Container::new()), &stale, false, true)
                 .await;
             assert_eq!(
                 crate::settings::load_settings()
                     .unwrap()
-                    .last_rpi_changelog_version,
+                    .last_shob_changelog_version,
                 Some(next_version.to_string())
             );
         });
@@ -197,7 +197,7 @@ fn pasted_images_accept_multiple_quoted_paths_without_consuming_normal_text() {
 }
 
 #[test]
-#[ignore = "set RPI_STATS_DLL to the monitor DLL"]
+#[ignore = "set SHOB_STATS_DLL to the monitor DLL"]
 fn monitor_function_key_works_with_a_draft_without_changing_text() {
     use ::extensions::{
         dispatch_empty_event, load_session_mixed, NullDiagnostics, RegistrySnapshot,
@@ -213,7 +213,7 @@ fn monitor_function_key_works_with_a_draft_without_changing_text() {
     let session = load_session_mixed(
         &[],
         &[std::path::PathBuf::from(
-            std::env::var("RPI_STATS_DLL").unwrap(),
+            std::env::var("SHOB_STATS_DLL").unwrap(),
         )],
         Arc::new(NullDiagnostics),
         None,
@@ -420,7 +420,7 @@ fn auto_send_footer_label_is_recognisable() {
 
 #[test]
 fn markdown_flag_only_comes_from_an_explicit_true() {
-    // Tools opt in by setting `details.markdown = true` (rpi-todo does).
+    // Tools opt in by setting `details.markdown = true` (shob-todo does).
     assert!(tool_result_requests_markdown(Some(
         &serde_json::json!({"kind": "todo", "markdown": true})
     )));
@@ -1043,8 +1043,8 @@ fn quote_shell_arg_quotes_only_when_needed() {
 
 #[test]
 fn trust_command_uses_the_session_cwd_after_process_chdir() {
-    const CHILD_ENV: &str = "RPI_TEST_TRUST_COMMAND_CHILD";
-    const SESSION_CWD_ENV: &str = "RPI_TEST_TRUST_COMMAND_SESSION_CWD";
+    const CHILD_ENV: &str = "SHOB_TEST_TRUST_COMMAND_CHILD";
+    const SESSION_CWD_ENV: &str = "SHOB_TEST_TRUST_COMMAND_SESSION_CWD";
     const TEST_NAME: &str =
         "interactive_tui::tests::trust_command_uses_the_session_cwd_after_process_chdir";
 
@@ -1090,7 +1090,7 @@ fn trust_command_uses_the_session_cwd_after_process_chdir() {
 }
 
 #[test]
-fn tui_startup_settings_prefer_rpi_project_fields_over_pi() {
+fn tui_startup_settings_prefer_shob_project_fields_over_pi() {
     let global = crate::settings::Settings {
         editor_padding_x: Some(3),
         autocomplete_max_visible: Some(6),
@@ -1099,7 +1099,7 @@ fn tui_startup_settings_prefer_rpi_project_fields_over_pi() {
         show_terminal_progress: Some(true),
         ..Default::default()
     };
-    let rpi_project = crate::settings::Settings {
+    let shob_project = crate::settings::Settings {
         editor_padding_x: Some(0),
         hide_thinking_block: Some(true),
         quiet_startup: Some(false),
@@ -1114,7 +1114,7 @@ fn tui_startup_settings_prefer_rpi_project_fields_over_pi() {
     };
 
     assert_eq!(
-        resolve_tui_startup_settings(&global, &[rpi_project, pi_project], true),
+        resolve_tui_startup_settings(&global, &[shob_project, pi_project], true),
         TuiStartupSettings {
             editor_padding_x: 0,
             autocomplete_max_visible: 12,
@@ -1128,18 +1128,18 @@ fn tui_startup_settings_prefer_rpi_project_fields_over_pi() {
 }
 
 #[test]
-fn tui_startup_settings_fall_back_from_rpi_to_pi_per_field() {
+fn tui_startup_settings_fall_back_from_shob_to_pi_per_field() {
     let global = crate::settings::Settings {
         quiet_startup: Some(false),
         ..Default::default()
     };
-    let rpi_project = crate::settings::Settings::default();
+    let shob_project = crate::settings::Settings::default();
     let pi_project = crate::settings::Settings {
         quiet_startup: Some(true),
         ..Default::default()
     };
 
-    let resolved = resolve_tui_startup_settings(&global, &[rpi_project, pi_project], true);
+    let resolved = resolve_tui_startup_settings(&global, &[shob_project, pi_project], true);
 
     assert!(resolved.quiet_startup);
 }
@@ -1173,7 +1173,7 @@ fn tui_startup_settings_use_global_values_without_project_fields() {
 
 #[test]
 fn tui_startup_settings_read_native_nested_terminal_block() {
-    // upstream nests these under `terminal`; rpi's flat keys stay
+    // upstream nests these under `terminal`; shob's flat keys stay
     // compatible and the nested block is the fallback.
     let global = crate::settings::Settings {
         terminal: Some(crate::settings::TerminalSettings {
@@ -1316,7 +1316,7 @@ fn test_layout_renders_welcome_message() {
 
     let all: String = frame.lines.join("\n");
     assert!(
-        all.contains("rpi"),
+        all.contains("SHOB"),
         "Welcome message not found. Rendered: {}",
         all
     );
@@ -1335,18 +1335,16 @@ fn test_chat_container_has_welcome_content() {
         &["read".into(), "bash".into(), "web_fetch".into()],
         &["rust-review".into(), "release".into()],
         &[
-            "/project/.rpi/SYSTEM.md".into(),
+            "/project/.shob/SYSTEM.md".into(),
             "/project/AGENTS.md".into(),
         ],
     );
 
     let lines = chat.render(80);
     let all: String = lines.join("\n");
-    // Welcome title is "rpi" (accent bold) + "interactive TUI" (muted),
-    // joined by an ANSI reset — strip ANSI before checking the substring.
     let plain = strip_ansi(&all);
     assert!(
-        plain.contains("rpi"),
+        plain.contains("SHOB"),
         "Welcome message not in chat container: {:?}",
         lines
     );
@@ -1357,7 +1355,7 @@ fn test_chat_container_has_welcome_content() {
     );
     assert!(plain.contains("Skills (2)"), "Skill count missing: {plain}");
     assert!(plain.contains("Context (2)"));
-    assert!(plain.contains("/project/.rpi/SYSTEM.md"));
+    assert!(plain.contains("/project/.shob/SYSTEM.md"));
     assert!(plain.contains("/project/AGENTS.md"));
     assert!(
         plain.contains("rust-review · release"),
@@ -1424,14 +1422,14 @@ fn welcome_header_renders_the_brand_mark() {
     let lines: Vec<String> = chat.render(80).iter().map(|l| strip_ansi(l)).collect();
     let all = lines.join("\n");
 
-    // The three-bar mark: the bottom row carries all three bars, and the
-    // wordmark sits on its baseline next to the middle bar.
     assert!(
-        lines.iter().any(|l| l.contains("██ ██ ██")),
+        lines
+            .iter()
+            .any(|l| l.contains("███████╗██╗  ██╗ ██████╗ ██████╗")),
         "brand mark missing: {all}"
     );
     assert!(
-        all.contains("rpi"),
+        all.contains("SHOB"),
         "the mark must carry the product name: {all}"
     );
 
@@ -1490,24 +1488,24 @@ fn empty_update_report_does_not_add_transcript_content() {
 }
 
 #[test]
-fn package_updates_render_without_an_rpi_update() {
+fn package_updates_render_without_an_shob_update() {
     let chat = Arc::new(Container::new());
     let app = crate::COMMAND;
     let command = format!("{app} update");
     let package_notice = crate::updates::UpdateNotice {
-        name: "rpi-im-message".into(),
+        name: "shob-im-message".into(),
         current: "0.1.9".into(),
         latest: "0.1.10".into(),
-        command: "rpi install rpi-im-message".into(),
+        command: "shob install shob-im-message".into(),
     };
 
-    for include_rpi in [false, true] {
+    for include_shob in [false, true] {
         chat.clear();
         let mut report = crate::updates::UpdateReport {
             notices: vec![package_notice.clone()],
             warnings: Vec::new(),
         };
-        if include_rpi {
+        if include_shob {
             report.notices.push(crate::updates::UpdateNotice {
                 name: app.into(),
                 current: "0.3.20".into(),
@@ -1521,13 +1519,13 @@ fn package_updates_render_without_an_rpi_update() {
         assert_eq!(chat.child_count(), 1);
         let plain = strip_ansi(&chat.render(80).join("\n"));
         assert!(plain.contains("Package Update Available"), "{plain}");
-        assert!(plain.contains("rpi-im-message 0.1.9 -> 0.1.10"), "{plain}");
+        assert!(plain.contains("shob-im-message 0.1.9 -> 0.1.10"), "{plain}");
         assert!(plain.contains(&package_notice.command), "{plain}");
         assert!(
             !plain.contains(&format!("{}.", package_notice.command)),
             "{plain}"
         );
-        assert_eq!(plain.contains(&command), include_rpi, "{plain}");
+        assert_eq!(plain.contains(&command), include_shob, "{plain}");
     }
 }
 
@@ -3106,7 +3104,7 @@ fn command_package_manifest(
             id,
             "http://localhost:8080/v1",
         )],
-        api_key_env: Some("RPI_TEST_PROVIDER_COMMAND_KEY".into()),
+        api_key_env: Some("SHOB_TEST_PROVIDER_COMMAND_KEY".into()),
         requires_auth,
     }
 }
@@ -3126,7 +3124,7 @@ fn login_provider_items_are_provider_scoped_and_exclude_anonymous_packages() {
         assert!(deepseek
             .description
             .as_deref()
-            .is_some_and(|text| text.contains("RPI_TEST_PROVIDER_COMMAND_KEY")));
+            .is_some_and(|text| text.contains("SHOB_TEST_PROVIDER_COMMAND_KEY")));
         assert!(!items.iter().any(|item| item.value == "llama-cpp"));
         assert!(items.iter().any(|item| item.value == "anthropic"));
         assert!(items.iter().any(|item| item.value == "openai"));
@@ -3232,7 +3230,7 @@ fn package_catalog_resolves_header_references_without_binding_credentials() {
     with_isolated_config_dir(|| {
         let manifests = vec![command_package_manifest("package-gateway", "model", true)];
         let cfg = serde_json::from_value(serde_json::json!({"providers":{"package-gateway":{
-            "apiKey":"secret-value", "headers":{"Authorization":"$RPI_TEST_MISSING_PACKAGE_HEADER"}, "models":[]
+            "apiKey":"secret-value", "headers":{"Authorization":"$SHOB_TEST_MISSING_PACKAGE_HEADER"}, "models":[]
         }}})).unwrap();
         crate::config::save_models_config(&cfg).unwrap();
         let catalog = crate::provider::catalog_with_manifests(&manifests).unwrap();
@@ -3248,12 +3246,12 @@ fn package_catalog_resolves_header_references_without_binding_credentials() {
 fn provider_package_key_status_uses_its_declared_environment() {
     with_isolated_config_dir(|| {
         let manifest = command_package_manifest("openrouter", "openrouter/auto", true);
-        let previous = std::env::var_os("RPI_TEST_PROVIDER_COMMAND_KEY");
-        std::env::set_var("RPI_TEST_PROVIDER_COMMAND_KEY", "package-key");
+        let previous = std::env::var_os("SHOB_TEST_PROVIDER_COMMAND_KEY");
+        std::env::set_var("SHOB_TEST_PROVIDER_COMMAND_KEY", "package-key");
         let items = provider_selector_items(&[manifest], None);
         match previous {
-            Some(value) => std::env::set_var("RPI_TEST_PROVIDER_COMMAND_KEY", value),
-            None => std::env::remove_var("RPI_TEST_PROVIDER_COMMAND_KEY"),
+            Some(value) => std::env::set_var("SHOB_TEST_PROVIDER_COMMAND_KEY", value),
+            None => std::env::remove_var("SHOB_TEST_PROVIDER_COMMAND_KEY"),
         }
         let router = items
             .iter()

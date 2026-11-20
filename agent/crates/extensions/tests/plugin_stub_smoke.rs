@@ -6,7 +6,7 @@
 //! This is the test the plan's verification §2 asks for: "adapter round-trips
 //! a stub tool via the spawn_blocking bridge" — but against the **actual cdylib**
 //! (not the in-process `extern "C"` stubs in `tool::tests`), so it exercises the
-//! full `libloading` → `rpi_plugin_register_v2` → `register_tool` trampoline →
+//! full `libloading` → `shob_plugin_register_v2` → `register_tool` trampoline →
 //! keepalive → adapter path.
 //!
 //! ## Locating the cdylib
@@ -208,7 +208,7 @@ async fn loads_real_cdylib_and_drives_echo_tool() {
     // full dispatch path (translate → catch_unwind fan-out → plugin handler) is
     // wired against the real cdylib. We read the counter back via the cdylib's
     // exported `plugin_stub_message_end_hits` accessor (looked up the same way
-    // the loader looks up `rpi_plugin_register_v2`).
+    // the loader looks up `shob_plugin_register_v2`).
     use agent::events::AgentEmitter;
     use agent::message::AgentMessage;
     use ai::types::{AssistantMessage, Content, Usage};

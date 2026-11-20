@@ -105,7 +105,7 @@ pub(super) async fn restore_queued_messages_to_editor(
 
 /// `app.message.dequeue`: restore the queued messages and report the count, like
 /// upstream's `handleDequeue` (`Restored N queued message(s)` / `No queued
-/// messages to restore`). The status is a dim transcript note (rpi's analog of
+/// messages to restore`). The status is a dim transcript note (shob's analog of
 /// native `showStatus`).
 pub(super) async fn handle_dequeue(
     lane: Arc<dyn AgentLane>,
@@ -582,7 +582,7 @@ pub(super) fn assistant_error_text(message: &ai::AssistantMessage) -> Option<Str
 /// Whether a tool result opts into markdown rendering of its body.
 ///
 /// A tool signals this by setting `details.markdown = true` on its result
-/// (the `rpi-todo` extension does this for its progress bar + table payload).
+/// (the `shob-todo` extension does this for its progress bar + table payload).
 /// The host then hands the body to the markdown renderer instead of printing
 /// it as plain text — see `ToolExecutionComponent::set_result_markdown`.
 /// Absent or non-`true` details keep the existing plain-text rendering, so

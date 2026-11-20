@@ -88,7 +88,7 @@ struct Fixture {
 impl Fixture {
     fn new() -> Result<Self> {
         let directory = tempfile::tempdir()?;
-        let path = directory.path().join("native.rpidb");
+        let path = directory.path().join("native.shobdb");
         let store = Store::create(&path, identity())?;
         Ok(Self {
             _directory: directory,
@@ -509,7 +509,7 @@ fn real_native_history_growth_does_not_decode_retired_bodies() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let mut measured = Vec::new();
     for count in [128, 2048] {
-        let path = directory.path().join(format!("native-{count}.rpidb"));
+        let path = directory.path().join(format!("native-{count}.shobdb"));
         let mut store = Store::create(&path, identity())?;
         let mut parent = None;
         for index in 0..count {
@@ -806,14 +806,14 @@ fn native_store_never_adopts_foreign_artifacts_or_overwrites_existing_files() ->
         std::fs::read(&legacy)?,
         b"{\"kind\":\"header\",\"version\":4}\n"
     );
-    let old = f._directory.path().join("phase2.rpidb");
+    let old = f._directory.path().join("phase2.shobdb");
     rusqlite::Connection::open(&old)?
         .execute_batch("PRAGMA application_id=1380993360;PRAGMA user_version=1")?;
     assert_error(
         Store::open(&old, identity()),
         "unsupported native fact format",
     );
-    let missing = f._directory.path().join("missing.rpidb");
+    let missing = f._directory.path().join("missing.shobdb");
     assert!(Store::open(&missing, identity()).is_err());
     assert!(!missing.exists());
     Ok(())

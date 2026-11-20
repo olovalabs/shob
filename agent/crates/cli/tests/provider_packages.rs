@@ -1,5 +1,5 @@
-//! Build rpi-providers in the independent rpi-package workspace, then set
-//! RPI_TEST_PROVIDER_LIBRARY to its DLL/so/dylib and RPI_TEST_PROVIDER_PACKAGE
+//! Build shob-providers in the independent shob-package workspace, then set
+//! SHOB_TEST_PROVIDER_LIBRARY to its DLL/so/dylib and SHOB_TEST_PROVIDER_PACKAGE
 //! to its package directory. The host has no vendor crate dependency.
 //! Then run cargo test -p cli --test provider_packages.
 use std::{
@@ -10,11 +10,11 @@ use std::{
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 fn library(name: &str) -> Option<PathBuf> {
-    if name == "rpi_providers" {
-        let path = PathBuf::from(std::env::var_os("RPI_TEST_PROVIDER_LIBRARY")?);
+    if name == "shob_providers" {
+        let path = PathBuf::from(std::env::var_os("SHOB_TEST_PROVIDER_LIBRARY")?);
         assert!(
             path.is_file(),
-            "RPI_TEST_PROVIDER_LIBRARY must name the built bundle"
+            "SHOB_TEST_PROVIDER_LIBRARY must name the built bundle"
         );
         return Some(path);
     }
@@ -36,11 +36,11 @@ fn library(name: &str) -> Option<PathBuf> {
 }
 
 fn command_base(temp: &tempfile::TempDir) -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_rpi"));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_shob"));
     cmd.current_dir(temp.path())
         .stdin(Stdio::null())
-        .env("RPI_CODING_AGENT_DIR", temp.path().join("agent"))
-        .env("RPI_OFFLINE", "1")
+        .env("SHOB_CODING_AGENT_DIR", temp.path().join("agent"))
+        .env("SHOB_OFFLINE", "1")
         .env_remove("ANTHROPIC_API_KEY")
         .env_remove("ANTHROPIC_AUTH_TOKEN")
         .env_remove("ANTHROPIC_BASE_URL")
@@ -88,8 +88,8 @@ fn assert_auth_output(output: std::process::Output, ready: bool, source: &str) {
 
 #[test]
 fn auth_check_uses_package_policy_precedence_and_provider_isolation() {
-    let Some(library) = library("rpi_providers") else {
-        eprintln!("SKIP: build rpi-providers and set RPI_TEST_PROVIDER_LIBRARY first");
+    let Some(library) = library("shob_providers") else {
+        eprintln!("SKIP: build shob-providers and set SHOB_TEST_PROVIDER_LIBRARY first");
         return;
     };
     let temp = tempfile::tempdir().unwrap();
@@ -157,7 +157,7 @@ fn auth_check_uses_package_policy_precedence_and_provider_isolation() {
     );
     std::fs::write(
         agent.join("auth.json"),
-        r#"{"openrouter":{"type":"api_key","key":"$RPI_TEST_MISSING_PACKAGE_AUTH"}}"#,
+        r#"{"openrouter":{"type":"api_key","key":"$SHOB_TEST_MISSING_PACKAGE_AUTH"}}"#,
     )
     .unwrap();
     assert_auth_output(
@@ -195,7 +195,7 @@ fn auth_check_uses_package_policy_precedence_and_provider_isolation() {
 
 #[test]
 fn auth_check_honors_anonymous_packages_and_logout_keeps_environment_keys() {
-    for (library_name, provider) in [("rpi_providers", "proxy"), ("rpi_providers", "llama-cpp")] {
+    for (library_name, provider) in [("shob_providers", "proxy"), ("shob_providers", "llama-cpp")] {
         let Some(library) = library(library_name) else {
             continue;
         };
@@ -214,7 +214,7 @@ fn auth_check_honors_anonymous_packages_and_logout_keeps_environment_keys() {
             "none",
         );
     }
-    let Some(library) = library("rpi_providers") else {
+    let Some(library) = library("shob_providers") else {
         return;
     };
     let temp = tempfile::tempdir().unwrap();
@@ -254,8 +254,8 @@ fn auth_check_honors_anonymous_packages_and_logout_keeps_environment_keys() {
 
 #[test]
 fn package_catalog_is_available_without_credentials_and_respects_no_extensions() {
-    let Some(library) = library("rpi_providers") else {
-        eprintln!("SKIP: build rpi-providers and set RPI_TEST_PROVIDER_LIBRARY first");
+    let Some(library) = library("shob_providers") else {
+        eprintln!("SKIP: build shob-providers and set SHOB_TEST_PROVIDER_LIBRARY first");
         return;
     };
     let temp = tempfile::tempdir().unwrap();
@@ -279,7 +279,7 @@ fn package_catalog_is_available_without_credentials_and_respects_no_extensions()
 
 #[test]
 fn openrouter_package_does_not_inherit_openai_credentials() {
-    let Some(library) = library("rpi_providers") else {
+    let Some(library) = library("shob_providers") else {
         return;
     };
     let temp = tempfile::tempdir().unwrap();
@@ -305,33 +305,33 @@ fn openrouter_package_does_not_inherit_openai_credentials() {
 async fn packaged_providers_stream_through_the_real_dll_and_cli() {
     for (name, provider, model, source) in [
         (
-            "rpi_providers",
+            "shob_providers",
             "openrouter",
             "openrouter/auto",
             "environment",
         ),
         (
-            "rpi_providers",
+            "shob_providers",
             "openrouter",
             "openrouter/auto",
             "models.json",
         ),
         (
-            "rpi_providers",
+            "shob_providers",
             "openrouter",
             "openrouter/auto",
             "auth.json",
         ),
-        ("rpi_providers", "openrouter", "openrouter/auto", "oauth"),
+        ("shob_providers", "openrouter", "openrouter/auto", "oauth"),
         (
-            "rpi_providers",
+            "shob_providers",
             "openrouter",
             "openrouter/auto",
             "expired-fallback",
         ),
-        ("rpi_providers", "openrouter", "openrouter/auto", "cli"),
-        ("rpi_providers", "llama-cpp", "local", "anonymous"),
-        ("rpi_providers", "proxy", "default", "anonymous"),
+        ("shob_providers", "openrouter", "openrouter/auto", "cli"),
+        ("shob_providers", "llama-cpp", "local", "anonymous"),
+        ("shob_providers", "proxy", "default", "anonymous"),
     ] {
         let auth = source != "anonymous";
         let Some(library) = library(name) else {
@@ -374,7 +374,7 @@ async fn packaged_providers_stream_through_the_real_dll_and_cli() {
                     .to_ascii_lowercase()
                     .contains("authorization: bearer package-key"));
                 assert!(
-                    text.to_ascii_lowercase().contains("x-title: rpi"),
+                    text.to_ascii_lowercase().contains("x-title: shob"),
                     "the package factory must handle this request"
                 );
             } else {
@@ -488,12 +488,12 @@ async fn packaged_providers_stream_through_the_real_dll_and_cli() {
 
 #[tokio::test]
 async fn reload_updates_the_catalog_endpoint_and_runtime_without_a_restart() {
-    let Some(library) = library("rpi_providers") else {
+    let Some(library) = library("shob_providers") else {
         return;
     };
     // The child gets an isolated environment; parallel tests never mutate the
     // parent's config directory or credentials.
-    if std::env::var_os("RPI_TEST_PACKAGE_RELOAD").is_none() {
+    if std::env::var_os("SHOB_TEST_PACKAGE_RELOAD").is_none() {
         let temp = tempfile::tempdir().unwrap();
         let output = Command::new(std::env::current_exe().unwrap())
             .args([
@@ -501,9 +501,9 @@ async fn reload_updates_the_catalog_endpoint_and_runtime_without_a_restart() {
                 "reload_updates_the_catalog_endpoint_and_runtime_without_a_restart",
                 "--nocapture",
             ])
-            .env("RPI_TEST_PACKAGE_RELOAD", "1")
-            .env("RPI_CODING_AGENT_DIR", temp.path().join("agent"))
-            .env("RPI_TEST_PACKAGE_CWD", temp.path())
+            .env("SHOB_TEST_PACKAGE_RELOAD", "1")
+            .env("SHOB_CODING_AGENT_DIR", temp.path().join("agent"))
+            .env("SHOB_TEST_PACKAGE_CWD", temp.path())
             .env_remove("OPENAI_API_KEY")
             .env_remove("ANTHROPIC_API_KEY")
             .env_remove("ANTHROPIC_AUTH_TOKEN")
@@ -523,7 +523,7 @@ async fn reload_updates_the_catalog_endpoint_and_runtime_without_a_restart() {
         );
         return;
     }
-    let cwd = PathBuf::from(std::env::var_os("RPI_TEST_PACKAGE_CWD").unwrap());
+    let cwd = PathBuf::from(std::env::var_os("SHOB_TEST_PACKAGE_CWD").unwrap());
     let extensions = vec![library];
     let args = cli::args::Args {
         extension: extensions,
@@ -730,19 +730,18 @@ async fn reload_updates_the_catalog_endpoint_and_runtime_without_a_restart() {
 
 #[test]
 fn linked_package_is_discovered_and_unlinked_cleanly() {
-    if library("rpi_providers").is_none() {
+    if library("shob_providers").is_none() {
         return;
     }
     let temp = tempfile::tempdir().unwrap();
-    let source =
-        PathBuf::from(std::env::var_os("RPI_TEST_PROVIDER_PACKAGE").expect(
-            "set RPI_TEST_PROVIDER_PACKAGE to packages/rpi-providers for link/unlink testing",
-        ));
+    let source = PathBuf::from(std::env::var_os("SHOB_TEST_PROVIDER_PACKAGE").expect(
+        "set SHOB_TEST_PROVIDER_PACKAGE to packages/shob-providers for link/unlink testing",
+    ));
     let run = |args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_rpi"))
+        Command::new(env!("CARGO_BIN_EXE_shob"))
             .current_dir(temp.path())
-            .env("RPI_CODING_AGENT_DIR", temp.path().join("agent"))
-            .env("RPI_OFFLINE", "1")
+            .env("SHOB_CODING_AGENT_DIR", temp.path().join("agent"))
+            .env("SHOB_OFFLINE", "1")
             // package link spawns Cargo. Do not contend with the parent test
             // runner's target lock or another workspace's build artifacts.
             .env("CARGO_TARGET_DIR", temp.path().join("cargo-target"))

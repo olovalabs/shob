@@ -214,7 +214,7 @@ impl SessionState {
         start: &str,
     ) -> SessionResult<crate::session::context::SessionContext> {
         let diagnostics =
-            std::env::var_os("RPI_AGENT_DIAGNOSTICS").is_some_and(|value| value != "0");
+            std::env::var_os("SHOB_AGENT_DIAGNOSTICS").is_some_and(|value| value != "0");
         let started = diagnostics.then(std::time::Instant::now);
         let mut path = self.walk_to_root(Some(start), bounds)?;
         path.reverse();
@@ -231,7 +231,7 @@ impl SessionState {
         }
         if let Some(started) = started {
             eprintln!(
-                "RPI_CONTEXT_DIAGNOSTICS path_load_ns={} path_entries={}",
+                "SHOB_CONTEXT_DIAGNOSTICS path_load_ns={} path_entries={}",
                 started.elapsed().as_nanos().min(u64::MAX as u128),
                 path.len(),
             );
@@ -480,7 +480,7 @@ pub(crate) fn matches_entry_payload(entry: &Entry, query: &EntryQuery) -> bool {
             agent::AgentMessage::Custom(custom) => {
                 custom
                     .data
-                    .get("__rpiOutbox")
+                    .get("__shobOutbox")
                     .and_then(|value| value.get("key"))
                     .and_then(serde_json::Value::as_str)
                     == Some(key)

@@ -28,7 +28,7 @@ pub struct UserMessageComponent {
     /// Prebuilt inner box (background `Box` + `Markdown`).
     ///
     /// Upstream builds this **once** in the constructor (`user-message.ts`
-    /// `rebuild()`); rpi used to rebuild the `Box` + `Markdown` on every
+    /// `rebuild()`); shob used to rebuild the `Box` + `Markdown` on every
     /// `render`, so the inner caches could never hit and each frame re-parsed
     /// every user message. Rebuild only on `invalidate` / `with_pad` / a theme
     /// change (the background colour is baked into the box).

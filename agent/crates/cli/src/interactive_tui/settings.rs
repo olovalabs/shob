@@ -274,13 +274,13 @@ pub(super) fn bool_setting_value(value: bool) -> &'static str {
 /// testable off a real terminal. Enabling images on a terminal that speaks
 /// neither Kitty nor iTerm2 is a no-op the user cannot otherwise see: the image
 /// component falls back to its `[Attached image]` placeholder, so a plain
-/// "enabled" reads as a promise rpi does not keep.
+/// "enabled" reads as a promise shob does not keep.
 pub(super) fn images_setting_note(enabled: bool, protocol: tui::ImageProtocol) -> String {
     match (enabled, protocol) {
         (false, _) => "Inline images disabled.".to_string(),
         (true, tui::ImageProtocol::None) => {
             "Inline images enabled, but this terminal cannot display them: ".to_string()
-                + "images will stay as text placeholders. rpi renders inline images "
+                + "images will stay as text placeholders. shob renders inline images "
                 + "through the Kitty graphics protocol (kitty, Ghostty, WezTerm, Warp) "
                 + "or iTerm2 inline images."
         }

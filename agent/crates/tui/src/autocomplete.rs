@@ -480,7 +480,7 @@ mod tests {
                 .map(|elapsed| elapsed.as_nanos())
                 .unwrap_or(0);
             let path =
-                std::env::temp_dir().join(format!("rpi-tui-{tag}-{}-{nanos}", std::process::id()));
+                std::env::temp_dir().join(format!("shob-tui-{tag}-{}-{nanos}", std::process::id()));
             std::fs::create_dir_all(&path).unwrap();
             Self(path)
         }

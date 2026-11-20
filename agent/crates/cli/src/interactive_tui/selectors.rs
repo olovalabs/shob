@@ -620,7 +620,7 @@ pub(super) fn open_provider_selector(
     if items.is_empty() {
         add_note_message(
             &state.notice_container(),
-            "No providers available. Use \"Add new provider\" to configure one in ~/.rpi/agent/models.json.",
+            "No providers available. Use \"Add new provider\" to configure one in ~/.shob/agent/models.json.",
         );
         tui.request_render(false);
         return;
@@ -628,7 +628,7 @@ pub(super) fn open_provider_selector(
     // The trailing actions turn the picker into a small management surface.
     items.push(
         SelectItem::new(ADD_PROVIDER_VALUE, "＋ Add new provider")
-            .with_description("Interactive form → writes ~/.rpi/agent/models.json")
+            .with_description("Interactive form → writes ~/.shob/agent/models.json")
             .with_search_text("add new provider"),
     );
     items.push(
@@ -792,7 +792,7 @@ pub(super) fn open_provider_remove_selector(
     if items.is_empty() {
         add_note_message(
             &state.notice_container(),
-            "No removable providers. Only providers defined in ~/.rpi/agent/models.json can be removed.",
+            "No removable providers. Only providers defined in ~/.shob/agent/models.json can be removed.",
         );
         tui.request_render(false);
         return;

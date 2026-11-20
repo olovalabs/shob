@@ -7,7 +7,7 @@
 //!
 //! The decisions live in pure functions over plain data ([`hooks`], [`cache`],
 //! [`anchors`], [`minimize`]) so they can be tested without building a harness.
-//! This module is the only place that names rpi types, and it is deliberately
+//! This module is the only place that names shob types, and it is deliberately
 //! thin: it maps `AgentToolResult` → text → the pure decision →
 //! `AfterToolCallResult`.
 //!

@@ -29,8 +29,8 @@ use crate::{
     tool_program_body::{append_body, BodyDescriptor, BodyKind, MAX_BODY_BYTES},
 };
 
-pub(crate) const BEGIN_CUSTOM_TYPE: &str = "rpi.tool_program.child_begin.v1";
-pub(crate) const PHASE_CUSTOM_TYPE: &str = "rpi.tool_program.child_phase.v1";
+pub(crate) const BEGIN_CUSTOM_TYPE: &str = "shob.tool_program.child_begin.v1";
+pub(crate) const PHASE_CUSTOM_TYPE: &str = "shob.tool_program.child_phase.v1";
 pub(crate) fn is_reserved_custom_type(custom_type: &str) -> bool {
     matches!(custom_type, BEGIN_CUSTOM_TYPE | PHASE_CUSTOM_TYPE)
 }

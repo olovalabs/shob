@@ -1,6 +1,6 @@
-//! Stable `#[repr(C)]` ABI contract for rpi **Rust-native (cdylib) plugins**.
+//! Stable `#[repr(C)]` ABI contract for shob **Rust-native (cdylib) plugins**.
 //!
-//! rpi loads extensions as compiled Rust cdylibs (`.dll`/`.so`/`.dylib`) via
+//! shob loads extensions as compiled Rust cdylibs (`.dll`/`.so`/`.dylib`) via
 //! `libloading` — **not** TS/jiti. Because we control both sides, the plugin is
 //! Rust, but the *boundary* is still a hand-defined C ABI: the two sides may be
 //! compiled with different Rust versions / crate versions, so no Rust type with
@@ -150,7 +150,7 @@ impl StbString {
         let len = buf.len();
         // Stabilize the pointer via `Box::into_raw`; the free fn reconstructs a
         // slice from ptr+len and drops it. Store the element pointer as
-        // `*mut c_char` (u8 ↔ c_char on every platform rpi targets). Ownership
+        // `*mut c_char` (u8 ↔ c_char on every platform shob targets). Ownership
         // moves into the `StbString` (we do NOT drop here).
         let ptr = Box::into_raw(buf) as *mut [u8] as *mut u8 as *mut c_char;
         let _ = len;
@@ -390,7 +390,7 @@ pub struct StableToolSchema {
 /// Plugins using host-managed child actions additionally receive per-call
 /// `runtimeHandle` (opaque integer) and `runtimeKey` (capability string). Worker
 /// threads use that handle as runtime_action's opaque user_data and include
-/// `__rpiRuntimeKey` in ChildAgent arguments. Never log, persist, expose to the
+/// `__shobRuntimeKey` in ChildAgent arguments. Never log, persist, expose to the
 /// model, or reuse these values across tool calls. Missing values mean the
 /// host cannot support worker-originated ChildAgent safely; fail closed.
 ///
@@ -401,7 +401,7 @@ pub struct StableToolSchema {
 ///
 /// The host's value wins if the model happens to send the same key: this is
 /// host truth, not a hint to be merged.
-pub const HOST_CONTEXT_KEY: &str = "__rpi";
+pub const HOST_CONTEXT_KEY: &str = "__shob";
 
 // ---------------------------------------------------------------------------
 // StepResult — the poll() return: Pending | Done | Err (explicit tag + union)
@@ -603,7 +603,7 @@ pub type RegisterPluginLifecycleFn =
 // ---------------------------------------------------------------------------
 
 /// Discriminant for [`StablePluginEvent`], one variant per pi `on()` category
-/// (33 total) plus one rpi-specific category (34 total). `#[repr(u32)]` pins
+/// (33 total) plus one shob-specific category (34 total). `#[repr(u32)]` pins
 /// the discriminant width.
 ///
 /// The 33 Pi categories (verified against `extensions/types.ts:1203-1244`):
@@ -617,7 +617,7 @@ pub type RegisterPluginLifecycleFn =
 /// tool_execution_end, model_select, thinking_level_select, tool_call,
 /// tool_result, user_bash, input.
 ///
-/// `BeforeTuiStart` is **rpi-specific** (not a Pi category): dispatched once
+/// `BeforeTuiStart` is **shob-specific** (not a Pi category): dispatched once
 /// before the interactive TUI is initialized, so extensions can prepare
 /// (connect a server, load a resource) before the UI starts. Appended last so
 /// existing discriminants keep their values (ABI-safe for already-compiled
@@ -679,7 +679,7 @@ pub enum EventTag {
     ToolResult = 30,
     UserBash = 31,
     Input = 32,
-    /// rpi-specific: dispatched before the interactive TUI initializes (not a
+    /// shob-specific: dispatched before the interactive TUI initializes (not a
     /// Pi `on()` category). Appended last so existing discriminants are stable.
     BeforeTuiStart = 33,
     /// Pi `on()` category: dispatched when the TUI shows an interactive prompt
@@ -687,7 +687,7 @@ pub enum EventTag {
     UiPromptStart = 34,
     /// Pi `on()` category: dispatched when the TUI prompt is dismissed.
     UiPromptEnd = 35,
-    /// rpi-specific (not a Pi `on()` category): dispatched whenever the
+    /// shob-specific (not a Pi `on()` category): dispatched whenever the
     /// interactive prompt editor's **text changes** — typing, pasting, deleting,
     /// or a programmatic rewrite. Appended last so existing discriminants are
     /// stable. The payload is `{"chars":N,"empty":bool}`; the draft text itself
@@ -710,14 +710,14 @@ pub enum EventTag {
     TurnEndPayload = 37,
 }
 
-/// Number of event categories — `38` (33 Pi `on()` categories + 1 rpi-specific
-/// [`EventTag::BeforeTuiStart`] + 2 UI prompt events + 2 rpi-specific payload
+/// Number of event categories — `38` (33 Pi `on()` categories + 1 shob-specific
+/// [`EventTag::BeforeTuiStart`] + 2 UI prompt events + 2 shob-specific payload
 /// tags: [`EventTag::EditorChange`] and [`EventTag::TurnEndPayload`]). A test
 /// asserts `EVENT_TAG_COUNT == 38` so a future edit that adds/removes a tag is
 /// caught.
 pub const EVENT_TAG_COUNT: usize = 38;
 
-/// The application name of the host that loads plugins: `"rpi"`.
+/// The application name of the host that loads plugins: `"shob"`.
 ///
 /// This is the **contract's** copy of the host identity, and the host's
 /// `APP_NAME` is defined in terms of it, so the two cannot drift. An extension
@@ -730,7 +730,7 @@ pub const EVENT_TAG_COUNT: usize = 38;
 /// extension should prefer: that value always describes the process actually
 /// running, whereas these constants describe the host the plugin was *built*
 /// against.
-pub const HOST_NAME: &str = "rpi";
+pub const HOST_NAME: &str = "shob";
 
 /// Version of the [`HOST_NAME`] host that this SDK ships with.
 ///
@@ -738,10 +738,10 @@ pub const HOST_NAME: &str = "rpi";
 /// as of this SDK release — good for a user agent or a fallback label, and
 /// superseded at runtime by the `host.version` field of the `BeforeAgentStart`
 /// payload.
-/// A preview build sets `RPI_BUILD_VERSION` so the executable and plugin
+/// A preview build sets `SHOB_BUILD_VERSION` so the executable and plugin
 /// bridge report the full prerelease version without changing the checked-in
 /// Cargo workspace version. Empty values are ignored for normal builds.
-pub const HOST_VERSION: &str = match option_env!("RPI_BUILD_VERSION") {
+pub const HOST_VERSION: &str = match option_env!("SHOB_BUILD_VERSION") {
     Some(version) if !version.is_empty() => version,
     _ => env!("CARGO_PKG_VERSION"),
 };
@@ -751,24 +751,24 @@ pub const HOST_VERSION: &str = match option_env!("RPI_BUILD_VERSION") {
 /// The host **rewrites** it whenever a session becomes active — at startup and
 /// on every in-process swap (`/import`, fork, switch) — so the value always
 /// names the session currently being served. It is not an embedder override:
-/// a value inherited from a parent process would otherwise make a child `rpi`
+/// a value inherited from a parent process would otherwise make a child `shob`
 /// report its ancestor's session forever. Embedders that need to pin the id set
 /// it after the session is active rather than before.
 ///
 /// The id is a plain UTF-8 string (no NUL), which is what makes writing it with
 /// `std::env::set_var` sound.
-pub const SESSION_ID_ENV: &str = "RPI_SESSION_ID";
+pub const SESSION_ID_ENV: &str = "SHOB_SESSION_ID";
 
 /// Environment variable a tracing extension publishes to name the trace a
-/// *nested* `rpi` should attach to, and reads back to decide it is a subagent.
+/// *nested* `shob` should attach to, and reads back to decide it is a subagent.
 ///
-/// The name is `rpi-langfuse`'s (it owns the `LANGFUSE_` prefix), but the
+/// The name is `shob-langfuse`'s (it owns the `LANGFUSE_` prefix), but the
 /// variable is declared here because **three** parties have to agree on it and
 /// they live in different crates, two of them in different repositories:
 ///
 /// - the extension writes it (so a launcher can attach a nested run),
 /// - the host's `bash`/`powershell` must *not* pass it on to a shell (or a plain
-///   `rpi` started from one mistakes itself for a subagent), and
+///   `shob` started from one mistakes itself for a subagent), and
 /// - a launcher may set it deliberately, which is the supported nesting path.
 ///
 /// Declaring it once here is what keeps those three in step. The host builds its
@@ -776,7 +776,7 @@ pub const SESSION_ID_ENV: &str = "RPI_SESSION_ID";
 /// ([`SUBAGENT_PARENT_ENV`]) is a compile error there rather than a silently
 /// re-opened leak, and a newly added member is excluded without the host having
 /// to be told. What the compiler still cannot check is the string itself, since
-/// `rpi-langfuse` lives in another repository and matches on the *value* — that
+/// `shob-langfuse` lives in another repository and matches on the *value* — that
 /// is pinned by a test. See [`SUBAGENT_PARENT_ENV`] for the whole family.
 pub const SUBAGENT_PARENT_TRACE_ID_ENV: &str = "LANGFUSE_PI_PARENT_TRACE_ID";
 
@@ -1718,10 +1718,10 @@ pub type OAuthRequestControlFn = extern "C" fn(
 // ---------------------------------------------------------------------------
 
 /// The unified ABI version.
-pub const RPI_PLUGIN_ABI_VERSION_UNIFIED: u32 = 4;
+pub const SHOB_PLUGIN_ABI_VERSION_UNIFIED: u32 = 4;
 
 /// The unversioned symbol for the unified ABI.
-pub const REGISTER_SYMBOL_UNIFIED: &[u8] = b"rpi_plugin_register\0";
+pub const REGISTER_SYMBOL_UNIFIED: &[u8] = b"shob_plugin_register\0";
 
 /// The host-provided API struct. The first two fields (`abi_version`
 /// and `struct_size`) are contract-identity markers that survive future
@@ -1989,7 +1989,7 @@ pub fn register_tool_result(api: &PluginApi, handler: ToolResultFn, user_data: *
 
 /// Unified ABI plugin entrypoint signature: `(api)`. The version is read from
 /// `api->abi_version`.
-pub type RpiPluginRegisterUnified = extern "C" fn(api: *const PluginApi) -> i32;
+pub type ShobPluginRegisterUnified = extern "C" fn(api: *const PluginApi) -> i32;
 
 // ===========================================================================
 // Panic containment
@@ -2020,7 +2020,7 @@ pub fn guard_or<R>(fallback: R, body: impl FnOnce() -> R) -> R {
     guard(body).unwrap_or(fallback)
 }
 
-/// Export a unified ABI plugin entrypoint under `rpi_plugin_register`.
+/// Export a unified ABI plugin entrypoint under `shob_plugin_register`.
 ///
 /// The unified ABI has no version suffix in the symbol name; the version lives
 /// inside the [`PluginApi`] struct (first field `abi_version`).
@@ -2046,7 +2046,7 @@ macro_rules! export_plugin {
         // The host ABI supplies this pointer; the shim forwards it to the
         // documented `register_entrypoint` contract.
         #[allow(clippy::not_unsafe_ptr_arg_deref)]
-        pub extern "C" fn rpi_plugin_register(api: *const $crate::PluginApi) -> i32 {
+        pub extern "C" fn shob_plugin_register(api: *const $crate::PluginApi) -> i32 {
             // SAFETY: host guarantees `api` is valid for this call.
             unsafe { $crate::register_entrypoint(api, $body) }
         }
@@ -2074,7 +2074,7 @@ pub unsafe fn register_entrypoint(
     // Read the version and size fields first — they're at known offsets
     // regardless of future struct growth.
     let (abi_version, struct_size) = unsafe { ((*api).abi_version, (*api).struct_size) };
-    if abi_version != RPI_PLUGIN_ABI_VERSION_UNIFIED {
+    if abi_version != SHOB_PLUGIN_ABI_VERSION_UNIFIED {
         // Mismatch: refuse to register. The host logs "ABI version mismatch"
         // and skips loading this plugin.
         return 1;
@@ -2129,7 +2129,7 @@ mod tests {
         // Set the version/size fields so the entrypoint gets past the checks
         // and into the body (which panics).
         unsafe {
-            (*api_ptr).abi_version = RPI_PLUGIN_ABI_VERSION_UNIFIED;
+            (*api_ptr).abi_version = SHOB_PLUGIN_ABI_VERSION_UNIFIED;
             (*api_ptr).struct_size = core::mem::size_of::<PluginApi>() as u32;
         }
         let rc = unsafe {
@@ -2275,7 +2275,7 @@ mod tests {
     fn event_tag_count_is_38() {
         // Enumerate every tag; a compile-time + runtime guarantee that the
         // 37-category surface is intact (33 Pi on() categories + the
-        // rpi-specific BeforeTuiStart + 2 UI prompt events + EditorChange).
+        // shob-specific BeforeTuiStart + 2 UI prompt events + EditorChange).
         let tags = [
             EventTag::ProjectTrust,
             EventTag::ResourcesDiscover,
@@ -2356,7 +2356,7 @@ mod tests {
         // The API struct is a plain old data struct: every fn pointer is
         // non-Drop, the struct has no Drop impl.
         let api = PluginApi {
-            abi_version: RPI_PLUGIN_ABI_VERSION_UNIFIED,
+            abi_version: SHOB_PLUGIN_ABI_VERSION_UNIFIED,
             struct_size: core::mem::size_of::<PluginApi>() as u32,
             free_string: test_free,
             register_tool: None,
@@ -2568,7 +2568,7 @@ mod tests {
 
     fn entrypoint_test_api() -> PluginApi {
         PluginApi {
-            abi_version: RPI_PLUGIN_ABI_VERSION_UNIFIED,
+            abi_version: SHOB_PLUGIN_ABI_VERSION_UNIFIED,
             struct_size: core::mem::size_of::<PluginApi>() as u32,
             free_string: test_free,
             register_tool: None,
@@ -2599,11 +2599,11 @@ mod tests {
     #[test]
     fn register_entrypoint_version_mismatch_refuses() {
         let api = entrypoint_test_api();
-        assert_eq!(RPI_PLUGIN_ABI_VERSION_UNIFIED, 4);
+        assert_eq!(SHOB_PLUGIN_ABI_VERSION_UNIFIED, 4);
 
         // A future version is rejected by the pre-dereference check.
         let mut future_api = api;
-        future_api.abi_version = RPI_PLUGIN_ABI_VERSION_UNIFIED + 1;
+        future_api.abi_version = SHOB_PLUGIN_ABI_VERSION_UNIFIED + 1;
         let rc = unsafe {
             register_entrypoint(&future_api, |_| {
                 panic!("body must not run on version mismatch");

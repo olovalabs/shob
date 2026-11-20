@@ -59,7 +59,7 @@ fn process_large_spill_kill_recovery_and_commit_ack_loss() {
                 assert_eq!(checkpoint(&baseline), 0);
                 // This copy precedes the writer child and has no active connection/journal.
                 std::fs::create_dir(dir.path().join("oracle")).unwrap();
-                let control = dir.path().join("oracle/control.rpinative");
+                let control = dir.path().join("oracle/control.shobnative");
                 std::fs::copy(&path, &control).unwrap();
                 let s = open(&control).await;
                 action(&s, "history-large-spill").await;

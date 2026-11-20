@@ -300,7 +300,7 @@ pub(super) struct TuiState {
     /// presets leave it `None` (nothing to poll).
     pub(super) theme_watcher: std::sync::Mutex<Option<crate::fs_watch::WatchHandle>>,
     /// The alt-screen handle, held so `set_status` can reflect run state in the
-    /// terminal window title ("rpi — working" / "rpi"). `None` in unit tests
+    /// terminal window title ("shob — working" / "shob"). `None` in unit tests
     /// that never call `set_status` with a title.
     pub(super) tui: Option<Arc<TuiAltScreen>>,
     /// The model id currently shown in the footer + used as the Ctrl+P
@@ -1254,7 +1254,7 @@ pub(super) fn emergency_exit(tui: &Arc<TuiAltScreen>) -> ! {
     // user's shell is usable afterwards. `stop` also joins the render
     // scheduler, so no in-flight frame can repaint over the restored screen.
     tui.stop(Default::default());
-    eprintln!("\n\x1b[2mrpi: aborted (forced quit).\x1b[0m");
+    eprintln!("\n\x1b[2mshob: aborted (forced quit).\x1b[0m");
     std::process::exit(130);
 }
 

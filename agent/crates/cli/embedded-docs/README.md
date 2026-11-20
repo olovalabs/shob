@@ -1,4 +1,4 @@
-# rpi — a Rust-native coding-agent runtime
+# shob — a Rust-native coding-agent runtime
 
 [![crates.io](https://img.shields.io/crates/v/rpi-cli.svg)](https://crates.io/crates/rpi-cli)
 [![downloads](https://img.shields.io/crates/d/rpi-cli.svg)](https://crates.io/crates/rpi-cli)
@@ -9,23 +9,23 @@
 [![GitHub stars](https://img.shields.io/github/stars/bigfish1913/pi-rust?style=flat)](https://github.com/bigfish1913/pi-rust/stargazers)
 [![Latest release](https://img.shields.io/github/v/release/bigfish1913/pi-rust)](https://github.com/bigfish1913/pi-rust/releases/latest)
 
-`rpi` is a library-first coding-agent runtime written in Rust, plus a terminal
+`shob` is a library-first coding-agent runtime written in Rust, plus a terminal
 agent built on top of it. Nine composable crates span provider adapters, a
 durable crash-resumable agent loop, a terminal UI, and a stable plugin ABI — so
-the same code works as an embedded SDK or as a ready-to-run `rpi` command.
+the same code works as an embedded SDK or as a ready-to-run `shob` command.
 
-rpi began as a Rust reimplementation of the [Pi TypeScript SDK](https://github.com/earendil-works/pi)
+shob began as a Rust reimplementation of the [Pi TypeScript SDK](https://github.com/earendil-works/pi)
 by Mario Zechner. It now includes its own Rust-native plugin ABI and execution
 infrastructure. See [Acknowledgements](#acknowledgements) and the repository's
 [NOTICE](https://github.com/bigfish1913/pi-rust/blob/main/NOTICE) for upstream attribution.
 
 Website: <https://rpi.bigfisharc.cn/> · Docs: <https://rpi.bigfisharc.cn/docs.html>
 
-![rpi interactive session](docs/images/rpi-interactive.png)
+![shob interactive session](docs/images/shob-interactive.png)
 
 <sub>Interactive TUI. See [`docs/guides/user-guide.md`](docs/guides/user-guide.md) for the full command surface.</sub>
 
-![rpi SDK demo — an agent loop and a real tool round-trip, offline with the faux provider](docs/images/rpi-sdk-demo.gif)
+![shob SDK demo — an agent loop and a real tool round-trip, offline with the faux provider](docs/images/shob-sdk-demo.gif)
 
 <sub>The agent loop and a real `write` tool round-trip, recorded with no API key and no network — the same path the tests take. Source of truth is [`demo/sdk.tape`](demo/sdk.tape); regenerate with `task demo`.</sub>
 
@@ -38,7 +38,7 @@ Website: <https://rpi.bigfisharc.cn/> · Docs: <https://rpi.bigfisharc.cn/docs.h
 | A tool/provider that extends every session | `plugin-sdk` | [`examples/plugin-stub`](examples/plugin-stub) |
 
 The three share one implementation. Build your tools once, debug them inside an
-embedded agent, and ship the same code as a `cdylib` plugin that the global `rpi`
+embedded agent, and ship the same code as a `cdylib` plugin that the global `shob`
 loads. See [`docs/agent/project-structure.md`](docs/agent/project-structure.md) for the recommended
 project layout.
 
@@ -57,15 +57,15 @@ Verifies the published SHA-256 checksum and installs to `/usr/local/bin` or
 
 ```bash
 cargo install cli
-rpi --version
+shob --version
 ```
 
 **Package managers:**
 
 ```bash
-brew tap bigfish1913/tap && brew install rpi          # macOS (Apple silicon), Linux
+brew tap bigfish1913/tap && brew install shob          # macOS (Apple silicon), Linux
 scoop bucket add bigfish1913 https://github.com/bigfish1913/scoop-bucket
-scoop install rpi                                     # Windows
+scoop install shob                                     # Windows
 ```
 
 The Homebrew formula currently supports Apple silicon on macOS. Intel Macs can
@@ -102,15 +102,15 @@ AgentEnd observed; tool ran against OsExecutionEnv.
 ### The CLI
 
 ```bash
-export ANTHROPIC_API_KEY=...          # or OPENAI_API_KEY, or ~/.rpi/agent/models.json
-rpi                                   # interactive TUI
-rpi -p "summarize the README"         # one-shot
-rpi --mode json -p "list the crates"  # machine-readable event stream
+export ANTHROPIC_API_KEY=...          # or OPENAI_API_KEY, or ~/.shob/agent/models.json
+shob                                   # interactive TUI
+shob -p "summarize the README"         # one-shot
+shob --mode json -p "list the crates"  # machine-readable event stream
 ```
 
-Sessions persist as JSONL and survive a crash mid-run; `rpi` resumes from the
+Sessions persist as JSONL and survive a crash mid-run; `shob` resumes from the
 last committed frame rather than replaying the turn. Custom Anthropic or
-OpenAI-compatible gateways are declared in `~/.rpi/agent/models.json` and
+OpenAI-compatible gateways are declared in `~/.shob/agent/models.json` and
 selected with `--model <provider>/<model>`.
 
 ### Runtime diagnostics
@@ -119,19 +119,19 @@ To investigate slow model preparation, context construction, tool execution, or
 persistent assistant-frame writes, temporarily enable stderr diagnostics:
 
 ```bash
-RPI_AGENT_DIAGNOSTICS=1 RPI_FRAME_DIAGNOSTICS=1 \
-  rpi -p "reproduce the issue" 2>rpi-diagnostics.log
+SHOB_AGENT_DIAGNOSTICS=1 SHOB_FRAME_DIAGNOSTICS=1 \
+  shob -p "reproduce the issue" 2>shob-diagnostics.log
 ```
 
-`RPI_AGENT_DIAGNOSTICS` reports context, request, tool, and session append
-latencies. `RPI_FRAME_DIAGNOSTICS` reports durable frame batching, flush barriers,
+`SHOB_AGENT_DIAGNOSTICS` reports context, request, tool, and session append
+latencies. `SHOB_FRAME_DIAGNOSTICS` reports durable frame batching, flush barriers,
 and writer failures. Those diagnostics are disabled when the variables are unset
-or set to `0`; they do not change the JSONL format. `RPI_TOOL_PARALLELISM` caps
+or set to `0`; they do not change the JSONL format. `SHOB_TOOL_PARALLELISM` caps
 how many tool bodies may overlap in one parallel batch (default 8, maximum 64).
 A non-zero host `tool_parallelism` wins over the variable. See
 [`docs/debugging/rust-debugging.md`](docs/debugging/rust-debugging.md) for the
 field reference. The built-in read-only `docs` tool can retrieve it with
-`{"topic":"debugging","query":"RPI_FRAME_DIAGNOSTICS"}`.
+`{"topic":"debugging","query":"SHOB_FRAME_DIAGNOSTICS"}`.
 
 ### Request timeouts and model compatibility
 
@@ -142,12 +142,12 @@ including SSE keepalives and partial frames. A stalled stream produces a
 retryable error; the configured retry policy controls whether it is retried.
 Healthy streams may run longer than the idle timeout, up to the total deadline.
 Use `--stream-idle-timeout 0` to disable the idle timer. You can also set
-`"streamIdleTimeout": 300` (seconds) in `~/.rpi/agent/settings.json`; the CLI flag
+`"streamIdleTimeout": 300` (seconds) in `~/.shob/agent/settings.json`; the CLI flag
 takes precedence. `httpIdleTimeout` only expires unused pooled connections and
 does not control an active response.
 
 For providers with `"api": "openai-completions"`, put compatibility flags in
-each model's `compat` object in `~/.rpi/agent/models.json`, for example:
+each model's `compat` object in `~/.shob/agent/models.json`, for example:
 
 ```json
 "compat": {
@@ -159,7 +159,7 @@ each model's `compat` object in `~/.rpi/agent/models.json`, for example:
 `requiresReasoningContent` replays assistant thinking in `reasoning_content`,
 including an empty string for assistant messages without thinking. The pi name
 `requiresReasoningContentOnAssistantMessages` is accepted as an alias; if both
-are present, the rpi spelling wins and conflicting values produce a warning.
+are present, the shob spelling wins and conflicting values produce a warning.
 `thinkingFormat` supports `"openai"` (the default request
 shape) and `"deepseek"` (also sends `thinking: { "type": "enabled" | "disabled" }`
 for reasoning-capable models). `supportsReasoningEffort: false` suppresses
@@ -216,15 +216,15 @@ telemetry → ai → agent → tools → harness
 
 Five crates sit outside that chain:
 
-- `tui` depends on no other `rpi-*` crate.
+- `tui` depends on no other `shob-*` crate.
 - `runtime` provides embeddable model catalogs, provider-scoped credentials and execution bindings on top of `ai`.
-- `plugin-sdk` is a leaf too (it has no `rpi-*` deps), but it is not only
+- `plugin-sdk` is a leaf too (it has no `shob-*` deps), but it is not only
   the host's plugin contract: `tools` also reads its env-var names, so the
   host and its plugins cannot disagree about the strings they exchange across
   the ABI. That edge is names-only — nothing is linked or called.
 - `extensions` is `plugin-sdk` plus `ai`/`agent`, since it hosts
   plugins that run tools.
-- `cli` depends on all nine of the others, which is how the `rpi` binary
+- `cli` depends on all nine of the others, which is how the `shob` binary
 gets the TUI, the harness and the plugin loader at once.
 
 | Crate | What it is |
@@ -236,16 +236,16 @@ gets the TUI, the harness and the plugin loader at once.
 | [`tools`](https://crates.io/crates/rpi-tools) | `read`/`write`/`edit`/`bash` (+ `grep`, `find`, `ls`, `powershell`) and the `ExecutionEnv` seam |
 | [`harness`](https://crates.io/crates/rpi-harness) | Session tree, JSONL persistence, compaction, crash recovery, the run loop |
 | [`tui`](https://crates.io/crates/rpi-tui) | Terminal UI primitives: components, layout, editor, transcript rendering |
-| [`cli`](https://crates.io/crates/rpi-cli) | The `rpi` binary: TUI, one-shot and JSON modes, config, plugin loading |
-| [`plugin-sdk`](https://crates.io/crates/rpi-plugin-sdk) | The stable `#[repr(C)]` ABI contract for plugins. No `rpi-*` deps; only `serde_json`, behind a default `json` feature that can be turned off |
+| [`cli`](https://crates.io/crates/rpi-cli) | The `shob` binary: TUI, one-shot and JSON modes, config, plugin loading |
+| [`plugin-sdk`](https://crates.io/crates/rpi-plugin-sdk) | The stable `#[repr(C)]` ABI contract for plugins. No `shob-*` deps; only `serde_json`, behind a default `json` feature that can be turned off |
 | [`extensions`](https://crates.io/crates/rpi-extensions) | Host-side plugin loader and the async-across-ABI tool bridge |
 
-Every crate has its own README and docs.rs page. The `crates/rpi-*`
-directories and the published crate names use the same `rpi-` prefix.
+Every crate has its own README and docs.rs page. The `crates/shob-*`
+directories and the published crate names use the same `shob-` prefix.
 
-## Why rpi
+## Why shob
 
-Most coding agents are CLIs. `rpi` is a **runtime with a CLI attached**, which
+Most coding agents are CLIs. `shob` is a **runtime with a CLI attached**, which
 changes what you can build with it:
 
 - **Embeddable.** The agent loop is a library. `agent` + `ai` is enough
@@ -269,9 +269,9 @@ changes what you can build with it:
 
 Structural differences against other terminal coding agents. Facts about other
 tools are as of 2026-09 and change often — check their documentation; only the
-`rpi` column is maintained here.
+`shob` column is maintained here.
 
-| | rpi | Claude Code | Codex CLI | opencode | aider |
+| | shob | Claude Code | Codex CLI | opencode | aider |
 | --- | --- | --- | --- | --- | --- |
 | Language | Rust | TypeScript | Rust | TypeScript/Go | Python |
 | Source available | ✅ MIT | ❌ | ✅ | ✅ | ✅ |
@@ -281,7 +281,7 @@ tools are as of 2026-09 and change often — check their documentation; only the
 | Provider-agnostic gateways | ✅ | ❌ | ❌ | ✅ | ✅ |
 
 If you want the most polished single-vendor experience, use the vendor's tool.
-`rpi` is for people who want to own the loop.
+`shob` is for people who want to own the loop.
 
 ## Performance
 
@@ -293,13 +293,13 @@ rebuild and re-measure on your own machine.
 | Metric | Value |
 | ------ | ----- |
 | Release binary size | **21.8 MiB** |
-| `rpi --version` wall time | **~17 ms** median |
+| `shob --version` wall time | **~17 ms** median |
 | RSS once the agent is ready | **12.0 MiB** |
 
 `node scripts/bench-vs-pi.mjs --pi <path-to-pi>` — against native Pi on the same
 machine, both offline, each with a fresh isolated config directory:
 
-| Metric | rpi (Rust) | pi (TypeScript) | Difference |
+| Metric | shob (Rust) | pi (TypeScript) | Difference |
 | ------ | ---------: | --------------: | ---------- |
 | `--version` | **17.5 ms** | 169.5 ms | **9.7× faster** |
 | Cold start | **17.7 ms** | 189.5 ms | **10.7× faster** |
@@ -307,12 +307,12 @@ machine, both offline, each with a fresh isolated config directory:
 | Install footprint | **21.8 MiB** (one binary) | ~385 MiB (+ ~91 MiB Node) | **~18–22× smaller** |
 
 **Cold start** is spawn → the agent answering its first command: process creation
-plus full initialisation, excluding teardown and any LLM work. rpi's `--version`
+plus full initialisation, excluding teardown and any LLM work. shob's `--version`
 (17.5 ms) and cold start (17.7 ms) are effectively equal, so startup is process
 creation, not initialisation; Pi is dominated by Node boot.
 
-Isolation caveat: rpi reads `RPI_CODING_AGENT_DIR` / `RPI_OFFLINE`, native Pi reads
-`PI_CODING_AGENT_DIR` / `PI_OFFLINE`. Set the matching pair for each, or rpi
+Isolation caveat: shob reads `SHOB_CODING_AGENT_DIR` / `SHOB_OFFLINE`, native Pi reads
+`PI_CODING_AGENT_DIR` / `PI_OFFLINE`. Set the matching pair for each, or shob
 silently loads the machine's global plugins.
 
 Method, raw per-run numbers, and what is *not* measured (LLM latency, tool-loop
@@ -326,44 +326,44 @@ can register tools, providers, slash commands, event handlers, markdown
 renderers and discovered resources.
 
 ```bash
-rpi install rpi-todo                    # prebuilt extension; no Rust toolchain needed
-rpi install my-ext --path ../my-ext     # local, for development
-rpi extension update [name]             # all eligible extensions, or one by name
-rpi dev                                 # build + watch + live reload
+shob install shob-todo                    # prebuilt extension; no Rust toolchain needed
+shob install my-ext --path ../my-ext     # local, for development
+shob extension update [name]             # all eligible extensions, or one by name
+shob dev                                 # build + watch + live reload
 ```
 
-Use `rpi extension update` to update all project-linked extensions and globally
-installed registry/prebuilt extensions, or `rpi extension update <name>` to select
+Use `shob extension update` to update all project-linked extensions and globally
+installed registry/prebuilt extensions, or `shob extension update <name>` to select
 one by name. Updates preserve the original Cargo build backend or explicit GitHub
 source. Global development installs made with `--path` are excluded. The old
-`rpi package update [name]` remains compatible; prefer `extension update` for
-extension updates. Project linking commands remain `rpi package link`,
-`rpi package list`, and `rpi package unlink`.
+`shob package update [name]` remains compatible; prefer `extension update` for
+extension updates. Project linking commands remain `shob package link`,
+`shob package list`, and `shob package unlink`.
 
-The host loads project `.rpi/extensions`, then global
-`~/.rpi/agent/extensions`, then any `--extensions-dir`.
+The host loads project `.shob/extensions`, then global
+`~/.shob/agent/extensions`, then any `--extensions-dir`.
 
 For a new Rust plugin, start with [`docs/extensions/authoring.md`](docs/extensions/authoring.md)
 and `examples/plugin-stub`. Use `plugin-sdk` for the `cdylib` ABI. If the plugin
 project also needs reusable session, workspace, native RPC or durable-runtime logic
-for a Web/ACP adapter, add [`rpi-extcore`](https://crates.io/crates/rpi-extcore)
-(`rpi-extcore = "0.1"`). It is a normal Rust library, not the `cdylib` entry point,
+for a Web/ACP adapter, add [`shob-extcore`](https://crates.io/crates/rpi-extcore)
+(`shob-extcore = "0.1"`). It is a normal Rust library, not the `cdylib` entry point,
 and it does not replace `plugin-sdk`; a simple tool plugin should not add it
 unnecessarily.
 
 Ready-to-install extensions live in the companion
-[`pi-rust/rpi-package`](https://github.com/pi-rust/rpi-package) repository, with
+[`pi-rust/shob-package`](https://github.com/pi-rust/rpi-package) repository, with
 an [online catalog](https://rpi.bigfisharc.cn/packages.html).
 
 ### Optional web and subagent tools
 
 ```bash
-rpi install rpi-websearch                # websearch: titles, URLs and snippets
-rpi install rpi-webfetch                 # webfetch: readable text from public pages
-rpi install rpi-subagents                # delegate_task: host-managed child agents
+shob install shob-websearch                # websearch: titles, URLs and snippets
+shob install shob-webfetch                 # webfetch: readable text from public pages
+shob install shob-subagents                # delegate_task: host-managed child agents
 ```
 
-Restart rpi after installation. These are independent extensions, not default
+Restart shob after installation. These are independent extensions, not default
 CLI tools. Web search/fetch do not provide browser clicks, login flows or page
 JavaScript execution.
 
@@ -403,8 +403,8 @@ rules, which are load-bearing rather than stylistic.
 ## Remote mode
 
 ```bash
-rpi --server                        # headless agent over TCP, prints an auth token
-rpi --connect host:port --token T   # TUI client with zero local agent resources
+shob --server                        # headless agent over TCP, prints an auth token
+shob --connect host:port --token T   # TUI client with zero local agent resources
 ```
 
 The client holds no provider, tools, extensions or session files — all agent
@@ -421,7 +421,7 @@ machine. See [`docs/remote/user-guide.md`](docs/remote/user-guide.md).
 | Platforms | Linux (GNU and musl), macOS, Windows (CI runs the suite on Linux) |
 | Binary release targets | Linux (x86_64 GNU/musl, aarch64 GNU), macOS (Intel/Apple silicon), Windows (x86_64) |
 
-`rpi` is a self-contained Rust coding-agent stack. No Node component is
+`shob` is a self-contained Rust coding-agent stack. No Node component is
 required and none is loaded.
 
 ## Documentation
@@ -446,9 +446,9 @@ The whole test suite runs offline: `cargo test --workspace --locked`.
 
 ## Support / 赞赏支持
 
-If rpi helps you, consider buying the author a coffee. Tips and donations support continued development and maintenance. Thank you!
+If shob helps you, consider buying the author a coffee. Tips and donations support continued development and maintenance. Thank you!
 
-如果 rpi 帮到了你，欢迎请作者喝杯咖啡，赞赏或捐助支持持续开发与维护。感谢每一份支持！
+如果 shob 帮到了你，欢迎请作者喝杯咖啡，赞赏或捐助支持持续开发与维护。感谢每一份支持！
 
 | 微信支付 / WeChat Pay | 支付宝 / Alipay | Binance Pay |
 | :---: | :---: | :---: |
@@ -479,7 +479,7 @@ Questions, ideas and early builds are welcome in either group:
 
 Thank you to Mario Zechner and the [Pi contributors](https://github.com/earendil-works/pi)
 for the original TypeScript SDK and the agent, tool and session designs that
-formed rpi's starting point. rpi reimplements that foundation in Rust and adds
+formed shob's starting point. shob reimplements that foundation in Rust and adds
 its own runtime and extension infrastructure; it does not load the TypeScript
 SDK or its npm extensions. Upstream copyright and MIT license notices are
 retained in the repository's LICENSE and NOTICE files.
@@ -488,7 +488,7 @@ retained in the repository's LICENSE and NOTICE files.
 
 MIT. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
-The `rpi-*` crates are a Rust-native coding-agent stack.
+The `shob-*` crates are a Rust-native coding-agent stack.
 
 ## Star history
 

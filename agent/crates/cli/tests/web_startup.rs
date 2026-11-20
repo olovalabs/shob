@@ -5,10 +5,10 @@ use std::{process::Stdio, time::Duration};
 async fn missing_web_extension_reports_installation_without_waiting_for_stdin() {
     let root = tempfile::tempdir().unwrap();
     for flag in ["--web", "--web=init", "--web=help"] {
-        let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_rpi"))
+        let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_shob"))
             .current_dir(root.path())
-            .env("RPI_CODING_AGENT_DIR", root.path().join("agent"))
-            .env("RPI_OFFLINE", "1")
+            .env("SHOB_CODING_AGENT_DIR", root.path().join("agent"))
+            .env("SHOB_OFFLINE", "1")
             .env("ANTHROPIC_API_KEY", "fixture-only-no-model-calls")
             .env_remove("ANTHROPIC_AUTH_TOKEN")
             .env_remove("ANTHROPIC_BASE_URL")
@@ -37,11 +37,11 @@ async fn missing_web_extension_reports_installation_without_waiting_for_stdin() 
         assert_eq!(output.status.code(), Some(2));
         let error = String::from_utf8_lossy(&output.stderr);
         assert!(
-            error.contains("--web requires the rpi-web server extension"),
+            error.contains("--web requires the shob-web server extension"),
             "{error}"
         );
         assert!(
-            error.contains("rpi install rpi-web --github pi-rust/rpi-package"),
+            error.contains("shob install shob-web --github pi-rust/shob-package"),
             "{error}"
         );
         assert!(output.stdout.is_empty());

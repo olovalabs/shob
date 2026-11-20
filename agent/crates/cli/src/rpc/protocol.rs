@@ -1,4 +1,4 @@
-//! Minimal P0 JSONL protocol for the native rpi RPC host.
+//! Minimal P0 JSONL protocol for the native shob RPC host.
 use serde_json::{json, Value};
 
 pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
@@ -285,7 +285,7 @@ pub fn response(id: Option<Value>, command: &str, result: Result<Option<Value>, 
 pub fn ready(mode: crate::args::RpcMessageUpdates) -> Value {
     json!({
         "type": "ready",
-        "protocol": "rpi",
+        "protocol": "shob",
         "piCompatibilityTarget": PI_BASELINE,
         "supportedCommands": SUPPORTED_COMMANDS,
         "supportedEvents": SUPPORTED_EVENTS,
@@ -469,7 +469,7 @@ mod tests {
             assert_eq!(ready(mode)["semantics"]["messageUpdates"], mode.as_str());
         }
         let value = ready(crate::args::RpcMessageUpdates::default());
-        assert_eq!(value["protocol"], "rpi");
+        assert_eq!(value["protocol"], "shob");
         assert_eq!(value["semantics"]["messageIds"], "sessionEntryId-v1");
         assert_eq!(value["semantics"]["settlementEvent"], "agent_settled");
         assert!(value["supportedCommands"]

@@ -99,8 +99,13 @@ pub fn sessions_dir() -> PathBuf {
     data_dir().join("sessions")
 }
 
-pub fn rpi_sessions_dir() -> PathBuf {
-    data_dir().join("rpi").join("sessions")
+pub fn shob_sessions_dir() -> PathBuf {
+    let root = data_dir();
+    let legacy = root.join("rpi").join("sessions");
+    if legacy.is_dir() {
+        return legacy;
+    }
+    root.join("shob").join("sessions")
 }
 
 pub fn conversations_dir() -> PathBuf {

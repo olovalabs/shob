@@ -223,10 +223,10 @@ mod tests {
 
         let preview = SessionSummary {
             name: Some("   ".into()),
-            preview: Some("读取下当前 rpi -r 命令".into()),
+            preview: Some("读取下当前 shob -r 命令".into()),
             ..Default::default()
         };
-        assert_eq!(session_display_label(&preview), "读取下当前 rpi -r 命令");
+        assert_eq!(session_display_label(&preview), "读取下当前 shob -r 命令");
 
         let bare = SessionSummary::default();
         assert_eq!(session_display_label(&bare), "(no messages)");

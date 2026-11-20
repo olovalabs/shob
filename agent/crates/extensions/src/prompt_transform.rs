@@ -4,9 +4,9 @@
 //! ## Why this exists (and why it is not an event)
 //!
 //! pi fires `before_agent_start` and lets a handler **return** `systemPrompt`,
-//! which becomes the run's `forceSystemPrompt` (`agent-session.ts:1436`). rpi
+//! which becomes the run's `forceSystemPrompt` (`agent-session.ts:1436`). shob
 //! already broadcasts [`EventTag::BeforeAgentStart`] to observers, but the event
-//! handler signature is fire-and-forget (`i32` only), so an rpi plugin could
+//! handler signature is fire-and-forget (`i32` only), so an shob plugin could
 //! watch the turn start and not influence it. This module carries the return
 //! channel the broadcast cannot: an out-param handler, the same shape
 //! `resources_discover` uses and for the same reason.

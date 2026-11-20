@@ -1,5 +1,5 @@
 //! End-to-end smoke test for the **push-to-talk** host plumbing, driven through
-//! the real `rpi_voice` cdylib.
+//! the real `shob_voice` cdylib.
 //!
 //! ## Why this test exists
 //!
@@ -19,17 +19,17 @@
 //! ## Locating the cdylib
 //!
 //! The test binary lives under `<target>/<profile>/deps/`, so `current_exe()` →
-//! up two levels is where `rpi_voice.{dll,so,dylib}` lands. We **skip** (not
-//! fail) when it isn't built — `rpi-voice` lives in the *other* repo
-//! (`rpi-package`), so a plain `cargo test` here must not go red just because
+//! up two levels is where `shob_voice.{dll,so,dylib}` lands. We **skip** (not
+//! fail) when it isn't built — `shob-voice` lives in the *other* repo
+//! (`shob-package`), so a plain `cargo test` here must not go red just because
 //! that crate wasn't compiled.
 //!
 //! Build it first:
 //! ```sh
-//! # in ../rpi-package
-//! cargo build -p rpi-voice --release --features local-stt
+//! # in ../shob-package
+//! cargo build -p shob-voice --release --features local-stt
 //! ```
-//! The test uses `RPI_VOICE_PTT_KEY` to assert the key name is honored rather
+//! The test uses `SHOB_VOICE_PTT_KEY` to assert the key name is honored rather
 //! than hard-coding `space`.
 
 use std::path::PathBuf;
@@ -52,21 +52,21 @@ impl PluginDiagnostics for RecordingDiag {
 
 fn cdylib_filename() -> &'static str {
     if cfg!(windows) {
-        "rpi_voice.dll"
+        "shob_voice.dll"
     } else if cfg!(target_os = "macos") {
-        "librpi_voice.dylib"
+        "libshob_voice.dylib"
     } else {
-        "librpi_voice.so"
+        "libshob_voice.so"
     }
 }
 
-/// Locate the built `rpi_voice` cdylib by walking up from the test binary.
+/// Locate the built `shob_voice` cdylib by walking up from the test binary.
 /// Also accepts the built artifact directly out of the sibling repo's target
-/// dir, since `rpi-voice` is a different workspace.
+/// dir, since `shob-voice` is a different workspace.
 fn locate_cdylib() -> Option<PathBuf> {
     let name = cdylib_filename();
 
-    // 1. This workspace's own target dir (if rpi-voice was ever built here).
+    // 1. This workspace's own target dir (if shob-voice was ever built here).
     if let Ok(exe) = std::env::current_exe() {
         if let Some(deps) = exe.parent() {
             for dir in [deps.parent(), Some(deps)] {
@@ -75,7 +75,7 @@ fn locate_cdylib() -> Option<PathBuf> {
                     if candidate.exists() {
                         return Some(candidate);
                     }
-                    // rpi-package builds into its own (or the shared) target dir.
+                    // shob-package builds into its own (or the shared) target dir.
                     for sub in ["release", "debug"] {
                         let candidate = dir.join(sub).join(name);
                         if candidate.exists() {
@@ -90,7 +90,7 @@ fn locate_cdylib() -> Option<PathBuf> {
     // 2. The sibling repo's target dir, resolved relative to this crate.
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = manifest.parent()?.parent()?; // <pi-rust>/crates/extensions -> <pi-rust>
-    let sibling = repo_root.parent()?.join("rpi-package");
+    let sibling = repo_root.parent()?.join("shob-package");
     for profile in ["release", "debug"] {
         let candidate = sibling.join("target").join(profile).join(name);
         if candidate.exists() {
@@ -131,8 +131,8 @@ fn load_voice() -> Option<(Arc<RecordingDiag>, Arc<RegistrySnapshot>)> {
 fn voice_registers_ptt_shortcut_and_input_handler() {
     let Some((diag, snapshot)) = load_voice() else {
         eprintln!(
-            "rpi_voice cdylib not built — skipping \
-             (build it with `cargo build -p rpi-voice --release` in ../rpi-package)"
+            "shob_voice cdylib not built — skipping \
+             (build it with `cargo build -p shob-voice --release` in ../shob-package)"
         );
         return;
     };
@@ -141,7 +141,7 @@ fn voice_registers_ptt_shortcut_and_input_handler() {
     assert!(warned.is_empty(), "unexpected load diagnostics: {warned:?}");
 
     // The key the plugin claimed. Defaults to `space`.
-    let key = std::env::var("RPI_VOICE_PTT_KEY")
+    let key = std::env::var("SHOB_VOICE_PTT_KEY")
         .ok()
         .map(|s| s.trim().to_ascii_lowercase())
         .filter(|s| !s.is_empty())
@@ -159,7 +159,7 @@ fn voice_registers_ptt_shortcut_and_input_handler() {
         .iter()
         .find(|s| s.key == key)
         .expect("shortcut present");
-    assert_eq!(shortcut.plugin, "rpi_voice");
+    assert_eq!(shortcut.plugin, "shob_voice");
 
     // 2. An `Input` handler is subscribed, which is how the plugin receives the
     //    press/release events the TUI routes for a claimed key.
@@ -194,7 +194,7 @@ fn only_the_claimed_key_is_routed() {
     assert!(!snapshot.has_shortcut("enter"));
 }
 
-/// The spoken-style prompt transform, driven through the real `rpi_voice`
+/// The spoken-style prompt transform, driven through the real `shob_voice`
 /// cdylib.
 ///
 /// Voice appends a "write for the ear" section to the system prompt while
@@ -208,7 +208,7 @@ fn voice_registers_a_prompt_transformer_that_respects_the_speech_switch() {
     use plugin_sdk::{StbString, StbStringRef};
 
     let Some((_, snapshot)) = load_voice() else {
-        eprintln!("rpi_voice cdylib not built — skipping");
+        eprintln!("shob_voice cdylib not built — skipping");
         return;
     };
 
@@ -216,7 +216,7 @@ fn voice_registers_a_prompt_transformer_that_respects_the_speech_switch() {
     assert_eq!(
         handlers.len(),
         1,
-        "rpi_voice should register exactly one system-prompt transformer"
+        "shob_voice should register exactly one system-prompt transformer"
     );
     let h = &handlers[0];
 
@@ -242,7 +242,7 @@ fn voice_registers_a_prompt_transformer_that_respects_the_speech_switch() {
     // The switch lives in the plugin's process-global state, driven by env at
     // registration; drive it through the same door the plugin reads so the test
     // is independent of test ordering. `/voice on|off` sets the same flag.
-    let speech_on = std::env::var("RPI_VOICE_AUTO_TTS")
+    let speech_on = std::env::var("SHOB_VOICE_AUTO_TTS")
         .map(|v| {
             matches!(
                 v.trim().to_ascii_lowercase().as_str(),
@@ -251,7 +251,7 @@ fn voice_registers_a_prompt_transformer_that_respects_the_speech_switch() {
         })
         .unwrap_or(false);
     if !speech_on {
-        eprintln!("RPI_VOICE_AUTO_TTS is not on — exercising only the no-change path");
+        eprintln!("SHOB_VOICE_AUTO_TTS is not on — exercising only the no-change path");
         let payload = transform(h, "BASE");
         assert_eq!(
             payload,

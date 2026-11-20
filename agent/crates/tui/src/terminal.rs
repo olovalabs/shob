@@ -49,12 +49,12 @@ fn keyboard_protocol_enabled_for(
     !is_macos || !is_ime_incompatible_terminal(term_program, term)
 }
 
-/// `RPI_KITTY_KEYBOARD=1` forces the protocol on, `RPI_KITTY_KEYBOARD=0` forces
+/// `SHOB_KITTY_KEYBOARD=1` forces the protocol on, `SHOB_KITTY_KEYBOARD=0` forces
 /// legacy input; otherwise [`keyboard_protocol_enabled_for`] decides from the
 /// platform and the terminal name.
 #[cfg(unix)]
 fn keyboard_protocol_enabled() -> bool {
-    if let Some(value) = std::env::var_os("RPI_KITTY_KEYBOARD") {
+    if let Some(value) = std::env::var_os("SHOB_KITTY_KEYBOARD") {
         return value != "0";
     }
     keyboard_protocol_enabled_for(
@@ -567,13 +567,13 @@ impl Terminal for ProcessTerminal {
 /// already modified and neither branch below touches it. The Windows branch
 /// covers only the case where that bit never reached the record: legacy VT
 /// input through ConPTY encodes both chords as `\r`
-/// (microsoft/terminal#4999), which is what `RPI_DEBUG_KEYS=1` shows as
+/// (microsoft/terminal#4999), which is what `SHOB_DEBUG_KEYS=1` shows as
 /// `code=Enter mods=NONE kind=Press` for either key.
 ///
 /// That fallback is best effort, not a reconstruction of the original chord.
 /// The information is gone by the time the record exists; only
 /// `win32-input-mode` (`CSI ? 9001 h`) would put it back, and it leaves the
-/// user's shell unusable if rpi dies without resetting it
+/// user's shell unusable if shob dies without resetting it
 /// (microsoft/terminal#19576, fish-shell#11877), so it is deliberately not
 /// enabled for one keybinding. Consequences, accepted deliberately:
 ///
@@ -654,7 +654,7 @@ fn local_apple_terminal(term_program: Option<&str>, ssh: bool) -> bool {
     term_program == Some("Apple_Terminal") && !ssh
 }
 
-/// `true` when rpi runs on this machine's console rather than serving a remote
+/// `true` when shob runs on this machine's console rather than serving a remote
 /// user. A Shift check makes sense only against the local physical keyboard;
 /// remote input must stay untouched, mirroring the macOS gate above.
 #[cfg(any(windows, test))]
@@ -1024,7 +1024,7 @@ mod tests {
             None
         ));
         // An unknown local terminal keeps the protocol rather than silently
-        // losing Shift+Enter; `RPI_KITTY_KEYBOARD=0` is the escape hatch.
+        // losing Shift+Enter; `SHOB_KITTY_KEYBOARD=0` is the escape hatch.
         assert!(keyboard_protocol_enabled_for(
             true,
             None,

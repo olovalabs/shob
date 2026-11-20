@@ -398,7 +398,7 @@ pub fn conversation_key(model: Option<&AgentModel>) -> String {
         None => "default".to_string(),
         Some(model) => {
             let backend = match model.backend {
-                ModelBackend::Rpi => "rpi",
+                ModelBackend::Embedded => "embedded",
                 ModelBackend::Shob => "shob",
             };
             sanitize(&format!("{backend}_{}_{}", model.provider, model.id))
@@ -411,6 +411,9 @@ pub fn legacy_conversation_key(model: Option<&AgentModel>) -> String {
     match model {
         Some(model) if model.backend == ModelBackend::Shob => {
             sanitize(&format!("omp_{}_{}", model.provider, model.id))
+        }
+        Some(model) if model.backend == ModelBackend::Embedded => {
+            sanitize(&format!("rpi_{}_{}", model.provider, model.id))
         }
         _ => conversation_key(model),
     }
@@ -901,6 +904,18 @@ mod tests {
         let key = conversation_key(Some(&model));
         assert_eq!(key, "shob_google_antigravity_gemini_3.1");
         assert_eq!(conversation_key(None), "default");
+        let embedded = AgentModel {
+            backend: ModelBackend::Embedded,
+            ..model
+        };
+        assert_eq!(
+            conversation_key(Some(&embedded)),
+            "embedded_google_antigravity_gemini_3.1"
+        );
+        assert_eq!(
+            legacy_conversation_key(Some(&embedded)),
+            "rpi_google_antigravity_gemini_3.1"
+        );
     }
 
     #[test]

@@ -18,14 +18,14 @@ other half.
 extensions = "0.3"
 ```
 
-Most users never depend on this directly — the `rpi` CLI uses it, and the
+Most users never depend on this directly — the `shob` CLI uses it, and the
 harness consumes its adapters through injection.
 
 ## What it does
 
 - **Loading.** `load_one` loads a single library, `load_dir` scans a directory,
   and `load_session` resolves the whole set for a session. Entrypoints are
-  resolved through the single `rpi_plugin_register` symbol. Plugins must use
+  resolved through the single `shob_plugin_register` symbol. Plugins must use
   the unified ABI; incompatible registrations are reported as load failures.
 - **Registry.** `ExtensionRegistry` holds what plugins registered: tools,
   providers, handlers, renderers and resource-discovery callbacks, with a
@@ -40,7 +40,7 @@ harness consumes its adapters through injection.
   cancels, unregisters the callback and destroys the handle exactly once, while
   retaining the library and invocation context through cleanup.
   Plugin tools are exclusive unless their schema explicitly sets
-  `"x-rpi-execution-mode": "parallel"`; opt in only for concurrency-safe bodies.
+  `"x-shob-execution-mode": "parallel"`; opt in only for concurrency-safe bodies.
 - **Partial results.** Tool progress flows back through an unbounded channel and
   is forwarded to `on_update`, behind a `catch_unwind` trampoline so a panicking
   callback cannot unwind across the FFI boundary.
@@ -66,16 +66,16 @@ the dependency graph stays acyclic.
 
 | Location | Scope |
 | -------- | ----- |
-| `.rpi/extensions` | Project (preferred) |
-| `~/.rpi/agent/extensions` | Global |
+| `.shob/extensions` | Project (preferred) |
+| `~/.shob/agent/extensions` | Global |
 | `--extensions-dir <path>` | Explicit, added by the CLI |
 
 ## Installing and developing
 
 ```bash
-rpi install my-extension                  # build from crates.io and install
-rpi install my-extension --path ../local  # local development
-rpi dev                                   # build + watch + live reload
+shob install my-extension                  # build from crates.io and install
+shob install my-extension --path ../local  # local development
+shob dev                                   # build + watch + live reload
 ```
 
 ## Docs

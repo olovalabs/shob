@@ -64,7 +64,7 @@ impl Selection {
                         AgentMessage::Custom(c) => {
                             s.outbox = c
                                 .data
-                                .get("__rpiOutbox")
+                                .get("__shobOutbox")
                                 .and_then(|v| v.get("key"))
                                 .and_then(serde_json::Value::as_str)
                                 .map(str::to_owned)
@@ -107,7 +107,7 @@ impl Selection {
             && (!q.exclude_tool_program_bodies
                 || !matches!(
                     self.custom_type.as_deref(),
-                    Some("rpi.tool_program.body_chunk.v1" | "rpi.tool_program.body_commit.v1")
+                    Some("shob.tool_program.body_chunk.v1" | "shob.tool_program.body_commit.v1")
                 ))
             && q.entry_id.as_deref().is_none_or(|t| t == id)
             && q.tool_call_id

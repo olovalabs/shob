@@ -85,7 +85,7 @@ impl Fixture {
         .env("CARGO_TARGET_DIR", &target)
         .env("CARGO_BUILD_BUILD_DIR", build)
         .env("CARGO_INCREMENTAL", "0")
-        .env("RPI_RESOURCE_FIXTURE_SOURCE_SHA256", &source_digest)
+        .env("SHOB_RESOURCE_FIXTURE_SOURCE_SHA256", &source_digest)
         .env("CARGO_BUILD_JOBS", "2")
         .env("CARGO_PROFILE_DEV_DEBUG", "0")
         .stdin(Stdio::null())

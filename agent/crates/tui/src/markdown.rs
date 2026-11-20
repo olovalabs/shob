@@ -1461,7 +1461,7 @@ mod tests {
     #[test]
     fn test_markdown_table_cells_wrap_instead_of_clipping() {
         // Real-world shape: the assistant's PR-split table from session
-        // 2026-10-30T16-22-17 (E:\rpi). Long CJK cells in a narrow transcript
+        // 2026-10-30T16-22-17 (E:\shob). Long CJK cells in a narrow transcript
         // used to squash the narrow columns to "PR…" / "*(tui)*…" and drop
         // the wide cell's tail behind an ellipsis, so a native-selection copy
         // lost the content — the same failure mode already fixed for code

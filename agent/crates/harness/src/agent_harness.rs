@@ -695,7 +695,7 @@ impl Drop for ActiveRunLease<'_> {
 /// restating their request.
 ///
 /// Upstream resumes the interrupted operation in place (`driveOperation`
-/// re-enters at `state.at`). rpi's run has no durable re-entry point, so the
+/// re-enters at `state.at`). shob's run has no durable re-entry point, so the
 /// equivalent is to start a run with **no new prompt**: the branch already
 /// ends with the resolved tool results, so the next thing the loop does is
 /// exactly what the interrupted run would have done next — ask the provider
@@ -3800,7 +3800,7 @@ impl AgentHarness {
     /// the lane is empty (no leaf).
     async fn branch_path_oldest_first(&self) -> HarnessResult<Vec<Entry>> {
         let diagnostics =
-            std::env::var_os("RPI_AGENT_DIAGNOSTICS").is_some_and(|value| value != "0");
+            std::env::var_os("SHOB_AGENT_DIAGNOSTICS").is_some_and(|value| value != "0");
         let started = diagnostics.then(std::time::Instant::now);
         let leaf = self
             .session
@@ -3828,7 +3828,7 @@ impl AgentHarness {
             .map_err(session_to_harness_err);
         if let Some(started) = started {
             eprintln!(
-                "RPI_CONTEXT_DIAGNOSTICS path_load_ns={} path_entries={}",
+                "SHOB_CONTEXT_DIAGNOSTICS path_load_ns={} path_entries={}",
                 started.elapsed().as_nanos().min(u64::MAX as u128),
                 result.as_ref().map(Vec::len).unwrap_or_default(),
             );
@@ -4758,7 +4758,7 @@ impl AgentHarness {
         // loop's only other exit is "the model stopped asking for tools", which
         // nothing bounds — one observed session ran 112 turns / 867s in a single
         // run (`docs/debugging/llm-repetition-forensics.md` §二). Upstream has no such
-        // ceiling either, so this is **off unless** `RPI_MAX_TURNS_PER_RUN=<n>`
+        // ceiling either, so this is **off unless** `SHOB_MAX_TURNS_PER_RUN=<n>`
         // asks for it; when off the hook stays `None` and the loop is unchanged.
         let run_budget = Arc::new(Mutex::new(match self.max_turns {
             Some(limit) => crate::run_budget::RunBudget::new(limit),
@@ -6799,7 +6799,7 @@ mod session_switch_tests {
         }
 
         let tmp =
-            std::env::temp_dir().join(format!("rpi-write-failure-probe-{}", std::process::id()));
+            std::env::temp_dir().join(format!("shob-write-failure-probe-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         let env = Arc::new(OsExecutionEnv::with_cwd(tmp.clone()));
@@ -7037,7 +7037,7 @@ mod session_switch_tests {
         {
             for fail_after in 0..=2 {
                 let tmp = std::env::temp_dir().join(format!(
-                    "rpi-recovery-reentry-{}-{fail_after}",
+                    "shob-recovery-reentry-{}-{fail_after}",
                     uuid::Uuid::now_v7()
                 ));
                 let fs: Arc<dyn FileSystem> = Arc::new(OsExecutionEnv::with_cwd(tmp.clone()));
@@ -7351,7 +7351,7 @@ mod session_switch_tests {
         let h = AgentHarness::create(opts()).await.unwrap();
         // Build two JSONL sessions with one user message each.
         let tmp =
-            std::env::temp_dir().join(format!("rpi-set-session-probe-{}", std::process::id()));
+            std::env::temp_dir().join(format!("shob-set-session-probe-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         let cwd = tmp.to_string_lossy().into_owned();
@@ -7646,7 +7646,7 @@ mod unsaved_isolation_tests {
         }
 
         let tmp =
-            std::env::temp_dir().join(format!("rpi-normal-prompt-probe-{}", std::process::id()));
+            std::env::temp_dir().join(format!("shob-normal-prompt-probe-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         let env = Arc::new(OsExecutionEnv::with_cwd(tmp.clone()));

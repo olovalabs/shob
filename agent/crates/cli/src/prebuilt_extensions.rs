@@ -1,4 +1,4 @@
-//! Versioned prebuilt extension distribution (rpi-extension.json v1).
+//! Versioned prebuilt extension distribution (shob-extension.json v1).
 //! Repository discovery uses crates.io metadata. Release tags and library
 //! paths are protocol fields, never guessed from asset names or repository latest.
 
@@ -409,11 +409,11 @@ fn validate_manifest<'a>(
         return Err("manifest source_commit must be a full Git commit SHA".into());
     }
     semver::Version::parse(&manifest.sdk.version).map_err(|_| "invalid SDK version in manifest")?;
-    if manifest.sdk.plugin_abi != plugin_sdk::RPI_PLUGIN_ABI_VERSION_UNIFIED {
+    if manifest.sdk.plugin_abi != plugin_sdk::SHOB_PLUGIN_ABI_VERSION_UNIFIED {
         return Err(format!(
             "extension SDK ABI {} is incompatible with host ABI {}",
             manifest.sdk.plugin_abi,
-            plugin_sdk::RPI_PLUGIN_ABI_VERSION_UNIFIED
+            plugin_sdk::SHOB_PLUGIN_ABI_VERSION_UNIFIED
         ));
     }
     let distribution = manifest.targets.get(target).ok_or_else(|| {
@@ -512,7 +512,7 @@ async fn fetch_manifest(
         &package.repository,
         &package.name,
         &package.version,
-        "rpi-extension.json",
+        "shob-extension.json",
     )?;
     let response = client
         .get(&url)
@@ -527,7 +527,7 @@ async fn read_manifest_response(
     package: &ResolvedPackage,
 ) -> Result<(Manifest, Vec<u8>), String> {
     if response.status() == reqwest::StatusCode::NOT_FOUND {
-        return Err(format!("prebuilt release for {} {} is not ready (rpi-extension.json is missing); retry later or use --build explicitly", package.name, package.version));
+        return Err(format!("prebuilt release for {} {} is not ready (shob-extension.json is missing); retry later or use --build explicitly", package.name, package.version));
     }
     if !response.status().is_success() {
         return Err(format!(
@@ -537,7 +537,7 @@ async fn read_manifest_response(
     }
     let bytes = body_limited(response, MAX_MANIFEST).await?;
     let manifest =
-        serde_json::from_slice(&bytes).map_err(|e| format!("invalid rpi-extension.json: {e}"))?;
+        serde_json::from_slice(&bytes).map_err(|e| format!("invalid shob-extension.json: {e}"))?;
     Ok((manifest, bytes))
 }
 
@@ -578,7 +578,7 @@ pub async fn install(
     let target = host_target()?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
-        .user_agent(format!("rpi/{}", crate::VERSION))
+        .user_agent(format!("shob/{}", crate::VERSION))
         .build()
         .map_err(|e| e.to_string())?;
     let repository = repository.or_else(|| {
@@ -644,7 +644,7 @@ pub async fn install(
     for path in installed {
         println!("installed {}", path.display());
     }
-    println!("rpi will validate the plugin entrypoint/SDK API size and load this extension on the next start.");
+    println!("shob will validate the plugin entrypoint/SDK API size and load this extension on the next start.");
     Ok(())
 }
 
@@ -1289,7 +1289,7 @@ mod tests {
         let manifest = serde_json::json!({
             "schema_version":1, "name":package.name, "version":package.version,
             "repository":package.repository, "tag":"independent-plugin-v1.2.3", "source_commit":"a".repeat(40),
-            "sdk":{"version":"0.3.23", "plugin_abi":plugin_sdk::RPI_PLUGIN_ABI_VERSION_UNIFIED},
+            "sdk":{"version":"0.3.23", "plugin_abi":plugin_sdk::SHOB_PLUGIN_ABI_VERSION_UNIFIED},
             "targets":{target:{"url":release_url(&package.repository,&package.name,&package.version,file).unwrap(),
                 "format":format,"size":archive.len(),"sha256":hash(&archive),"library":{"path":library,"sha256":hash(&bytes)}}}
         });
@@ -2300,12 +2300,12 @@ mod tests {
         ] {
             assert!(canonical_repository(invalid).is_err());
         }
-        assert_eq!(release_url("https://github.com/publisher/monorepo","plugin-one","1.2.3","rpi-extension.json").unwrap(),"https://github.com/publisher/monorepo/releases/download/plugin-one-v1.2.3/rpi-extension.json");
+        assert_eq!(release_url("https://github.com/publisher/monorepo","plugin-one","1.2.3","shob-extension.json").unwrap(),"https://github.com/publisher/monorepo/releases/download/plugin-one-v1.2.3/rpi-extension.json");
         assert!(release_url(
             "https://github.com/publisher/monorepo",
             "plugin-two",
             "4.5.6",
-            "rpi-extension.json"
+            "shob-extension.json"
         )
         .unwrap()
         .contains("plugin-two-v4.5.6"));
@@ -2383,10 +2383,14 @@ mod tests {
             (
                 "404 Not Found",
                 b"missing".to_vec(),
-                "rpi-extension.json is missing",
+                "shob-extension.json is missing",
             ),
             ("403 Forbidden", b"denied".to_vec(), "403 Forbidden"),
-            ("200 OK", b"not json".to_vec(), "invalid rpi-extension.json"),
+            (
+                "200 OK",
+                b"not json".to_vec(),
+                "invalid shob-extension.json",
+            ),
             (
                 "200 OK",
                 vec![b' '; MAX_MANIFEST as usize + 1],
@@ -2426,7 +2430,7 @@ mod tests {
             &resolved.repository,
             &resolved.name,
             &resolved.version,
-            "rpi-extension.json"
+            "shob-extension.json"
         )
         .unwrap()
         .contains("custom-repo/releases/download/private-extension-v2.3.4/"));

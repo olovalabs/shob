@@ -9,7 +9,7 @@
 //!
 //! Native keeps frames in session-scoped **list** storage
 //! (`pendingAssistantFrames(operationId, responseEntryId)`), separate from the
-//! branch. rpi uses the independent `SessionStorage` progress APIs: Memory live
+//! branch. shob uses the independent `SessionStorage` progress APIs: Memory live
 //! state, SQLite progress tables, or a reclaimable JSONL sidecar. Payloads never
 //! enter transcript entries, the history sequence, or record pagination.
 //!
@@ -108,7 +108,7 @@ struct FrameDiagnostics {
 impl FrameDiagnostics {
     fn new() -> Arc<Self> {
         Arc::new(Self {
-            enabled: std::env::var_os("RPI_FRAME_DIAGNOSTICS").is_some_and(|value| value != "0"),
+            enabled: std::env::var_os("SHOB_FRAME_DIAGNOSTICS").is_some_and(|value| value != "0"),
             ..Default::default()
         })
     }
@@ -450,7 +450,7 @@ pub(crate) struct VolatileProgress {
 }
 pub(crate) type SharedVolatileProgress = Arc<Mutex<VolatileProgress>>;
 
-/// Turn a replayed partial into the interrupted message rpi records.
+/// Turn a replayed partial into the interrupted message shob records.
 ///
 /// Mirrors `interruptedAssistantMessage`: `stopReason: error` plus the notice,
 /// and **usage zeroed** so a salvaged partial cannot double-count tokens that a
@@ -982,7 +982,7 @@ impl RecorderShared {
             return;
         };
         eprintln!(
-            "RPI_FRAME_DIAGNOSTICS lane={} run_id={} frame_append_requests={} batch_count={} batch_records={} append_records_calls={} flush_requests={} queue_wait_ns={} flush_wait_ns={} batch_append_ns={} writer_failures={} prepare_commit_flushes={} error_recovery_flushes={} clear_stream_before_flushes={} clear_stream_after_flushes={} clear_run_before_flushes={} clear_run_after_flushes={}",
+            "SHOB_FRAME_DIAGNOSTICS lane={} run_id={} frame_append_requests={} batch_count={} batch_records={} append_records_calls={} flush_requests={} queue_wait_ns={} flush_wait_ns={} batch_append_ns={} writer_failures={} prepare_commit_flushes={} error_recovery_flushes={} clear_stream_before_flushes={} clear_stream_after_flushes={} clear_run_before_flushes={} clear_run_after_flushes={}",
             self.lane,
             self.run_id,
             snapshot.frame_append_requests,

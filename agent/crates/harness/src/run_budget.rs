@@ -19,12 +19,12 @@
 //! # Off by default (upstream parity)
 //!
 //! Upstream's loop has no turn/token ceiling at all — it runs until the model
-//! stops asking for tools, an abort, or an error. `rpi` therefore ships the
+//! stops asking for tools, an abort, or an error. `shob` therefore ships the
 //! guard **disabled** so default behaviour is identical to native, and you opt
 //! in per process:
 //!
 //! ```text
-//! RPI_MAX_TURNS_PER_RUN=120 rpi      # stop a single run after 120 turns
+//! SHOB_MAX_TURNS_PER_RUN=120 shob      # stop a single run after 120 turns
 //! ```
 //!
 //! Unset, empty, non-numeric or `0` all mean "no ceiling", exactly like native.
@@ -66,10 +66,10 @@ impl BudgetStop {
 /// guard — see [`RunBudget::from_env`]. `0` means unlimited.
 pub const DEFAULT_MAX_TURNS_PER_RUN: u32 = 120;
 
-/// Environment variable that switches the guard on: `RPI_MAX_TURNS_PER_RUN=<n>`
+/// Environment variable that switches the guard on: `SHOB_MAX_TURNS_PER_RUN=<n>`
 /// (`n > 0`). Anything else — unset, empty, non-numeric, `0` — leaves the run
 /// unbounded, matching upstream.
-pub const MAX_TURNS_ENV: &str = "RPI_MAX_TURNS_PER_RUN";
+pub const MAX_TURNS_ENV: &str = "SHOB_MAX_TURNS_PER_RUN";
 
 // Readers asserting environment stability and tests mutating this key must
 // share one lock. Tokio's guard is safe to retain across child-run awaits.
@@ -91,7 +91,7 @@ pub struct RunBudget {
 }
 
 impl Default for RunBudget {
-    /// Disabled: upstream has no run-level ceiling, so neither does `rpi`
+    /// Disabled: upstream has no run-level ceiling, so neither does `shob`
     /// unless the operator asks for one (see [`RunBudget::from_env`]).
     fn default() -> Self {
         Self::new(0)
@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn default_is_unbounded_like_native_pi() {
         // Upstream's loop has no ceiling, so the default must not invent one:
-        // the guard is opt-in (RPI_MAX_TURNS_PER_RUN).
+        // the guard is opt-in (SHOB_MAX_TURNS_PER_RUN).
         let mut budget = RunBudget::default();
         assert!(!budget.is_enabled());
         assert_eq!(budget.max_turns(), 0);

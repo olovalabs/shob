@@ -257,5 +257,5 @@ fn context_retains_skills_templates_and_empty_resource_guidance() {
     let output = context_panel_lines(&AgentHarnessResources::default()).join("\n");
     assert!(output.contains("no context files loaded"));
     assert!(output.contains("none discovered"));
-    assert!(output.contains(".rpi/prompts/"));
+    assert!(output.contains(".shob/prompts/"));
 }

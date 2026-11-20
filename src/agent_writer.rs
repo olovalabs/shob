@@ -1,6 +1,6 @@
 //! Ordered, non-blocking writes to a child-process agent.
 //!
-//! OMP and rpi RPC run as child processes. Their prompt, abort and extension
+//! OMP and shob RPC run as child processes. Their prompt, abort and extension
 //! replies share one stdin pipe, so a single writer thread owns that pipe and
 //! preserves command order. Sending only enqueues an owned command, so a large
 //! prompt written to a slow-reading child can never block the UI thread.

@@ -77,8 +77,8 @@ async fn old_versions_and_root_formats_are_rejected_without_rewriting_artifacts(
     for sql in [
         "PRAGMA user_version=1",
         "PRAGMA user_version=2",
-        "UPDATE root SET format='rpi-native-fact-prototype-v1'",
-        "UPDATE root SET format='rpi-native-fact-experimental-v2'",
+        "UPDATE root SET format='shob-native-fact-prototype-v1'",
+        "UPDATE root SET format='shob-native-fact-experimental-v2'",
         "PRAGMA application_id=1380993358",
         "PRAGMA application_id=1380993359",
     ] {
@@ -92,7 +92,7 @@ async fn old_versions_and_root_formats_are_rejected_without_rewriting_artifacts(
             .await
             .unwrap();
         drop(s);
-        let path = dir.path().join(format!("{}.rpinative", metadata.id));
+        let path = dir.path().join(format!("{}.shobnative", metadata.id));
         let before = std::fs::read(&path).unwrap();
         assert!(Store::open(&path, identity).is_err(), "accepted {sql}");
         assert_eq!(std::fs::read(&path).unwrap(), before, "rewrote {sql}");

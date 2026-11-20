@@ -48,7 +48,7 @@ fn parse_yaml(input: &str) -> Result<Value, String> {
     match yaml_serde::from_str(input) {
         Ok(value) => Ok(value),
         Err(original_error) => {
-            // Older rpi releases treated every top-level value as an opaque
+            // Older shob releases treated every top-level value as an opaque
             // scalar, so descriptions containing an unquoted `: ` were
             // accepted even though strict YAML requires quoting them. Retry
             // only after quoting that narrow legacy shape; block collections

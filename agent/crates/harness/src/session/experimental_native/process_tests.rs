@@ -135,7 +135,7 @@ async fn fixture(root: &Path) -> PathBuf {
     storage.drain().await;
     drop(storage);
     drop(repo);
-    root.join("fixture.rpinative")
+    root.join("fixture.shobnative")
 }
 async fn action(s: &ExperimentalNativeStorage, kind: &str) {
     match kind {
@@ -376,7 +376,7 @@ fn process_history_batch_kill_and_commit_ack_loss_are_atomic() {
             let dir=tempfile::tempdir().unwrap();let path=fixture(dir.path()).await;
             // The fixture is closed before copying. This is a synthetic same-identity
             // oracle clone, not a migration/fork or a copy of a live SQLite artifact.
-            let control=dir.path().join("control.rpinative");std::fs::copy(&path,&control).unwrap();
+            let control=dir.path().join("control.shobnative");std::fs::copy(&path,&control).unwrap();
             let baseline=snapshot(&path).await;
             let oracle=open(&control).await;action(&oracle,"history").await;drop(oracle);
             let committed=snapshot(&control).await;
@@ -420,7 +420,7 @@ fn process_progress_and_prune_kill_matrix_is_independent_of_history() {
                     drop(s);
                 }
                 let baseline = snapshot(&path).await;
-                let control = dir.path().join("control.rpinative");
+                let control = dir.path().join("control.shobnative");
                 std::fs::copy(&path, &control).unwrap();
                 let s = open(&control).await;
                 action(&s, kind).await;
@@ -557,7 +557,7 @@ fn process_sqlite_writer_busy_then_release_or_kill_has_no_sequence_holes() {
     runtime().block_on(async {
         for kill in [false,true] {
             let dir=tempfile::tempdir().unwrap();let path=fixture(dir.path()).await;
-            let control=dir.path().join("control.rpinative");std::fs::copy(&path,&control).unwrap();
+            let control=dir.path().join("control.shobnative");std::fs::copy(&path,&control).unwrap();
             let s=open(&control).await;
             if !kill {s.set_name(Some("holder")).await.unwrap();}
             s.set_name(Some("contender")).await.unwrap();drop(s);

@@ -119,7 +119,7 @@ mod agent_bridge_rpc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Events from one persistent embedded rpi session.
+/// Events from one persistent embedded shob session.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum AgentEvent {
     Text(String),
@@ -203,8 +203,8 @@ impl QueuedEvent for AgentEvent {
     }
 }
 
-/// One rpi conversation. The default backend is the in-process harness; set
-/// `SHOB_RPI_BACKEND=rpc` to use the old subprocess bridge for a baseline.
+/// One shob conversation. The default backend is the in-process harness; set
+/// `SHOB_AGENT_BACKEND=rpc` to use the old subprocess bridge for a baseline.
 pub struct AgentBridge {
     backend: Backend,
     trace_id: u64,
@@ -253,7 +253,7 @@ impl AgentBridge {
         Self::spawn_session(cwd, None, model)
     }
 
-    /// Reopen a durable rpi conversation, optionally with a specific model.
+    /// Reopen a durable shob conversation, optionally with a specific model.
     pub fn spawn_resumed(
         cwd: &Path,
         session: Option<&str>,
@@ -269,8 +269,8 @@ impl AgentBridge {
     ) -> Result<Self, String> {
         let trace_id = crate::stream_timing::new_trace();
         if let Some(id) = session {
-            crate::rpi_storage::copy_legacy_session(cwd, id)
-                .map_err(|error| format!("Could not copy the existing RPI session: {error}"))?;
+            crate::shob_storage::copy_legacy_session(cwd, id)
+                .map_err(|error| format!("Could not copy the existing SHOB session: {error}"))?;
         }
         if rpc_backend_requested() && !uses_gemini(model) {
             agent_bridge_rpc::RpcAgentBridge::spawn_resumed(cwd, session, model, trace_id).map(
@@ -486,7 +486,8 @@ impl AgentBridge {
 }
 
 pub(crate) fn rpc_backend_requested() -> bool {
-    std::env::var("SHOB_RPI_BACKEND")
+    std::env::var("SHOB_AGENT_BACKEND")
+        .or_else(|_| std::env::var("SHOB_RPI_BACKEND"))
         .map(|backend| backend.eq_ignore_ascii_case("rpc"))
         .unwrap_or(false)
 }
@@ -503,7 +504,7 @@ impl EmbeddedBridge {
         let delta_trace = trace_id;
         let resumed = session.is_some();
         let mut options = SessionOptions::new(cwd)
-            .with_session_dir(crate::paths::rpi_sessions_dir())
+            .with_session_dir(crate::paths::shob_sessions_dir())
             .with_selector(model)
             .with_session(session)
             .with_provider_request_hook(Arc::new(move || {
@@ -557,7 +558,7 @@ impl EmbeddedBridge {
         let spawn_start = std::time::Instant::now();
         let mut session = EmbeddedSession::spawn(options).map_err(|error| {
             format!(
-                "Could not start the embedded rpi agent in {}: {error}",
+                "Could not start the embedded shob agent in {}: {error}",
                 cwd.display()
             )
         })?;
@@ -916,7 +917,7 @@ pub(crate) fn decode_tool_event(record: &Value) -> Option<AgentEvent> {
     }
 }
 
-/// Decode a legacy rpi RPC record. Retained for protocol fixtures; the embedded
+/// Decode a legacy shob RPC record. Retained for protocol fixtures; the embedded
 /// bridge maps [`embedded::SessionEvent`] directly.
 #[cfg(test)]
 fn decode_event(record: &Value) -> Vec<AgentEvent> {
@@ -926,7 +927,7 @@ fn decode_event(record: &Value) -> Vec<AgentEvent> {
             let command = record["command"].as_str().unwrap_or("command");
             if record["success"] == false {
                 let error = record["error"].as_str().unwrap_or("unknown error");
-                events.push(AgentEvent::Error(format!("rpi {command}: {error}")));
+                events.push(AgentEvent::Error(format!("shob {command}: {error}")));
                 if command == "prompt" {
                     events.push(AgentEvent::Done);
                 }
@@ -971,7 +972,7 @@ fn decode_event(record: &Value) -> Vec<AgentEvent> {
             let error = record["error"]
                 .as_str()
                 .unwrap_or("Unknown extension error");
-            events.push(AgentEvent::Error(format!("rpi extension: {error}")));
+            events.push(AgentEvent::Error(format!("shob extension: {error}")));
         }
         _ => {}
     }

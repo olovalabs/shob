@@ -77,7 +77,7 @@ async fn fixture(s: &Session, lca: &str) {
     s.move_lane("main", Some(lca)).await.unwrap();
     user(s, "main", "old-1").await;
     custom(s, "main", "ordinary", "extension").await;
-    custom(s, "main", "prefix", "rpi.tool_program.body_chunk.v1.extra").await;
+    custom(s, "main", "prefix", "shob.tool_program.body_chunk.v1.extra").await;
     for id in ["old-chunk-0", "old-chunk-1"] {
         custom(s, "main", id, CHUNK_CUSTOM_TYPE).await;
     }
@@ -380,7 +380,7 @@ async fn experimental_native_poisoned_bodies_preserve_metadata_ancestry() {
         fixture(&s, lca).await;
         s.drain().await;
         // Body digests remain pinned, metadata and its digest remain intact.
-        let conn = rusqlite::Connection::open(temp.path().join("branch-body.rpinative")).unwrap();
+        let conn = rusqlite::Connection::open(temp.path().join("branch-body.shobnative")).unwrap();
         let changed = conn.execute("UPDATE facts SET body=replace(body,'xxxxxxxx','POISONED') WHERE id IN ('common-chunk-0','common-chunk-1','common-chunk-2','common-commit','old-chunk-0','old-chunk-1','old-commit','target-chunk','target-commit')", []).unwrap();
         assert_eq!(changed, 9);
         drop(conn);

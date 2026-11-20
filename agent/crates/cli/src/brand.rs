@@ -1,4 +1,4 @@
-//! The startup brand lockup: the three-bar mark, the `rpi` wordmark, and the
+//! The startup brand lockup: the three-bar mark, the `shob` wordmark, and the
 //! Rust crab standing in for the language name.
 //!
 //! The layout exists as a module rather than inline in the welcome header for
@@ -17,7 +17,7 @@ use tui::{bold as tui_bold, theme as current_theme, Component};
 use crate::args::is_truthy_env_flag;
 
 /// Set to `1`/`true`/`yes` to render the lockup without the crab.
-pub const NO_EMOJI_ENV: &str = "RPI_NO_EMOJI";
+pub const NO_EMOJI_ENV: &str = "SHOB_NO_EMOJI";
 
 /// The Rust mascot, standing where the word "rust" used to be.
 ///
@@ -26,7 +26,7 @@ pub const NO_EMOJI_ENV: &str = "RPI_NO_EMOJI";
 /// `tui`), so this one is opt-out rather than mandatory.
 pub const CRAB: &str = "🦀";
 
-/// Separator between `rpi` and the crab.
+/// Separator between `shob` and the crab.
 const SEPARATOR: &str = "·";
 
 /// The three-bar mark as a single plain-text row: the lockup's silhouette,
@@ -89,6 +89,7 @@ fn window_title_from(crab: bool, status: &str) -> String {
 
 /// The five rows of the mark and wordmark. `crab` adds the mascot after the
 /// wordmark; without it the wordmark stands alone.
+#[cfg(test)]
 fn render_lockup(crab: bool) -> Vec<String> {
     let c = current_theme().colors;
     let bar = c.dim.fg("██");
@@ -115,6 +116,31 @@ fn render_lockup(crab: bool) -> Vec<String> {
     ]
 }
 
+/// Centers each welcome row without caching terminal-width-dependent padding.
+pub(crate) struct CenteredWelcome(pub std::sync::Arc<tui::Container>);
+
+impl Component for CenteredWelcome {
+    fn render(&self, width: usize) -> Vec<String> {
+        self.0
+            .render(width)
+            .into_iter()
+            .map(|row| {
+                let row = row.trim();
+                let padding = width.saturating_sub(tui::ansi::visible_width(row)) / 2;
+                format!("{}{row}", " ".repeat(padding))
+            })
+            .collect()
+    }
+
+    fn invalidate(&self) {
+        self.0.invalidate();
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
 /// The startup lockup. Add one to the welcome header.
 pub struct BrandLockup;
 
@@ -131,8 +157,23 @@ impl Default for BrandLockup {
 }
 
 impl Component for BrandLockup {
-    fn render(&self, _width: usize) -> Vec<String> {
-        render_lockup(crab_enabled())
+    fn render(&self, width: usize) -> Vec<String> {
+        let c = current_theme().colors;
+        if width < 34 {
+            return vec![c.text.fg(&tui_bold("SHOB"))];
+        }
+        [
+            "███████╗██╗  ██╗ ██████╗ ██████╗ ",
+            "██╔════╝██║  ██║██╔═══██╗██╔══██╗",
+            "███████╗███████║██║   ██║██████╔╝",
+            "╚════██║██╔══██║██║   ██║██╔══██╗",
+            "███████║██║  ██║╚██████╔╝██████╔╝",
+            "╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ",
+        ]
+        .iter()
+        .map(|row| c.text.fg(&tui_bold(row)))
+        .chain([c.muted.fg(&format!("SHOB v{}", env!("CARGO_PKG_VERSION")))])
+        .collect()
     }
 
     fn invalidate(&self) {
@@ -151,6 +192,24 @@ mod tests {
 
     fn plain(crab: bool) -> Vec<String> {
         render_lockup(crab).iter().map(|r| strip_ansi(r)).collect()
+    }
+
+    #[test]
+    fn welcome_centers_at_each_width_and_falls_back_on_narrow_terminals() {
+        let content = std::sync::Arc::new(tui::Container::new());
+        content.add_child(std::sync::Arc::new(BrandLockup::new()));
+        let welcome = CenteredWelcome(content);
+        for width in [20, 40, 80, 120] {
+            let lines = welcome.render(width);
+            for row in &lines {
+                let plain = strip_ansi(row);
+                assert!(visible_width(row) <= width);
+                let left = plain.len() - plain.trim_start().len();
+                let right = width - visible_width(row);
+                assert!(left.abs_diff(right) <= 1, "{width}: {plain}");
+            }
+            assert!(lines.iter().any(|row| strip_ansi(row).contains("SHOB")));
+        }
     }
 
     #[test]
@@ -248,6 +307,6 @@ mod tests {
         assert!(!rows[4].contains(CRAB));
         // No dangling separator once the crab is gone.
         assert!(!rows[4].contains(SEPARATOR), "got {:?}", rows[4]);
-        assert!(rows[4].ends_with("rpi"), "got {:?}", rows[4]);
+        assert!(rows[4].ends_with("shob"), "got {:?}", rows[4]);
     }
 }

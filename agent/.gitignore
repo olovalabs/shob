@@ -20,13 +20,13 @@ target/*
 # Static frontend deployment bundle
 .deploy/
 .codegraph
-.rpi/*
-!.rpi/skills/
-.rpi/skills/*
-!.rpi/skills/rpi-extension-authoring/
-!.rpi/skills/rpi-extension-authoring/SKILL.md
-!.rpi/skills/rpi-release/
-!.rpi/skills/rpi-release/SKILL.md
-website/.rpi/*
-.git/rpi-release-helper.exe
+.shob/*
+!.shob/skills/
+.shob/skills/*
+!.shob/skills/shob-extension-authoring/
+!.shob/skills/shob-extension-authoring/SKILL.md
+!.shob/skills/shob-release/
+!.shob/skills/shob-release/SKILL.md
+website/.shob/*
+.git/shob-release-helper.exe
 publish-*.log

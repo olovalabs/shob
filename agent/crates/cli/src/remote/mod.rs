@@ -1,7 +1,7 @@
-//! Remote client support for `rpi --connect`.
+//! Remote client support for `shob --connect`.
 //!
-//! rpi is a Rust replacement for the TS `pi` CLI, not a wrapper around it, so
-//! this module owns rpi's *own* wire contract instead of depending on any
+//! shob is a Rust replacement for the TS `pi` CLI, not a wrapper around it, so
+//! this module owns shob's *own* wire contract instead of depending on any
 //! external implementation. The design borrows the shape of the TS
 //! `packages/coding-agent/src/modes/rpc/` layer (commands on stdin, responses +
 //! events on stdout, a session abstraction the UI can render), but every type
@@ -16,7 +16,7 @@
 //!   length-prefixed frames carrying CBOR-encoded protocol messages (port of
 //!   the reference JSONL transport remains
 //!   the default; the binary one is available for callers that want it.
-//! - [`client`] — the TCP JSON-RPC connection to a `rpi --server` endpoint.
+//! - [`client`] — the TCP JSON-RPC connection to a `shob --server` endpoint.
 //! - [`session`] — the client-side transcript + state the UI renders.
 //!
 //! The client itself (`--connect`) is built on top of these types: a TCP JSONL

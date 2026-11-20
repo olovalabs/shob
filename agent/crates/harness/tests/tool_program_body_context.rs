@@ -193,7 +193,7 @@ async fn default_context_and_explicit_history_agree_across_backends() {
         custom(
             &session,
             "not-reserved",
-            "rpi.tool_program.body_chunk.v1.extra",
+            "shob.tool_program.body_chunk.v1.extra",
             false,
         )
         .await;
@@ -518,7 +518,7 @@ async fn recovery_preserves_never_replay_and_noncustom_boundaries() {
             )
             .await;
         }
-        custom(&session, "child", "rpi.tool_program.child.begin.v1", false).await;
+        custom(&session, "child", "shob.tool_program.child.begin.v1", false).await;
         archives(&session).await;
         session.drain().await;
         drop(session);

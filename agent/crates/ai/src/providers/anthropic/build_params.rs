@@ -487,8 +487,8 @@ static BUILD_PARAMS_DIAGNOSTICS_DETAIL: OnceLock<bool> = OnceLock::new();
 
 fn build_params_diagnostics_enabled() -> bool {
     *BUILD_PARAMS_DIAGNOSTICS.get_or_init(|| {
-        std::env::var_os("RPI_PROVIDER_DIAGNOSTICS")
-            .or_else(|| std::env::var_os("RPI_AGENT_DIAGNOSTICS"))
+        std::env::var_os("SHOB_PROVIDER_DIAGNOSTICS")
+            .or_else(|| std::env::var_os("SHOB_AGENT_DIAGNOSTICS"))
             .is_some_and(|value| value != "0")
     })
 }
@@ -496,7 +496,8 @@ fn build_params_diagnostics_enabled() -> bool {
 fn build_params_diagnostics_detail_enabled() -> bool {
     *BUILD_PARAMS_DIAGNOSTICS_DETAIL.get_or_init(|| {
         build_params_diagnostics_enabled()
-            && std::env::var_os("RPI_PROVIDER_DIAGNOSTICS_DETAIL").is_some_and(|value| value != "0")
+            && std::env::var_os("SHOB_PROVIDER_DIAGNOSTICS_DETAIL")
+                .is_some_and(|value| value != "0")
     })
 }
 

@@ -56,10 +56,10 @@ fn take_flag_value(argv: &[String], flag: &str) -> Option<String> {
 }
 
 /// Resolve the `--connect` auth token: the `--token` flag wins, then the
-/// `RPI_SERVER_TOKEN` environment variable (ignoring empty/whitespace values).
+/// `SHOB_SERVER_TOKEN` environment variable (ignoring empty/whitespace values).
 fn resolve_connect_token(argv: &[String]) -> Option<String> {
     take_flag_value(argv, "--token").or_else(|| {
-        std::env::var("RPI_SERVER_TOKEN")
+        std::env::var("SHOB_SERVER_TOKEN")
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
@@ -75,7 +75,7 @@ pub async fn run() -> i32 {
 
 /// Runs the CLI with arguments excluding the executable name.
 pub async fn run_with_args(argv: Vec<String>) -> i32 {
-    // Startup profiling wrapper: RPI_TIMING=1 flushes timings on every exit path.
+    // Startup profiling wrapper: SHOB_TIMING=1 flushes timings on every exit path.
     crate::timings::reset(crate::timings::TimingNamespace::Main);
     let code = run_inner(argv).await;
     crate::timings::print_timings();
@@ -125,24 +125,24 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
         return crate::saved_session_read::run(&argv).await;
     }
 
-    if argv.first().map(String::as_str) == Some("__rpi_dev_cleanup") {
+    if argv.first().map(String::as_str) == Some("__shob_dev_cleanup") {
         return crate::dev_extension::run_cleanup_helper(&argv[1..]);
     }
 
-    // ---- `rpi --connect <addr>` — pure remote client ----
+    // ---- `shob --connect <addr>` — pure remote client ----
     // Intercepted before any provider / harness / session / extension work so
     // the client holds no local agent resources at all: it only connects to a
-    // running `rpi --server` and renders the remote transcript.
+    // running `shob --server` and renders the remote transcript.
     if let Some(addr) = take_flag_value(&argv, "--connect") {
         let token = resolve_connect_token(&argv);
         return crate::remote::tui::run(&addr, token.as_deref()).await;
     }
 
-    // Normalize the CLI flag into RPI_OFFLINE so early-dispatch subcommands and
+    // Normalize the CLI flag into SHOB_OFFLINE so early-dispatch subcommands and
     // the regular parsed path all observe the same process-wide gate.
     crate::args::normalize_offline_mode(&argv);
 
-    // `rpi dev` wraps the normal CLI: consume only development-specific
+    // `shob dev` wraps the normal CLI: consume only development-specific
     // options, then pass every remaining argument through the regular parser.
     let dev_command = argv.first().map(String::as_str);
     let dev_options = if matches!(dev_command, Some("dev" | "dev-local")) {
@@ -217,7 +217,7 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
         }
         // // Never a working invocation; the same fall-through applies.
         // Some("self-update") => {
-        //     eprintln!("error: unknown command `self-update`; use `rpi update`");
+        //     eprintln!("error: unknown command `self-update`; use `shob update`");
         //     return EXIT_USAGE;
         // }
         _ => {}
@@ -251,8 +251,8 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
         }
     }
 
-    // ---- Legacy-layout migration (flat ~/.rpi → ~/.rpi/agent/) ----
-    // Best-effort; never blocks startup. Skipped when RPI_CODING_AGENT_DIR is
+    // ---- Legacy-layout migration (flat ~/.shob → ~/.shob/agent/) ----
+    // Best-effort; never blocks startup. Skipped when SHOB_CODING_AGENT_DIR is
     // set (an explicit override is its own layout).
     let _ = crate::config::migrate_legacy_layout();
     crate::timings::time("config migrated", crate::timings::TimingNamespace::Main);
@@ -282,7 +282,7 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
 
     // ---- stdin ownership ----
     // Do NOT drain stdin when the run is an RPC/server session: stdin is the
-    // JSONL command channel there (a spawned `rpi --mode rpc` child reads its
+    // JSONL command channel there (a spawned `shob --mode rpc` child reads its
     // commands from stdin), so consuming it up-front would leave the protocol
     // loop nothing to read. `--mode rpc` and `--server` both select RunMode::Rpc.
     //
@@ -298,7 +298,7 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
 
     // ---- @file attachments → text (TS processFileArguments, text branch only) ----
     // Deliberately runs BEFORE the cwd adoption below: `@file` paths come from
-    // the shell that launched `rpi`, so they resolve against the launch cwd no
+    // the shell that launched `shob`, so they resolve against the launch cwd no
     // matter which directory the restored session points at.
     let (file_text, file_images) = match process_file_args(&parsed.file_args, &cwd) {
         Ok(t) => t,
@@ -317,7 +317,7 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
     // working directory. `@file` args above intentionally stay launch-cwd.
     //
     // The session ROOT is frozen first, for the same reason: settings and
-    // `RPI_CODING_AGENT_SESSION_DIR` may change while extensions load, and the
+    // `SHOB_CODING_AGENT_SESSION_DIR` may change while extensions load, and the
     // adopted cwd belongs to another project's tree. Pinning the resolved root
     // into `args` makes `prepare_extensions` and the build below read one root.
     let session_root = crate::session::configured_session_dir(&parsed, &cwd);
@@ -332,7 +332,7 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
     let restored_cwd = crate::session::peek_restored_session_cwd(&selection, &cwd).await;
     cwd_lookup.finish();
     // Pin the session the peek resolved: `-c` re-lists the directory when the
-    // build runs, and another `rpi` may have written a newer session in
+    // build runs, and another `shob` may have written a newer session in
     // between. Adopting one session's directory while opening another would
     // put the tools in a directory the opened conversation never used, which is
     // the failure this adoption exists to prevent.
@@ -503,7 +503,7 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
         })
         .unwrap_or(false);
     if web_requested && (!web_registered || !stdio_claimed) {
-        eprintln!("error: --web requires the rpi-web server extension; it is missing, disabled, or failed to load.\nInstall it with: {command} install rpi-web --github pi-rust/rpi-package\nThen restart with: {command} --web", command = crate::COMMAND);
+        eprintln!("error: --web requires the shob-web server extension; it is missing, disabled, or failed to load.\nInstall it with: {command} install shob-web --github pi-rust/shob-package\nThen restart with: {command} --web", command = crate::COMMAND);
         return EXIT_USAGE;
     }
     let stdio_lifecycle = reload_context
@@ -544,9 +544,9 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
         mode
     };
 
-    // Debug/testing escape hatch: RPI_FORCE_TUI=1 forces interactive mode
+    // Debug/testing escape hatch: SHOB_FORCE_TUI=1 forces interactive mode
     // (for testing the TUI in non-TTY environments).
-    let mode = if std::env::var("RPI_FORCE_TUI")
+    let mode = if std::env::var("SHOB_FORCE_TUI")
         .map(|v| v == "1")
         .unwrap_or(false)
     {
@@ -558,7 +558,7 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
     // A plugin that claimed stdio owns this process's stdin/stdout: force the
     // headless Rpc lifecycle (dispatch startup events, then wait for completion)
     // and let the plugin's own protocol server read/write stdio. This is
-    // authoritative — it must win over TTY detection and RPI_FORCE_TUI,
+    // authoritative — it must win over TTY detection and SHOB_FORCE_TUI,
     // otherwise the host would start a TUI/print run that writes to a stream the
     // plugin owns.
     let mode = if stdio_claimed { RunMode::Rpc } else { mode };
@@ -634,9 +634,9 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
         }
         RunMode::Rpc => {
             // Headless lifecycle (P0): no TUI, but a session still starts/ends —
-            // extensions (e.g. rpi-server) auto-start on SessionStart and clean
+            // extensions (e.g. shob-server) auto-start on SessionStart and clean
             // up on SessionShutdown, exactly as in interactive mode. This is why
-            // `rpi --server` works headless: the SessionStart hook fires and the
+            // `shob --server` works headless: the SessionStart hook fires and the
             // extension brings up the TCP server.
             let before_start = StartupSpan::start(Phase::BeforeStartHooks);
             let veto = crate::session::dispatch_session_event_async(
@@ -646,7 +646,7 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
             .await;
             before_start.finish();
             if let Some(reason) = veto {
-                eprintln!("[rpi] startup vetoed by extension: {reason}");
+                eprintln!("[shob] startup vetoed by extension: {reason}");
                 EXIT_VETOED
             } else {
                 let session_start = StartupSpan::start(Phase::SessionStartHooks);
@@ -657,7 +657,7 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
                 .await
                 {
                     tracing::warn!(
-                        "[rpi] extension vetoed SessionStart (headless, advisory): {reason}"
+                        "[shob] extension vetoed SessionStart (headless, advisory): {reason}"
                     );
                 }
                 session_start.finish();
@@ -667,7 +667,7 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
                     // owns the process's I/O. Wait for its completion or Ctrl+C,
                     // then dispatch SessionShutdown before unloading plugins.
                     eprintln!(
-                        "[rpi] running in headless mode (no TUI); extension owns stdio; Ctrl+C to stop"
+                        "[shob] running in headless mode (no TUI); extension owns stdio; Ctrl+C to stop"
                     );
                     if stdio_claimed {
                         let lifecycle = stdio_lifecycle
@@ -683,8 +683,8 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
                     }
                 } else {
                     // `--mode rpc`: JSONL command loop over stdio — the
-                    // server-side agent that rpi-server spawns and that
-                    // `rpi --connect` talks to. The extension `UiDialog`
+                    // server-side agent that shob-server spawns and that
+                    // `shob --connect` talks to. The extension `UiDialog`
                     // mailbox is bridged over the same channel so a permission
                     // gate can ask the client mid-run.
                     // Release the extension session lock before the RPC loop awaits.
@@ -711,7 +711,7 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
                 .await
                 {
                     tracing::warn!(
-                        "[rpi] extension vetoed SessionShutdown (ignored, closing): {reason}"
+                        "[shob] extension vetoed SessionShutdown (ignored, closing): {reason}"
                     );
                 }
                 code
@@ -776,7 +776,7 @@ fn export_if_requested(parsed: &Args) -> Option<i32> {
                 .file_stem()
                 .and_then(|value| value.to_str())
                 .unwrap_or("session");
-            Path::new(&format!("rpi-session-{stem}.html")).to_path_buf()
+            Path::new(&format!("shob-session-{stem}.html")).to_path_buf()
         });
 
     match crate::export::export_file(input, &output) {
@@ -994,9 +994,9 @@ async fn list_models(search: &str, args: &Args, cwd: &Path) -> i32 {
 /// NOTE: if stdin is *not* a TTY but no bytes arrive (e.g. `pi < /dev/null`),
 /// this returns `None` (empty), which is what TS does too (`data.trim() || undefined`).
 fn read_piped_stdin() -> Option<String> {
-    // Debug/testing escape hatch: RPI_SKIP_STDIN=1 skips reading piped stdin
+    // Debug/testing escape hatch: SHOB_SKIP_STDIN=1 skips reading piped stdin
     // (avoids blocking on non-TTY stdin in automated environments).
-    if std::env::var("RPI_SKIP_STDIN")
+    if std::env::var("SHOB_SKIP_STDIN")
         .map(|v| v == "1")
         .unwrap_or(false)
     {
@@ -1116,7 +1116,7 @@ fn print_resolve_error(e: &ResolveError) {
         ResolveError::Config(_) => {
             eprintln!("error: {e}");
             eprintln!();
-            eprintln!("Check ~/.rpi/auth.json / ~/.rpi/models.json (set RPI_CODING_AGENT_DIR to relocate).");
+            eprintln!("Check ~/.shob/auth.json / ~/.shob/models.json (set SHOB_CODING_AGENT_DIR to relocate).");
         }
         _ => eprintln!("error: {e}"),
     }
@@ -1163,7 +1163,7 @@ mod tests {
 
     #[test]
     fn connect_token_prefers_the_flag_over_the_env_var() {
-        // The flag wins regardless of any RPI_SERVER_TOKEN in the environment.
+        // The flag wins regardless of any SHOB_SERVER_TOKEN in the environment.
         let argv = vec!["--token".to_string(), "flag-token".to_string()];
         assert_eq!(resolve_connect_token(&argv).as_deref(), Some("flag-token"));
     }

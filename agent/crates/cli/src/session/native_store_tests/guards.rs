@@ -5,7 +5,7 @@ async fn build_revalidates_post_prepare_changes_and_keeps_native_root_frozen() {
     let old = temp.path().join("old");
     let _env = crate::config::test_support::SessionDirEnv::new(Some(&old));
     let _restore = Environment::new();
-    std::env::remove_var("RPI_FORCE_TUI");
+    std::env::remove_var("SHOB_FORCE_TUI");
     let agent = temp.path().join("agent");
     std::fs::create_dir_all(&agent).unwrap();
     std::env::set_var(crate::config::CONFIG_DIR_ENV, &agent);
@@ -28,7 +28,7 @@ async fn build_revalidates_post_prepare_changes_and_keeps_native_root_frozen() {
             8 => {
                 arguments.unknown_flags.insert("web".into(), true.into());
             }
-            9 => std::env::set_var("RPI_FORCE_TUI", "1"),
+            9 => std::env::set_var("SHOB_FORCE_TUI", "1"),
             _ => arguments.print = false,
         }
         assert!(
@@ -38,7 +38,7 @@ async fn build_revalidates_post_prepare_changes_and_keeps_native_root_frozen() {
             ),
             "accepted change {change}"
         );
-        std::env::remove_var("RPI_FORCE_TUI");
+        std::env::remove_var("SHOB_FORCE_TUI");
         assert!(!temp.path().join("native").exists());
         assert!(!temp.path().join("changed native").exists());
         assert!(!old.exists());
@@ -46,7 +46,7 @@ async fn build_revalidates_post_prepare_changes_and_keeps_native_root_frozen() {
     let arguments = args();
     let prepared = prepare_extensions(&arguments, temp.path(), false).unwrap();
     let changed = temp.path().join("changed old sessions");
-    std::env::set_var("RPI_CODING_AGENT_SESSION_DIR", &changed);
+    std::env::set_var("SHOB_CODING_AGENT_SESSION_DIR", &changed);
     std::fs::write(
         agent.join("settings.json"),
         serde_json::json!({"sessionDir":changed}).to_string(),

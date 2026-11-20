@@ -1,4 +1,4 @@
-//! `rpi --connect`: connect a [`RemoteDriver`] and run the shared TUI shell.
+//! `shob --connect`: connect a [`RemoteDriver`] and run the shared TUI shell.
 //!
 //! This module is the remote **adapter** only — the shell it drives lives in
 //! [`crate::tui_shell`], and the transport lives in

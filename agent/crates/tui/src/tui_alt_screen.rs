@@ -23,7 +23,7 @@ use crate::terminal::{InputEvent, Terminal, TerminalInfo};
 use crate::terminal_image::CellDimensions;
 
 /// Symbol for ViewportTUI capability check.
-pub const VIEWPORT_TUI: &[u8] = b"rpi-tui/viewport";
+pub const VIEWPORT_TUI: &[u8] = b"shob-tui/viewport";
 
 /// Upper bound on the coalesced repaint rate, matching upstream's
 /// `TuiBase.MIN_RENDER_INTERVAL_MS` (16 ms ≈ 60 fps).
@@ -285,7 +285,7 @@ impl TuiAltScreen {
         }
         let tui = self.clone();
         let spawned = std::thread::Builder::new()
-            .name("rpi-tui-render".to_string())
+            .name("shob-tui-render".to_string())
             .spawn(move || tui.run_render_scheduler());
         match spawned {
             Ok(handle) => {
@@ -615,7 +615,7 @@ impl TuiAltScreen {
     /// `\x1b]2;{title}\x07` (OSC 2); the `DummyTerminal` stub is a no-op. This
     /// accessor locks the real underlying terminal (bypassing the no-op trait
     /// impl returned by [`TUI::terminal`]) so hosts can reflect run state in
-    /// the window title — e.g. "rpi — working" while a turn is in flight.
+    /// the window title — e.g. "shob — working" while a turn is in flight.
     pub fn set_title(&self, title: &str) {
         if let Ok(terminal) = self.terminal.lock() {
             terminal.set_title(title);

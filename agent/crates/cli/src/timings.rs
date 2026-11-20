@@ -1,7 +1,7 @@
 //! Central timing instrumentation for startup profiling.
 //!
 //! Port of the upstream `packages/coding-agent/src/core/timings.ts`. Enable with
-//! the `RPI_TIMING=1` environment variable; disabled builds pay only a single
+//! the `SHOB_TIMING=1` environment variable; disabled builds pay only a single
 //! atomic load per call.
 //!
 //! Timings are grouped by namespace (`main` for the primary startup path,
@@ -11,11 +11,11 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
-/// True when `RPI_TIMING=1`. Evaluated once.
+/// True when `SHOB_TIMING=1`. Evaluated once.
 pub fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
-        std::env::var("RPI_TIMING")
+        std::env::var("SHOB_TIMING")
             .map(|v| v == "1")
             .unwrap_or(false)
     })
@@ -79,7 +79,7 @@ pub fn time(label: impl Into<String>, namespace: TimingNamespace) {
     }
 }
 
-/// Print every accumulated namespace to stderr. No-op unless `RPI_TIMING=1`.
+/// Print every accumulated namespace to stderr. No-op unless `SHOB_TIMING=1`.
 pub fn print_timings() {
     if !enabled() {
         return;
@@ -115,7 +115,7 @@ mod tests {
     #[test]
     fn disabled_by_default() {
         // The env var is unset in the test process unless explicitly set.
-        if std::env::var_os("RPI_TIMING").is_none() {
+        if std::env::var_os("SHOB_TIMING").is_none() {
             assert!(!enabled());
         }
     }

@@ -94,10 +94,10 @@ async fn run_case(settings_idle: u64, cli_idle: Option<u64>, stall: bool) {
         drop(stalled_socket);
         requests
     });
-    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_rpi"));
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_shob"));
     command
         .current_dir(root.path())
-        .env("RPI_CODING_AGENT_DIR", &agent)
+        .env("SHOB_CODING_AGENT_DIR", &agent)
         .env_remove("HTTP_PROXY")
         .env_remove("HTTPS_PROXY")
         .env_remove("ALL_PROXY")
@@ -164,9 +164,9 @@ async fn model_listing_reports_compat_warnings_once() {
     std::fs::write(agent.join("models.json"), json!({"providers":{"fixture":{
         "api":"openai-completions", "models":[{"id":"test", "compat":{"unknownListingFlag":true}}]
     }}}).to_string()).unwrap();
-    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_rpi"))
+    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_shob"))
         .current_dir(root.path())
-        .env("RPI_CODING_AGENT_DIR", agent)
+        .env("SHOB_CODING_AGENT_DIR", agent)
         .args([
             "--offline",
             "--package-only",

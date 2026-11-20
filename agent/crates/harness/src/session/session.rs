@@ -46,8 +46,9 @@ enum MutationPermit {
 }
 
 fn agent_diagnostics_enabled() -> bool {
-    *AGENT_DIAGNOSTICS
-        .get_or_init(|| std::env::var_os("RPI_AGENT_DIAGNOSTICS").is_some_and(|value| value != "0"))
+    *AGENT_DIAGNOSTICS.get_or_init(|| {
+        std::env::var_os("SHOB_AGENT_DIAGNOSTICS").is_some_and(|value| value != "0")
+    })
 }
 
 fn elapsed_ns(started: Instant) -> u64 {
@@ -1100,7 +1101,7 @@ impl Session {
         }
         if let Some(started) = started {
             eprintln!(
-                "RPI_SESSION_DIAGNOSTICS kind=entry entry_type={} append_ns={}",
+                "SHOB_SESSION_DIAGNOSTICS kind=entry entry_type={} append_ns={}",
                 entry_type,
                 elapsed_ns(started),
             );
@@ -1213,7 +1214,7 @@ impl Session {
         };
         if let Some(started) = started {
             eprintln!(
-                "RPI_SESSION_DIAGNOSTICS kind=record record_type={} append_ns={}",
+                "SHOB_SESSION_DIAGNOSTICS kind=record record_type={} append_ns={}",
                 record_type,
                 elapsed_ns(started),
             );

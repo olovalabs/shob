@@ -1,17 +1,17 @@
-//! `rpi auth` subcommand — persistent credential management. Mirrors the
+//! `shob auth` subcommand — persistent credential management. Mirrors the
 //! Rust-relevant slice of the TS `packages/coding-agent/src/cli/auth-command.ts`
 //! + `main.ts:runAuthCommand` + `core/auth-check.ts`.
 //!
 //! The host owns credential storage and standard login/check/logout/refresh
 //! commands. Packages own provider-specific policy and OAuth implementations.
 //!
-//! - `rpi auth login`  — legacy API-key prompt (no echo, via `rpassword`) for
-//!   the default provider and persist it to `~/.rpi/auth.json`.
+//! - `shob auth login`  — legacy API-key prompt (no echo, via `rpassword`) for
+//!   the default provider and persist it to `~/.shob/auth.json`.
 //!   Mirrors the upstream `/login` TUI's `type:"secret"` prompt + `modify`.
-//! - `rpi auth check`  — local-only probe of `auth.json`, models.json and the
+//! - `shob auth check`  — local-only probe of `auth.json`, models.json and the
 //!   provider's declared policy; reports `ready`/`not_ready` (no network call — the upstream
 //!   `--no-refresh` equivalent). `--json` emits a structured result.
-//! - `rpi auth logout` — drop the selected provider entry from `auth.json`
+//! - `shob auth logout` — drop the selected provider entry from `auth.json`
 //!   (env vars are left untouched).
 //!
 //! # Not ported (deferred — see the initial port notes (retired))
@@ -33,7 +33,7 @@ const EXIT_NOT_READY: i32 = 1;
 /// Exit code for an operational error (IO failure, bad args).
 const EXIT_ERROR: i32 = 2;
 
-/// `rpi auth <sub> [args]` entry. `args` is the slice *after* `auth` (i.e. the
+/// `shob auth <sub> [args]` entry. `args` is the slice *after* `auth` (i.e. the
 /// subcommand + its flags). Returns the process exit code. Async to match the
 /// `app::run` shape, though v1 does no async work here.
 pub async fn run(args: &[String]) -> i32 {
@@ -65,7 +65,7 @@ pub async fn run_with_extensions(
     }
 }
 
-/// `rpi auth login [--provider <id>]` — prompt for a key and persist it.
+/// `shob auth login [--provider <id>]` — prompt for a key and persist it.
 async fn run_login(args: &[String], snapshot: Option<&Arc<extensions::RegistrySnapshot>>) -> i32 {
     let provider = parse_provider(args).unwrap_or(DEFAULT_PROVIDER_ID);
     if let Some(snapshot) = snapshot {
@@ -113,7 +113,7 @@ async fn run_login(args: &[String], snapshot: Option<&Arc<extensions::RegistrySn
     0
 }
 
-/// `rpi auth check [--provider <id>] [--json]` — local readiness probe.
+/// `shob auth check [--provider <id>] [--json]` — local readiness probe.
 async fn run_check(args: &[String], snapshot: Option<&Arc<extensions::RegistrySnapshot>>) -> i32 {
     let provider = parse_provider(args).unwrap_or(DEFAULT_PROVIDER_ID);
     let want_json = args.iter().any(|a| a == "--json");
@@ -154,7 +154,7 @@ async fn run_check(args: &[String], snapshot: Option<&Arc<extensions::RegistrySn
     }
 }
 
-/// `rpi auth refresh [--provider <id>]` — refresh a stored OAuth credential.
+/// `shob auth refresh [--provider <id>]` — refresh a stored OAuth credential.
 async fn run_refresh(args: &[String], snapshot: Option<&Arc<extensions::RegistrySnapshot>>) -> i32 {
     let provider = parse_provider(args).unwrap_or(DEFAULT_PROVIDER_ID);
     let Some(snapshot) = snapshot else {
@@ -216,7 +216,7 @@ fn renewal_lock(provider: &str) -> Arc<std::sync::Mutex<()>> {
 }
 
 /// Refresh `provider`'s stored OAuth credential through its package and save
-/// the result. Shared by `rpi auth refresh` and request-time renewal.
+/// the result. Shared by `shob auth refresh` and request-time renewal.
 fn refresh_stored_oauth(
     snapshot: &Arc<extensions::RegistrySnapshot>,
     provider: &str,
@@ -226,7 +226,7 @@ fn refresh_stored_oauth(
     // and manual refresh. The lock is held across the package callback, which may
     // hang, so it is per provider and never shared with another one. It serializes
     // one process only: auth.json has no cross-process lock, so two processes may
-    // still both refresh, as two `rpi auth refresh` runs can.
+    // still both refresh, as two `shob auth refresh` runs can.
     let renewal = renewal_lock(provider);
     let _renewing = renewal
         .lock()
@@ -500,7 +500,7 @@ fn detect_credential(
     Ok(crate::credentials::status(provider, &models, &store, &manifests).source)
 }
 
-/// `rpi auth --help`. Mirrors the TS auth-command usage but scoped to v1.
+/// `shob auth --help`. Mirrors the TS auth-command usage but scoped to v1.
 fn print_auth_help() {
     println!(
         "Usage: {name} auth <subcommand> [options]
@@ -531,7 +531,7 @@ Notes:
   otherwise it is a provider-neutral API-key compatibility prompt. The host
   only handles standard interaction and credential responses for OAuth.
   `refresh` and `logout` use extension actions. API-key providers may still
-  use ~/.rpi/agent/models.json or environment variables.
+  use ~/.shob/agent/models.json or environment variables.
 ",
         name = crate::COMMAND
     );
@@ -544,7 +544,7 @@ mod tests {
         auth_path, test_support::env_lock, upsert_credential, Credential, DEFAULT_PROVIDER_ID,
     };
 
-    /// Scope `RPI_CODING_AGENT_DIR` + the `ANTHROPIC_*` env vars to a temp dir
+    /// Scope `SHOB_CODING_AGENT_DIR` + the `ANTHROPIC_*` env vars to a temp dir
     /// for the duration of a test. Holds the shared env lock for its whole
     /// lifetime so it can't race with config/provider env-mutating tests.
     struct TempConfig {
@@ -706,9 +706,9 @@ mod tests {
         upsert_credential(
             "gateway",
             Credential::ApiKey {
-                key: Some("$RPI_TEST_STORED_KEY".into()),
+                key: Some("$SHOB_TEST_STORED_KEY".into()),
                 env: Some(std::collections::BTreeMap::from([(
-                    "RPI_TEST_STORED_KEY".into(),
+                    "SHOB_TEST_STORED_KEY".into(),
                     "stored-key".into(),
                 )])),
             },
@@ -718,7 +718,7 @@ mod tests {
             detect_credential("gateway", None).unwrap(),
             CredentialSource::StoredApiKey
         );
-        for key in [Some("$RPI_TEST_AUTH_MISSING_VARIABLE"), Some("   "), None] {
+        for key in [Some("$SHOB_TEST_AUTH_MISSING_VARIABLE"), Some("   "), None] {
             upsert_credential(
                 "gateway",
                 Credential::ApiKey {

@@ -22,7 +22,7 @@
 //! Each registered handler is called in registration order with `{type, cwd,
 //! reason}`. One handler's error (nonzero `rc`) or panic **does not abort the
 //! fan-out** — the host logs + skips it and continues to the next handler.
-//! Results are concatenated (bare strings; rpi does NOT track per-extension
+//! Results are concatenated (bare strings; shob does NOT track per-extension
 //! `extensionPath` — v1 documented divergence: paths are unattributed).
 //!
 //! [`EventHandlerFn`]: plugin_sdk::EventHandlerFn
@@ -36,7 +36,7 @@ use crate::registry::{assert_active, RegistrySnapshot};
 
 /// The merged `resources_discover` result across all handlers: bare string
 /// arrays for skills, prompt-templates, and themes. `theme_paths` is collected
-/// for parity but rpi has no theme system yet (accepted, ignored, documented).
+/// for parity but shob has no theme system yet (accepted, ignored, documented).
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct DiscoveredResources {
     pub skill_paths: Vec<String>,

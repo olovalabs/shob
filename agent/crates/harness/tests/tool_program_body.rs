@@ -31,7 +31,7 @@ fn memory(name: &str) -> Session {
 }
 async fn begin(s: &Session) -> String {
     s.append_custom_entry(
-        "rpi.tool_program.child.begin.v1",
+        "shob.tool_program.child.begin.v1",
         Some(json!({"tool":"test"})),
     )
     .await

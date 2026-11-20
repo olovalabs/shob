@@ -35,15 +35,15 @@ fn skill(path: impl AsRef<Path>, name: &str, marker: &str) {
     );
 }
 fn command(root: &Path) -> tokio::process::Command {
-    let mut cmd = tokio::process::Command::new(env!("CARGO_BIN_EXE_rpi"));
+    let mut cmd = tokio::process::Command::new(env!("CARGO_BIN_EXE_shob"));
     cmd.current_dir(root)
-        .env("RPI_CODING_AGENT_DIR", root.join("agent"))
-        .env("RPI_CODING_AGENT_SESSION_DIR", root.join("sessions"))
+        .env("SHOB_CODING_AGENT_DIR", root.join("agent"))
+        .env("SHOB_CODING_AGENT_SESSION_DIR", root.join("sessions"))
         .env(
-            "RPI_PLUGIN_STUB_REGISTRATION_LOG",
+            "SHOB_PLUGIN_STUB_REGISTRATION_LOG",
             root.join("registrations.log"),
         )
-        .env("RPI_EXTENSIONS_DIR", root.join("agent/extensions"))
+        .env("SHOB_EXTENSIONS_DIR", root.join("agent/extensions"))
         .env("NO_PROXY", "127.0.0.1,localhost")
         .env_remove("HTTP_PROXY")
         .env_remove("HTTPS_PROXY")
@@ -227,7 +227,7 @@ async fn concurrent_native_hosts_exact_model_input_invocation_none_and_restart()
     let fixture = fixture_build.library.clone();
     let dll = fixture.file_name().unwrap().to_str().unwrap();
     for name in ["a", "b", "unselected"] {
-        let package = root.join(format!(".rpi/packages/{name}"));
+        let package = root.join(format!(".shob/packages/{name}"));
         skill(
             package.join(format!("skills/package-{name}/SKILL.md")),
             &format!("package-{name}"),
@@ -251,14 +251,14 @@ async fn concurrent_native_hosts_exact_model_input_invocation_none_and_restart()
             format!("INSTRUCTION_{name}_MARKER"),
         );
     }
-    std::fs::create_dir_all(root.join(".rpi/packages/a/extensions")).unwrap();
-    std::fs::copy(&fixture, root.join(".rpi/packages/a/extensions").join(dll)).unwrap();
-    put(root.join(".rpi/packages.json"), json!({"packages":[
+    std::fs::create_dir_all(root.join(".shob/packages/a/extensions")).unwrap();
+    std::fs::copy(&fixture, root.join(".shob/packages/a/extensions").join(dll)).unwrap();
+    put(root.join(".shob/packages.json"), json!({"packages":[
         {"name":"a","version":"1","source":"fixture","cargo_package":"plugin-stub","artifacts":[dll]},
         {"name":"b","version":"1","source":"fixture","cargo_package":"none","artifacts":[]},
         {"name":"unselected","version":"1","source":"fixture","cargo_package":"none","artifacts":[]}
     ]}).to_string());
-    for base in [root.join(".rpi"), root.join("agent")] {
+    for base in [root.join(".shob"), root.join("agent")] {
         skill(
             base.join("skills/unselected/SKILL.md"),
             "unselected",
@@ -408,7 +408,7 @@ async fn concurrent_native_hosts_exact_model_input_invocation_none_and_restart()
     assert_eq!(sa["package"]["cargo_package"], "plugin-stub");
     assert_eq!(
         PathBuf::from(sa["package"]["root"].as_str().unwrap()),
-        std::fs::canonicalize(root.join(".rpi/packages/a")).unwrap()
+        std::fs::canonicalize(root.join(".shob/packages/a")).unwrap()
     );
     assert_eq!(
         sa["instructions"][0]["sha256"],
@@ -509,7 +509,7 @@ async fn concurrent_native_hosts_exact_model_input_invocation_none_and_restart()
         .all(|s| s["modelVisible"] == false));
     extra.stop().await;
     let mut legacy = Host::start_legacy(root).await;
-    assert_eq!(legacy.request("append_entry",json!({"customType":"rpi.value","data":{"key":"rpi.resource-selection.v1","value":{"forged":true}}})).await["success"],false);
+    assert_eq!(legacy.request("append_entry",json!({"customType":"shob.value","data":{"key":"shob.resource-selection.v1","value":{"forged":true}}})).await["success"],false);
     assert_eq!(
         legacy.request("get_resource_state", json!({})).await["success"],
         false
@@ -678,7 +678,7 @@ async fn malformed_missing_unknown_and_duplicate_selection_fail_closed() {
 
 #[test]
 fn exact_mode_reload_is_restart_required_and_preparation_is_frozen() {
-    const CHILD: &str = "RPI_RESOURCE_RELOAD_CHILD";
+    const CHILD: &str = "SHOB_RESOURCE_RELOAD_CHILD";
     if std::env::var_os(CHILD).is_none() {
         let root = tempfile::tempdir().unwrap();
         let output = std::process::Command::new(std::env::current_exe().unwrap())
@@ -688,8 +688,8 @@ fn exact_mode_reload_is_restart_required_and_preparation_is_frozen() {
                 "--nocapture",
             ])
             .env(CHILD, root.path())
-            .env("RPI_CODING_AGENT_DIR", root.path().join("agent"))
-            .env_remove("RPI_EXTENSIONS_DIR")
+            .env("SHOB_CODING_AGENT_DIR", root.path().join("agent"))
+            .env_remove("SHOB_EXTENSIONS_DIR")
             .output()
             .unwrap();
         assert!(
@@ -702,16 +702,16 @@ fn exact_mode_reload_is_restart_required_and_preparation_is_frozen() {
     }
     let root = PathBuf::from(std::env::var_os(CHILD).unwrap());
     put(
-        root.join(".rpi/packages/metadata/persistent.md"),
+        root.join(".shob/packages/metadata/persistent.md"),
         "frozen instructions",
     );
-    put(root.join(".rpi/packages.json"),json!({"packages":[{"name":"metadata","version":"captured-version","source":"captured-source","cargo_package":"captured-identity","artifacts":[]}]}).to_string());
+    put(root.join(".shob/packages.json"),json!({"packages":[{"name":"metadata","version":"captured-version","source":"captured-source","cargo_package":"captured-identity","artifacts":[]}]}).to_string());
     put(
         root.join("resources.json"),
         r#"{"version":1,"main_package":{"name":"metadata","instructions":["persistent.md"]},"tools":{"mode":"none"}}"#,
     );
     skill(
-        root.join(".rpi/skills/unselected/SKILL.md"),
+        root.join(".shob/skills/unselected/SKILL.md"),
         "unselected",
         "UNSELECTED_MARKER",
     );
@@ -731,7 +731,7 @@ fn exact_mode_reload_is_restart_required_and_preparation_is_frozen() {
         drop(prepare_extensions(&persistent_args,&root,true).unwrap());
         assert!(!uncreated_root.exists(),"preflight must not create a session root/file/lock");
         let prepared = prepare_extensions(&args, &root, true).unwrap();
-        put(root.join(".rpi/packages.json"),json!({"packages":[{"name":"metadata","version":"changed-version","source":"changed-source","cargo_package":"changed-identity","artifacts":[]}]}).to_string());
+        put(root.join(".shob/packages.json"),json!({"packages":[{"name":"metadata","version":"changed-version","source":"changed-source","cargo_package":"changed-identity","artifacts":[]}]}).to_string());
         // The config is a frozen startup snapshot, not a second discovery opportunity.
         put(
             root.join("resources.json"),
@@ -765,14 +765,14 @@ fn exact_mode_reload_is_restart_required_and_preparation_is_frozen() {
             .unwrap()
             .clone_host();
         for key in [
-            "rpi.resource-selection.v1",
-            "rpi.resource-inventory.v1",
-            "rpi.resource-selection.v2",
+            "shob.resource-selection.v1",
+            "shob.resource-inventory.v1",
+            "shob.resource-selection.v2",
         ] {
             for value in [Value::Null, json!({"forged":true})] {
                 assert!(host
                     .append_entry(
-                        json!({"customType":"rpi.value","data":{"key":key,"value":value}})
+                        json!({"customType":"shob.value","data":{"key":key,"value":value}})
                     )
                     .await
                     .unwrap_err()
@@ -780,7 +780,7 @@ fn exact_mode_reload_is_restart_required_and_preparation_is_frozen() {
             }
         }
         host.append_entry(
-            json!({"customType":"rpi.value","data":{"key":"user.preference","value":"kept"}}),
+            json!({"customType":"shob.value","data":{"key":"user.preference","value":"kept"}}),
         )
         .await
         .unwrap();
@@ -792,7 +792,7 @@ fn exact_mode_reload_is_restart_required_and_preparation_is_frozen() {
             .unwrap();
         assert_eq!(values.get("user.preference"), Some(&json!("kept")));
         assert!(values
-            .get("rpi.resource-selection.v1")
+            .get("shob.resource-selection.v1")
             .unwrap()
             .get("inventory")
             .is_some());

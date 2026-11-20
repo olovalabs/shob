@@ -15,13 +15,13 @@ struct Host {
 #[async_trait::async_trait]
 impl RuntimeActionHost for Host {
     fn stop_round(&self, args: Value) -> Result<Value, String> {
-        assert!(args.get("__rpiRuntimeKey").is_none());
+        assert!(args.get("__shobRuntimeKey").is_none());
         self.stop_rounds.fetch_add(1, Ordering::SeqCst);
         Ok(json!({"requested":true}))
     }
 
     async fn list_commands(&self, args: Value) -> Result<Value, String> {
-        assert!(args.get("__rpiRuntimeKey").is_none());
+        assert!(args.get("__shobRuntimeKey").is_none());
         self.command_lists.fetch_add(1, Ordering::SeqCst);
         Ok(
             json!({"commands":[{"name":"integrated","description":"both actions coexist","source":"extension"}]}),
@@ -34,7 +34,7 @@ impl RuntimeActionHost for Host {
         args: Value,
         sink: SideQuestionSink,
     ) -> Result<Value, String> {
-        assert!(args.get("__rpiRuntimeKey").is_none());
+        assert!(args.get("__shobRuntimeKey").is_none());
         sink(json!({"op":"register","id":"btw-test","type":"text","slot":"overlay"}))?;
         self.side_sinks.lock().unwrap().push(sink);
         Ok(json!({"owner":owner}))
@@ -42,7 +42,7 @@ impl RuntimeActionHost for Host {
     async fn abort(&self, args: Value) -> Result<Value, String> {
         self.aborts.fetch_add(1, Ordering::SeqCst);
         assert!(
-            args.get("__rpiRuntimeKey").is_none(),
+            args.get("__shobRuntimeKey").is_none(),
             "capabilities must not reach action payloads"
         );
         // No run is active in this mock: mirror the idle-lane no-op contract so
@@ -104,7 +104,7 @@ impl RuntimeActionHost for Host {
             "dispatch must retain the originating invocation's cancellation"
         );
         assert!(
-            args.get("__rpiRuntimeKey").is_none(),
+            args.get("__shobRuntimeKey").is_none(),
             "capabilities must not reach action payloads"
         );
         Ok(json!({"owner":owner}))
@@ -146,7 +146,7 @@ async fn child_actions_require_a_live_parent_invocation_and_its_capability() {
     assert_eq!(
         call(
             parent.user_data() as usize,
-            json!({"op":"start","__rpiRuntimeKey":"guessed"})
+            json!({"op":"start","__shobRuntimeKey":"guessed"})
         )
         .0,
         1
@@ -154,7 +154,7 @@ async fn child_actions_require_a_live_parent_invocation_and_its_capability() {
     assert_eq!(
         call(
             child.user_data() as usize,
-            json!({"op":"start","__rpiRuntimeKey":child.invocation_key()})
+            json!({"op":"start","__shobRuntimeKey":child.invocation_key()})
         )
         .0,
         1
@@ -165,7 +165,7 @@ async fn child_actions_require_a_live_parent_invocation_and_its_capability() {
         assert_eq!(
             call(
                 parent.user_data() as usize,
-                json!({"op":"start","__rpiRuntimeKey":parent.invocation_key()})
+                json!({"op":"start","__shobRuntimeKey":parent.invocation_key()})
             )
             .0,
             1
@@ -173,7 +173,7 @@ async fn child_actions_require_a_live_parent_invocation_and_its_capability() {
     }
     let accepted = call(
         parent.user_data() as usize,
-        json!({"op":"start","__rpiRuntimeKey":parent.invocation_key()}),
+        json!({"op":"start","__shobRuntimeKey":parent.invocation_key()}),
     );
     assert_eq!(accepted.0, 0);
     assert_eq!(
@@ -185,7 +185,7 @@ async fn child_actions_require_a_live_parent_invocation_and_its_capability() {
     assert_eq!(
         call(
             parent.user_data() as usize,
-            json!({"op":"start","__rpiRuntimeKey":parent.invocation_key()})
+            json!({"op":"start","__shobRuntimeKey":parent.invocation_key()})
         )
         .0,
         1

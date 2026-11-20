@@ -1,8 +1,8 @@
-//! `plugin-stub` — a minimal **Rust cdylib** rpi plugin.
+//! `plugin-stub` — a minimal **Rust cdylib** shob plugin.
 //!
 //! This is the Part B2 ABI smoke target. The host loads it via `extensions`
 //! (`--extensions-dir examples/plugin-stub`'), which looks up
-//! `rpi_plugin_register` (the unified ABI) and calls it with the host vtable. In `register` this
+//! `shob_plugin_register` (the unified ABI) and calls it with the host vtable. In `register` this
 //! plugin:
 //!
 //! 1. Registers an **`echo`** tool — params `{ "text": string }`, returns that
@@ -29,7 +29,7 @@
 //!
 //! ```sh
 //! cargo build -p plugin-stub
-//! rpi --extensions-dir examples/plugin-stub/target/.../echo.dll -p 'echo "hi"'
+//! shob --extensions-dir examples/plugin-stub/target/.../echo.dll -p 'echo "hi"'
 //! ```
 //! (`echo.dll`/`libecho.so`/`libecho.dylib` depending on platform — the loader
 //! recognizes all of `.{dll,so,dylib,pyd}`.)
@@ -580,14 +580,14 @@ plugin_sdk::string_handler! {
 // The register entrypoint
 // ---------------------------------------------------------------------------
 
-// The SDK macro exports the unified `rpi_plugin_register` symbol and applies
+// The SDK macro exports the unified `shob_plugin_register` symbol and applies
 // the version/null checks before running our registration body. Return 0 on
 // success; nonzero means the host logs and skips this plugin.
 plugin_sdk::export_plugin!(|api| {
     // Opt-in real registration side effect for native host lifecycle tests.
     // The build-only digest proves a test loaded its freshly built source, not
     // an unrelated DLL in a shared target directory. No output by default.
-    if let Some(path) = std::env::var_os("RPI_PLUGIN_STUB_REGISTRATION_LOG") {
+    if let Some(path) = std::env::var_os("SHOB_PLUGIN_STUB_REGISTRATION_LOG") {
         use std::io::Write;
         if let Ok(mut log) = std::fs::OpenOptions::new()
             .create(true)
@@ -597,7 +597,7 @@ plugin_sdk::export_plugin!(|api| {
             let _ = writeln!(
                 log,
                 "register {}",
-                option_env!("RPI_RESOURCE_FIXTURE_SOURCE_SHA256").unwrap_or("unversioned")
+                option_env!("SHOB_RESOURCE_FIXTURE_SOURCE_SHA256").unwrap_or("unversioned")
             );
         }
     }

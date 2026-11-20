@@ -10,7 +10,7 @@ impl RecoveryPhase {
     pub(crate) fn start(phase: &'static str) -> Self {
         Self {
             phase,
-            started: std::env::var_os("RPI_SESSION_DIAGNOSTICS")
+            started: std::env::var_os("SHOB_SESSION_DIAGNOSTICS")
                 .filter(|value| value != "0")
                 .map(|_| Instant::now()),
         }
@@ -23,7 +23,7 @@ impl RecoveryPhase {
             let mut stderr = std::io::stderr().lock();
             let _ = writeln!(
                 stderr,
-                "RPI_SESSION_DIAGNOSTICS phase={} elapsed_ns={} input={} output={}",
+                "SHOB_SESSION_DIAGNOSTICS phase={} elapsed_ns={} input={} output={}",
                 self.phase,
                 started.elapsed().as_nanos().min(u64::MAX as u128),
                 input,

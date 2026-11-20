@@ -18,8 +18,8 @@ use uuid::Uuid;
 use crate::error::{SessionError, SessionResult};
 use crate::session::{types::*, Session};
 
-pub const CHUNK_CUSTOM_TYPE: &str = "rpi.tool_program.body_chunk.v1";
-pub const COMMIT_CUSTOM_TYPE: &str = "rpi.tool_program.body_commit.v1";
+pub const CHUNK_CUSTOM_TYPE: &str = "shob.tool_program.body_chunk.v1";
+pub const COMMIT_CUSTOM_TYPE: &str = "shob.tool_program.body_commit.v1";
 pub const CHUNK_BYTES: usize = 32 * 1024;
 pub const MAX_CHUNKS: usize = 1024;
 pub const MAX_BODY_BYTES: usize = CHUNK_BYTES * MAX_CHUNKS;

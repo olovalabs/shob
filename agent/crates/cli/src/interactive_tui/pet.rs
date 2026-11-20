@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use tui::ansi::visible_width;
 use tui::utils::{truncate_to_width, wrap_text_with_ansi};
 
-pub(super) const PET_KEY: &str = "rpi.pet";
+pub(super) const PET_KEY: &str = "shob.pet";
 
 #[derive(serde::Deserialize)]
 struct PetState {

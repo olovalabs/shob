@@ -118,7 +118,7 @@ fn process_large_progress_replace_spill_and_prune_commit_boundaries() {
                     "baseline full frame contents mismatch"
                 );
                 std::fs::create_dir(dir.path().join("oracle")).unwrap();
-                let control = dir.path().join("oracle/control.rpinative");
+                let control = dir.path().join("oracle/control.shobnative");
                 std::fs::copy(&path, &control).unwrap();
                 let s = open(&control).await;
                 action(&s, kind).await;

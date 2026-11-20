@@ -959,7 +959,7 @@ fn run_streaming_provider_request(
 /// was cancelled" from "the plugin failed". It cannot collide with a real plugin
 /// error: plugin-side failures are formatted as `plugin provider {id} …`, and
 /// this marker starts with a NUL no plugin-produced text goes through.
-const CANCELLED_MARKER: &str = "\u{0}rpi:cancelled";
+const CANCELLED_MARKER: &str = "\u{0}shob:cancelled";
 
 /// The terminal message for a request whose caller went away. `StopReason::Aborted`
 /// is what the built-in providers use, and the crate's `push_terminal` maps it to

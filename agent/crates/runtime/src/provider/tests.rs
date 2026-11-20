@@ -7,7 +7,7 @@ use crate::thinking::{parse_thinking_level, VALID_THINKING_LEVELS};
 
 #[test]
 fn catalog_and_resolution_return_compat_diagnostics_without_writing_stderr() {
-    const CHILD: &str = "RPI_TEST_QUIET_COMPAT_CHILD";
+    const CHILD: &str = "SHOB_TEST_QUIET_COMPAT_CHILD";
     if std::env::var_os(CHILD).is_none() {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "provider::tests::catalog_and_resolution_return_compat_diagnostics_without_writing_stderr", "--nocapture"])
@@ -292,7 +292,7 @@ fn settings_default_model_wins_when_authed() {
     // A copied pi `settings.json` carrying `defaultModel` (step 3 of pi's
     // `findInitialModel`) overrides the built-in Anthropic default
     // when that model is in the catalog and authed. Mirrors the on-disk-
-    // Drop an agent dir at `~/.rpi/agent/` and the saved
+    // Drop an agent dir at `~/.shob/agent/` and the saved
     // default comes alive on launch (no `--model` needed).
     let _env = TestEnv::new();
     std::env::set_var(ANTHROPIC_API_KEY_ENV, "k");
@@ -1711,7 +1711,7 @@ fn models_json_auth_header_satisfies_auth_without_env() {
 /// `findInitialModel` step-4 fallback `availableModels[0]` over the
 /// auth-filtered snapshot. The built-in Anthropic models carry no auth in a
 /// gateway-only setup, so the gateway model is the first (and only)
-/// authenticated model. This is the `rpi -p hi` (no `--model`) case.
+/// authenticated model. This is the `shob -p hi` (no `--model`) case.
 #[test]
 fn default_prefers_gateway_when_only_gateway_configured() {
     // TestEnv already holds the shared env_lock for its whole lifetime —
@@ -1829,7 +1829,7 @@ fn models_json_bare_apikey_satisfies_auth_without_env() {
 /// the default selector must pick the gateway model (the only authed one),
 // NOT the built-in claude-sonnet-5 — which would carry a gateway x-api-key to
 // api.anthropic.com → 401, the same misrouting the Bearer fold guards
-// against. This is the `rpi -p hi` (no `--model`) case for a bare-apiKey
+// against. This is the `shob -p hi` (no `--model`) case for a bare-apiKey
 /// gateway.
 #[test]
 fn default_prefers_gateway_when_only_bare_apikey_configured() {
@@ -1859,13 +1859,13 @@ fn default_prefers_gateway_when_only_bare_apikey_configured() {
 
 /// A bare `apiKey` that references an unset env var resolves to `None` and
 /// is skipped (mirrors pi `resolveConfigValue` semantics) — the auth gate
-/// falls through to the env/`rpi auth login` sources rather than partially
+/// falls through to the env/`shob auth login` sources rather than partially
 /// authenticating with an empty key.
 #[test]
 fn models_json_bare_apikey_env_template_resolves() {
     let _env = TestEnv::new();
     // Prime the env var the apiKey references.
-    std::env::set_var("RPI_TEST_GATEWAY_KEY", "env-resolved-secret");
+    std::env::set_var("SHOB_TEST_GATEWAY_KEY", "env-resolved-secret");
     std::fs::write(
         config::models_path().unwrap(),
         r#"{
@@ -1873,7 +1873,7 @@ fn models_json_bare_apikey_env_template_resolves() {
     "gateway": {
       "baseUrl": "https://gw.example.com",
       "api": "anthropic-messages",
-      "apiKey": "$RPI_TEST_GATEWAY_KEY",
+      "apiKey": "$SHOB_TEST_GATEWAY_KEY",
       "models": [
         { "id": "custom-claude", "contextWindow": 200000, "maxTokens": 8192 }
       ]
@@ -1897,7 +1897,7 @@ fn models_json_bare_apikey_env_template_resolves() {
             "env-resolved-secret".into()
         ))
     );
-    std::env::remove_var("RPI_TEST_GATEWAY_KEY");
+    std::env::remove_var("SHOB_TEST_GATEWAY_KEY");
 }
 
 /// `authHeader: true` takes precedence over a bare `apiKey` on the SAME or a

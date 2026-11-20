@@ -483,7 +483,7 @@ async fn context_uses_metadata_before_compaction_and_payload_filter_precedes_lim
     }));
     for seq in 8..=10 {
         entries.push(Entry::Message(MessageEntry { base: base(seq,"message"), terminate: None,
-            message: agent::message::AgentMessage::Custom(agent::message::CustomMessage::new("custom", Vec::new(), serde_json::json!({"__rpiOutbox":{"key": if seq == 8 { "wanted" } else { "other" }}}),seq as i64)),
+            message: agent::message::AgentMessage::Custom(agent::message::CustomMessage::new("custom", Vec::new(), serde_json::json!({"__shobOutbox":{"key": if seq == 8 { "wanted" } else { "other" }}}),seq as i64)),
         }));
     }
     let mut eager = SessionState::new();

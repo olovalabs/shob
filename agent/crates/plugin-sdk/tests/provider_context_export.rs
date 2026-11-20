@@ -63,7 +63,7 @@ extern "C" fn runtime_action(
 }
 fn api() -> sdk::PluginApi {
     sdk::PluginApi {
-        abi_version: sdk::RPI_PLUGIN_ABI_VERSION_UNIFIED,
+        abi_version: sdk::SHOB_PLUGIN_ABI_VERSION_UNIFIED,
         struct_size: std::mem::size_of::<sdk::PluginApi>() as u32,
         free_string: sdk::callbacks::free_string,
         register_tool: None,
@@ -129,7 +129,7 @@ fn exported_context_handles_concurrent_credentials_errors_shutdown_and_old_hosts
         let mut api = api();
         api.register_streaming_provider = Some(register);
         api.register_plugin_lifecycle = has_lifecycle.then_some(lifecycle);
-        assert_eq!(rpi_plugin_register(&api), 0);
+        assert_eq!(shob_plugin_register(&api), 0);
         let registration = REGISTERED.with(|slot| slot.borrow_mut().take().unwrap());
         assert_eq!(registration.2 != 0, has_lifecycle);
         let workers: Vec<_> = ["first-secret", "second-secret"].into_iter().map(|key| std::thread::spawn(move || {

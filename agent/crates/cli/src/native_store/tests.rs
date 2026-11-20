@@ -60,7 +60,7 @@ fn missing_empty_duplicate_and_conflicting_parameters_fail_closed() {
 #[test]
 fn early_paths_are_rejected_without_matching_prompt_substrings() {
     for command in [
-        "__rpi_dev_cleanup",
+        "__shob_dev_cleanup",
         "dev",
         "dev-local",
         "auth",

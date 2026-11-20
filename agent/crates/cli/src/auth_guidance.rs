@@ -5,7 +5,7 @@
 //! it" messages so every entry point (startup, `/model`, provider resolution)
 //! says the same thing.
 
-/// Where the login help points. rpi keeps its documentation embedded in the
+/// Where the login help points. shob keeps its documentation embedded in the
 /// crate, so this is a stable identifier rather than a filesystem path.
 pub const DOCS_PROVIDERS: &str = "docs/providers.md";
 pub const DOCS_MODELS: &str = "docs/models.md";

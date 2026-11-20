@@ -44,7 +44,7 @@ impl Scope {
     }
     pub fn root(self, cwd: &Path) -> Result<PathBuf> {
         let logical = match self {
-            Self::Project => cwd.join(".rpi"),
+            Self::Project => crate::resource_dirs::project_root(cwd),
             Self::Global => crate::config::agent_dir().map_err(err)?,
         };
         resolve_scope_root(&logical)
@@ -54,7 +54,7 @@ impl Scope {
 /// Resolve only the external prefix of an owned scope root.
 ///
 /// The root itself is deliberately appended after canonicalization so a link
-/// at `.rpi`/`agent` remains visible to `checked_path`. Missing parents are
+/// at `.shob`/`agent` remains visible to `checked_path`. Missing parents are
 /// represented by a tail appended to the nearest existing parent; this is
 /// path resolution only and never creates directories or reads metadata files.
 fn resolve_scope_root(root: &Path) -> Result<PathBuf> {
@@ -394,7 +394,7 @@ pub(crate) fn shared_lease(root: &Path) -> Result<Lease> {
 fn ensure_complete(root: &Path) -> Result<()> {
     if read_bytes(&root.join(JOURNAL), MAX_META)?.is_some() {
         return Err(
-            "incomplete resource transaction; run rpi resource recover with this scope".into(),
+            "incomplete resource transaction; run shob resource recover with this scope".into(),
         );
     }
     Ok(())
@@ -617,7 +617,7 @@ pub(crate) fn legacy_unowned(root: &Path, kind: &str, name: &str) -> Result<()> 
         .iter()
         .any(|r| r.kind == kind && r.name.eq_ignore_ascii_case(name))
     {
-        return Err("resource is managed by rpi resource; use its update/remove commands".into());
+        return Err("resource is managed by shob resource; use its update/remove commands".into());
     }
     if kind == Kind::Package {
         legacy_package_identity(name)?;
@@ -673,7 +673,9 @@ pub(crate) fn legacy_unowned_targets(root: &Path, targets: &[PathBuf]) -> Result
     for r in receipts(root)?.resources {
         let owned = path_identity(&root.join(&r.target))?;
         if targets.iter().any(|t| t == &owned || t.starts_with(&owned)) {
-            return Err("target owned by rpi resource; refusing legacy replacement/removal".into());
+            return Err(
+                "target owned by shob resource; refusing legacy replacement/removal".into(),
+            );
         }
     }
     Ok(())

@@ -77,9 +77,9 @@ fn trusted_project_defaults_override_global_defaults_for_resolution() {
     )
     .unwrap();
     let project = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(project.path().join(".rpi")).unwrap();
+    std::fs::create_dir_all(project.path().join(".shob")).unwrap();
     std::fs::write(
-        project.path().join(".rpi/settings.json"),
+        project.path().join(".shob/settings.json"),
         r#"{"defaultProvider":"project","defaultModel":"project-model"}"#,
     )
     .unwrap();
@@ -664,7 +664,7 @@ mod package_oauth_refresh {
         let session = session(true);
         config::upsert_oauth_token("acme", "stale-access".into(), "refresh-1".into(), 1).unwrap();
         let resolved = resolve(&session).unwrap();
-        // Another rpi process, or `rpi auth refresh`, renewed the stored credential.
+        // Another shob process, or `shob auth refresh`, renewed the stored credential.
         config::upsert_oauth_token(
             "acme",
             "other-access".into(),

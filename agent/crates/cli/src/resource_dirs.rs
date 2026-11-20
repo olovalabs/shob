@@ -7,7 +7,7 @@
 //! collision (skills.ts:399-428), with a collision diagnostic naming the winner
 //! (kept) and loser (dropped) paths.
 //!
-//! rpi's library loaders (`harness::skills::load_skills`,
+//! shob's library loaders (`harness::skills::load_skills`,
 //! `harness::prompt_templates::load_prompt_templates`) are **append-only**
 //! (no dedup-by-name) — they correctly mirror pi's *per-directory* discovery
 //! (SKILL.md-first / root-.md / subdir recursion for skills; non-recursive `.md`
@@ -17,15 +17,15 @@
 //!
 //! **Trust gate (v1 divergence):** pi gates project `SYSTEM.md` /
 //! `APPEND_SYSTEM.md` (and some project resources) behind
-//! `settingsManager.isProjectTrusted()`. rpi v1 has **no trust prompt**
+//! `settingsManager.isProjectTrusted()`. shob v1 has **no trust prompt**
 //! (`config.rs:349`: "does not gate any project resources behind trust in v1"),
-//! so project resources are read unconditionally here. A copied `.rpi/`
+//! so project resources are read unconditionally here. A copied `.shob/`
 //! directory drops in and works (the documented intent). Full trust gating is
 //! deferred.
 //!
 //! **Deferred (documented):** `.agents/skills` + `~/.agents/skills`;
 //! shadowed-context-file dedup (`findShadowedContextFile`); full structured
-//! winner/loser collision diagnostics (rpi v1 encodes collisions as a
+//! winner/loser collision diagnostics (shob v1 encodes collisions as a
 //! `SkillDiagnostic`/`PromptTemplateDiagnostic` with a descriptive message).
 
 use std::collections::HashMap;
@@ -40,43 +40,53 @@ use harness::skills::{load_skills, LoadSkillsResult, SkillDiagnostic, SkillDiagn
 use harness::types::{PromptTemplate, Skill};
 use tools::env::ExecutionEnv;
 
-/// The project-local rpi configuration directory.
-pub const PROJECT_CONFIG_DIR_NAME: &str = ".rpi";
+/// The project-local shob configuration directory.
+pub const PROJECT_CONFIG_DIR_NAME: &str = ".shob";
 
-/// Resolve the preferred project-local resource subdir `<cwd>/.rpi/<sub>`.
-pub fn project_dir(cwd: &Path, sub: &str) -> PathBuf {
-    cwd.join(PROJECT_CONFIG_DIR_NAME).join(sub)
+/// Resolve the preferred project-local resource subdir `<cwd>/.shob/<sub>`.
+pub fn project_root(cwd: &Path) -> PathBuf {
+    let preferred = cwd.join(PROJECT_CONFIG_DIR_NAME);
+    let legacy = cwd.join(".rpi");
+    if !preferred.exists() && legacy.is_dir() {
+        legacy
+    } else {
+        preferred
+    }
 }
 
-/// Resolve project-local resource dirs. Only `.rpi` is read.
+pub fn project_dir(cwd: &Path, sub: &str) -> PathBuf {
+    project_root(cwd).join(sub)
+}
+
+/// Resolve project-local resource dirs, with a fallback for existing projects.
 pub fn project_dirs(cwd: &Path, sub: &str) -> Vec<PathBuf> {
     vec![project_dir(cwd, sub)]
 }
 
 /// Resolve the global resource subdir `<agent_dir>/<sub>` (e.g.
-/// `~/.rpi/agent/skills`). Returns `None` if the agent dir can't be resolved
-/// (no home dir + no `RPI_CODING_AGENT_DIR`) — callers then proceed project-only.
+/// `~/.shob/agent/skills`). Returns `None` if the agent dir can't be resolved
+/// (no home dir + no `SHOB_CODING_AGENT_DIR`) — callers then proceed project-only.
 pub fn global_dir(sub: &str) -> Option<PathBuf> {
     crate::config::agent_dir().ok().map(|d| d.join(sub))
 }
 
 /// The candidate context/SYSTEM/APPEND filenames live directly under
-/// `<cwd>/.rpi/` and `<agent_dir>/`.
+/// `<cwd>/.shob/` and `<agent_dir>/`.
 pub fn project_config_file(cwd: &Path, name: &str) -> PathBuf {
-    cwd.join(PROJECT_CONFIG_DIR_NAME).join(name)
+    project_root(cwd).join(name)
 }
 
-/// Resolve project config files. Only `.rpi` is read.
+/// Resolve project config files, with a fallback for existing projects.
 pub fn project_config_files(cwd: &Path, name: &str) -> Vec<PathBuf> {
     vec![project_config_file(cwd, name)]
 }
 
-/// Global config file under `<agent_dir>/<name>` (`~/.rpi/agent/SYSTEM.md`).
+/// Global config file under `<agent_dir>/<name>` (`~/.shob/agent/SYSTEM.md`).
 pub fn global_config_file(name: &str) -> Option<PathBuf> {
     crate::config::agent_dir().ok().map(|d| d.join(name))
 }
 
-/// Discover `SYSTEM.md` from the project `.rpi/` directory or global agent dir.
+/// Discover `SYSTEM.md` from the project `.shob/` directory or global agent dir.
 pub fn discover_system_prompt_file(cwd: &Path) -> Option<PathBuf> {
     discover_system_prompt_file_with_trust(cwd, true)
 }
@@ -115,7 +125,7 @@ pub fn discover_append_system_prompt_file(cwd: &Path) -> Option<PathBuf> {
 /// duplicates emit a collision diagnostic naming the winner (kept) and loser
 /// (dropped) paths. Load dirs in **project→global** order so project wins.
 ///
-/// **v1 divergence:** rpi's `SkillDiagnostic` has no structured
+/// **v1 divergence:** shob's `SkillDiagnostic` has no structured
 /// `winnerPath`/`loserPath` fields (pi's `SkillCollisionDiagnostic`); the
 /// collision is encoded as an `InvalidMetadata` diagnostic with a descriptive
 /// message naming both paths and `path` set to the loser.
@@ -149,7 +159,7 @@ pub fn dedupe_skills(skills: Vec<Skill>, diagnostics: &mut Vec<SkillDiagnostic>)
 /// **v1 divergence:** `PromptTemplate` carries no `file_path` (only
 /// name/description/content), so the collision diagnostic's `path` is set to the
 /// colliding template **name** rather than a file path; and the code is
-/// `ParseFailed` (rpi has no dedicated collision code) with a descriptive
+/// `ParseFailed` (shob has no dedicated collision code) with a descriptive
 /// message. Structured winner/loser diagnostics are deferred.
 pub fn dedupe_prompt_templates(
     templates: Vec<PromptTemplate>,
@@ -269,7 +279,7 @@ pub async fn load_prompt_templates_with_precedence(
 }
 
 /// The ordered skill dirs for a project: configured project paths, then
-/// `[<cwd>/.rpi/skills, <agent_dir>/skills]`, followed by
+/// `[<cwd>/.shob/skills, <agent_dir>/skills]`, followed by
 /// configured and conventional global paths.
 /// The global dir is omitted when `agent_dir()` can't be resolved (no home dir).
 pub fn skill_dirs(cwd: &Path) -> Vec<PathBuf> {
@@ -282,7 +292,7 @@ pub fn skill_dirs(cwd: &Path) -> Vec<PathBuf> {
 }
 
 /// Project-only skill directories, excluding user/global configuration. This
-/// is used by `rpi dev-local` so the current extension can be debugged with
+/// is used by `shob dev-local` so the current extension can be debugged with
 /// the skills in the current checkout without importing unrelated skills.
 pub fn project_skill_dirs(cwd: &Path) -> Vec<PathBuf> {
     project_resource_dirs(cwd, "skills", ResourceKind::Skills)
@@ -295,7 +305,7 @@ pub fn global_skill_dirs() -> Vec<PathBuf> {
 }
 
 /// The ordered prompt-template paths for a project: configured paths, then
-/// `[<cwd>/.rpi/prompts, <agent_dir>/prompts]`.
+/// `[<cwd>/.shob/prompts, <agent_dir>/prompts]`.
 pub fn prompt_template_dirs(cwd: &Path) -> Vec<PathBuf> {
     let mut dirs = project_prompt_template_dirs(cwd);
     if let Some(g) = global_dir("prompts") {
@@ -316,7 +326,7 @@ pub fn global_prompt_template_dirs() -> Vec<PathBuf> {
 
 /// The ordered Rust extension directories for a project. Configured paths are
 /// added before conventional directories so an explicit project path can be
-/// used for development while `.rpi` defaults stay lower precedence.
+/// used for development while `.shob` defaults stay lower precedence.
 pub fn extension_dirs(cwd: &Path) -> Vec<PathBuf> {
     let mut dirs = project_resource_dirs(cwd, "extensions", ResourceKind::Extensions);
     if let Some(g) = global_dir("extensions") {
@@ -349,7 +359,7 @@ fn project_resource_dirs(cwd: &Path, sub: &str, kind: ResourceKind) -> Vec<PathB
     }
     // Project packages are explicit, local resources. Keep configured project
     // directories first, then package resources, then the conventional
-    // `.rpi/<sub>` directory so existing precedence remains stable.
+    // `.shob/<sub>` directory so existing precedence remains stable.
     let package_kind = match kind {
         ResourceKind::Skills => "skills",
         ResourceKind::Prompts => "prompts",
@@ -418,19 +428,21 @@ mod tests {
     fn dedupe_skills_first_wins_keeps_project() {
         // Project loaded first, global second; same name → project (first) wins.
         let skills = vec![
-            skill("echo", "/proj/.rpi/skills/echo/SKILL.md"),
-            skill("echo", "/home/.rpi/agent/skills/echo/SKILL.md"),
+            skill("echo", "/proj/.shob/skills/echo/SKILL.md"),
+            skill("echo", "/home/.shob/agent/skills/echo/SKILL.md"),
         ];
         let mut diags = Vec::new();
         let out = dedupe_skills(skills, &mut diags);
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].file_path, "/proj/.rpi/skills/echo/SKILL.md");
+        assert_eq!(out[0].file_path, "/proj/.shob/skills/echo/SKILL.md");
         assert_eq!(diags.len(), 1);
         assert!(diags[0]
             .message
-            .contains("/home/.rpi/agent/skills/echo/SKILL.md"));
-        assert!(diags[0].message.contains("/proj/.rpi/skills/echo/SKILL.md"));
-        assert_eq!(diags[0].path, "/home/.rpi/agent/skills/echo/SKILL.md");
+            .contains("/home/.shob/agent/skills/echo/SKILL.md"));
+        assert!(diags[0]
+            .message
+            .contains("/proj/.shob/skills/echo/SKILL.md"));
+        assert_eq!(diags[0].path, "/home/.shob/agent/skills/echo/SKILL.md");
     }
 
     #[test]
@@ -486,21 +498,32 @@ mod tests {
     }
 
     #[test]
-    fn project_dir_uses_rpi_name() {
+    fn project_dir_uses_shob_name() {
         let d = project_dir(Path::new("/proj"), "skills");
-        assert_eq!(d, PathBuf::from("/proj/.rpi/skills"));
+        assert_eq!(d, PathBuf::from("/proj/.shob/skills"));
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join(".rpi")).unwrap();
+        assert_eq!(
+            project_dir(root.path(), "skills"),
+            root.path().join(".rpi/skills")
+        );
+        std::fs::create_dir(root.path().join(".shob")).unwrap();
+        assert_eq!(
+            project_dir(root.path(), "skills"),
+            root.path().join(".shob/skills")
+        );
     }
 
     #[test]
-    fn project_dirs_only_use_rpi_after_de_pi() {
+    fn project_dirs_only_use_shob_after_de_pi() {
         let dirs = project_dirs(Path::new("/proj"), "extensions");
-        assert_eq!(dirs, vec![PathBuf::from("/proj/.rpi/extensions")]);
+        assert_eq!(dirs, vec![PathBuf::from("/proj/.shob/extensions")]);
     }
 
     #[test]
-    fn project_config_files_only_use_rpi_after_de_pi() {
+    fn project_config_files_only_use_shob_after_de_pi() {
         let p = project_config_file(Path::new("/proj"), "SYSTEM.md");
-        assert_eq!(p, PathBuf::from("/proj/.rpi/SYSTEM.md"));
+        assert_eq!(p, PathBuf::from("/proj/.shob/SYSTEM.md"));
         assert_eq!(
             project_config_files(Path::new("/proj"), "SYSTEM.md"),
             vec![p]
@@ -510,31 +533,31 @@ mod tests {
     #[test]
     fn project_settings_add_configured_resource_paths() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join(".rpi")).unwrap();
+        std::fs::create_dir_all(tmp.path().join(".shob")).unwrap();
         std::fs::write(
-            tmp.path().join(".rpi/settings.json"),
+            tmp.path().join(".shob/settings.json"),
             r#"{"skills":["shared-skills"],"promptDirs":["prompt-pack"],"extensionDirs":["target/debug"]}"#,
         )
         .unwrap();
 
         let skills = skill_dirs(tmp.path());
         assert_eq!(skills[0], tmp.path().join("shared-skills"));
-        assert!(skills.contains(&tmp.path().join(".rpi/skills")));
+        assert!(skills.contains(&tmp.path().join(".shob/skills")));
 
         let prompts = prompt_template_dirs(tmp.path());
         assert_eq!(prompts[0], tmp.path().join("prompt-pack"));
 
         let extensions = extension_dirs(tmp.path());
         assert_eq!(extensions[0], tmp.path().join("target/debug"));
-        assert!(extensions.contains(&tmp.path().join(".rpi/extensions")));
+        assert!(extensions.contains(&tmp.path().join(".shob/extensions")));
     }
 
     #[test]
     fn local_resource_dirs_exclude_global_paths() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join(".rpi")).unwrap();
+        std::fs::create_dir_all(tmp.path().join(".shob")).unwrap();
         std::fs::write(
-            tmp.path().join(".rpi/settings.json"),
+            tmp.path().join(".shob/settings.json"),
             r#"{"skills":["local-skills"],"promptDirs":["local-prompts"]}"#,
         )
         .unwrap();
@@ -542,8 +565,8 @@ mod tests {
         let skills = project_skill_dirs(tmp.path());
         let prompts = project_prompt_template_dirs(tmp.path());
         assert!(skills.contains(&tmp.path().join("local-skills")));
-        assert!(skills.contains(&tmp.path().join(".rpi/skills")));
+        assert!(skills.contains(&tmp.path().join(".shob/skills")));
         assert!(prompts.contains(&tmp.path().join("local-prompts")));
-        assert!(prompts.contains(&tmp.path().join(".rpi/prompts")));
+        assert!(prompts.contains(&tmp.path().join(".shob/prompts")));
     }
 }

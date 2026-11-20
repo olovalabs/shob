@@ -450,7 +450,7 @@ impl ProviderHooks for NoopProviderHooks {}
 ///
 /// Mirrors the `systemPrompt` half of pi's `transform_context` result
 /// (`harness/agent-harness.ts:445`): the hook may replace the system prompt the
-/// request carries. pi also allows replacing `messages` there; rpi deliberately
+/// request carries. pi also allows replacing `messages` there; shob deliberately
 /// does not (yet) — see `ProviderHooks::transform_context`.
 ///
 /// `None` inside means "leave as-is", so an empty patch is a no-op and a caller

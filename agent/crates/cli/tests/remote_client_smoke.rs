@@ -1,5 +1,5 @@
 //! End-to-end smoke test for the `--connect` client against a fake
-//! `rpi --server` endpoint.
+//! `shob --server` endpoint.
 //!
 //! Exercises the real client path (TCP connect → `start_session` → `subscribe`
 //! → `send` → event pump → transcript folding) without needing a live agent.
@@ -433,22 +433,22 @@ async fn token_authentication_is_enforced() {
 }
 
 /// Real end-to-end check: drives the *actual* client against a live
-/// `rpi --server`. Opt-in via `RPI_REMOTE_E2E_ADDR` (e.g. `127.0.0.1:9899`) so
+/// `shob --server`. Opt-in via `SHOB_REMOTE_E2E_ADDR` (e.g. `127.0.0.1:9899`) so
 /// the default test run stays hermetic.
 #[tokio::test]
 async fn real_server_roundtrip_if_configured() {
-    let Ok(addr) = std::env::var("RPI_REMOTE_E2E_ADDR") else {
+    let Ok(addr) = std::env::var("SHOB_REMOTE_E2E_ADDR") else {
         return;
     };
-    let prompt = std::env::var("RPI_REMOTE_E2E_PROMPT")
+    let prompt = std::env::var("SHOB_REMOTE_E2E_PROMPT")
         .unwrap_or_else(|_| "Reply with exactly the single word: PONG".to_string());
 
     let mut client = RemoteClient::connect(&addr).await.unwrap();
-    let token = std::env::var("RPI_REMOTE_E2E_TOKEN").unwrap_or_default();
+    let token = std::env::var("SHOB_REMOTE_E2E_TOKEN").unwrap_or_default();
     client
         .authenticate(&token)
         .await
-        .expect("authentication failed (set RPI_REMOTE_E2E_TOKEN)");
+        .expect("authentication failed (set SHOB_REMOTE_E2E_TOKEN)");
     let started = client.call("start_session", json!({})).await.unwrap();
     let session_id = started["sessionId"].as_str().unwrap().to_string();
     let subscribed = client

@@ -9,7 +9,7 @@
 //! Shape of a value entry:
 //!
 //! ```jsonc
-//! { "type": "custom", "customType": "rpi.value", "data": { "key": "…", "value": … } }
+//! { "type": "custom", "customType": "shob.value", "data": { "key": "…", "value": … } }
 //! ```
 //!
 //! A `null` `value` is a tombstone: the key is treated as deleted from that
@@ -29,7 +29,7 @@ use crate::session::session::Session;
 use crate::session::types::{Entry, EntryOrder, EntryQuery};
 
 /// The reserved `customType` that marks a session value entry.
-pub const VALUE_CUSTOM_TYPE: &str = "rpi.value";
+pub const VALUE_CUSTOM_TYPE: &str = "shob.value";
 
 /// A loaded, latest-wins view of the session's values. Cheap to clone.
 #[derive(Debug, Clone, Default, PartialEq)]

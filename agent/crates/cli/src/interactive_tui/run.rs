@@ -22,9 +22,9 @@ pub(super) async fn maybe_add_startup_changelog(
         .map(|entry| entry.is_some())
         .unwrap_or(true);
     let entries = crate::changelog::bundled_entries();
-    let baseline = crate::changelog::rpi_baseline(
+    let baseline = crate::changelog::shob_baseline(
         &entries,
-        settings.last_rpi_changelog_version.as_deref(),
+        settings.last_shob_changelog_version.as_deref(),
         settings.last_changelog_version.as_deref(),
     );
     let mut notice = crate::changelog::startup_changelog_for_profile(
@@ -34,9 +34,9 @@ pub(super) async fn maybe_add_startup_changelog(
         has_messages,
         existing_profile,
     );
-    // Copy an identified rpi legacy baseline even when there is no new notice.
+    // Copy an identified shob legacy baseline even when there is no new notice.
     // On resume this copies only the old version, so unseen updates stay pending.
-    if notice.version_to_record.is_none() && settings.last_rpi_changelog_version.is_none() {
+    if notice.version_to_record.is_none() && settings.last_shob_changelog_version.is_none() {
         notice.version_to_record = baseline.map(str::to_owned);
     }
     if let Some(markdown) = &notice.markdown {
@@ -49,14 +49,14 @@ pub(super) async fn maybe_add_startup_changelog(
                 let candidate =
                     semver::Version::parse(&version).map_err(|error| error.to_string())?;
                 if current
-                    .last_rpi_changelog_version
+                    .last_shob_changelog_version
                     .as_deref()
                     .and_then(|seen| semver::Version::parse(seen).ok())
                     .is_some_and(|seen| seen >= candidate)
                 {
                     return Ok(());
                 }
-                current.last_rpi_changelog_version = Some(version);
+                current.last_shob_changelog_version = Some(version);
                 crate::settings::save_settings(&current)
             });
         if let Err(error) = saved {
@@ -72,7 +72,7 @@ pub(super) async fn maybe_add_startup_changelog(
 pub(super) fn launch_external_editor(draft: String, tx: mpsc::UnboundedSender<TuiMessage>) {
     std::thread::spawn(move || {
         let file = match tempfile::Builder::new()
-            .prefix("rpi-draft-")
+            .prefix("shob-draft-")
             .suffix(".md")
             .tempfile()
         {
@@ -90,7 +90,7 @@ pub(super) fn launch_external_editor(draft: String, tx: mpsc::UnboundedSender<Tu
             ))));
             return;
         }
-        let editor = std::env::var("RPI_EXTERNAL_EDITOR")
+        let editor = std::env::var("SHOB_EXTERNAL_EDITOR")
             .ok()
             .filter(|value| !value.trim().is_empty())
             .or_else(|| std::env::var("VISUAL").ok())

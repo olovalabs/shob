@@ -58,7 +58,7 @@ pub struct ResolvedModel {
     /// Retained for diagnostics and API compatibility. Published catalogs are
     /// already filtered when their execution bindings are constructed.
     pub has_provider_key: bool,
-    /// Saved theme name from `~/.rpi/agent/settings.json`, if any. Best-effort:
+    /// Saved theme name from `~/.shob/agent/settings.json`, if any. Best-effort:
     /// the TUI applies it at startup when it matches a known preset
     /// (dark/light/monochrome); otherwise ignored.
     pub theme: Option<String>,
@@ -280,7 +280,7 @@ pub(crate) fn resolve_with_factories(
         .env(ANTHROPIC_BASE_URL_ENV)
         .filter(|value| !value.is_empty());
 
-    // ---- Catalog: built-in + ~/.rpi/models.json (merged, reusing the
+    // ---- Catalog: built-in + ~/.shob/models.json (merged, reusing the
     // already-loaded config) ----
     let mut catalog = build_catalog(&models_cfg, &factories.manifests, values);
 
@@ -465,7 +465,7 @@ pub(crate) fn resolve_with_factories(
             // (3) Saved default from settings, when the provider is anthropic
             // (or absent — v1 is anthropic-only) OR names a configured
             // models.json gateway (config-namespacing: the saved
-            // `defaultProvider` id matches a `~/.rpi/models.json` provider
+            // `defaultProvider` id matches a `~/.shob/models.json` provider
             // key), and the saved model is authed. Without the gateway arm a
             // copied pi settings.json (`defaultProvider:
             // "cc-switch-deep-seek-copy-2"`) is ignored and the default falls
@@ -995,7 +995,7 @@ fn build_catalog(
     catalog
 }
 
-/// Merge `~/.rpi/models.json` providers into the built-in catalog. Models from
+/// Merge `~/.shob/models.json` providers into the built-in catalog. Models from
 /// the same runtime provider replace entries with the same id, including an
 /// explicitly changed wire API. Models from different providers stay distinct
 /// so `provider/id` continues selecting the intended endpoint.

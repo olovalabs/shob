@@ -1,6 +1,6 @@
 # durable
 
-Backend-independent checkpoint/recovery primitives for the native rpi host.
+Backend-independent checkpoint/recovery primitives for the native shob host.
 The initial module, `progress`, is the existing active assistant-progress
 reducer extracted from `harness`, not a second journal or storage backend.
 
@@ -30,7 +30,7 @@ adapter preserves the existing frame format, companion discriminator and error
 codes. No session is automatically migrated. Primary JSONL history still needs
 a full initial scan; extracting a reducer alone does not make startup bounded.
 
-This is a **native library**, distinct from the existing `rpi-package`
+This is a **native library**, distinct from the existing `shob-package`
 `durable` workflow plugin. This step neither loads both packages into one
 workspace nor replaces the plugin. Before a future release/integration, the
 native/library and plugin naming/version ownership must be reconciled explicitly.

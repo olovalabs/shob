@@ -1,4 +1,4 @@
-# rpi Rust 扩展与 Agent 调试指引
+# shob Rust 扩展与 Agent 调试指引
 
 本文覆盖两条主线：**如何编写 Rust `cdylib` 扩展**（统一 C ABI、工具生命周期、
 事件处理器、资源发现、Provider/渲染器），以及**如何调试 agent 与扩展**（事件日志、
@@ -9,14 +9,14 @@
 最小可用扩展是一个 Rust `cdylib` crate，只依赖 `plugin-sdk`：
 
 ```bash
-cargo new my-rpi-extension
-cd my-rpi-extension
+cargo new my-shob-extension
+cd my-shob-extension
 # 在 Cargo.toml 中把 crate-type 设为 ["cdylib", "rlib"]
 ```
 
 ```toml
 [package]
-name = "my-rpi-extension"
+name = "my-shob-extension"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
@@ -38,7 +38,7 @@ serde_json = "1"
 
 ## 2. 统一 ABI 入口
 
-宿主只加载统一 C ABI 符号 `rpi_plugin_register`。扩展使用 `export_plugin!`，
+宿主只加载统一 C ABI 符号 `shob_plugin_register`。扩展使用 `export_plugin!`，
 通过同一个 `PluginApi` 注册能力并调用 `api.declare` 声明优先级/平台。
 SDK 在注册前检查 `abi_version` 和 `struct_size`；不兼容时返回非零状态，宿主报告加载失败。
 
@@ -143,7 +143,7 @@ extern "C" fn my_destroy(handle: StepHandle) {
 - **Agent 循环**：`BeforeAgentStart`、`AgentStart`、`AgentEnd`、`AgentSettled`、
   `TurnStart`、`TurnEnd`、`MessageStart`/`MessageUpdate`/`MessageEnd`、
   `ToolExecutionStart`/`Update`/`End`、`ToolCall`、`ToolResult`、`UserBash`、`Input`。
-- **rpi 特有 / UI**：`BeforeTuiStart`（TUI 初始化前）、`UiPromptStart`/`UiPromptEnd`
+- **shob 特有 / UI**：`BeforeTuiStart`（TUI 初始化前）、`UiPromptStart`/`UiPromptEnd`
   （交互式提示阻塞 agent 时）。
 
 处理器收到 `StablePluginEvent`，**不得释放**事件里的字符串（宿主 fan-out 后统一
@@ -151,7 +151,7 @@ extern "C" fn my_destroy(handle: StepHandle) {
 
 ### 生命周期 veto（P1）
 
-`BeforeTuiStart` 是一个带 veto 语义的 rpi 专有钩子：第一个返回
+`BeforeTuiStart` 是一个带 veto 语义的 shob 专有钩子：第一个返回
 `EVENT_HANDLER_ABORT` 的处理器会**中止启动**，CLI 以退出码 `3` 退出并打印原因
 （用于"进入 TUI 前必须先建立外部连接"这类场景）。`SessionStart` / `SessionShutdown`
 的 veto 只是 advisory：headless 模式打印警告，shutdown 时忽略。事件分发带超时，
@@ -171,30 +171,30 @@ extern "C" fn my_destroy(handle: StepHandle) {
 `register_markdown_transformer` / `register_entry_renderer` 注册消息渲染能力，
 宿主接受 `{text, lines}` 组件信封。这些槽位都可能为 `None`，使用前必须检测。
 
-## 5. 用 `rpi dev` 开发
+## 5. 用 `shob dev` 开发
 
 在扩展 crate 目录运行：
 
 ```bash
-rpi dev
+shob dev
 ```
 
-rpi 通过 Cargo metadata 识别当前 `cdylib`，首次编译后把版本化副本放到工作区
-`.rpi/extensions/.dev/`，启动正常 TUI，并监控 `src/`、`build.rs`、package/workspace
+shob 通过 Cargo metadata 识别当前 `cdylib`，首次编译后把版本化副本放到工作区
+`.shob/extensions/.dev/`，启动正常 TUI，并监控 `src/`、`build.rs`、package/workspace
 `Cargo.toml` 和 `Cargo.lock`。源码变化自动重编译并热重载；编译失败保留当前已加载
 版本。TUI 里 `/reload` 会强制重新构建再加载。
 
 多扩展 workspace 必须明确选择 package：
 
 ```bash
-rpi dev --package rpi-todo
-rpi dev -P rpi-webfetch
-rpi dev --release
-rpi dev --no-watch
-rpi dev --package rpi-todo -- --model gateway/model
+shob dev --package shob-todo
+shob dev -P shob-webfetch
+shob dev --release
+shob dev --no-watch
+shob dev --package shob-todo -- --model gateway/model
 ```
 
-调试单个扩展用 `rpi dev-local`（等价于 `rpi dev --local-only`）：只加载当前编译
+调试单个扩展用 `shob dev-local`（等价于 `shob dev --local-only`）：只加载当前编译
 的扩展和该扩展发现的 skill/prompt，不扫描全局扩展、已安装 Pi 包或其他项目资源，
 避免同名命令干扰。没有 cdylib 时优雅降级为 skills-only 模式。Windows 上已加载
 DLL 无法原地覆盖，因此不要手工复制 Cargo target DLL；版本化 staging 会安全切换。
@@ -204,18 +204,18 @@ DLL 无法原地覆盖，因此不要手工复制 Cargo target DLL；版本化 s
 ### 开启事件日志
 
 ```bash
-export RPI_EVENT_LOG=1
-rpi            # 任意运行都会记录扩展事件处理器调用
+export SHOB_EVENT_LOG=1
+shob            # 任意运行都会记录扩展事件处理器调用
 ```
 
-日志默认写到 `~/.rpi/logs/events.jsonl`（`RPI_CODING_AGENT_DIR` 存在时写到其
-父目录的 `logs/` 下；`RPI_EVENT_LOG_PATH` 可显式覆盖）。关闭时零磁盘写入、零开销。
+日志默认写到 `~/.shob/logs/events.jsonl`（`SHOB_CODING_AGENT_DIR` 存在时写到其
+父目录的 `logs/` 下；`SHOB_EVENT_LOG_PATH` 可显式覆盖）。关闭时零磁盘写入、零开销。
 
 查看日志位置和实时跟踪：
 
 ```bash
-rpi events path        # 打印事件日志路径
-rpi events tail        # 打印已有内容并持续跟踪（Ctrl+C 停止）
+shob events path        # 打印事件日志路径
+shob events tail        # 打印已有内容并持续跟踪（Ctrl+C 停止）
 ```
 
 每一行 JSON 包含 `ts_ms`（Unix 毫秒）、`event`（如 `BeforeTuiStart` /
@@ -230,22 +230,22 @@ stderr 诊断。两个开关都只在值存在且不等于字符串 `0` 时启�
 文件，也不会改变正常的持久化格式：
 
 ```bash
-RPI_AGENT_DIAGNOSTICS=1 RPI_FRAME_DIAGNOSTICS=1 rpi -p "复现问题" 2>rpi-diagnostics.log
+SHOB_AGENT_DIAGNOSTICS=1 SHOB_FRAME_DIAGNOSTICS=1 shob -p "复现问题" 2>shob-diagnostics.log
 ```
 
 PowerShell：
 
 ```powershell
-$env:RPI_AGENT_DIAGNOSTICS="1"
-$env:RPI_FRAME_DIAGNOSTICS="1"
-rpi -p "复现问题" 2> rpi-diagnostics.log
+$env:SHOB_AGENT_DIAGNOSTICS="1"
+$env:SHOB_FRAME_DIAGNOSTICS="1"
+shob -p "复现问题" 2> shob-diagnostics.log
 ```
 
-- `RPI_AGENT_DIAGNOSTICS` 输出上下文构建、assistant 请求转换/建流、工具执行和
+- `SHOB_AGENT_DIAGNOSTICS` 输出上下文构建、assistant 请求转换/建流、工具执行和
   session entry/record/batch append 的纳秒耗时；每次模型请求以
-  `RPI_AGENT_DIAGNOSTICS` 开头，每次工具以 `RPI_TOOL_DIAGNOSTICS` 开头。
-- `RPI_FRAME_DIAGNOSTICS` 只对持久化 session 的 assistant frame writer 生效，运行
-  结束清理时输出 `RPI_FRAME_DIAGNOSTICS` 汇总。重点看 `batch_records`、
+  `SHOB_AGENT_DIAGNOSTICS` 开头，每次工具以 `SHOB_TOOL_DIAGNOSTICS` 开头。
+- `SHOB_FRAME_DIAGNOSTICS` 只对持久化 session 的 assistant frame writer 生效，运行
+  结束清理时输出 `SHOB_FRAME_DIAGNOSTICS` 汇总。重点看 `batch_records`、
   `append_records_calls`、`flush_requests`、`writer_failures` 和各类 flush barrier。
 - frame writer 默认最多聚合 32 条记录，或等待约 50 ms 后写入；提交 assistant entry
   和清理 stream/run 前后会强制 flush。诊断中的 `*_ns` 是累计耗时，不能直接当作单次
@@ -258,9 +258,9 @@ rpi -p "复现问题" 2> rpi-diagnostics.log
 ### 系统提示词与资源检查
 
 ```bash
-rpi --debug-system-prompt   # 把最终解析出的系统提示词各段打印到 stderr
-rpi --list-models           # 列出可用模型（可带模糊搜索词）
-rpi --verbose               # 显示启动警告（如被忽略的 flag）
+shob --debug-system-prompt   # 把最终解析出的系统提示词各段打印到 stderr
+shob --list-models           # 列出可用模型（可带模糊搜索词）
+shob --verbose               # 显示启动警告（如被忽略的 flag）
 ```
 
 `--debug-system-prompt` 会显示 skills、prompts、package 资源和计数，是排查
@@ -269,8 +269,8 @@ rpi --verbose               # 显示启动警告（如被忽略的 flag）
 ### 凭据与 Provider 调试
 
 ```bash
-rpi auth check                          # 报告任何可用认证源（不联网）
-rpi auth check --provider gateway --json
+shob auth check                          # 报告任何可用认证源（不联网）
+shob auth check --provider gateway --json
 ```
 
 接口报错时保留 provider 返回的诊断文本，先检查 endpoint、认证头和模型 ID。
@@ -278,21 +278,21 @@ rpi auth check --provider gateway --json
 ### 会话导出
 
 ```bash
-rpi --export session.jsonl      # 把 JSONL 会话导出为 HTML 便于审阅
+shob --export session.jsonl      # 把 JSONL 会话导出为 HTML 便于审阅
 ```
 
 ## 7. 远程模式调试
 
 ```bash
-rpi --server --port 9899        # 无头服务端，启动时打印 token
-rpi --connect 127.0.0.1:9899 --token <token>   # 远程 TUI 客户端
+shob --server --port 9899        # 无头服务端，启动时打印 token
+shob --connect 127.0.0.1:9899 --token <token>   # 远程 TUI 客户端
 ```
 
 客户端是纯输入/显示，没有任何本地 provider、工具、扩展或 session 文件；全部 agent
 工作发生在服务端。调试技巧：
 
-- 服务端日志（`--verbose`）显示启动警告；事件日志（`RPI_EVENT_LOG=1`）在服务端
-  进程开启，用 `rpi events tail` 在同一台机器跟踪。
+- 服务端日志（`--verbose`）显示启动警告；事件日志（`SHOB_EVENT_LOG=1`）在服务端
+  进程开启，用 `shob events tail` 在同一台机器跟踪。
 - 客户端可用 `/state`（当前 model/thinking/工具）、`/model <id>`、`/thinking <level>`、
   `/tools` 检查会话状态。
 - 远程模式下 `/tree`、`/fork`、`/switch`、`/export`、`/name`、`/reload` 不可用
@@ -301,24 +301,24 @@ rpi --connect 127.0.0.1:9899 --token <token>   # 远程 TUI 客户端
 ### 按键诊断（手机 / 远程终端）
 
 手机客户端、IME、SSH 网关对"回车"的编码各不相同，出问题时先看**到达 TUI 的原始
-按键事件**，不要猜。设置 `RPI_DEBUG_KEYS` 即可把所有按键事件（含 Enter 的判定结果）
+按键事件**，不要猜。设置 `SHOB_DEBUG_KEYS` 即可把所有按键事件（含 Enter 的判定结果）
 追加到日志：
 
 ```powershell
 # Windows：在手机 SSH 进来的那个会话里
-$env:RPI_DEBUG_KEYS=1; rpi
+$env:SHOB_DEBUG_KEYS=1; shob
 ```
 
 ```bash
 # Unix / Termux
-RPI_DEBUG_KEYS=1 rpi
+SHOB_DEBUG_KEYS=1 shob
 ```
 
-默认写到 `<临时目录>/rpi-keys.log`（Windows 为 `%TEMP%\rpi-keys.log`），也可用
-`RPI_DEBUG_KEYS=<路径>` 指定文件。格式：
+默认写到 `<临时目录>/shob-keys.log`（Windows 为 `%TEMP%\shob-keys.log`），也可用
+`SHOB_DEBUG_KEYS=<路径>` 指定文件。格式：
 
 ```text
-2026-09-24T12:00:01.234Z --- rpi TUI key trace start pid=4321 TERM=xterm-256color raw_mode=true ---
+2026-09-24T12:00:01.234Z --- shob TUI key trace start pid=4321 TERM=xterm-256color raw_mode=true ---
 2026-09-24T12:00:01.235Z code=Char('h') mods=NONE kind=Press
 2026-09-24T12:00:01.236Z code=Enter mods=NONE kind=Press
 2026-09-24T12:00:01.236Z enter-decision -> newline (paste burst) gap_ms=1 more_queued=false
@@ -331,7 +331,7 @@ RPI_DEBUG_KEYS=1 rpi
 | `code=Char('j') mods=CONTROL`（或 `Char('\n')`） | 客户端把回车发成了 **LF (0x0A)**。crossterm 在 raw 模式下把 LF 当 Ctrl+J，而 Ctrl+J 绑定的是"插入换行"（对齐 pi 的 `tui.input.newLine`） | **已修复**：`Editor::handle_key` 现在把无修饰键的 `Char('\n')`/`Char('\r')` 当作提交，`Ctrl+J`（`Char('j') + CONTROL`）仍保持插入换行 |
 | `code=Enter mods=NONE` + `enter-decision -> newline (paste burst)` | 收到的是正常 CR，但客户端把"文字 + 回车"合并成一批发送，粘贴启发式（20ms 突发窗口）误判为粘贴 | **已修复**：粘贴启发式仅保留在 Windows（`cfg!(windows)`）。Unix 上括号粘贴用 `Event::Paste` 处理真实粘贴，普通回车直接提交 |
 | `code=Enter mods=NONE` + `enter-decision -> submit` | 输入路径正常，问题不在按键层 | 检查会话/网络层 |
-| 完全没有 `code=` 行 | 按键根本没到 TUI | 客户端没连上、窗口未聚焦，或 `RPI_SKIP_STDIN` 被设了 |
+| 完全没有 `code=` 行 | 按键根本没到 TUI | 客户端没连上、窗口未聚焦，或 `SHOB_SKIP_STDIN` 被设了 |
 
 ## 8. 常见失败定位
 
@@ -339,12 +339,12 @@ RPI_DEBUG_KEYS=1 rpi
 | --- | --- |
 | 扩展没加载 | `cdylib` crate-type？平台匹配？用 `--extensions-dir` 指向生成目录；`--no-extensions` 未误开 |
 | 工具未注册 | ABI 版本协商失败？vtable slot 是 `None`（宿主未实现）？注册返回非零？ |
-| 事件处理器没触发 | `RPI_EVENT_LOG=1` + `rpi events tail` 看是否有 `Abort`/`Panic`/`Timeout` |
+| 事件处理器没触发 | `SHOB_EVENT_LOG=1` + `shob events tail` 看是否有 `Abort`/`Panic`/`Timeout` |
 | 启动被中止 | `BeforeTuiStart` 有扩展返回 `EVENT_HANDLER_ABORT`，退出码 3 |
 | `poll` 卡住 | `poll` 必须非阻塞；耗时工作放线程，handle 保存状态，取消标记限时结束 |
-| Windows 上热重载失败 | 已加载 DLL 无法覆盖；用 `rpi dev` 的版本化 staging，不要手工复制 |
+| Windows 上热重载失败 | 已加载 DLL 无法覆盖；用 `shob dev` 的版本化 staging，不要手工复制 |
 | 资源没出现在系统提示词 | `--debug-system-prompt` 查看最终组装结果；确认 skill 路径被发现 |
-| 手机/远程终端回车变换行 | `RPI_DEBUG_KEYS=1` 看按键：`Char('j') mods=CONTROL` = 客户端发的是 LF（已被 `Editor` 当提交处理）；`Enter` + `paste burst` = 粘贴启发式误判（已限定 Windows 平台） |
+| 手机/远程终端回车变换行 | `SHOB_DEBUG_KEYS=1` 看按键：`Char('j') mods=CONTROL` = 客户端发的是 LF（已被 `Editor` 当提交处理）；`Enter` + `paste burst` = 粘贴启发式误判（已限定 Windows 平台） |
 | 粘贴内容不是系统剪贴板（而是 TUI 自己的文案） | 远程/手机客户端把粘贴映射成 `Ctrl+V` 时，`read_clipboard_text` 会读**服务器**剪贴板——可能被拖选复制（copy-on-select）写入了 TUI 文案（如欢迎语 `Skills (…): …`）。已限定该回退只在 Windows 生效；Unix 上真实粘贴走括号粘贴 `Event::Paste`，`Ctrl+V` 回退为编辑器 kill-ring yank |
 | panic / 段错误跨 ABI | `extern "C"` 边界不能 unwind；`StbString` 所有权遵守宿主/插件两侧规则 |
 | ABI 版本不匹配 | 宿主日志提示 mismatch 并跳过加载；确认 `plugin-sdk` 版本 |
@@ -356,6 +356,6 @@ RPI_DEBUG_KEYS=1 rpi
 - 至少一个宿主 smoke test 验证 ABI 注册、加载和卸载（参考 `plugin-stub` 的
   测试模式：宿主读取插件导出的 hit counter 断言行为）。
 - `cargo fmt --check`、`cargo clippy --all-targets`、`cargo test` 通过。
-- `rpi dev --no-watch` 能编译、加载并注册预期工具。
-- `rpi install <crate> --force` 的干净安装路径通过（Linux/macOS/Windows 由 CI 验证）。
+- `shob dev --no-watch` 能编译、加载并注册预期工具。
+- `shob install <crate> --force` 的干净安装路径通过（Linux/macOS/Windows 由 CI 验证）。
 - README 记录工具 schema、权限边界、持久化文件、网络访问、支持平台和卸载方式。

@@ -14,8 +14,8 @@ use harness::{
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
-const CHILD_BEGIN_CUSTOM_TYPE: &str = "rpi.tool_program.child_begin.v1";
-const CHILD_PHASE_CUSTOM_TYPE: &str = "rpi.tool_program.child_phase.v1";
+const CHILD_BEGIN_CUSTOM_TYPE: &str = "shob.tool_program.child_begin.v1";
+const CHILD_PHASE_CUSTOM_TYPE: &str = "shob.tool_program.child_phase.v1";
 pub(crate) const CHILD_EVENT_MAX_BYTES: usize = super::protocol::TOOL_PROGRAM_CHILD_EVENT_MAX_BYTES;
 
 /// Project a commit without applying the child-event size budget to ordinary
@@ -368,7 +368,7 @@ mod tests {
         assert_eq!(begin["seq"], 7);
 
         let unknown = commit_event(commit(Some(native(
-            "rpi.tool_program.unknown.v1",
+            "shob.tool_program.unknown.v1",
             json!({}),
         ))));
         assert_eq!(unknown["type"], "tool_program_child_resync_required");

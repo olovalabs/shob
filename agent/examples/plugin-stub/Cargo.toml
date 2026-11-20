@@ -3,10 +3,10 @@ name = "plugin-stub"
 version = "0.1.11"
 edition = "2021"
 publish = false
-description = "Minimal rpi Rust-cdylib plugin: registers an `echo` tool + one event handler (the Part B2 ABI smoke target)."
+description = "Minimal shob Rust-cdylib plugin: registers an `echo` tool + one event handler (the Part B2 ABI smoke target)."
 
 [lib]
-# cdylib so the host can load it via libloading as rpi_plugin_register_v2.
+# cdylib so the host can load it via libloading as shob_plugin_register_v2.
 crate-type = ["cdylib"]
 
 [dependencies]

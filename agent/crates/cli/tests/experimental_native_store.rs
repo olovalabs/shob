@@ -27,7 +27,7 @@ impl Fixture {
         std::fs::create_dir_all(&agent).unwrap();
         for root in [
             &old,
-            &temp.path().join(".rpi/sessions"),
+            &temp.path().join(".shob/sessions"),
             &temp.path().join("settings sessions"),
         ] {
             std::fs::create_dir_all(root).unwrap();
@@ -47,16 +47,16 @@ impl Fixture {
         }
     }
     fn command(&self) -> tokio::process::Command {
-        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_rpi"));
+        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_shob"));
         command
             .current_dir(self.temp.path())
-            .env("RPI_CODING_AGENT_DIR", &self.agent)
-            .env("RPI_CODING_AGENT_SESSION_DIR", &self.old)
+            .env("SHOB_CODING_AGENT_DIR", &self.agent)
+            .env("SHOB_CODING_AGENT_SESSION_DIR", &self.old)
             .env("HOME", self.temp.path())
             .env("USERPROFILE", self.temp.path())
-            .env_remove("RPI_FORCE_TUI")
-            .env_remove("RPI_EXTENSIONS_DIR")
-            .env_remove("RPI_SESSION_ID")
+            .env_remove("SHOB_FORCE_TUI")
+            .env_remove("SHOB_EXTENSIONS_DIR")
+            .env_remove("SHOB_SESSION_ID")
             .env_remove("HTTP_PROXY")
             .env_remove("HTTPS_PROXY")
             .env_remove("ALL_PROXY")
@@ -86,7 +86,7 @@ impl Fixture {
         let mut out = BTreeMap::new();
         for root in [
             &self.old,
-            &self.temp.path().join(".rpi/sessions"),
+            &self.temp.path().join(".shob/sessions"),
             &self.temp.path().join("settings sessions"),
         ] {
             visit(self.temp.path(), root, &mut out);
@@ -157,14 +157,14 @@ async fn illegal_optins_reject_before_early_dispatch_or_legacy_writes() {
         }
         assert!(!f.native.exists());
         assert!(!f.temp.path().join("export.html").exists());
-        assert!(!f.temp.path().join(".rpi/.resource-lease").exists());
+        assert!(!f.temp.path().join(".shob/.resource-lease").exists());
         assert!(!f.agent.join(".resource-lease").exists());
         assert_eq!(f.sentinels(), before);
     }
     let result = output(
         f.command()
             .args(["--print", "--experimental-native-store=native"])
-            .env("RPI_FORCE_TUI", "1"),
+            .env("SHOB_FORCE_TUI", "1"),
     )
     .await;
     assert_eq!(result.status.code(), Some(2));
@@ -305,7 +305,7 @@ async fn real_text_and_json_prints_create_only_fresh_native_artifacts_and_persis
                 .unwrap()
                 .path()
                 .extension()
-                .is_some_and(|ext| ext == "rpinative")));
+                .is_some_and(|ext| ext == "shobnative")));
         }
         tokio::time::timeout(Duration::from_secs(3), provider)
             .await

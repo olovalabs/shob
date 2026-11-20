@@ -5,7 +5,7 @@
 //! source checkout or network request. Optional remote fetching remains
 //! available to consumers, with the same versioned-entry parser.
 //!
-//! The remote URL is overridable with `RPI_CHANGELOG_URL` so a fork can point at
+//! The remote URL is overridable with `SHOB_CHANGELOG_URL` so a fork can point at
 //! its own changelog without a rebuild.
 
 use serde::{Deserialize, Serialize};
@@ -22,13 +22,13 @@ pub struct ChangelogEntry {
     pub content: String,
 }
 
-/// Default remote changelog URL. Overridable via `RPI_CHANGELOG_URL`.
+/// Default remote changelog URL. Overridable via `SHOB_CHANGELOG_URL`.
 pub const DEFAULT_CHANGELOG_URL: &str =
     "https://raw.githubusercontent.com/bigfish1913/pi-rust/main/CHANGELOG.md";
 
-/// The remote changelog URL to use, honoring `RPI_CHANGELOG_URL`.
+/// The remote changelog URL to use, honoring `SHOB_CHANGELOG_URL`.
 pub fn changelog_url() -> String {
-    std::env::var("RPI_CHANGELOG_URL").unwrap_or_else(|_| DEFAULT_CHANGELOG_URL.to_string())
+    std::env::var("SHOB_CHANGELOG_URL").unwrap_or_else(|_| DEFAULT_CHANGELOG_URL.to_string())
 }
 
 /// Parse a semver-ish heading like `## 1.2.3` / `# 1.2.3` / `## v1.2.3`.
@@ -128,9 +128,9 @@ pub fn latest_release(entries: &[ChangelogEntry], current_version: &str) -> Vec<
         .collect()
 }
 
-/// Migrate only legacy markers that name a release in rpi's bundled history.
-/// A foreign version (for example Pi 0.85.1) must not suppress rpi updates.
-pub fn rpi_baseline<'a>(
+/// Migrate only legacy markers that name a release in shob's bundled history.
+/// A foreign version (for example Pi 0.85.1) must not suppress shob updates.
+pub fn shob_baseline<'a>(
     entries: &[ChangelogEntry],
     dedicated: Option<&'a str>,
     legacy: Option<&'a str>,
@@ -164,7 +164,7 @@ pub fn startup_changelog(
     startup_changelog_for_profile(entries, last_version, current_version, has_messages, false)
 }
 
-/// Existing profiles without an rpi baseline see the current release once;
+/// Existing profiles without an shob baseline see the current release once;
 /// genuinely fresh installs record a baseline without replaying old history.
 pub fn startup_changelog_for_profile(
     entries: &[ChangelogEntry],
@@ -224,7 +224,7 @@ pub async fn fetch_changelog(allow_network: bool) -> Result<Option<String>, Stri
     }
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
-        .user_agent(format!("rpi/{}", crate::VERSION))
+        .user_agent(format!("shob/{}", crate::VERSION))
         .build()
         .map_err(|e| e.to_string())?;
     let response = client
@@ -357,12 +357,12 @@ mod tests {
     }
 
     #[test]
-    fn foreign_baseline_does_not_hide_rpi_notes_and_the_new_marker_is_independent() {
+    fn foreign_baseline_does_not_hide_shob_notes_and_the_new_marker_is_independent() {
         let entries = parse_changelog("## [0.3.19]\n- current\n## [0.3.18]\n- previous");
-        assert_eq!(rpi_baseline(&entries, None, Some("0.85.1")), None);
+        assert_eq!(shob_baseline(&entries, None, Some("0.85.1")), None);
         let notice = startup_changelog_for_profile(
             &entries,
-            rpi_baseline(&entries, None, Some("0.85.1")),
+            shob_baseline(&entries, None, Some("0.85.1")),
             "0.3.19",
             false,
             true,
@@ -371,13 +371,16 @@ mod tests {
         let markdown = notice.markdown.unwrap();
         assert!(markdown.contains("current"));
         assert!(!markdown.contains("previous"));
-        let baseline = rpi_baseline(&entries, Some("0.3.19"), Some("0.86.0"));
+        let baseline = shob_baseline(&entries, Some("0.3.19"), Some("0.86.0"));
         let again = startup_changelog_for_profile(&entries, baseline, "0.3.19", false, true);
         assert!(again.markdown.is_none());
         assert!(again.version_to_record.is_none());
-        assert_eq!(rpi_baseline(&entries, None, Some("0.3.18")), Some("0.3.18"));
         assert_eq!(
-            rpi_baseline(&entries, Some("0.3.20"), Some("0.85.1")),
+            shob_baseline(&entries, None, Some("0.3.18")),
+            Some("0.3.18")
+        );
+        assert_eq!(
+            shob_baseline(&entries, Some("0.3.20"), Some("0.85.1")),
             Some("0.3.20")
         );
         assert!(

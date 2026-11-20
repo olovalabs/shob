@@ -6,7 +6,7 @@
 //!
 //! The first chunk is emitted immediately. Later checkpoints are coalesced into
 //! a short window (16 ms by default, overridable with
-//! `RPI_BASH_UPDATE_THROTTLE_MS`); a final flush always follows capture
+//! `SHOB_BASH_UPDATE_THROTTLE_MS`); a final flush always follows capture
 //! resolution.
 
 use futures::future::BoxFuture;
@@ -45,7 +45,7 @@ const BASH_UPDATE_THROTTLE_MS: u64 = 16;
 pub(super) fn update_throttle() -> Duration {
     static THROTTLE: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
     *THROTTLE.get_or_init(|| {
-        std::env::var("RPI_BASH_UPDATE_THROTTLE_MS")
+        std::env::var("SHOB_BASH_UPDATE_THROTTLE_MS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .map(Duration::from_millis)

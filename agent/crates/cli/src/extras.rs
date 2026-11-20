@@ -9,7 +9,7 @@ use tui::Container;
 use crate::config;
 
 /// Path of the "first-time setup done" sentinel, under the agent dir
-/// (`~/.rpi/agent/.setup_done`).
+/// (`~/.shob/agent/.setup_done`).
 pub fn setup_done_path() -> Option<std::path::PathBuf> {
     config::agent_dir().ok().map(|d| d.join(".setup_done"))
 }
@@ -22,7 +22,7 @@ pub fn setup_done() -> bool {
 /// Mark first-time setup complete (write the sentinel). Best-effort.
 pub fn mark_setup_done() -> std::io::Result<()> {
     let path = setup_done_path().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::NotFound, "no home dir for .rpi/agent")
+        std::io::Error::new(std::io::ErrorKind::NotFound, "no home dir for .shob/agent")
     })?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn test_sentinel_paths_under_agent_dir() {
         // The sentinel lives directly under the resolved agent dir and honors
-        // the `RPI_CODING_AGENT_DIR` override (delegated to `config::agent_dir`).
+        // the `SHOB_CODING_AGENT_DIR` override (delegated to `config::agent_dir`).
         let _guard = crate::config::test_support::env_lock().lock().unwrap();
         let prev = std::env::var_os(crate::config::CONFIG_DIR_ENV);
         let tmp = tempfile::TempDir::new().unwrap();

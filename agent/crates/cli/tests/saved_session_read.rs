@@ -44,10 +44,10 @@ async fn invoke(root: &Path, request: &Value) -> Value {
     put(root.join("request.json"), request.to_string());
     let output = tokio::time::timeout(
         Duration::from_secs(15),
-        tokio::process::Command::new(env!("CARGO_BIN_EXE_rpi"))
+        tokio::process::Command::new(env!("CARGO_BIN_EXE_shob"))
             .current_dir(root)
-            .env("RPI_CODING_AGENT_DIR", root.join("agent"))
-            .env("RPI_CODING_AGENT_SESSION_DIR", root.join("sessions"))
+            .env("SHOB_CODING_AGENT_DIR", root.join("agent"))
+            .env("SHOB_CODING_AGENT_SESSION_DIR", root.join("sessions"))
             .arg("--resource-session-read")
             .arg(root.join("request.json"))
             .stdin(Stdio::null())
@@ -197,7 +197,7 @@ async fn saved_reader_pending_work_is_readable_and_identity_custom_privacy_are_s
     wrong["sessionId"] = json!("wrong-id");
     assert_eq!(invoke(root, &wrong).await["success"], false);
     wrong = query.clone();
-    wrong["customTypes"] = json!(["rpi.value"]);
+    wrong["customTypes"] = json!(["shob.value"]);
     assert_eq!(invoke(root, &wrong).await["success"], false);
     wrong = query.clone();
     wrong["unexpected"] = json!(true);

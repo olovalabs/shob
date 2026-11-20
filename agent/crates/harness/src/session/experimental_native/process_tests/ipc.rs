@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-const MANIFEST_ENV: &str = "RPI_CFG_TEST_IPC_MANIFEST";
-const NONCE_ENV: &str = "RPI_CFG_TEST_IPC_NONCE";
+const MANIFEST_ENV: &str = "SHOB_CFG_TEST_IPC_MANIFEST";
+const NONCE_ENV: &str = "SHOB_CFG_TEST_IPC_NONCE";
 const CHILD_TEST: &str = "session::experimental_native::storage::process_tests::child";
 const CAP: usize = 64 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(30);
@@ -399,7 +399,7 @@ impl Peer {
             .unwrap_or_else(|error| self.channel.fail(&format!("artifact metadata: {error}")));
         if !path.is_absolute()
             || canonical.parent() != Some(self.channel.root.as_path())
-            || path.file_name() != Some(OsStr::new("fixture.rpinative"))
+            || path.file_name() != Some(OsStr::new("fixture.shobnative"))
             || !file.file_type().is_file()
             || file.file_type().is_symlink()
         {

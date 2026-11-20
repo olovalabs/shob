@@ -1,4 +1,4 @@
-//! Build the independent rpi-subagents DLL, then set RPI_TEST_SUBAGENT_LIBRARY.
+//! Build the independent shob-subagents DLL, then set SHOB_TEST_SUBAGENT_LIBRARY.
 //! Exercises the real ABI while all model responses and files remain local.
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -22,8 +22,8 @@ mod lifetime;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn real_subagent_plugin_inherits_project_tools_model_and_parent_approval_ui() {
-    let Some(path) = std::env::var_os("RPI_TEST_SUBAGENT_LIBRARY") else {
-        eprintln!("SKIP: build rpi-subagents and set RPI_TEST_SUBAGENT_LIBRARY");
+    let Some(path) = std::env::var_os("SHOB_TEST_SUBAGENT_LIBRARY") else {
+        eprintln!("SKIP: build shob-subagents and set SHOB_TEST_SUBAGENT_LIBRARY");
         return;
     };
     let path = PathBuf::from(path);
@@ -117,7 +117,7 @@ async fn real_subagent_plugin_inherits_project_tools_model_and_parent_approval_u
         }),
         FauxStep::factory(|context| {
             let text = serde_json::to_string(context).unwrap();
-            assert!(text.contains("rpi-delegation"));
+            assert!(text.contains("shob-delegation"));
             assert!(text.contains("child report"));
             faux_assistant_message("parent completed", StopReason::Stop)
         }),

@@ -254,7 +254,7 @@ impl ToolProgramObservation for Observation {
                 .iter()
                 .find_map(|entry| match entry {
                     Entry::Custom(entry)
-                        if entry.custom_type == "rpi.tool_program.intent.v1"
+                        if entry.custom_type == "shob.tool_program.intent.v1"
                             && entry
                                 .data
                                 .as_ref()
@@ -670,7 +670,7 @@ async fn invalid_denied_and_prepare_failure_finish_without_native_intent_or_exec
         .unwrap()
         .contains("controlled prepare_arguments failure"));
     let entries = session.find_entries(&EntryQuery::default()).await.unwrap();
-    assert!(!entries.iter().any(|e| matches!(e, Entry::Custom(e) if e.custom_type == "rpi.tool_program.intent.v1" || e.custom_type == "rpi.tool_program.finished.v1")));
+    assert!(!entries.iter().any(|e| matches!(e, Entry::Custom(e) if e.custom_type == "shob.tool_program.intent.v1" || e.custom_type == "shob.tool_program.finished.v1")));
     let ids: Vec<_> = log
         .children
         .lock()
@@ -811,7 +811,7 @@ async fn default_journal_preserves_legacy_checkpoint_and_root_only_transcript() 
                 Box::pin(async move {
                     assert!(current_observation().unwrap().id().starts_with("tpchild-"));
                     assert!(session.find_entries(&EntryQuery::default()).await.unwrap().iter().any(|e| matches!(e,
-                    Entry::Custom(e) if e.custom_type == "rpi.tool_program.intent.v1" && e.data.as_ref().unwrap()["requestId"] == id)));
+                    Entry::Custom(e) if e.custom_type == "shob.tool_program.intent.v1" && e.data.as_ref().unwrap()["requestId"] == id)));
                     effects.fetch_add(1, Ordering::SeqCst);
                     Ok(AgentToolResult::text("effect"))
                 })
@@ -832,7 +832,7 @@ async fn default_journal_preserves_legacy_checkpoint_and_root_only_transcript() 
     let begin = entries
         .iter()
         .find_map(|entry| match entry {
-            Entry::Custom(entry) if entry.custom_type == "rpi.tool_program.child_begin.v1" => {
+            Entry::Custom(entry) if entry.custom_type == "shob.tool_program.child_begin.v1" => {
                 entry.data.as_ref()
             }
             _ => None,
@@ -841,7 +841,7 @@ async fn default_journal_preserves_legacy_checkpoint_and_root_only_transcript() 
     assert_eq!(begin["toolName"], "effect");
     assert!(begin["childId"].as_str().unwrap().starts_with("tpchild-"));
     assert!(entries.iter().any(|entry| matches!(entry,
-        Entry::Custom(entry) if entry.custom_type == "rpi.tool_program.child_phase.v1"
+        Entry::Custom(entry) if entry.custom_type == "shob.tool_program.child_phase.v1"
             && entry.data.as_ref().unwrap()["phase"] == "final")));
 }
 
@@ -858,8 +858,8 @@ async fn journal(session: &Session) -> (Vec<Value>, Vec<Value>) {
     for entry in entries {
         if let Entry::Custom(entry) = entry {
             match entry.custom_type.as_str() {
-                "rpi.tool_program.child_begin.v1" => begins.push(entry.data.unwrap()),
-                "rpi.tool_program.child_phase.v1" => phases.push(entry.data.unwrap()),
+                "shob.tool_program.child_begin.v1" => begins.push(entry.data.unwrap()),
+                "shob.tool_program.child_phase.v1" => phases.push(entry.data.unwrap()),
                 _ => {}
             }
         }
@@ -1111,8 +1111,8 @@ async fn public_append_cannot_fabricate_native_child_namespace() {
     .await
     .unwrap();
     for custom_type in [
-        "rpi.tool_program.child_begin.v1",
-        "rpi.tool_program.child_phase.v1",
+        "shob.tool_program.child_begin.v1",
+        "shob.tool_program.child_phase.v1",
     ] {
         for lane in ["main"] {
             let revision = session.storage().history_revision().await.unwrap();
@@ -1162,7 +1162,7 @@ async fn public_append_cannot_fabricate_native_child_namespace() {
             .is_err());
     }
     for lane in ["main"] {
-        let custom_type = "rpi.tool_program.child_begin.v1.other";
+        let custom_type = "shob.tool_program.child_begin.v1.other";
         let guard = BranchWriteGuard {
             session_id: session.storage().metadata().id,
             leaf_id: session.view(lane).get_leaf_id().await.unwrap(),

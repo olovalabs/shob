@@ -238,16 +238,16 @@ def main():
             "models": [{"id": "gemini-3.8-flash", "reasoning": True}],
         }
         (config / "models.json").write_text(json.dumps({"providers": providers}))
-        env = dict(os.environ, RPI_CODING_AGENT_DIR=str(config),
-                   RPI_CODING_AGENT_SESSION_DIR=str(Path(tmp, "sessions")),
+        env = dict(os.environ, SHOB_CODING_AGENT_DIR=str(config),
+                   SHOB_CODING_AGENT_SESSION_DIR=str(Path(tmp, "sessions")),
                    SHOB_DATA_DIR=str(Path(tmp, "shob")),
                    SHOB_BENCH_CWD=str(cwd))
-        for key in ("SHOB_RPI_BACKEND", "SHOB_BENCH_SETTLE", "SHOB_STREAM_TIMINGS"):
+        for key in ("SHOB_AGENT_BACKEND", "SHOB_BENCH_SETTLE", "SHOB_STREAM_TIMINGS"):
             env.pop(key, None)
         if args.settle:
             env["SHOB_BENCH_SETTLE"] = "1"
         if args.rpc:
-            env["SHOB_RPI_BACKEND"] = "rpc"
+            env["SHOB_AGENT_BACKEND"] = "rpc"
             env["SHOB_BENCH_CLI"] = args.cli
         before = resource.getrusage(resource.RUSAGE_CHILDREN)
         subprocess.run([args.test_executable, "loopback_agent_stream_benchmark",

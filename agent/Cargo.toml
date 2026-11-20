@@ -1,4 +1,4 @@
-# rpi — embedded upstream runtime + CLI source vendored for Shob.
+# shob — embedded upstream runtime + CLI source vendored for Shob.
 # Upstream docs, website, scripts, packaging and examples were removed; the
 # library crates remain complete.
 [workspace]

@@ -351,7 +351,7 @@ Closures are `Arc<dyn Fn(...) -> BoxFuture<...> + Send + Sync>`. This is the tri
 **Two `transform_context` layers, not one.** pi has both a low-level and a
 harness-level hook of this name, and they are not interchangeable:
 
-| | pi | rpi |
+| | pi | shob |
 |---|---|---|
 | `agent-loop.ts` | `(messages) => messages` | `TransformContext` on `AgentLoopConfig` — **same** |
 | `harness` hook map | `{messages, systemPrompt} => {messages?, systemPrompt?}` | the prompt half lives on `ProviderHooks::transform_context` returning `ContextPatch`; the messages half is **not** implemented |

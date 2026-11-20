@@ -1,11 +1,11 @@
-//! `~/.rpi/agent/settings.json` — saved user defaults. Mirrors the slice of
+//! `~/.shob/agent/settings.json` — saved user defaults. Mirrors the slice of
 //! pi's `Settings` interface (`packages/coding-agent/src/core/settings-manager.ts`)
-//! that rpi honors: `defaultProvider` / `defaultModel` / `defaultThinkingLevel`
+//! that shob honors: `defaultProvider` / `defaultModel` / `defaultThinkingLevel`
 //! (consumed by `provider::resolve` as pi's `findInitialModel` step 3 — the
 //! saved default, when authed, wins over the built-in fallback), `theme`,
 //! packages, and configurable resource directories.
 //!
-//! pi's `Settings` carries ~40 fields; rpi reads the fields it uses and drops the
+//! pi's `Settings` carries ~40 fields; shob reads the fields it uses and drops the
 //! rest (serde `default` ignores unknown fields), so a copied pi `settings.json`
 //! parses clean.
 
@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use crate::config::{self, strip_line_comments, ConfigError};
 
 /// `retry` — upstream's `RetrySettings`. `provider` is parsed but unused: it
-/// configures the provider SDK's own retry loop, which rpi does not run.
+/// configures the provider SDK's own retry loop, which shob does not run.
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct RetrySettings {
@@ -28,7 +28,7 @@ pub struct RetrySettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_agent_delay_ms: Option<u64>,
     /// upstream's nested `retry.provider`. Kept so a copied file round-trips;
-    /// rpi has no provider-SDK retry loop to configure.
+    /// shob has no provider-SDK retry loop to configure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<serde_json::Value>,
 }
@@ -56,7 +56,7 @@ pub struct BranchSummarySettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reserve_tokens: Option<i64>,
     /// When true, upstream skips its "Summarize branch?" prompt and defaults to
-    /// *no* summary. rpi has no such prompt, so this is what makes the key mean
+    /// *no* summary. shob has no such prompt, so this is what makes the key mean
     /// something: `Some(true)` suppresses the summary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skip_prompt: Option<bool>,
@@ -122,7 +122,7 @@ pub struct Settings {
     #[serde(default)]
     pub shell_command_prefix: Option<String>,
 
-    /// Proxy URL applied as `HTTP_PROXY` / `HTTPS_PROXY` for rpi's own HTTP
+    /// Proxy URL applied as `HTTP_PROXY` / `HTTPS_PROXY` for shob's own HTTP
     /// clients. upstream's `httpProxy`.
     #[serde(default)]
     pub http_proxy: Option<String>,
@@ -144,7 +144,7 @@ pub struct Settings {
 
     /// Branch-summary settings. Mirrors upstream `branchSummary`.
     ///
-    /// Parsed for shape fidelity, but **nothing consumes it yet**: rpi's
+    /// Parsed for shape fidelity, but **nothing consumes it yet**: shob's
     /// `navigate_tree` ignores its `summarize` argument outright (`_summarize`),
     /// and `generate_branch_summary` has no production caller. Until
     /// navigation-with-summary is wired, these keys cannot change behaviour — see
@@ -198,12 +198,12 @@ pub struct Settings {
     #[serde(default)]
     pub quiet_startup: Option<bool>,
     /// Legacy/imported marker retained for settings compatibility. Only known
-    /// rpi release versions are migrated into the dedicated rpi marker.
+    /// shob release versions are migrated into the dedicated shob marker.
     #[serde(default)]
     pub last_changelog_version: Option<String>,
-    /// rpi's own release-note baseline, independent of imported Pi settings.
+    /// shob's own release-note baseline, independent of imported Pi settings.
     #[serde(default)]
-    pub last_rpi_changelog_version: Option<String>,
+    pub last_shob_changelog_version: Option<String>,
     /// Show a compact upgrade notice instead of full notes. Pi defaults false.
     #[serde(default)]
     pub collapse_changelog: Option<bool>,
@@ -229,19 +229,19 @@ pub struct Settings {
     /// diagnostics. upstream `showCacheMissNotices` (default `false`).
     #[serde(default)]
     pub show_cache_miss_notices: Option<bool>,
-    /// Render images inline in the terminal. rpi stores this at the top level
+    /// Render images inline in the terminal. shob stores this at the top level
     /// under `showImages`; upstream nests it as `terminal.showImages`, which
     /// [`TerminalSettings`] also accepts (see [`Settings::show_images`]).
     #[serde(default)]
     pub show_images: Option<bool>,
-    /// upstream's nested `terminal` settings block. rpi keeps its own flat
+    /// upstream's nested `terminal` settings block. shob keeps its own flat
     /// keys for the settings it has always written, but reads this block so a
     /// native `settings.json` is honored.
     #[serde(default)]
     pub terminal: Option<TerminalSettings>,
     /// How long idle pooled HTTP connections are kept before being closed.
     /// Accepts a millisecond number or the string `"disabled"`.
-    /// `httpIdleTimeout`. rpi surface: `httpIdleTimeout`.
+    /// `httpIdleTimeout`. shob surface: `httpIdleTimeout`.
     #[serde(default, alias = "httpIdleTimeoutMs")]
     pub http_idle_timeout: Option<serde_json::Value>,
     /// Maximum silence between streamed response bytes, in seconds.
@@ -256,7 +256,7 @@ pub struct Settings {
 }
 
 /// upstream's `terminal` settings block (`TerminalSettings`). Only the fields
-/// rpi can honor are modeled; unknown keys are ignored.
+/// shob can honor are modeled; unknown keys are ignored.
 #[derive(serde::Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalSettings {
@@ -354,14 +354,14 @@ impl Settings {
             .unwrap_or(agent::QueueMode::OneAtATime)
     }
 
-    /// Render images inline. rpi's flat `showImages` wins; upstream's nested
+    /// Render images inline. shob's flat `showImages` wins; upstream's nested
     /// `terminal.showImages` is the fallback.
     pub fn show_images(&self) -> Option<bool> {
         self.show_images
             .or_else(|| self.terminal.as_ref().and_then(|t| t.show_images))
     }
 
-    /// Terminal progress indicator. rpi's flat `showTerminalProgress` wins;
+    /// Terminal progress indicator. shob's flat `showTerminalProgress` wins;
     /// upstream's nested `terminal.showTerminalProgress` is the fallback.
     pub fn show_terminal_progress(&self) -> Option<bool> {
         self.show_terminal_progress.or_else(|| {
@@ -372,7 +372,7 @@ impl Settings {
     }
 }
 
-/// Load `~/.rpi/agent/settings.json`. Missing file ⇒ `Settings::default()`
+/// Load `~/.shob/agent/settings.json`. Missing file ⇒ `Settings::default()`
 /// (not an error). Malformed JSON ⇒ `ConfigError::Json`. Tolerates `//` line
 /// comments (a copied pi settings.json may contain them).
 pub fn load_settings() -> Result<Settings, ConfigError> {
@@ -387,8 +387,8 @@ pub fn load_settings() -> Result<Settings, ConfigError> {
     }
 }
 
-/// Load the single active project settings document. `.rpi/settings.json`
-/// is the only project settings file rpi reads.
+/// Load the single active project settings document. `.shob/settings.json`
+/// is the only project settings file shob reads.
 pub fn load_project_settings(cwd: &Path) -> Vec<Settings> {
     load_project_settings_with_paths(cwd)
         .into_iter()
@@ -410,7 +410,7 @@ pub fn load_project_settings_with_paths(cwd: &Path) -> Vec<(PathBuf, Settings)> 
 pub fn load_active_project_settings(
     cwd: &Path,
 ) -> Result<Option<(PathBuf, Settings)>, ConfigError> {
-    let preferred = cwd.join(".rpi/settings.json");
+    let preferred = cwd.join(".shob/settings.json");
     match load_settings_file(&preferred) {
         Ok(settings) => Ok(Some((preferred, settings))),
         Err(ConfigError::Read { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
@@ -447,7 +447,7 @@ pub fn load_effective_model_settings(
     Ok(effective)
 }
 
-/// Load the project settings document that rpi may safely update.
+/// Load the project settings document that shob may safely update.
 pub fn load_project_settings_for_write(cwd: &Path) -> Result<Settings, ConfigError> {
     Ok(load_active_project_settings(cwd)?
         .map(|(_, settings)| settings)
@@ -493,7 +493,7 @@ fn parse_settings(text: &str) -> Result<Settings, serde_json::Error> {
     }
 }
 
-/// Parse an existing settings document while retaining fields that rpi does
+/// Parse an existing settings document while retaining fields that shob does
 /// not model. upstream permits `//` line comments in `settings.json`, so use
 /// the same strict-then-comment-stripped strategy as [`parse_settings`].
 /// Keeping this separate from `parse_settings` is important: deserializing
@@ -508,7 +508,7 @@ fn parse_settings_value(text: &str) -> Result<serde_json::Value, serde_json::Err
     }
 }
 
-/// Persist the honored settings back to `~/.rpi/agent/settings.json`.
+/// Persist the honored settings back to `~/.shob/agent/settings.json`.
 /// Unknown pi fields (which `Settings` doesn't model) are **preserved**: the
 /// current file is read as raw JSON, the known fields are overlaid, and the
 /// merged object is written — so a copied pi `settings.json` survives edits
@@ -520,9 +520,9 @@ pub fn save_settings(settings: &Settings) -> Result<(), String> {
     save_settings_to_path(settings, &path, None)
 }
 
-/// Persist project-scoped settings under `.rpi/settings.json`.
+/// Persist project-scoped settings under `.shob/settings.json`.
 pub fn save_project_settings(cwd: &Path, settings: &Settings) -> Result<(), String> {
-    save_settings_to_path(settings, &cwd.join(".rpi/settings.json"), None)
+    save_settings_to_path(settings, &cwd.join(".shob/settings.json"), None)
 }
 
 fn save_settings_to_path(
@@ -566,8 +566,8 @@ fn save_settings_to_path(
             settings.last_changelog_version.as_ref(),
         ),
         (
-            "lastRpiChangelogVersion",
-            settings.last_rpi_changelog_version.as_ref(),
+            "lastShobChangelogVersion",
+            settings.last_shob_changelog_version.as_ref(),
         ),
     ] {
         match val {
@@ -693,8 +693,8 @@ fn save_settings_to_path(
     config::atomic_write(path, text.as_bytes()).map_err(|e| e.to_string())
 }
 
-/// When rpi is still reading upstream's settings fallback, seed the first
-/// rpi-owned save from that complete raw object. Otherwise a modeled-field
+/// When shob is still reading upstream's settings fallback, seed the first
+/// shob-owned save from that complete raw object. Otherwise a modeled-field
 /// save could shadow the native file and silently drop fields added by Pi.
 fn read_fallback_settings_value(
     target: &Path,
@@ -726,7 +726,7 @@ mod tests {
     use super::*;
     use crate::config::test_support::env_lock;
 
-    /// Point `RPI_CODING_AGENT_DIR` at a fresh temp dir for this test.
+    /// Point `SHOB_CODING_AGENT_DIR` at a fresh temp dir for this test.
     struct TempConfig {
         _guard: std::sync::MutexGuard<'static, ()>,
         _tmp: tempfile::TempDir,
@@ -803,12 +803,12 @@ mod tests {
     }
 
     #[test]
-    fn project_settings_only_use_rpi() {
+    fn project_settings_only_use_shob() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join(".rpi")).unwrap();
+        std::fs::create_dir_all(tmp.path().join(".shob")).unwrap();
         std::fs::write(
-            tmp.path().join(".rpi/settings.json"),
-            r#"{"skillDirs":["rpi-skills"],"extensions":["rpi-ext"]}"#,
+            tmp.path().join(".shob/settings.json"),
+            r#"{"skillDirs":["shob-skills"],"extensions":["shob-ext"]}"#,
         )
         .unwrap();
 
@@ -816,19 +816,19 @@ mod tests {
         assert_eq!(settings.len(), 1);
         assert_eq!(
             settings[0].skill_dirs.as_deref(),
-            Some(["rpi-skills".to_string()].as_slice())
+            Some(["shob-skills".to_string()].as_slice())
         );
         assert_eq!(
             settings[0].extension_dirs.as_deref(),
-            Some(["rpi-ext".to_string()].as_slice())
+            Some(["shob-ext".to_string()].as_slice())
         );
     }
 
     #[test]
-    fn malformed_rpi_project_settings_are_not_read() {
+    fn malformed_shob_project_settings_are_not_read() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join(".rpi")).unwrap();
-        std::fs::write(tmp.path().join(".rpi/settings.json"), "{ malformed").unwrap();
+        std::fs::create_dir_all(tmp.path().join(".shob")).unwrap();
+        std::fs::write(tmp.path().join(".shob/settings.json"), "{ malformed").unwrap();
 
         assert!(load_project_settings_with_paths(tmp.path()).is_empty());
         assert!(load_active_project_settings(tmp.path()).is_err());
@@ -845,9 +845,9 @@ mod tests {
         )
         .unwrap();
         let project = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(project.path().join(".rpi")).unwrap();
+        std::fs::create_dir_all(project.path().join(".shob")).unwrap();
         std::fs::write(
-            project.path().join(".rpi/settings.json"),
+            project.path().join(".shob/settings.json"),
             r#"{"defaultProvider":"project","defaultModel":"project-model"}"#,
         )
         .unwrap();
@@ -1028,10 +1028,10 @@ mod scoped_tests {
         assert_eq!(retry.base_delay_ms, default_retry.base_delay_ms);
     }
 
-    /// upstream's key names must be accepted, not only rpi's.
+    /// upstream's key names must be accepted, not only shob's.
     ///
     /// A user copying upstream's `settings.json` writes `enabledModels` and
-    /// `httpIdleTimeoutMs`; before this they were silently ignored because rpi
+    /// `httpIdleTimeoutMs`; before this they were silently ignored because shob
     /// spelled them differently.
     #[test]
     fn native_settings_key_names_are_accepted() {
@@ -1047,7 +1047,7 @@ mod scoped_tests {
         assert_eq!(
             settings.scoped_models,
             Some(vec!["a".to_string(), "b".to_string()]),
-            "native's `enabledModels` must map onto rpi's scoped models"
+            "native's `enabledModels` must map onto shob's scoped models"
         );
         assert_eq!(
             settings.http_idle_timeout_ms(),
@@ -1114,7 +1114,7 @@ mod scoped_tests {
     }
 
     #[test]
-    fn rpi_changelog_marker_preserves_foreign_baselines_and_existing_settings() {
+    fn shob_changelog_marker_preserves_foreign_baselines_and_existing_settings() {
         let (_tmp, _guard) = with_temp_env();
         let path = config::settings_path().unwrap();
         std::fs::write(
@@ -1123,14 +1123,17 @@ mod scoped_tests {
         )
         .unwrap();
         let mut settings = load_settings().unwrap();
-        settings.last_rpi_changelog_version = Some("0.3.19".into());
+        settings.last_shob_changelog_version = Some("0.3.19".into());
         save_settings(&settings).unwrap();
         let loaded = load_settings().unwrap();
-        assert_eq!(loaded.last_rpi_changelog_version.as_deref(), Some("0.3.19"));
+        assert_eq!(
+            loaded.last_shob_changelog_version.as_deref(),
+            Some("0.3.19")
+        );
         assert_eq!(loaded.last_changelog_version.as_deref(), Some("0.85.1"));
         let value: serde_json::Value =
             serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-        assert_eq!(value["lastRpiChangelogVersion"], "0.3.19");
+        assert_eq!(value["lastShobChangelogVersion"], "0.3.19");
         assert_eq!(value["lastChangelogVersion"], "0.85.1");
         assert_eq!(value["theme"], "dark");
         assert_eq!(value["custom"]["retained"], true);
@@ -1198,7 +1201,7 @@ mod scoped_tests {
     #[test]
     fn nested_terminal_block_is_accepted_as_a_fallback() {
         // upstream nests `showImages` / `showTerminalProgress` under
-        // `terminal`; rpi's flat keys win when both are present.
+        // `terminal`; shob's flat keys win when both are present.
         let (_tmp, _guard) = with_temp_env();
         let path = config::settings_path().unwrap();
         std::fs::write(

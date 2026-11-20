@@ -22,7 +22,8 @@ pub struct Provider {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ModelBackend {
-    Rpi,
+    #[serde(alias = "Rpi")]
+    Embedded,
     #[serde(alias = "Omp")]
     Shob,
 }
@@ -80,7 +81,7 @@ pub fn available_models(_cwd: &Path) -> Result<Vec<AgentModel>, String> {
         .map(|model| AgentModel {
             provider: model.provider,
             id: model.id,
-            backend: ModelBackend::Rpi,
+            backend: ModelBackend::Embedded,
         })
         .collect();
     models.sort_by(|a, b| (&a.provider, &a.id).cmp(&(&b.provider, &b.id)));

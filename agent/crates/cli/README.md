@@ -4,9 +4,9 @@
 [![docs.rs](https://docs.rs/rpi-cli/badge.svg)](https://docs.rs/rpi-cli)
 [![CI](https://github.com/bigfish1913/pi-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/bigfish1913/pi-rust/actions)
 
-The terminal coding-agent CLI — the `rpi` binary — built on the `rpi-*` library
+The terminal coding-agent CLI — the `shob` binary — built on the `shob-*` library
 crates. It is the ready-to-run surface of the
-[rpi](https://github.com/bigfish1913/pi-rust) project: an interactive TUI, a
+[shob](https://github.com/bigfish1913/pi-rust) project: an interactive TUI, a
 one-shot `-p` mode, a JSON event mode, durable sessions, and Rust `cdylib`
 plugin loading.
 
@@ -19,15 +19,15 @@ cargo install cli
 Requires Rust 1.88 or newer. Then point it at a provider and start it:
 
 ```bash
-export ANTHROPIC_API_KEY=...     # or OPENAI_API_KEY, or ~/.rpi/agent/models.json
-rpi
+export ANTHROPIC_API_KEY=...     # or OPENAI_API_KEY, or ~/.shob/agent/models.json
+shob
 ```
 
 One-shot, and machine-readable output:
 
 ```bash
-rpi -p "summarize the README"
-rpi --mode json -p "list the crates"
+shob -p "summarize the README"
+shob --mode json -p "list the crates"
 ```
 
 ## Authentication
@@ -35,17 +35,17 @@ rpi --mode json -p "list the crates"
 Credentials are resolved in priority order:
 
 1. `--api-key` on the command line
-2. `~/.rpi/auth.json`, written by `rpi auth login` (mode `0o600` on Unix)
-3. the `apiKey` field of a provider in `~/.rpi/agent/models.json`
+2. `~/.shob/auth.json`, written by `shob auth login` (mode `0o600` on Unix)
+3. the `apiKey` field of a provider in `~/.shob/agent/models.json`
 4. provider environment variables: `OPENAI_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
    `ANTHROPIC_API_KEY`
 
-`~/.rpi/` can be relocated with `RPI_CODING_AGENT_DIR`.
+`~/.shob/` can be relocated with `SHOB_CODING_AGENT_DIR`.
 
 ## Custom providers and gateways
 
 Any Anthropic-Messages or OpenAI-compatible endpoint can be declared in
-`~/.rpi/agent/models.json`:
+`~/.shob/agent/models.json`:
 
 ```jsonc
 {
@@ -63,7 +63,7 @@ Any Anthropic-Messages or OpenAI-compatible endpoint can be declared in
 ```
 
 ```bash
-rpi --model gateway/custom-claude -p "hi"
+shob --model gateway/custom-claude -p "hi"
 ```
 
 Use `"api": "openai-completions"` for an OpenAI-compatible endpoint. Anthropic
@@ -73,34 +73,34 @@ endpoint overrides also honour `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`.
 
 - Sessions are JSONL v4 files under the session directory, with branching and
   context compaction.
-- Project resources are discovered from `.rpi/` (skills, prompts, themes, and
-  `SYSTEM.md`), with `~/.rpi/agent/` as the global layer. When both define the
+- Project resources are discovered from `.shob/` (skills, prompts, themes, and
+  `SYSTEM.md`), with `~/.shob/agent/` as the global layer. When both define the
   same skill or prompt name, the project copy wins.
-- Plugins are loaded from project `.rpi/extensions`, global
-  `~/.rpi/agent/extensions`, and `--extensions-dir`.
+- Plugins are loaded from project `.shob/extensions`, global
+  `~/.shob/agent/extensions`, and `--extensions-dir`.
 
 ## Plugins
 
 ```bash
-rpi install rpi-todo                           # prebuilt: repository discovered via crates.io
-rpi install rpi-todo --version 0.2.0
-rpi install my-extension --github owner/repo --version 1.2.3
-rpi install rpi-todo --build                    # explicitly compile source
-rpi install my-extension --path ../my-extension --force   # local
-rpi dev                                        # build + watch a local extension
+shob install shob-todo                           # prebuilt: repository discovered via crates.io
+shob install shob-todo --version 0.2.0
+shob install my-extension --github owner/repo --version 1.2.3
+shob install shob-todo --build                    # explicitly compile source
+shob install my-extension --path ../my-extension --force   # local
+shob dev                                        # build + watch a local extension
 ```
 
-`rpi install` defaults to the versioned `rpi-extension.json` prebuilt protocol: it resolves a non-yanked stable package version and repository through crates.io, loads the `<package>-v<version>` Release manifest, and verifies the archive and declared library before transactionally installing it into `~/.rpi/agent/extensions`. Explicit `--github owner/repo` installs use package-specific tags and also support unpublished extensions. Both repository forms consume the same protocol; they never infer library filenames or use repository-wide latest bundles. Missing prebuilt releases fail with an actionable error; `--build` and `--path` explicitly select Cargo compilation. Installed provenance preserves the source for update discovery, reinstalls and uninstall. Actual plugin ABI/API-size validation still happens when loading the library.
+`shob install` defaults to the versioned `shob-extension.json` prebuilt protocol: it resolves a non-yanked stable package version and repository through crates.io, loads the `<package>-v<version>` Release manifest, and verifies the archive and declared library before transactionally installing it into `~/.shob/agent/extensions`. Explicit `--github owner/repo` installs use package-specific tags and also support unpublished extensions. Both repository forms consume the same protocol; they never infer library filenames or use repository-wide latest bundles. Missing prebuilt releases fail with an actionable error; `--build` and `--path` explicitly select Cargo compilation. Installed provenance preserves the source for update discovery, reinstalls and uninstall. Actual plugin ABI/API-size validation still happens when loading the library.
 
-`rpi install <name>` installs or upgrades an extension without `--force`. An already installed version is skipped; use `--force` to reinstall the same version or allow a downgrade. These rules also apply to explicit Cargo builds and local installs.
+`shob install <name>` installs or upgrades an extension without `--force`. An already installed version is skipped; use `--force` to reinstall the same version or allow a downgrade. These rules also apply to explicit Cargo builds and local installs.
 
-`rpi extension update` updates all project-linked extensions and globally installed registry/prebuilt extensions; `rpi extension update <name>` selects one extension by name. Updates retain the original Cargo build backend or explicit GitHub source. Global development installs made with `--path` are excluded. The old `rpi package update [name]` remains compatible, but `rpi extension update [name]` is recommended for extension updates. Project linking commands remain `rpi package link`, `rpi package list`, and `rpi package unlink`.
+`shob extension update` updates all project-linked extensions and globally installed registry/prebuilt extensions; `shob extension update <name>` selects one extension by name. Updates retain the original Cargo build backend or explicit GitHub source. Global development installs made with `--path` are excluded. The old `shob package update [name]` remains compatible, but `shob extension update [name]` is recommended for extension updates. Project linking commands remain `shob package link`, `shob package list`, and `shob package unlink`.
 
 ## Remote mode
 
 ```bash
-rpi --server                      # headless agent over TCP, prints a token
-rpi --connect host:port --token T # zero-local-resource TUI client
+shob --server                      # headless agent over TCP, prints a token
+shob --connect host:port --token T # zero-local-resource TUI client
 ```
 
 The client holds no local provider, tools, extensions or session files; all
@@ -130,7 +130,7 @@ For building your own agent, depend on
 
 ## RPC message identity, images and client text files
 
-`rpi --mode rpc` exposes additive, explicitly negotiated native contracts for
+`shob --mode rpc` exposes additive, explicitly negotiated native contracts for
 optional durable message identity, ordered inline PNG/JPEG prompt input, and
 client-authoritative text I/O through the existing built-in read/write/edit
 tools. Legacy text/local operation remains the default; client terminal support
@@ -213,4 +213,4 @@ This crate is part of a Rust port of the MIT-licensed TypeScript `pi` SDK
 
 ### CLI self-update
 
-`rpi update` downloads the matching GitHub prebuilt CLI using the versioned `rpi-release.json` distribution protocol. It verifies target, archive size, both SHA-256 hashes, and the executable version before using the existing atomic replacement and Windows staging helper. Version discovery uses crates.io. Only `rpi update --build` selects local Cargo compilation; missing manifests and failed checks preserve the installed executable. `--force` reinstalls and `--offline` reports cached information without downloads or builds.
+`shob update` downloads the matching GitHub prebuilt CLI using the versioned `shob-release.json` distribution protocol. It verifies target, archive size, both SHA-256 hashes, and the executable version before using the existing atomic replacement and Windows staging helper. Version discovery uses crates.io. Only `shob update --build` selects local Cargo compilation; missing manifests and failed checks preserve the installed executable. `--force` reinstalls and `--offline` reports cached information without downloads or builds.

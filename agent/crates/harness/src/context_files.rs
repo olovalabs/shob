@@ -19,7 +19,7 @@
 //! v1 divergences (documented): the TS worktree *shadowed* context-file
 //! deduplication (`findShadowedContextFile`, `:100-116`) is deferred — it
 //! suppresses a linked worktree's duplicate of the main repo's file and is a
-//! git-layout edge case rpi's resource discovery does not yet need.
+//! git-layout edge case shob's resource discovery does not yet need.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -264,14 +264,14 @@ mod tests {
 
     #[tokio::test]
     async fn project_walk_global_then_deep_last() {
-        // Global under /home/rpi/agent, project under /proj + /proj/sub.
+        // Global under /home/shob/agent, project under /proj + /proj/sub.
         let concrete = InMemoryExecutionEnv::with_cwd(PathBuf::from("/proj/sub"));
-        let agent_dir = Path::new("/home/rpi/agent");
+        let agent_dir = Path::new("/home/shob/agent");
         let cwd = Path::new("/proj/sub");
         // Seed with forward-slash absolute paths: `InMemoryExecutionEnv` stores
         // `seed_file` keys verbatim, while `file_info`'s `resolve_key` normalizes
         // `\`→`/` (Windows `Path::join` inserts `\`, which would miss the lookup).
-        seed(&concrete, "/home/rpi/agent/AGENTS.md", "GLOBAL").await;
+        seed(&concrete, "/home/shob/agent/AGENTS.md", "GLOBAL").await;
         seed(&concrete, "/proj/sub/AGENTS.md", "SUB").await;
         seed(&concrete, "/proj/AGENTS.md", "ROOT").await;
         let env: Arc<dyn ExecutionEnv> = Arc::new(concrete);

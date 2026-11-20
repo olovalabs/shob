@@ -1,7 +1,7 @@
-//! Development workflow for Rust-native rpi extensions.
+//! Development workflow for Rust-native shob extensions.
 //!
-//! `rpi dev` detects a Cargo `cdylib`, builds it, stages a uniquely named copy
-//! under `.rpi/extensions/.dev`, and optionally watches its source tree. Unique
+//! `shob dev` detects a Cargo `cdylib`, builds it, stages a uniquely named copy
+//! under `.shob/extensions/.dev`, and optionally watches its source tree. Unique
 //! staging directories are required on Windows because a loaded DLL cannot be
 //! overwritten until the old `Library` handle is released by `/reload`.
 
@@ -64,7 +64,7 @@ pub fn parse_args(args: &[String]) -> Result<DevOptions, String> {
 pub fn print_help() {
     println!(
         "Usage: {command} dev [dev options] [--] [agent options/messages...]\n       {command} dev-local [dev options] [--] [agent options/messages...]\n\n\
-Build the current Rust rpi extension, load it, and watch for changes.\n\n\
+Build the current Rust shob extension, load it, and watch for changes.\n\n\
 Dev options:\n  \
 --package, -P <name>  Select a cdylib package in a multi-package workspace\n  \
 --release              Build with Cargo's release profile\n  \
@@ -125,7 +125,7 @@ impl DevExtension {
         let project = detect_project(cwd, options.package.as_deref())?;
         let stage_root = project
             .workspace_root
-            .join(".rpi/extensions/.dev")
+            .join(".shob/extensions/.dev")
             .join(format!(
                 "{}-{}",
                 safe_name(&project.package),
@@ -248,10 +248,10 @@ impl DevExtension {
             return;
         }
         // A host-side keepalive can retain the mapped DLL until process exit.
-        // A detached copy of rpi retries after this process releases the file.
+        // A detached copy of shob retries after this process releases the file.
         if let Ok(exe) = std::env::current_exe() {
             let _ = Command::new(exe)
-                .arg("__rpi_dev_cleanup")
+                .arg("__shob_dev_cleanup")
                 .arg(&self.stage_root)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
@@ -531,7 +531,7 @@ fn is_dev_stage_root(path: &Path) -> bool {
             .and_then(Path::parent)
             .and_then(Path::file_name)
             .and_then(|v| v.to_str())
-            == Some(".rpi")
+            == Some(".shob")
 }
 
 fn remove_empty_dev_dir(stage_root: &Path) {
@@ -545,7 +545,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_dev_options_without_consuming_rpi_options() {
+    fn parses_dev_options_without_consuming_shob_options() {
         let options = parse_args(&[
             "--package".into(),
             "demo".into(),
@@ -580,7 +580,7 @@ mod tests {
 
     #[test]
     fn local_only_apply_keeps_only_the_current_stage() {
-        let stage_root = PathBuf::from("workspace/.rpi/extensions/.dev/demo-123");
+        let stage_root = PathBuf::from("workspace/.shob/extensions/.dev/demo-123");
         let current_stage = stage_root.join("1");
         let dev = DevExtension {
             project: ExtensionProject {
@@ -642,7 +642,7 @@ mod tests {
     fn cleanup_helper_rejects_non_dev_paths() {
         assert!(!is_dev_stage_root(Path::new("target/debug")));
         assert!(is_dev_stage_root(Path::new(
-            "workspace/.rpi/extensions/.dev/example-123"
+            "workspace/.shob/extensions/.dev/example-123"
         )));
     }
 }

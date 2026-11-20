@@ -8,7 +8,7 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 documentation = "https://docs.rs/rpi-cli"
-description = "Terminal coding-agent CLI (the `rpi` binary) built on the rpi-* library crates"
+description = "Terminal coding-agent CLI (the `shob` binary) built on the shob-* library crates"
 readme = "README.md"
 keywords = ["agent", "llm", "ai", "claude", "cli"]
 categories = [
@@ -80,10 +80,10 @@ nix = { version = "0.29", features = ["signal"] }
 rustdoc-args = ["--cfg", "docsrs"]
 
 # `cargo binstall cli` support. The release workflow publishes
-# `rpi-v<version>-<target>.tar.gz` (`.zip` on Windows) with the `rpi` binary at
+# `shob-v<version>-<target>.tar.gz` (`.zip` on Windows) with the `shob` binary at
 # the archive root, plus a sibling `.sha256`. The URL has to be built from
 # `{ bin }` rather than `{ name }`, because the assets are named after the
-# binary (`rpi`) while the crate is `cli`. Default `pkg-fmt` is `tgz`; only
+# binary (`shob`) while the crate is `cli`. Default `pkg-fmt` is `tgz`; only
 # the Windows target needs the zip override.
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ bin }-v{ version }-{ target }.{ archive-format }"
@@ -113,5 +113,5 @@ harness = false
 path = "src/lib.rs"
 
 [[bin]]
-name = "rpi"
-path = "src/bin/rpi.rs"
+name = "shob"
+path = "src/bin/shob.rs"

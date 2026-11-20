@@ -33,7 +33,7 @@ pub(crate) fn early_check(argv: &[String]) -> Result<(), String> {
     if matches!(
         argv.first().map(String::as_str),
         Some(
-            "__rpi_dev_cleanup"
+            "__shob_dev_cleanup"
                 | "dev"
                 | "dev-local"
                 | "auth"
@@ -92,8 +92,8 @@ pub(crate) fn validate(args: &Args) -> Result<(), String> {
     {
         return Err(format!("{FLAG} cannot be combined with session selection, --session-dir, export, list-models, RPC, server, Web or remote modes"));
     }
-    if std::env::var("RPI_FORCE_TUI").ok().as_deref() == Some("1") {
-        return Err(format!("{FLAG} cannot be combined with RPI_FORCE_TUI=1"));
+    if std::env::var("SHOB_FORCE_TUI").ok().as_deref() == Some("1") {
+        return Err(format!("{FLAG} cannot be combined with SHOB_FORCE_TUI=1"));
     }
     if root.is_relative()
         && (root.has_root() || root.components().any(|c| matches!(c, Component::Prefix(_))))

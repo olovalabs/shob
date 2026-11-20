@@ -527,7 +527,7 @@ pub fn dispatch_data_event(snapshot: &RegistrySnapshot, tag: EventTag, data: &st
 }
 
 /// Build + dispatch a **no-payload** event (e.g. `session_start`, `session_shutdown`,
-/// the rpi-specific `before_tui_start`) to the tag's handlers. Returns whether any
+/// the shob-specific `before_tui_start`) to the tag's handlers. Returns whether any
 /// handler was invoked. Mirrors [`dispatch_data_event`] for events whose payload
 /// is `EventEmpty`; a handler that subscribes to a no-payload tag receives the
 /// event with an empty payload.
@@ -1808,7 +1808,7 @@ mod tests {
     // --- dispatch_empty_event: no-payload lifecycle events (P0 session events)
 
     /// Verifies `dispatch_empty_event` fans a no-payload event (e.g. the
-    /// rpi-specific `BeforeTuiStart` / session lifecycle tags) to every
+    /// shob-specific `BeforeTuiStart` / session lifecycle tags) to every
     /// subscriber and reports whether any handler was invoked.
     #[test]
     fn dispatch_empty_event_fans_out_to_subscribers() {

@@ -21,7 +21,7 @@ async fn corrupt_binding_metadata_is_rejected_without_registration_or_rewrite() 
     put(root.join("transition.json"), json!({"version":1,"operation_id":"test-corruption","expected":{"revision":state["binding"]["revision"],"fingerprint":state["binding"]["fingerprint"]},"target":selection}).to_string());
     fn replace(value: &mut Value, field: &str, damaged: &Value) -> usize {
         let mut count = 0;
-        if value["key"] == "rpi.resource-selection.v1" && value.get("value").is_some() {
+        if value["key"] == "shob.resource-selection.v1" && value.get("value").is_some() {
             value["value"][field] = damaged.clone();
             return 1;
         }

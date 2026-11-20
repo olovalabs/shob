@@ -1,6 +1,6 @@
-//! Opt-in baseline: the pre-embedding rpi RPC subprocess bridge.
+//! Opt-in baseline: the pre-embedding shob RPC subprocess bridge.
 //!
-//! The embedded bridge is the default. Setting `SHOB_RPI_BACKEND=rpc` keeps
+//! The embedded bridge is the default. Setting `SHOB_AGENT_BACKEND=rpc` keeps
 //! the old process/stdio/JSONL path available for before/after measurements on
 //! a credentialed machine, without changing the UI or the event contract.
 
@@ -41,7 +41,7 @@ impl Write for DeferredStdin {
         if self.sink.is_none() {
             self.sink =
                 Some(self.receiver.recv().map_err(|_| {
-                    io::Error::new(io::ErrorKind::BrokenPipe, "rpi startup failed")
+                    io::Error::new(io::ErrorKind::BrokenPipe, "shob startup failed")
                 })?);
         }
         self.sink.as_mut().expect("attached stdin").write(bytes)
@@ -155,7 +155,7 @@ impl RpcAgentBridge {
                 command
                     .args(["--mode", "rpc"])
                     .arg("--session-dir")
-                    .arg(crate::paths::rpi_sessions_dir())
+                    .arg(crate::paths::shob_sessions_dir())
                     .current_dir(&worker_cwd)
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
@@ -368,7 +368,7 @@ impl RpcAgentBridge {
         let model = self
             .model
             .lock()
-            .map_err(|_| "rpi model lock was poisoned")?
+            .map_err(|_| "shob model lock was poisoned")?
             .clone()
             .ok_or("The agent model is still starting; try again shortly")?;
         let predecessor = Some(Arc::clone(&self.cleanup));
@@ -386,7 +386,7 @@ impl RpcAgentBridge {
 
     pub(crate) fn send_prompt(&mut self, prompt: &str) -> Result<(), String> {
         if self.closed {
-            return Err("The rpi process has exited".into());
+            return Err("The shob process has exited".into());
         }
         self.next_id = self.next_id.wrapping_add(1);
         self.writer
@@ -400,7 +400,7 @@ impl RpcAgentBridge {
 
     pub(crate) fn cancel(&mut self) -> Result<(), String> {
         if self.closed {
-            return Err("The rpi process has exited".into());
+            return Err("The shob process has exited".into());
         }
         self.next_id = self.next_id.wrapping_add(1);
         self.writer
@@ -647,7 +647,7 @@ fn decode_event(record: &Value) -> Vec<AgentEvent> {
             let command = record["command"].as_str().unwrap_or("command");
             if record["success"] == false {
                 let error = record["error"].as_str().unwrap_or("unknown error");
-                events.push(AgentEvent::Error(format!("rpi {command}: {error}")));
+                events.push(AgentEvent::Error(format!("shob {command}: {error}")));
                 if command == "prompt" {
                     events.push(AgentEvent::Done);
                 }
@@ -695,7 +695,7 @@ fn decode_event(record: &Value) -> Vec<AgentEvent> {
             let error = record["error"]
                 .as_str()
                 .unwrap_or("Unknown extension error");
-            events.push(AgentEvent::Error(format!("rpi extension: {error}")));
+            events.push(AgentEvent::Error(format!("shob extension: {error}")));
         }
         _ => {}
     }
@@ -735,7 +735,7 @@ mod tests {
     fn a_slow_rpc_reader_does_not_block_prompt_abort_or_drop() {
         let dir = std::env::temp_dir().join(crate::paths::uid("shob-slow-rpc"));
         std::fs::create_dir_all(&dir).unwrap();
-        let script = dir.join("slow-rpi.sh");
+        let script = dir.join("slow-shob.sh");
         std::fs::write(
             &script,
             "#!/bin/sh\necho $$ > pid\nsleep 30 &\necho $! > descendant\nwait\n",

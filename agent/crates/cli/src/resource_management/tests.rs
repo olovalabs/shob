@@ -69,7 +69,7 @@ fn leases_distinguish_contention_from_errors_and_keep_observation_guard() {
 #[test]
 fn host_lease_does_not_create_project_resource_directory() {
     let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().join(".rpi");
+    let root = dir.path().join(".shob");
     let host = shared_lease(&root).unwrap();
     assert!(!root.exists());
     assert!(lease_path(&root).is_file());

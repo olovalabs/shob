@@ -26,7 +26,7 @@ impl Cli {
     }
 
     async fn run(&self, args: &[&str]) -> (i32, String, String) {
-        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_rpi"));
+        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_shob"));
         command.env_clear();
         // Windows process/runtime support, not user configuration or credentials.
         for key in ["SystemRoot", "WINDIR", "TEMP", "TMP"] {
@@ -41,8 +41,8 @@ impl Cli {
             .env("APPDATA", self.home.join("AppData/Roaming"))
             .env("LOCALAPPDATA", self.home.join("AppData/Local"))
             .env("XDG_CONFIG_HOME", self.home.join(".config"))
-            .env("RPI_CODING_AGENT_DIR", &self.agent)
-            .env("RPI_OFFLINE", "1")
+            .env("SHOB_CODING_AGENT_DIR", &self.agent)
+            .env("SHOB_OFFLINE", "1")
             .env("CARGO_NET_OFFLINE", "true")
             .env("HTTP_PROXY", "http://127.0.0.1:9")
             .env("HTTPS_PROXY", "http://127.0.0.1:9")
@@ -92,7 +92,7 @@ async fn extension_and_legacy_help_are_available_before_provider_startup() {
     ] {
         let result = cli.run(&args).await;
         assert_eq!(result.0, 0);
-        assert!(result.1.contains("Usage: rpi extension <command>"));
+        assert!(result.1.contains("Usage: shob extension <command>"));
         assert!(result.1.contains("update [name]"));
         assert!(result.2.is_empty());
     }
@@ -100,13 +100,13 @@ async fn extension_and_legacy_help_are_available_before_provider_startup() {
     assert_eq!(legacy.0, 0);
     assert!(legacy
         .1
-        .contains("Legacy compatibility alias for `rpi extension update`"));
+        .contains("Legacy compatibility alias for `shob extension update`"));
     for flag in ["--help", "-h"] {
         let (out, err) = cli.both(&[flag], 0).await;
-        assert!(out.contains("Usage: rpi extension update [name]"));
+        assert!(out.contains("Usage: shob extension update [name]"));
         assert!(out.contains("--debug"));
         assert!(out.contains("--locked"));
-        assert!(out.contains("rpi package update"));
+        assert!(out.contains("shob package update"));
         assert!(err.is_empty());
     }
     assert_eq!(std::fs::read_dir(&cli.agent).unwrap().count(), 0);
@@ -118,8 +118,8 @@ async fn update_aliases_match_for_empty_registries_and_arguments() {
     // Missing registries and explicitly empty registries must behave identically.
     for explicit in [false, true] {
         if explicit {
-            std::fs::create_dir_all(cli.cwd.join(".rpi")).unwrap();
-            std::fs::write(cli.cwd.join(".rpi/packages.json"), r#"{"packages":[]}"#).unwrap();
+            std::fs::create_dir_all(cli.cwd.join(".shob")).unwrap();
+            std::fs::write(cli.cwd.join(".shob/packages.json"), r#"{"packages":[]}"#).unwrap();
             std::fs::write(cli.agent.join("native-packages.json"), "[]").unwrap();
         }
         for args in [
@@ -150,7 +150,7 @@ async fn update_aliases_match_for_empty_registries_and_arguments() {
             assert!(err.contains("error:"));
         }
     }
-    assert!(!cli.cwd.join(".rpi/packages").exists());
+    assert!(!cli.cwd.join(".shob/packages").exists());
     assert!(!cli.agent.join("extensions").exists());
 }
 
@@ -161,8 +161,8 @@ async fn corrupt_registries_fail_identically_and_help_still_works() {
     let (_, err) = cli.both(&[], 1).await;
     assert!(err.contains("error:"));
     cli.both(&["--help"], 0).await;
-    std::fs::create_dir_all(cli.cwd.join(".rpi")).unwrap();
-    std::fs::write(cli.cwd.join(".rpi/packages.json"), "not json").unwrap();
+    std::fs::create_dir_all(cli.cwd.join(".shob")).unwrap();
+    std::fs::write(cli.cwd.join(".shob/packages.json"), "not json").unwrap();
     let (_, err) = cli.both(&[], 1).await;
     assert!(err.contains("error:"));
     cli.both(&["--help"], 0).await;
@@ -177,7 +177,7 @@ async fn unsupported_extension_commands_are_usage_errors_not_model_prompts() {
         assert!(result
             .2
             .contains(&format!("unknown extension command `{subcommand}`")));
-        assert!(result.1.contains("Usage: rpi extension <command>"));
+        assert!(result.1.contains("Usage: shob extension <command>"));
     }
     assert_eq!(std::fs::read_dir(&cli.agent).unwrap().count(), 0);
     assert_eq!(std::fs::read_dir(&cli.cwd).unwrap().count(), 0);

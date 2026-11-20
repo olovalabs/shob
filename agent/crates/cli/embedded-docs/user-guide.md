@@ -1,7 +1,7 @@
-# rpi 使用手册
+# shob 使用手册
 
-这是一份面向使用者和扩展作者的 rpi 手册，涵盖安装、配置、会话、插件、远程模式和故障排查。
-具体实现以当前仓库和已安装的 rpi 二进制为准。
+这是一份面向使用者和扩展作者的 shob 手册，涵盖安装、配置、会话、插件、远程模式和故障排查。
+具体实现以当前仓库和已安装的 shob 二进制为准。
 
 ## 1. 安装
 
@@ -11,8 +11,8 @@
 
 ```bash
 cargo install cli
-rpi --version
-rpi --help
+shob --version
+shob --help
 ```
 
 从本仓库源码安装开发版本：
@@ -23,7 +23,7 @@ cd pi-rust
 cargo install --path crates/cli --force
 ```
 
-`cargo install` 安装的是可执行文件；它不等同于 `rpi install`。后者用于安装由 `plugin-sdk` 构建的 Rust 动态库扩展。
+`cargo install` 安装的是可执行文件；它不等同于 `shob install`。后者用于安装由 `plugin-sdk` 构建的 Rust 动态库扩展。
 
 ### 从源码启动与构建
 
@@ -33,7 +33,7 @@ cargo install --path crates/cli --force
 # 直接启动 CLI
 cargo run -p cli
 
-# 向 CLI 传递参数（`--` 后的内容属于 rpi）
+# 向 CLI 传递参数（`--` 后的内容属于 shob）
 cargo run -p cli -- -p "总结 README.md"
 cargo run -p cli -- --mode json -p "列出项目中的 crates"
 
@@ -41,11 +41,11 @@ cargo run -p cli -- --mode json -p "列出项目中的 crates"
 cargo build -p cli --release
 ```
 
-构建完成后，Windows 可执行文件位于 `target/release/rpi.exe`，Linux/macOS 下通常为 `target/release/rpi`。也可以把本地 CLI 安装到 Cargo 的 bin 目录后直接使用：
+构建完成后，Windows 可执行文件位于 `target/release/shob.exe`，Linux/macOS 下通常为 `target/release/shob`。也可以把本地 CLI 安装到 Cargo 的 bin 目录后直接使用：
 
 ```bash
 cargo install --path crates/cli --force
-rpi
+shob
 ```
 
 离线示例（不需要 API Key 或网络）可以使用：
@@ -59,21 +59,21 @@ cargo run -p minimal
 交互模式：
 
 ```bash
-rpi
-rpi "解释当前项目的目录结构"
+shob
+shob "解释当前项目的目录结构"
 ```
 
 单次输出模式：
 
 ```bash
-rpi -p "总结 README.md"
-rpi --mode json -p "列出项目的风险"
+shob -p "总结 README.md"
+shob --mode json -p "列出项目的风险"
 ```
 
 通过 `@` 把文件放进第一条消息：
 
 ```bash
-rpi @README.md "给出这个项目的改进建议"
+shob @README.md "给出这个项目的改进建议"
 ```
 
 ## 2. 模型和凭据
@@ -83,24 +83,24 @@ rpi @README.md "给出这个项目的改进建议"
 当多个来源同时存在时，优先级为：
 
 1. `--api-key`
-2. `~/.rpi/auth.json`（由 `rpi auth login` 写入）
-3. `~/.rpi/agent/models.json` 中对应 provider 的 `apiKey`
+2. `~/.shob/auth.json`（由 `shob auth login` 写入）
+3. `~/.shob/agent/models.json` 中对应 provider 的 `apiKey`
 4. 环境变量
 
 Anthropic 使用 `ANTHROPIC_API_KEY` 或 `ANTHROPIC_AUTH_TOKEN`；OpenAI-compatible provider 使用 `OPENAI_API_KEY`。检查凭据时不会发起网络请求：
 
 ```bash
-rpi auth check
-rpi auth check --provider gateway --json
-rpi auth login
-rpi auth logout
+shob auth check
+shob auth check --provider gateway --json
+shob auth login
+shob auth logout
 ```
 
 不要把密钥写入 Git 仓库、项目文档或 package manifest。
 
 ### 自定义 Provider
 
-配置文件默认是 `~/.rpi/agent/models.json`，也可以通过 `RPI_CODING_AGENT_DIR` 指定 agent 配置目录：
+配置文件默认是 `~/.shob/agent/models.json`，也可以通过 `SHOB_CODING_AGENT_DIR` 指定 agent 配置目录：
 
 ```jsonc
 {
@@ -128,12 +128,12 @@ rpi auth logout
 选择模型：
 
 ```bash
-rpi --model gateway/custom-claude -p "hello"
-rpi --model openai-gateway/custom-model -p "hello"
-rpi --provider gateway --model custom-claude -p "hello"
+shob --model gateway/custom-claude -p "hello"
+shob --model openai-gateway/custom-model -p "hello"
+shob --provider gateway --model custom-claude -p "hello"
 ```
 
-不传 `--model` 时，rpi 会优先选择已经认证的模型。标准 Anthropic 凭据存在时使用内置默认模型；只有自定义 gateway 已认证时，会选择该 gateway 的第一个可用模型。
+不传 `--model` 时，shob 会优先选择已经认证的模型。标准 Anthropic 凭据存在时使用内置默认模型；只有自定义 gateway 已认证时，会选择该 gateway 的第一个可用模型。
 
 Anthropic 的兼容网关还可以使用：
 
@@ -183,37 +183,37 @@ ANTHROPIC_AUTH_TOKEN=token
 --server [--port <n>] [--bind <ip>]
                         无头服务端（启动时打印 token）
 --connect <host:port>   远程客户端 TUI（零本地资源）
---token <token>         远程认证 token（也支持环境变量 RPI_SERVER_TOKEN）
+--token <token>         远程认证 token（也支持环境变量 SHOB_SERVER_TOKEN）
 ```
 
 子命令：
 
 ```text
-rpi auth login|check|logout
-rpi events path|tail    检查扩展事件日志（需 RPI_EVENT_LOG=1）
-rpi install <crate>
-rpi uninstall <crate>
-rpi extension update [name] # 更新全部符合条件的扩展，或按名称更新
-rpi update                 # 更新 rpi CLI 自身
-rpi dev [options]          # 开发 Rust 扩展：编译、watch、热重载
-rpi dev-local [options]    # 只调试当前 Rust 扩展（隔离模式）
+shob auth login|check|logout
+shob events path|tail    检查扩展事件日志（需 SHOB_EVENT_LOG=1）
+shob install <crate>
+shob uninstall <crate>
+shob extension update [name] # 更新全部符合条件的扩展，或按名称更新
+shob update                 # 更新 shob CLI 自身
+shob dev [options]          # 开发 Rust 扩展：编译、watch、热重载
+shob dev-local [options]    # 只调试当前 Rust 扩展（隔离模式）
 ```
 
 ### CLI 自更新
 
-`rpi update` 默认从 GitHub Release 下载预编译的 CLI，不需要本地 Rust/Cargo。
-稳定版版本按 crates.io 的发布记录解析；`rpi-release.json` 提供各平台下载地址、大小和
+`shob update` 默认从 GitHub Release 下载预编译的 CLI，不需要本地 Rust/Cargo。
+稳定版版本按 crates.io 的发布记录解析；`shob-release.json` 提供各平台下载地址、大小和
 压缩包/可执行文件的 SHA-256。校验目标平台、完整性和实际版本后，原子替换当前 CLI。
 Windows 会暂存更新，等待当前进程退出后完成替换。稳定版不会提示或自动选择预览版。
 
 预览构建来自 `preview` 分支的合并，会创建 GitHub prerelease，但不会发布到 crates.io。
-需要体验预览版时显式运行 `rpi update preview`；它只从 GitHub prerelease 中选择最新版本。
-预览版运行普通 `rpi update` 时会检查 crates.io，发现正式版后提示切换到正式版本。
+需要体验预览版时显式运行 `shob update preview`；它只从 GitHub prerelease 中选择最新版本。
+预览版运行普通 `shob update` 时会检查 crates.io，发现正式版后提示切换到正式版本。
 
-`rpi update --force` 重新安装已解析的版本；`rpi update --build` 显式使用 Cargo 源码编译。
+`shob update --force` 重新安装已解析的版本；`shob update --build` 显式使用 Cargo 源码编译。
 缺少 manifest、下载失败或校验不通过都会报错并保留原版本，不会自动转为编译。
 `--offline` 仅报告稳定版缓存；预览版需要联网查询 GitHub。旧 Release 没有 manifest 时，
-可等待协议资产补齐，或显式使用 `rpi update --build`。
+可等待协议资产补齐，或显式使用 `shob update --build`。
 
 ### TUI 历史消息滚动
 
@@ -227,7 +227,7 @@ macOS 的行为与 main-screen 的终端原生 scrollback 不同：alternate-scr
 
 支持 Kitty 键盘协议的终端使用与 Pi 一致的 flags 7，启用修饰键识别及功能键重复、松键事件。普通文本保留 UTF-8 输入，保证 iTerm2 等终端的中文输入法可以正常提交文字；不启用把所有文本转成按键事件的 flag 8。普通字符键（例如空格）的松键事件不作保证，依赖按住操作的插件应使用终端支持松键事件的功能键。协议在切换到当前屏幕后开启，并在退出或挂起前恢复；恢复运行时也会重新启用全屏鼠标滚动。
 
-macOS 默认同样开启协议，因为 `Shift+Enter` 依赖它区分于 `Enter`；只有开启协议后输入法无法上屏的终端（如 Otty）退回传统输入。`RPI_KITTY_KEYBOARD=1` 可强制开启，`RPI_KITTY_KEYBOARD=0` 可强制回退传统输入。
+macOS 默认同样开启协议，因为 `Shift+Enter` 依赖它区分于 `Enter`；只有开启协议后输入法无法上屏的终端（如 Otty）退回传统输入。`SHOB_KITTY_KEYBOARD=1` 可强制开启，`SHOB_KITTY_KEYBOARD=0` 可强制回退传统输入。
 
 本地 Terminal.app 的 `Shift+Enter` 使用 macOS 原生 Shift 状态补足换行识别，普通 `Enter` 继续发送。SSH 会话不会读取本机 Shift 状态。未支持增强键盘协议的终端仍使用传统输入，按住快捷键等依赖松键事件的功能需要终端支持。
 
@@ -238,12 +238,12 @@ macOS 默认同样开启协议，因为 `Shift+Enter` 依赖它区分于 `Enter`
 把 agent 跑在无头服务端，另一个进程用 TUI 远程驱动。客户端**无任何本地 agent 资源**。
 
 ```bash
-rpi --server --port 9899          # 服务端：启动时打印 token
-rpi --connect 127.0.0.1:9899 --token <token>   # 客户端
+shob --server --port 9899          # 服务端：启动时打印 token
+shob --connect 127.0.0.1:9899 --token <token>   # 客户端
 
 # 或通过环境变量传递 token
-export RPI_SERVER_TOKEN=<token>
-rpi --connect 127.0.0.1:9899
+export SHOB_SERVER_TOKEN=<token>
+shob --connect 127.0.0.1:9899
 ```
 
 服务端默认开启 token 认证（`--no-token` 可关闭）。客户端支持 `/state`、`/model`、
@@ -253,9 +253,9 @@ rpi --connect 127.0.0.1:9899
 
 ## 4. 内置工具
 
-默认工具包含 Pi 的 `read`、`bash`、`edit`、`write`，以及 rpi 自带的只读 `docs` 文档查询工具。Windows 上还会默认注册 `powershell`。`docs` 可以查询使用手册、扩展开发、Agent 项目结构、Rust 调试和架构说明；`grep`、`find`、`ls` 仍保留为库实现，但不由 CLI 默认注册。
+默认工具包含 Pi 的 `read`、`bash`、`edit`、`write`，以及 shob 自带的只读 `docs` 文档查询工具。Windows 上还会默认注册 `powershell`。`docs` 可以查询使用手册、扩展开发、Agent 项目结构、Rust 调试和架构说明；`grep`、`find`、`ls` 仍保留为库实现，但不由 CLI 默认注册。
 
-可以通过 `.rpi/settings.json` 的 `defaultTools` 字段（或简写 `default_tools`）在未指定
+可以通过 `.shob/settings.json` 的 `defaultTools` 字段（或简写 `default_tools`）在未指定
 `--tools` 时限定启动工具集：
 
 ```json
@@ -267,16 +267,16 @@ rpi --connect 127.0.0.1:9899
 需要限制工具范围时，显式列出 Pi 的四个工具：
 
 ```bash
-rpi --tools read,bash,edit,write,docs -p "检查并修改项目文件"
+shob --tools read,bash,edit,write,docs -p "检查并修改项目文件"
 ```
 
 ## 5. 项目目录和资源优先级
 
-rpi 会优先使用 rpi 自己的目录，同时兼容原 Pi 的 `.pi` 布局：
+shob 会优先使用 shob 自己的目录，同时兼容原 Pi 的 `.pi` 布局：
 
 ```text
 项目/
-├── .rpi/
+├── .shob/
 │   ├── settings.json
 │   ├── SYSTEM.md
 │   ├── APPEND_SYSTEM.md
@@ -288,9 +288,9 @@ rpi 会优先使用 rpi 自己的目录，同时兼容原 Pi 的 `.pi` 布局：
 └── themes/
 ```
 
-项目 `.rpi` 优先于项目 `.pi`。全局资源默认位于 `~/.rpi/agent/`，包括 `settings.json`、`models.json`、`skills/`、`prompts/`、`themes/`、`extensions/` 和 `packages/`。同名资源发生冲突时，项目资源优先于全局资源，`.rpi` 优先于 `.pi`。
+项目 `.shob` 优先于项目 `.pi`。全局资源默认位于 `~/.shob/agent/`，包括 `settings.json`、`models.json`、`skills/`、`prompts/`、`themes/`、`extensions/` 和 `packages/`。同名资源发生冲突时，项目资源优先于全局资源，`.shob` 优先于 `.pi`。
 
-项目级 `.rpi/settings.json` 可以追加资源目录：
+项目级 `.shob/settings.json` 可以追加资源目录：
 
 ```json
 {
@@ -301,21 +301,21 @@ rpi 会优先使用 rpi 自己的目录，同时兼容原 Pi 的 `.pi` 布局：
 }
 ```
 
-路径相对于项目根目录；`skills`、`prompts`、`extensions` 是对应 `*Dirs` 字段的简写。自定义目录会与 `.rpi`、`.pi` 和全局约定目录一起加载，`.rpi` 优先。全局 `~/.rpi/agent/settings.json` 也支持这些字段，相对路径相对于 agent 目录。
+路径相对于项目根目录；`skills`、`prompts`、`extensions` 是对应 `*Dirs` 字段的简写。自定义目录会与 `.shob`、`.pi` 和全局约定目录一起加载，`.shob` 优先。全局 `~/.shob/agent/settings.json` 也支持这些字段，相对路径相对于 agent 目录。
 
 只加载当前项目的 package/resource、排除全局资源时，使用以下任一等价参数：
 
 ```bash
-rpi --package-only
-rpi --project-only
+shob --package-only
+shob --project-only
 ```
 
-两者都会加载当前项目的 skills、prompts、themes、extensions 和 packages，并读取项目 `.rpi/settings.json`；不会自动加载全局资源。`--local-only` 语义不同，只加载通过 `--extensions-dir` 或 `--extension` 显式指定的扩展。
+两者都会加载当前项目的 skills、prompts、themes、extensions 和 packages，并读取项目 `.shob/settings.json`；不会自动加载全局资源。`--local-only` 语义不同，只加载通过 `--extensions-dir` 或 `--extension` 显式指定的扩展。
 
 配置目录可以重定位：
 
 ```bash
-RPI_CODING_AGENT_DIR=/work/agent rpi
+SHOB_CODING_AGENT_DIR=/work/agent shob
 ```
 
 会话默认保存到 agent 配置目录下的 sessions；`--no-session` 可使用临时会话。
@@ -324,34 +324,34 @@ RPI_CODING_AGENT_DIR=/work/agent rpi
 
 Rust 原生插件是 `cdylib`，只依赖 `plugin-sdk`，由 `extensions` 动态加载：
 完整的“从零写插件”流程见 [`docs/extensions/authoring.md`](../extensions/authoring.md)，
-包括 Cargo 结构、`export_plugin!`、工具生命周期、能力检测、测试和 `rpi dev`。
+包括 Cargo 结构、`export_plugin!`、工具生命周期、能力检测、测试和 `shob dev`。
 如果插件项目还需要 Web/ACP 适配器共享的 session、workspace、RPC 或 durable 状态，
-可以额外复用 [`rpi-extcore`](https://crates.io/crates/rpi-extcore)（`rpi-extcore = "0.1"`）。
+可以额外复用 [`shob-extcore`](https://crates.io/crates/rpi-extcore)（`shob-extcore = "0.1"`）。
 它是普通 Rust 库，不是 `cdylib` 入口，也不替代 `plugin-sdk`；只做普通 CLI 工具时
 不要为了 ABI 注册引入它。
 
 ```bash
 cargo build -p plugin-stub
-rpi --extensions-dir target/debug -p 'echo "hi"'
+shob --extensions-dir target/debug -p 'echo "hi"'
 ```
 
 安装预编译扩展（默认，不需要 Rust/Cargo）：
 
 ```bash
-rpi install rpi-todo
-rpi install rpi-todo --version 0.2.0
-rpi install rpi-todo --force # 同版本重装
+shob install shob-todo
+shob install shob-todo --version 0.2.0
+shob install shob-todo --force # 同版本重装
 ```
 
-`rpi install <包名>` 可直接安装或升级；目标版本已安装时会提示并跳过。同版本重装或降级需要 `--force`。源码构建也遵循这一规则，本地开发修改代码但未更改版本时，使用 `--force` 重装。
+`shob install <包名>` 可直接安装或升级；目标版本已安装时会提示并跳过。同版本重装或降级需要 `--force`。源码构建也遵循这一规则，本地开发修改代码但未更改版本时，使用 `--force` 重装。
 
-安装器从 crates.io 选择最新未撤回的稳定版本，并用包的 `repository` 元数据找到 GitHub 仓库，再读取 `<包名>-v<版本>` Release 中的 `rpi-extension.json`。它按精确目标三元组匹配预编译文件，校验压缩包大小和 SHA-256、解压后的库文件 SHA-256、平台架构及声明的 SDK ABI。库文件名以 manifest 的 `library.path` 为准。同一仓库里的扩展可以独立版本发布。
+安装器从 crates.io 选择最新未撤回的稳定版本，并用包的 `repository` 元数据找到 GitHub 仓库，再读取 `<包名>-v<版本>` Release 中的 `shob-extension.json`。它按精确目标三元组匹配预编译文件，校验压缩包大小和 SHA-256、解压后的库文件 SHA-256、平台架构及声明的 SDK ABI。库文件名以 manifest 的 `library.path` 为准。同一仓库里的扩展可以独立版本发布。
 
 指定自定义 GitHub 仓库（也接受完整 HTTPS 仓库 URL）：
 
 ```bash
-rpi install my-extension --github owner/repo --version 1.2.3
-rpi install my-extension --github https://github.com/owner/repo
+shob install my-extension --github owner/repo --version 1.2.3
+shob install my-extension --github https://github.com/owner/repo
 ```
 
 自定义仓库也须发布同一分发协议。显式仓库不依赖 crates.io；省略版本时，只在该仓库的 `<包名>-v<版本>` 标签中选择最新稳定版本。不会使用仓库的全局 latest Release。后续 `--force` 重装和启动更新检查会保留来源，并核对新版本的 manifest 是否适配当前平台。
@@ -359,48 +359,48 @@ rpi install my-extension --github https://github.com/owner/repo
 发布者必须先上传所声明平台的压缩包，最后上传 manifest。manifest 尚未发布、目标平台缺失或校验不通过时安装失败，不会自动编译或选择其他版本。需要源码编译时显式使用：
 
 ```bash
-rpi install rpi-todo --build
-rpi install rpi-todo --build --version 0.2.0 --force
+shob install shob-todo --build
+shob install shob-todo --build --version 0.2.0 --force
 ```
 
 预编译安装记录包括版本、仓库、目标平台、源码提交、SDK ABI 和校验值；安装与卸载使用同一事务机制。加载时仍会验证实际插件入口与 API 结构大小。系统原生运行库依赖仍由操作系统提供。
 
-包可以在库文件旁附带运行所需的文件，例如 Node 工作进程 `runtime/main.mjs`。压缩包根目录的 `runtime-assets.json` 索引由包的发布构建工具生成，列出每个文件的路径、大小和 SHA-256。安装器先在内存中校验全部内容，再与库文件一起以事务方式写入扩展目录，并记录在安装注册表中。升级会替换这些文件；卸载会连同因此变空的目录一并删除。路径须为相对的 ASCII 普通路径，不得包含 `..`、隐藏组件、`node_modules`、原生库后缀、Windows 设备名（如 `CON`、`NUL`、`COM1`）、以点结尾的组件、符号链接或索引未声明的文件；单文件不超过 128 MiB，展开后的总量不超过 256 MiB，压缩包条目总数不超过 128。没有索引的压缩包只安装库文件。旧版 rpi 不支持此功能：它读取这类压缩包时只安装库文件而不会拒绝，因此发布声明了附属文件的包之前，应先升级 rpi。
+包可以在库文件旁附带运行所需的文件，例如 Node 工作进程 `runtime/main.mjs`。压缩包根目录的 `runtime-assets.json` 索引由包的发布构建工具生成，列出每个文件的路径、大小和 SHA-256。安装器先在内存中校验全部内容，再与库文件一起以事务方式写入扩展目录，并记录在安装注册表中。升级会替换这些文件；卸载会连同因此变空的目录一并删除。路径须为相对的 ASCII 普通路径，不得包含 `..`、隐藏组件、`node_modules`、原生库后缀、Windows 设备名（如 `CON`、`NUL`、`COM1`）、以点结尾的组件、符号链接或索引未声明的文件；单文件不超过 128 MiB，展开后的总量不超过 256 MiB，压缩包条目总数不超过 128。没有索引的压缩包只安装库文件。旧版 shob 不支持此功能：它读取这类压缩包时只安装库文件而不会拒绝，因此发布声明了附属文件的包之前，应先升级 shob。
 
 本地开发：
 
 ```bash
-rpi install my-extension --path ../my-rpi-extension --force
+shob install my-extension --path ../my-shob-extension --force
 ```
 
-推荐用 `rpi extension update` 更新全部项目链接扩展和全局 registry/prebuilt 扩展，
-或用 `rpi extension update <name>` 按名称更新。更新保留原来的 Cargo 构建后端或
+推荐用 `shob extension update` 更新全部项目链接扩展和全局 registry/prebuilt 扩展，
+或用 `shob extension update <name>` 按名称更新。更新保留原来的 Cargo 构建后端或
 显式指定的 GitHub 来源；全局通过 `--path` 安装的开发扩展不参与更新。
-旧命令 `rpi package update [name]` 仍兼容，但扩展更新推荐使用
-`rpi extension update [name]`。项目链接管理仍使用 `rpi package link`、
-`rpi package list`、`rpi package unlink`，这些命令名称不变。
+旧命令 `shob package update [name]` 仍兼容，但扩展更新推荐使用
+`shob extension update [name]`。项目链接管理仍使用 `shob package link`、
+`shob package list`、`shob package unlink`，这些命令名称不变。
 
 开发扩展项目时使用 watch 模式：
 
 ```bash
-cd ../my-rpi-extension
-rpi dev
-# 多扩展 workspace：rpi dev --package my-extension
-# 只调试当前扩展：rpi dev-local（隔离模式，不加载全局扩展）
+cd ../my-shob-extension
+shob dev
+# 多扩展 workspace：shob dev --package my-extension
+# 只调试当前扩展：shob dev-local（隔离模式，不加载全局扩展）
 ```
 
-`rpi dev` 会自动识别 Cargo `cdylib`、首次编译并从 `.rpi/extensions/.dev` 加载版本化产物。源码变化会触发重新编译和热重载；手工执行 `/reload` 也会先重新编译。编译失败时继续保留当前已经加载的版本。完整模板和边界规则见在线扩展作者指南：<https://rpi.laofu.online/extension-authoring.md>，调试技巧见 `docs` 的 `debugging` 主题。
+`shob dev` 会自动识别 Cargo `cdylib`、首次编译并从 `.shob/extensions/.dev` 加载版本化产物。源码变化会触发重新编译和热重载；手工执行 `/reload` 也会先重新编译。编译失败时继续保留当前已经加载的版本。完整模板和边界规则见在线扩展作者指南：<https://rpi.laofu.online/extension-authoring.md>，调试技巧见 `docs` 的 `debugging` 主题。
 
-安装后的动态库位于 `~/.rpi/agent/extensions`（或 `RPI_CODING_AGENT_DIR` 指定的目录），下次启动 rpi 时加载。插件通过稳定 ABI 注册工具、Provider、事件处理器和资源处理器；不要直接依赖 `cli` 的私有模块。
+安装后的动态库位于 `~/.shob/agent/extensions`（或 `SHOB_CODING_AGENT_DIR` 指定的目录），下次启动 shob 时加载。插件通过稳定 ABI 注册工具、Provider、事件处理器和资源处理器；不要直接依赖 `cli` 的私有模块。
 
 ### 网页搜索与抓取
 
-联网工具由独立的 [rpi-package 扩展](https://github.com/pi-rust/rpi-package) 提供，
-不属于 CLI 默认内置工具。按需安装后重启 rpi：
+联网工具由独立的 [shob-package 扩展](https://github.com/pi-rust/rpi-package) 提供，
+不属于 CLI 默认内置工具。按需安装后重启 shob：
 
 ```bash
-rpi install rpi-websearch
-rpi install rpi-webfetch
+shob install shob-websearch
+shob install shob-webfetch
 ```
 
 - `websearch` 返回搜索结果的标题、链接和摘要。
@@ -409,15 +409,15 @@ rpi install rpi-webfetch
 
 ### 继承主会话配置的子 agent
 
-安装兼容版本的 `rpi-subagents` 并重启后，可通过 `delegate_task` 委派任务：
+安装兼容版本的 `shob-subagents` 并重启后，可通过 `delegate_task` 委派任务：
 
 ```bash
-rpi install rpi-subagents
+shob install shob-subagents
 ```
 
 子 agent 使用主会话当前有效配置的快照：模型/provider 及其私有凭据绑定、thinking、
 系统提示词、资源、请求选项、启用的工具、项目 cwd 和审批 hook。它不是重新读取默认
-配置启动的 `rpi` 子进程；凭据不会通过插件 JSON 传递。
+配置启动的 `shob` 子进程；凭据不会通过插件 JSON 传递。
 
 子任务使用独立的内存 Session，**不复制或修改父聊天历史**。宿主 API 可进一步缩小
 工具集合，但不能扩大；子工具集中移除 `delegate_task`，并禁止通过别名递归委派。
@@ -444,7 +444,7 @@ let mut agent = Agent::builder(model)
     .build();
 
 let mut events = agent.subscribe();
-agent.prompt("Hello from rpi").await?;
+agent.prompt("Hello from shob").await?;
 while let Some(event) = events.recv().await {
     if matches!(event, AgentEvent::AgentEnd { .. }) {
         break;
@@ -458,7 +458,7 @@ while let Some(event) = events.recv().await {
 
 ### 找不到模型或接口报错
 
-运行 `rpi auth check`，确认 provider、`models.json`、环境变量和 `baseUrl`。使用 `--provider` 和完整的 `provider/model` 避免同名模型歧义。接口错误会保留 provider 返回的诊断文本；先检查 endpoint、认证头和模型 ID。
+运行 `shob auth check`，确认 provider、`models.json`、环境变量和 `baseUrl`。使用 `--provider` 和完整的 `provider/model` 避免同名模型歧义。接口错误会保留 provider 返回的诊断文本；先检查 endpoint、认证头和模型 ID。
 
 ### 扩展加载失败
 
@@ -467,23 +467,23 @@ while let Some(event) = events.recv().await {
 ### 扩展事件处理器没触发或启动被中止
 
 ```bash
-export RPI_EVENT_LOG=1
-rpi            # 记录所有扩展事件处理器调用
-rpi events tail   # 跟踪日志；看 result 是 Continue 还是 Error/Abort/Panic/Timeout
+export SHOB_EVENT_LOG=1
+shob            # 记录所有扩展事件处理器调用
+shob events tail   # 跟踪日志；看 result 是 Continue 还是 Error/Abort/Panic/Timeout
 ```
 
-日志默认在 `~/.rpi/logs/events.jsonl`（可用 `RPI_EVENT_LOG_PATH` 覆盖）。如果
+日志默认在 `~/.shob/logs/events.jsonl`（可用 `SHOB_EVENT_LOG_PATH` 覆盖）。如果
 `BeforeTuiStart` 阶段有扩展返回 veto（`EVENT_HANDLER_ABORT`），CLI 以退出码 `3`
 中止启动并打印原因。
 
 ### 资源没有出现在欢迎页
 
-确认文件位于 `.rpi`（或兼容的 `.pi`）或全局 `~/.rpi/agent`。使用 `rpi --debug-system-prompt` 查看最终系统提示词、skills 和资源计数；同名资源优先检查 `.rpi` 是否覆盖了 `.pi`。
+确认文件位于 `.shob`（或兼容的 `.pi`）或全局 `~/.shob/agent`。使用 `shob --debug-system-prompt` 查看最终系统提示词、skills 和资源计数；同名资源优先检查 `.shob` 是否覆盖了 `.pi`。
 
 ### 远程模式连不上
 
-确认服务端已用 `rpi --server --port <port>` 启动且 token 正确（或通过
-`RPI_SERVER_TOKEN` 提供）。客户端是纯显示端，不加载任何本地 provider/工具/扩展；
+确认服务端已用 `shob --server --port <port>` 启动且 token 正确（或通过
+`SHOB_SERVER_TOKEN` 提供）。客户端是纯显示端，不加载任何本地 provider/工具/扩展；
 会话文件在服务端。
 
 ## 9. 开发、测试和发布
@@ -510,7 +510,7 @@ Release PR；维护者需要在 `Actions → CI → Run workflow` 中选择 `mai
 见仓库 `docs/maintaining/releasing.md`：
 <https://github.com/bigfish1913/pi-rust/blob/main/docs/maintaining/releasing.md>。
 
-修改模型可读文档源 `docs/rpi-tool/` 后运行 `sh scripts/sync-embedded-docs.sh` 并提交
+修改模型可读文档源 `docs/shob-tool/` 后运行 `sh scripts/sync-embedded-docs.sh` 并提交
 生成的文档快照。仅更新文档不需要 bump 版本或打 tag。官网仍需单独部署，提交或合并
 文档不等于已经更新线上网站。
 
@@ -522,6 +522,6 @@ Release PR；维护者需要在 `Actions → CI → Run workflow` 中选择 `mai
 
 - Package 与扩展作者指南：<https://rpi.laofu.online/extension-authoring.md>
 - 远程模式：<docs/remote/user-guide.md>
-- Rust 扩展与 agent 调试：`rpi` 内 `docs` 工具的 `debugging` 主题
+- Rust 扩展与 agent 调试：`shob` 内 `docs` 工具的 `debugging` 主题
 
 当在线文档和已安装版本不一致时，以对应版本的 Git tag 和仓库内文档为准。

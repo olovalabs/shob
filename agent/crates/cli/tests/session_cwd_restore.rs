@@ -101,7 +101,7 @@ async fn start_fixture() -> Fixture {
 }
 
 /// One print-mode run of the real binary.
-async fn run_rpi(
+async fn run_shob(
     fixture: &Fixture,
     cwd: &std::path::Path,
     extra_args: &[&str],
@@ -109,11 +109,11 @@ async fn run_rpi(
 ) -> (std::process::ExitStatus, String, String) {
     let out_path = cwd.join("stdout.log");
     let err_path = cwd.join("stderr.log");
-    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_rpi"));
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_shob"));
     command
         .current_dir(cwd)
-        .env("RPI_CODING_AGENT_DIR", &fixture.agent)
-        .env("RPI_CODING_AGENT_SESSION_DIR", &fixture.sessions)
+        .env("SHOB_CODING_AGENT_DIR", &fixture.agent)
+        .env("SHOB_CODING_AGENT_SESSION_DIR", &fixture.sessions)
         .env_remove("HTTP_PROXY")
         .env_remove("HTTPS_PROXY")
         .env_remove("ALL_PROXY")
@@ -168,7 +168,7 @@ async fn resuming_from_another_directory_runs_in_the_recorded_one() {
         let collector = Arc::clone(&bodies);
         tokio::spawn(serve_one_request(listener, collector));
     }
-    let (status, stdout, stderr) = run_rpi(&fixture, &project, &[], "first").await;
+    let (status, stdout, stderr) = run_shob(&fixture, &project, &[], "first").await;
     assert!(status.success(), "stdout: {stdout}\nstderr: {stderr}");
     assert_eq!(bodies.lock().unwrap().len(), 1);
 
@@ -179,7 +179,7 @@ async fn resuming_from_another_directory_runs_in_the_recorded_one() {
         let collector = Arc::clone(&bodies);
         tokio::spawn(serve_one_request(listener, collector));
     }
-    let (status, stdout, stderr) = run_rpi(&fixture, &launch, &["--continue"], "second").await;
+    let (status, stdout, stderr) = run_shob(&fixture, &launch, &["--continue"], "second").await;
     assert!(status.success(), "stdout: {stdout}\nstderr: {stderr}");
     assert!(stdout.contains("ok."), "{stdout}\n{stderr}");
 
@@ -222,7 +222,7 @@ async fn a_missing_recorded_directory_falls_back_and_says_so() {
         let collector = Arc::clone(&bodies);
         tokio::spawn(serve_one_request(listener, collector));
     }
-    let (status, stdout, stderr) = run_rpi(&fixture, &project, &[], "first").await;
+    let (status, stdout, stderr) = run_shob(&fixture, &project, &[], "first").await;
     assert!(status.success(), "stdout: {stdout}\nstderr: {stderr}");
 
     // The recorded directory disappears before the resume.
@@ -234,7 +234,7 @@ async fn a_missing_recorded_directory_falls_back_and_says_so() {
         let collector = Arc::clone(&bodies);
         tokio::spawn(serve_one_request(listener, collector));
     }
-    let (status, stdout, stderr) = run_rpi(&fixture, &launch, &["--continue"], "second").await;
+    let (status, stdout, stderr) = run_shob(&fixture, &launch, &["--continue"], "second").await;
     assert!(status.success(), "stdout: {stdout}\nstderr: {stderr}");
     assert!(
         stderr.contains("no longer exists"),

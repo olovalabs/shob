@@ -237,7 +237,7 @@ impl PluginToolAdapter {
             _background: agent::tool_execution_scope::track_background_tool(),
             _keepalive: self.keepalive.clone(),
         }));
-        let result_envelope = self.schema.parameters.as_value()["x-rpi-result-envelope"] == 1;
+        let result_envelope = self.schema.parameters.as_value()["x-shob-result-envelope"] == 1;
         tokio::spawn(async move {
             let (mut driver, ()) = call(driver, move |driver| {
                 driver.handle = (driver.functions.execute_fn)(

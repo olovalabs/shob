@@ -88,10 +88,13 @@ async fn populate(storage: &dyn SessionStorage) {
         ),
         ("after", user("after")),
         ("extension", custom("extension")),
-        ("near-chunk", custom("rpi.tool_program.body_chunk.v1.extra")),
+        (
+            "near-chunk",
+            custom("shob.tool_program.body_chunk.v1.extra"),
+        ),
         (
             "near-commit",
-            custom("rpi.tool_program.body_commit.v1.extra"),
+            custom("shob.tool_program.body_commit.v1.extra"),
         ),
         ("chunk", custom(CHUNK_CUSTOM_TYPE)),
         ("commit", custom(COMMIT_CUSTOM_TYPE)),
@@ -164,8 +167,8 @@ async fn global_and_branch_queries_match_memory_before_limits() {
         CHUNK_CUSTOM_TYPE,
         COMMIT_CUSTOM_TYPE,
         "extension",
-        "rpi.tool_program.body_chunk.v1.extra",
-        "rpi.tool_program.body_commit.v1.extra",
+        "shob.tool_program.body_chunk.v1.extra",
+        "shob.tool_program.body_commit.v1.extra",
     ] {
         for exclude in [false, true] {
             queries.push(EntryQuery {
@@ -290,7 +293,7 @@ async fn cold_corrupt_archives_are_skipped_but_explicit_reads_still_fail() {
     // Reopen cold, then damage only bodies, preserving metadata/digests. Any
     // archive hydration must now fail rather than merely being projected away.
     let storage = repo.open(&metadata).await.unwrap();
-    let db = rusqlite::Connection::open(dir.path().join("body-experimental.rpinative")).unwrap();
+    let db = rusqlite::Connection::open(dir.path().join("body-experimental.shobnative")).unwrap();
     assert_eq!(db.execute(
         "UPDATE facts SET body='poisoned archive body' WHERE seq IN (SELECT seq FROM selection WHERE json_extract(keys,'$.custom_type') IN (?1,?2))",
         [CHUNK_CUSTOM_TYPE, COMMIT_CUSTOM_TYPE],

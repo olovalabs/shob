@@ -47,7 +47,7 @@ it is the default.
 - `providers` — concrete implementations: `faux` (always), `anthropic`,
   `openai_completions`, `openai_responses` (behind `providers`).
   DeepSeek, OpenRouter, llama.cpp and Proxy live together in the optional
-  [rpi-providers package](https://github.com/pi-rust/rpi-package/tree/feature-1014/packages/rpi-providers);
+  [shob-providers package](https://github.com/pi-rust/rpi-package/tree/feature-1014/packages/rpi-providers);
   see the [migration guide](../../docs/architecture/provider-packages.md).
 
 ## The `Provider` trait
@@ -128,7 +128,7 @@ tool → result → follow-up cycle offline. See
 | ----- | ---- |
 | [`agent`](https://crates.io/crates/rpi-agent) | The agent loop built on this layer |
 | [`harness`](https://crates.io/crates/rpi-harness) | Sessions, persistence, compaction |
-| [`cli`](https://crates.io/crates/rpi-cli) | The `rpi` terminal agent |
+| [`cli`](https://crates.io/crates/rpi-cli) | The `shob` terminal agent |
 
 ## Documentation
 

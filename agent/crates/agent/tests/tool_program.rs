@@ -197,7 +197,7 @@ async fn catalog_subset_recursion_validation_hooks_and_finalized_result() {
                 assert_eq!(page["tools"][0]["name"], "effect");
                 assert!(page["tools"][0]["parameters"].is_object());
                 assert!(page["nextOffset"].is_null());
-                for name in ["codemode", "root-secret", "__rpiRuntimeKey"] {
+                for name in ["codemode", "root-secret", "__shobRuntimeKey"] {
                     assert!(p
                         .handle(json!({"op":"start","name":name,"arguments":{}}))
                         .await
@@ -1524,13 +1524,13 @@ async fn containing_native_cancellation_reaches_program_and_drains_children() {
 }
 
 // Neutral AgentTool JSON is business data, not extension ABI transport metadata.
-// In particular, these nested names do not claim the top-level __rpi binding.
+// In particular, these nested names do not claim the top-level __shob binding.
 fn business_json() -> Value {
     json!({"record": {
         "runtimeKey":"customer-key", "runtimeHandle":{"id":7},
-        "__rpi":{"owner":"customer"}, "__rpiRuntimeKey":"customer-runtime",
+        "__shob":{"owner":"customer"}, "__shobRuntimeKey":"customer-runtime",
         "items":[{"runtimeKey":"nested-key", "runtimeHandle":"nested-handle",
-            "__rpi":{"runtimeKey":"deep-key"}, "__rpiRuntimeKey":"nested-runtime"}]
+            "__shob":{"runtimeKey":"deep-key"}, "__shobRuntimeKey":"nested-runtime"}]
     }})
 }
 fn business_result(args: Value) -> AgentToolResult {

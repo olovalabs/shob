@@ -6,8 +6,8 @@
 //! v1 scope cuts vs the TS SDK (tracked in `docs/m6-cli-open-questions.md`):
 //! - **Skill / prompt-template / context-file discovery IS wired**
 //!   (`--no-skills`/`-ns`, `--no-prompt-templates`/`-np`, `--no-context-files`/
-//!   `-nc` each suppress one channel; project `.rpi/<sub>` + legacy
-//!   `.rpi/<sub>` + global
+//!   `-nc` each suppress one channel; project `.shob/<sub>` + legacy
+//!   `.shob/<sub>` + global
 //!   `agent_dir()<sub>` discovery with project-wins dedupe via
 //!   [`crate::resource_dirs`]; SYSTEM.md/APPEND_SYSTEM.md project-wins
 //!   precedence). **Extension `resources_discover` (B5b) feeds the SAME loaders:
@@ -21,7 +21,7 @@
 //!   built-in Anthropic/OpenAI-compatible providers and `models.json`, but
 //!   runtime catalog mutation remains outside this layer.
 //! - **Built-in tools**: `read`, `bash`, `edit`, `write`, and the read-only
-//!   `docs` lookup tool. The former rpi-only `grep`, `find`, `ls`, and
+//!   `docs` lookup tool. The former shob-only `grep`, `find`, `ls`, and
 //!   `powershell` tools remain library modules but are not registered by the
 //!   CLI.
 //! - **Session restore (`-c`/`-r`/`--session`)** is *partially* supported: a
@@ -261,7 +261,7 @@ pub fn default_system_prompt_with_tool_prompts(
         .join("\n");
 
     format!(
-        "You are an expert coding assistant operating inside rpi, a coding agent harness. \
+        "You are an expert coding assistant operating inside shob, a coding agent harness. \
 You help users by reading files, executing commands, editing code, and writing new files.
 
 Available tools:
@@ -308,7 +308,7 @@ fn builtin_tool_guideline(name: &str) -> Option<&'static str> {
     })
 }
 
-/// One-line prompt descriptions of the tools rpi itself registers.
+/// One-line prompt descriptions of the tools shob itself registers.
 fn builtin_tool_snippet(name: &str) -> Option<&'static str> {
     Some(match name {
         task_list::NAME => "Keep a live checklist for substantial multi-step work",
@@ -316,7 +316,7 @@ fn builtin_tool_snippet(name: &str) -> Option<&'static str> {
         "bash" => "Execute Bash commands (Bash/POSIX syntax, also on Windows)",
         "edit" => "Find/replace edits to existing files",
         "write" => "Create or overwrite files",
-        "docs" => "Look up rpi commands, extensions, Pi package compatibility and .rpi configuration instead of guessing",
+        "docs" => "Look up shob commands, extensions, Pi package compatibility and .shob configuration instead of guessing",
         "grep" => "Search file contents for a pattern",
         "find" => "Find files by glob pattern",
         "ls" => "List directory contents",
@@ -418,7 +418,7 @@ pub(crate) fn select_session_in_dir(args: &Args, dir: PathBuf) -> SessionSelecti
 
 /// The default session directory is in Shob's application data folder.
 pub fn default_session_dir(_cwd: &Path) -> PathBuf {
-    std::env::var("RPI_CODING_AGENT_SESSION_DIR")
+    std::env::var("SHOB_CODING_AGENT_SESSION_DIR")
         .ok()
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -439,7 +439,7 @@ pub(crate) fn shob_session_dir() -> PathBuf {
             }
             .unwrap_or_else(|| std::env::temp_dir().join("shob"))
         });
-    data.join("rpi").join("sessions")
+    data.join("shob").join("sessions")
 }
 
 /// Extensions are loaded exactly once before model resolution. Their action
@@ -959,7 +959,7 @@ async fn build_prepared_with_tool_hook_full(
 
     // ---- Session storage ----
     // The root is the one `prepare_extensions` froze at startup, never a fresh
-    // `configured_session_dir(args, cwd)`: settings and `RPI_CODING_AGENT_SESSION_DIR`
+    // `configured_session_dir(args, cwd)`: settings and `SHOB_CODING_AGENT_SESSION_DIR`
     // can change while extensions load, and an adopted session cwd would point
     // at another project's tree. Both the cwd peek and this build must read the
     // same root, so the caller pins it into `args` before either runs.
@@ -998,7 +998,7 @@ async fn build_prepared_with_tool_hook_full(
     // ---- System prompt base (precedence: --system-prompt > SYSTEM.md > default) ----
     // Mirrors pi `discoverSystemPromptFile` (`resource-loader.ts:1022-1034`):
     // an explicit `--system-prompt` flag wins; otherwise a discovered
-    // `<cwd>/.rpi/SYSTEM.md` wins, then
+    // `<cwd>/.shob/SYSTEM.md` wins, then
     // `<agent_dir>/SYSTEM.md`.
     // (global); otherwise the built-in default. **Project-wins** — the same
     // direction as skills/prompts precedence.
@@ -1072,16 +1072,16 @@ async fn build_prepared_with_tool_hook_full(
     // global→ancestor(cwd→root), deepest-last (pi parity).
     //
     // **Trust gate (v1 divergence):** pi gates project config discovery on
-    // `isProjectTrusted()` (global resources are unconditional). rpi v1 has no
+    // `isProjectTrusted()` (global resources are unconditional). shob v1 has no
     // trust prompt — project resources are discovered unconditionally (a copied
-    // `.rpi/` dir drops in and works). Full trust gating is deferred.
+    // `.shob/` dir drops in and works). Full trust gating is deferred.
     let agent_dir = crate::config::agent_dir().ok();
 
     // ---- B5b: extension resources_discover ----
     // If any plugin registered a `resources_discover` handler, fan the event out
     // (reason "startup") and collect skill/prompt/theme paths. These plugin-
     // contributed paths merge WITH the static Part-A dirs (project
-    // `.rpi/skills` +
+    // `.shob/skills` +
     // `agent_dir/skills`, etc.) and the loaders re-run over the union — the
     // coherence point: a plugin's discovered skills land through the SAME loaders
     // as static skills. Static dirs load FIRST so project skills keep winning name
@@ -1319,7 +1319,7 @@ async fn build_prepared_with_tool_hook_full(
     // default when its key is absent.
     let saved_settings = crate::settings::load_settings().unwrap_or_default();
 
-    // `httpProxy` applies to rpi's own HTTP clients. Setting the environment is how
+    // `httpProxy` applies to shob's own HTTP clients. Setting the environment is how
     // they are configured (`pi-ai/src/http.rs`), and upstream does the same thing
     // with this key — an explicit environment variable still wins, so a shell-level
     // proxy override is not silently replaced by the setting.
@@ -1813,7 +1813,7 @@ pub struct ReloadContext {
     /// A detached mailbox makes `ask_user` fail with "requires an interactive
     /// UI" (headless contract).
     pub ui_dialog: extensions::UiDialogMailbox,
-    /// Active `rpi dev` extension builder. `/reload` rebuilds it before
+    /// Active `shob dev` extension builder. `/reload` rebuilds it before
     /// swapping plugin sessions; its watcher signals `mailbox` after a
     /// successful background build.
     pub dev_extension: Option<Arc<crate::dev_extension::DevExtension>>,
@@ -1836,7 +1836,7 @@ impl ReloadContext {
 }
 
 /// Dispatch a no-payload lifecycle event (e.g. `SessionStart`, `SessionShutdown`,
-/// the rpi-specific `BeforeTuiStart`) to every extension handler subscribed to
+/// the shob-specific `BeforeTuiStart`) to every extension handler subscribed to
 /// that tag, with **veto** + **timeout** semantics (P1).
 ///
 /// Resolves the **current** extension session from the reload cell so a
@@ -2099,7 +2099,7 @@ where
             project_trusted: None,
         };
     }
-    // Resolve the arguments once for this reload. `rpi dev` may append its
+    // Resolve the arguments once for this reload. `shob dev` may append its
     // freshly staged extension directory; every subsequent loader and policy
     // decision must observe that same effective set rather than falling back
     // to the pre-dev snapshot held in `ctx.args`.
@@ -2858,7 +2858,7 @@ pub(crate) fn resolve_project_trust(args: &Args, cwd: &Path) -> bool {
 
 /// Resolve the extension dirs to scan and load the cdylib plugins, returning
 /// the loaded session guard (keeps the `Library` handles alive for the harness
-/// lifetime). Scan order: configured project paths, project `.rpi/extensions`,
+/// lifetime). Scan order: configured project paths, project `.shob/extensions`,
 /// configured/global conventional paths, then any
 /// `--extensions-dir` flags (scanned after the defaults — `args.rs`).
 /// Diagnostics are a no-op sink for now; load skips/ABI mismatches surface via
@@ -2987,10 +2987,10 @@ fn merge_extension_tools(
 /// resolution in `createAgentSession`.
 /// Default bash timeout: 120s when the model doesn't pass one (prevents a
 /// forgotten `timeout` from hanging the run forever — the "卡住" report).
-/// `RPI_BASH_TIMEOUT` overrides; a model-supplied timeout always wins.
+/// `SHOB_BASH_TIMEOUT` overrides; a model-supplied timeout always wins.
 pub fn bash_options() -> tools::tools::bash::BashToolOptions {
     use tools::tools::bash::BashToolOptions;
-    let default = std::env::var("RPI_BASH_TIMEOUT")
+    let default = std::env::var("SHOB_BASH_TIMEOUT")
         .ok()
         .and_then(|v| v.parse::<f64>().ok())
         .unwrap_or(tools::tools::bash::DEFAULT_BASH_TIMEOUT_SECONDS);
@@ -3011,7 +3011,7 @@ fn build_tools(ctx: &ExecutionToolContext, args: &Args) -> Vec<HarnessTool> {
     if args.no_tools {
         return Vec::new();
     }
-    // Keep the coding tools aligned with Pi and expose rpi's read-only docs
+    // Keep the coding tools aligned with Pi and expose shob's read-only docs
     // lookup as a default assistant capability.
     //
     // Replay policy (native `ToolDeclaration.replay`): only tools that are
@@ -3322,7 +3322,7 @@ async fn find_session_metadata(
 pub(crate) struct RestoredSessionCwd {
     /// The id of the session this launch will restore. The host pins it into
     /// `args` so the later build opens exactly this session — a directory
-    /// listing taken twice can disagree (another `rpi` may write a newer
+    /// listing taken twice can disagree (another `shob` may write a newer
     /// session in between), and adopting one session's directory while opening
     /// another is the very bug this restores.
     pub id: String,
@@ -3361,7 +3361,7 @@ pub(crate) async fn peek_restored_session_cwd(
 /// session the peek inspected.
 ///
 /// `Latest` (`-c`) re-lists the session directory when the build runs, and
-/// another `rpi` may have written a newer session in between. Adopting one
+/// another `shob` may have written a newer session in between. Adopting one
 /// session's working directory while opening a different conversation would put
 /// the tools in a directory that conversation never used — the exact failure
 /// this adoption exists to prevent. Pinning the resolved id turns the second
@@ -3818,12 +3818,12 @@ pub(crate) async fn open_session_by_id_in_dir(
 ///
 /// - `ToolCallContext` — read per plugin **tool** call, which is why a stale
 ///   value there made a plugin's `todo`-style state follow the wrong session.
-/// - `RPI_SESSION_ID` — read per **turn** by the provider hooks, which is the
+/// - `SHOB_SESSION_ID` — read per **turn** by the provider hooks, which is the
 ///   only channel an observer gets for a pure-chat run. Process-global, which is
 ///   exactly the scope of "the session this process is serving".
 ///
 /// The write overwrites unconditionally, deliberately. An inherited value is not
-/// an override: `rpi` spawning `rpi` would otherwise hand the child the parent's
+/// an override: `shob` spawning `shob` would otherwise hand the child the parent's
 /// session id, and the child — which is *serving its own* session — would report
 /// it forever. (Children no longer inherit the variable at all; see
 /// `tools::HOST_PRIVATE_ENV`. This overwrite is the second line of defence,
@@ -4087,7 +4087,7 @@ static SESSION_LOCKS: OnceLock<Mutex<Vec<std::fs::File>>> = OnceLock::new();
 
 /// Claim the exclusive lock for a session log.
 ///
-/// Two rpi processes appending to one JSONL diverge their `sequence` counters
+/// Two shob processes appending to one JSONL diverge their `sequence` counters
 /// (duplicate / gapped seqs) and corrupt it. The lock is an OS advisory lock on
 /// `<path>.lock`: the second process gets a clear "already open" error instead
 /// of corrupting the log, and the OS releases it automatically when the holder
@@ -4118,7 +4118,7 @@ fn claim_session_lock_inner(session_path: &str, allow_reentry: bool) -> Result<(
         .map_err(|e| format!("open session lock {}: {e}", lock_path.display()))?;
     if fs2::FileExt::try_lock_exclusive(&file).is_err() {
         return Err(format!(
-            "session {session_path} is already open in another rpi process"
+            "session {session_path} is already open in another shob process"
         ));
     }
     SESSION_LOCKS
@@ -4445,7 +4445,7 @@ mod tests {
 
     #[test]
     fn loaded_context_paths_track_precedence_and_reload() {
-        const CHILD: &str = "RPI_CONTEXT_PATHS_REGRESSION_CHILD";
+        const CHILD: &str = "SHOB_CONTEXT_PATHS_REGRESSION_CHILD";
         if std::env::var_os(CHILD).is_none() {
             let dir = tempfile::tempdir().unwrap();
             let output = std::process::Command::new(std::env::current_exe().unwrap())
@@ -4473,7 +4473,7 @@ mod tests {
             .block_on(async {
                 let agent = crate::config::agent_dir().unwrap();
                 let cwd = agent.join("project");
-                let project_config = cwd.join(".rpi");
+                let project_config = crate::resource_dirs::project_root(&cwd);
                 std::fs::create_dir_all(&project_config).unwrap();
                 for (path, content) in [
                     (agent.join("SYSTEM.md"), "GLOBAL_BASE"),
@@ -4684,7 +4684,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "rpi-summary-{}-{nanos}-{name}.jsonl",
+            "shob-summary-{}-{nanos}-{name}.jsonl",
             std::process::id()
         ));
         path
@@ -4712,14 +4712,14 @@ mod tests {
             "{\"kind\":\"header\",\"version\":4,\"id\":\"abc\",\"createdAt\":1,\"cwd\":\"x\"}\n",
             "{\"kind\":\"fact\",\"seq\":1,\"fact\":\"name\",\"name\":\"fix resume picker\"}\n",
             "{\"kind\":\"record\",\"type\":\"operation_started\",\"id\":\"r1\"}\n",
-            "{\"kind\":\"entry\",\"lane\":\"main\",\"type\":\"message\",\"id\":\"e1\",\"message\":{\"kind\":\"user\",\"role\":\"user\",\"content\":\"read the rpi -r picker\"}}\n",
+            "{\"kind\":\"entry\",\"lane\":\"main\",\"type\":\"message\",\"id\":\"e1\",\"message\":{\"kind\":\"user\",\"role\":\"user\",\"content\":\"read the shob -r picker\"}}\n",
             "{\"kind\":\"entry\",\"lane\":\"main\",\"type\":\"message\",\"id\":\"e2\",\"message\":{\"kind\":\"assistant\",\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"second\"}]}}\n",
         );
         std::fs::write(&path, body).unwrap();
         let summary = summarize_session_file(&path);
         assert!(!summary.empty);
         assert_eq!(summary.name.as_deref(), Some("fix resume picker"));
-        assert_eq!(summary.preview.as_deref(), Some("read the rpi -r picker"));
+        assert_eq!(summary.preview.as_deref(), Some("read the shob -r picker"));
         std::fs::remove_file(&path).ok();
     }
 
@@ -4871,7 +4871,7 @@ mod tests {
 
     #[test]
     fn list_session_files_sync_walks_the_cwd_subdirectory() {
-        let root = std::env::temp_dir().join(format!("rpi-summary-{}-dir", std::process::id()));
+        let root = std::env::temp_dir().join(format!("shob-summary-{}-dir", std::process::id()));
         let nested = root.join("--proj--");
         std::fs::create_dir_all(&nested).unwrap();
         let file = nested.join("2026-01-01_a.jsonl");
@@ -5101,9 +5101,9 @@ mod tests {
         let agent = tmp.path().join("agent");
         let cwd = tmp.path().join("project");
         std::fs::create_dir_all(&agent).unwrap();
-        std::fs::create_dir_all(cwd.join(".rpi")).unwrap();
+        std::fs::create_dir_all(cwd.join(".shob")).unwrap();
         std::fs::write(agent.join("settings.json"), "{}").unwrap();
-        std::fs::write(cwd.join(".rpi/settings.json"), "{ malformed").unwrap();
+        std::fs::write(cwd.join(".shob/settings.json"), "{ malformed").unwrap();
         std::env::set_var(crate::config::CONFIG_DIR_ENV, &agent);
         let args = Args::default();
 
@@ -5724,7 +5724,7 @@ mod tests {
         let _env = crate::config::test_support::SessionDirEnv::new(None);
         let tmp = tempfile::tempdir().unwrap();
         let cwd = tmp.path();
-        std::fs::create_dir_all(cwd.join(".rpi/sessions")).unwrap();
+        std::fs::create_dir_all(cwd.join(".shob/sessions")).unwrap();
         assert_eq!(default_session_dir(cwd), shob_session_dir());
         assert_eq!(
             default_session_dir(Path::new("/another/project")),
@@ -5761,7 +5761,7 @@ mod tests {
     /// between those two crates any more. What it still guards is the part the
     /// compiler cannot see:
     ///
-    /// - **The wire values.** `rpi-langfuse` lives in a different repository and
+    /// - **The wire values.** `shob-langfuse` lives in a different repository and
     ///   agrees on the *strings*, not the constant paths. Rewriting a constant's
     ///   value would compile here and silently stop matching there, so the exact
     ///   values are pinned below. Changing one is a deliberate, breaking change to
@@ -5771,7 +5771,7 @@ mod tests {
     #[test]
     fn host_private_env_matches_the_declared_contract() {
         // 1. The wire values. Pinned literally on purpose: see the doc comment.
-        assert_eq!(plugin_sdk::SESSION_ID_ENV, "RPI_SESSION_ID");
+        assert_eq!(plugin_sdk::SESSION_ID_ENV, "SHOB_SESSION_ID");
         assert_eq!(
             plugin_sdk::SUBAGENT_PARENT_ENV,
             [
@@ -5780,7 +5780,7 @@ mod tests {
                 "LANGFUSE_PI_PARENT_SESSION_ID",
                 "LANGFUSE_PI_PARENT_DEPTH",
             ],
-            "these strings are what rpi-langfuse (a different repo) matches; a \
+            "these strings are what shob-langfuse (a different repo) matches; a \
              change here is a breaking cross-repo change, not a refactor"
         );
 
@@ -5792,7 +5792,7 @@ mod tests {
         {
             assert!(
                 tools::is_host_private_env(name),
-                "`{name}` must not reach a spawned shell, but rpi-tools excludes only {:?}",
+                "`{name}` must not reach a spawned shell, but shob-tools excludes only {:?}",
                 tools::HOST_PRIVATE_ENV
             );
         }
@@ -5800,7 +5800,7 @@ mod tests {
         // 3. Narrowness — these name how the *user* configured the run and are
         //    exactly what a command inside the shell should still see.
         for visible in [
-            crate::args::RPI_OFFLINE_ENV,
+            crate::args::SHOB_OFFLINE_ENV,
             crate::config::CONFIG_DIR_ENV,
             "PATH",
         ] {
@@ -5854,7 +5854,7 @@ mod tests {
     /// that is the whole point of recording it. Everything downstream (tool
     /// env, system prompt, context files, extensions) keys off the run's cwd,
     /// so a peek that falls back to the launch directory would leave the
-    /// resumed agent editing files in whatever directory `rpi` happened to be
+    /// resumed agent editing files in whatever directory `shob` happened to be
     /// started from.
     #[tokio::test]
     async fn a_restored_session_adopts_its_recorded_directory() {
@@ -6007,7 +6007,7 @@ mod tests {
     /// The session the peek inspected must be the session the build opens.
     ///
     /// `-c` means "the most recent session", and the build lists the directory
-    /// again. Another `rpi` (or a `/session` new-session) can write a newer one
+    /// again. Another `shob` (or a `/session` new-session) can write a newer one
     /// between the peek and the build; adopting the peeked session's directory
     /// while opening the newer conversation would run the tools in a directory
     /// that conversation never used. Pinning the resolved id makes the second

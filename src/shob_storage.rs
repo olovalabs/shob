@@ -1,4 +1,4 @@
-//! Session files owned by Shob's embedded RPI conversations.
+//! Session files owned by Shob's embedded SHOB conversations.
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -27,18 +27,23 @@ fn session_file(name: &str, id: &str) -> bool {
 
 /// Copy an old project-local session only when it has not already been copied.
 pub fn copy_legacy_session(cwd: &Path, id: &str) -> io::Result<()> {
-    copy_legacy_session_to(cwd, id, &crate::paths::rpi_sessions_dir())
+    copy_legacy_session_to(cwd, id, &crate::paths::shob_sessions_dir())
 }
 
 fn copy_legacy_session_to(cwd: &Path, id: &str, root: &Path) -> io::Result<()> {
     if !valid_id(id) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "invalid RPI session id",
+            "invalid SHOB session id",
         ));
     }
     let project = project_dir(cwd);
-    let source = cwd.join(".rpi/sessions").join(&project);
+    let source = cwd.join(".shob/sessions").join(&project);
+    let source = if source.is_dir() {
+        source
+    } else {
+        cwd.join(".rpi/sessions").join(&project)
+    };
     let destination = root.join(project);
     let entries = match fs::read_dir(&source) {
         Ok(entries) => entries,
@@ -78,14 +83,14 @@ fn copy_legacy_session_to(cwd: &Path, id: &str, root: &Path) -> io::Result<()> {
 
 /// Delete only files whose exact session id was recorded as owned by a pane.
 pub fn delete_sessions(ids: &[String]) -> io::Result<()> {
-    delete_sessions_in(&crate::paths::rpi_sessions_dir(), ids)
+    delete_sessions_in(&crate::paths::shob_sessions_dir(), ids)
 }
 
 fn delete_sessions_in(root: &Path, ids: &[String]) -> io::Result<()> {
     if ids.iter().any(|id| !valid_id(id)) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "invalid RPI session id",
+            "invalid SHOB session id",
         ));
     }
     let dirs = match fs::read_dir(root) {
@@ -128,10 +133,9 @@ mod tests {
 
     #[test]
     fn legacy_copy_and_owned_deletion_leave_other_sessions_untouched() {
-        let base =
-            std::env::temp_dir().join(format!("shob-rpi-storage-{}", crate::paths::uid("test")));
+        let base = std::env::temp_dir().join(format!("shob-storage-{}", crate::paths::uid("test")));
         let project = base.join("project");
-        let root = base.join("data/rpi/sessions");
+        let root = base.join("data/shob/sessions");
         let old = project.join(".rpi/sessions").join(project_dir(&project));
         fs::create_dir_all(&old).unwrap();
         fs::write(old.join("date_abc.jsonl"), "old").unwrap();

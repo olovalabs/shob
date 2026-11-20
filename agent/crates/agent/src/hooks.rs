@@ -225,13 +225,13 @@ impl AgentLoopConfig {
 /// semaphore so one turn cannot fan out without a host-set limit.
 pub const DEFAULT_TOOL_PARALLELISM: usize = 8;
 
-/// Resolve the parallel-tool cap. `RPI_TOOL_PARALLELISM` is the operator
+/// Resolve the parallel-tool cap. `SHOB_TOOL_PARALLELISM` is the operator
 /// override; a non-zero config value wins so tests and hosts stay deterministic.
 pub fn effective_tool_parallelism(configured: usize) -> usize {
     let limit = if configured > 0 {
         configured
     } else {
-        std::env::var("RPI_TOOL_PARALLELISM")
+        std::env::var("SHOB_TOOL_PARALLELISM")
             .ok()
             .and_then(|value| value.parse().ok())
             .filter(|limit| *limit > 0)

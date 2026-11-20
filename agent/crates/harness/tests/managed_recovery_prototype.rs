@@ -35,7 +35,7 @@ fn db(path: &std::path::Path, sql: &str) {
 #[test]
 fn checkpoint_tail_matches_full_metadata_replay_across_lanes() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let path = directory.path().join("managed.rpidb");
+    let path = directory.path().join("managed.shobdb");
     let mut store = Store::create(&path, identity())?;
     let mut expected = Recovery::default();
     let mut committed = HashSet::new();
@@ -136,7 +136,7 @@ fn restore_decode_volume_is_bounded_not_proportional_to_history() -> Result<()> 
     let directory = tempfile::tempdir()?;
     let mut measurements = Vec::new();
     for count in [128, 2048] {
-        let path = directory.path().join(format!("fixture-{count}.rpidb"));
+        let path = directory.path().join(format!("fixture-{count}.shobdb"));
         let mut store = Store::create(&path, identity())?;
         let body = vec![b'x'; 16 * 1024];
         let mut parent = None;
@@ -201,7 +201,7 @@ fn transaction_faults_roll_back_history_revision_and_checkpoint() -> Result<()> 
         Fault::BeforeCommit,
     ] {
         let directory = tempfile::tempdir()?;
-        let path = directory.path().join("fault.rpidb");
+        let path = directory.path().join("fault.shobdb");
         let mut store = Store::create(&path, identity())?;
         let mut parent = None;
         for index in 0..MAX_TAIL - 1 {
@@ -239,7 +239,7 @@ fn transaction_faults_roll_back_history_revision_and_checkpoint() -> Result<()> 
 #[test]
 fn lost_ack_is_reconciled_by_id_without_reappending() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let path = directory.path().join("ack.rpidb");
+    let path = directory.path().join("ack.shobdb");
     let mut store = Store::create(&path, identity())?;
     let first = message("maybe-committed", None);
     error(
@@ -258,7 +258,7 @@ fn lost_ack_is_reconciled_by_id_without_reappending() -> Result<()> {
 #[test]
 fn separate_handles_refresh_state_and_reject_stale_revision() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let path = directory.path().join("handles.rpidb");
+    let path = directory.path().join("handles.shobdb");
     let mut left = Store::create(&path, identity())?;
     let mut right = Store::open(&path, identity())?;
     left.append(message("first", None), b"one", Some(0), Fault::None)?;
@@ -286,7 +286,7 @@ fn separate_handles_refresh_state_and_reject_stale_revision() -> Result<()> {
 #[test]
 fn history_cursor_is_lane_scoped_and_body_corruption_is_lazy() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let path = directory.path().join("pages.rpidb");
+    let path = directory.path().join("pages.shobdb");
     let mut store = Store::create(&path, identity())?;
     store.append(
         event("side", "side", Action::CreateLane { at: None }),
@@ -335,7 +335,7 @@ fn history_cursor_is_lane_scoped_and_body_corruption_is_lazy() -> Result<()> {
 #[test]
 fn unknown_formats_and_foreign_identities_are_rejected_without_overwrite() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let path = directory.path().join("identity.rpidb");
+    let path = directory.path().join("identity.shobdb");
     drop(Store::create(&path, identity())?);
     let original = std::fs::read(&path)?;
     assert!(Store::create(&path, identity()).is_err());
@@ -364,7 +364,7 @@ fn unknown_formats_and_foreign_identities_are_rejected_without_overwrite() -> Re
         std::fs::read(&legacy)?,
         b"{\"kind\":\"header\",\"version\":4}\n"
     );
-    let missing = directory.path().join("missing.rpidb");
+    let missing = directory.path().join("missing.shobdb");
     assert!(Store::open(&missing, identity()).is_err());
     assert!(!missing.exists());
     Ok(())
@@ -412,7 +412,7 @@ fn checkpoint_and_tail_corruption_fail_closed() -> Result<()> {
         ),
     ] {
         let directory = tempfile::tempdir()?;
-        let path = directory.path().join("corrupt.rpidb");
+        let path = directory.path().join("corrupt.shobdb");
         let mut store = Store::create(&path, identity())?;
         for index in 0..3 {
             store.append(
@@ -438,8 +438,8 @@ fn checkpoint_and_tail_corruption_fail_closed() -> Result<()> {
 #[test]
 fn checkpoint_identity_binding_is_validated_even_with_matching_digest() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let left_path = directory.path().join("left.rpidb");
-    let right_path = directory.path().join("right.rpidb");
+    let left_path = directory.path().join("left.shobdb");
+    let right_path = directory.path().join("right.shobdb");
     drop(Store::create(&left_path, identity())?);
     let mut other = identity();
     other.generation = "generation-002".into();
@@ -463,7 +463,7 @@ fn checkpoint_identity_binding_is_validated_even_with_matching_digest() -> Resul
 #[test]
 fn invalid_events_and_unique_ids_never_consume_a_sequence() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let path = directory.path().join("invalid.rpidb");
+    let path = directory.path().join("invalid.shobdb");
     let mut store = Store::create(&path, identity())?;
     for bad in [
         event("", "main", Action::Start),
@@ -516,7 +516,7 @@ fn concurrent_writers_use_one_transactional_revision() -> Result<()> {
     use std::sync::{Arc, Barrier};
     for expected in [Some(0), None] {
         let directory = tempfile::tempdir()?;
-        let path = directory.path().join("concurrent.rpidb");
+        let path = directory.path().join("concurrent.shobdb");
         let left = Store::create(&path, identity())?;
         let right = Store::open(&path, identity())?;
         let barrier = Arc::new(Barrier::new(2));
@@ -563,7 +563,7 @@ fn concurrent_writers_use_one_transactional_revision() -> Result<()> {
 #[test]
 fn oversized_body_and_duplicate_queue_target_roll_back() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let path = directory.path().join("budgets.rpidb");
+    let path = directory.path().join("budgets.shobdb");
     let mut store = Store::create(&path, identity())?;
     error(
         store.append(
@@ -598,7 +598,7 @@ fn oversized_body_and_duplicate_queue_target_roll_back() -> Result<()> {
 #[test]
 fn actual_sql_checkpoint_error_rolls_back_the_entire_append() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let path = directory.path().join("checkpoint-error.rpidb");
+    let path = directory.path().join("checkpoint-error.shobdb");
     let mut store = Store::create(&path, identity())?;
     for index in 0..MAX_TAIL - 1 {
         store.append(

@@ -2483,7 +2483,7 @@ mod tests {
     #[tokio::test]
     async fn resource_transition_binding_append_failure_is_old_new_or_strict_recovery_required() {
         use crate::session::{Session, SessionValueWriter, SessionValues};
-        const KEY: &str = "rpi.resource-selection.v1";
+        const KEY: &str = "shob.resource-selection.v1";
         for (tear, uncertain) in [
             (Tear::Whole, false),
             (Tear::Half, false),
@@ -3077,7 +3077,7 @@ mod tests {
                                     timestamp: 1,
                                 },
                                 custom_type: crate::session::values::VALUE_CUSTOM_TYPE.into(),
-                                data: Some(serde_json::json!({"key":"rpi.resource-selection.v1","value":value_seq})),
+                                data: Some(serde_json::json!({"key":"shob.resource-selection.v1","value":value_seq})),
                             }),
                         }));
                     }
@@ -3114,7 +3114,7 @@ mod tests {
             );
             assert_eq!(facts.metadata.id, header().id);
             assert_eq!(
-                facts.values.get("rpi.resource-selection.v1"),
+                facts.values.get("shob.resource-selection.v1"),
                 Some(&serde_json::json!(3))
             );
             // ReadOnly remains fully capable; the facts-only handles below
@@ -3162,7 +3162,7 @@ mod tests {
             // The pure DTO remains usable after every storage/file owner and
             // the source itself are gone; it has no lazy payload capability.
             assert_eq!(
-                facts.values.get("rpi.resource-selection.v1"),
+                facts.values.get("shob.resource-selection.v1"),
                 Some(&serde_json::json!(3))
             );
         }

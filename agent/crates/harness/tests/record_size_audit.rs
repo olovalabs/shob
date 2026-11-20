@@ -93,9 +93,9 @@ fn record_field_size_audit() {
     assert!(commit_compact < commit_full);
     assert!(append_payload < append_full);
 
-    if std::env::var_os("RPI_RECORD_SIZE_AUDIT").is_some_and(|value| value != "0") {
+    if std::env::var_os("SHOB_RECORD_SIZE_AUDIT").is_some_and(|value| value != "0") {
         eprintln!(
-            "RPI_RECORD_SIZE_AUDIT tool_started_full={} tool_started_without_tool_id_name={} tool_saving={} commit_stream_full={} commit_stream_top_level_entry_id={} commit_saving={} assistant_frame_append_full={} assistant_frame_payload_only={}",
+            "SHOB_RECORD_SIZE_AUDIT tool_started_full={} tool_started_without_tool_id_name={} tool_saving={} commit_stream_full={} commit_stream_top_level_entry_id={} commit_saving={} assistant_frame_append_full={} assistant_frame_payload_only={}",
             tool_full,
             tool_compact,
             tool_full - tool_compact,

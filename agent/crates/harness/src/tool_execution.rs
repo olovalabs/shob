@@ -105,7 +105,7 @@ impl AgentTool for ToolExecutionBarrier {
             .execute(tool_call_id, params, signal, on_update)
             .await;
         if let Some(parent) = parent {
-            if let Err(error) = self.harness.append_custom_entry("rpi.tool_program.finished.v1", Some(serde_json::json!({"rootToolCallId":parent.root_id,"parentToolCallId":parent.parent_id,"requestId":tool_call_id,"isError":result.is_err()}))).await {
+            if let Err(error) = self.harness.append_custom_entry("shob.tool_program.finished.v1", Some(serde_json::json!({"rootToolCallId":parent.root_id,"parentToolCallId":parent.parent_id,"requestId":tool_call_id,"isError":result.is_err()}))).await {
                 self.signal.cancel();
                 self.write_error.lock().unwrap().get_or_insert(error.to_string());
                 // Preserve the actual effect result (including terminate/usage)

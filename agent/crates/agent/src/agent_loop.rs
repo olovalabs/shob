@@ -47,8 +47,9 @@ pub type NewMessages = Vec<AgentMessage>;
 static AGENT_DIAGNOSTICS: OnceLock<bool> = OnceLock::new();
 
 fn agent_diagnostics_enabled() -> bool {
-    *AGENT_DIAGNOSTICS
-        .get_or_init(|| std::env::var_os("RPI_AGENT_DIAGNOSTICS").is_some_and(|value| value != "0"))
+    *AGENT_DIAGNOSTICS.get_or_init(|| {
+        std::env::var_os("SHOB_AGENT_DIAGNOSTICS").is_some_and(|value| value != "0")
+    })
 }
 
 /// Why a run ended. `Completed` is the normal exit; `Aborted`/`Failed` are set
@@ -571,7 +572,7 @@ impl Drop for AssistantRequestDiagnostics {
             .map(Self::elapsed_ns)
             .unwrap_or_default();
         eprintln!(
-            "RPI_AGENT_DIAGNOSTICS phase=assistant input_messages={} llm_messages={} tools={} transform_ns={} history_clone_ns={} context_build_ns={} convert_ns={} stream_open_ns={} first_event_ns={} first_poll_ns={} provider_events={} emit_calls={} emit_ns={} fold_ns={} stream_ns={} total_ns={}",
+            "SHOB_AGENT_DIAGNOSTICS phase=assistant input_messages={} llm_messages={} tools={} transform_ns={} history_clone_ns={} context_build_ns={} convert_ns={} stream_open_ns={} first_event_ns={} first_poll_ns={} provider_events={} emit_calls={} emit_ns={} fold_ns={} stream_ns={} total_ns={}",
             self.input_messages,
             self.llm_messages,
             self.tools,
@@ -1776,7 +1777,7 @@ async fn execute_prepared_tool_call(
     };
     if let Some(started) = execute_started {
         eprintln!(
-            "RPI_TOOL_DIAGNOSTICS tool={} call_id={} is_error={} execute_ns={}",
+            "SHOB_TOOL_DIAGNOSTICS tool={} call_id={} is_error={} execute_ns={}",
             diagnostic_tool_name,
             tool_call.id,
             outcome.is_error,

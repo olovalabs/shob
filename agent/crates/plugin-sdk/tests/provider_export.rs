@@ -146,7 +146,7 @@ extern "C" fn runtime_action(
 
 fn api() -> sdk::PluginApi {
     sdk::PluginApi {
-        abi_version: sdk::RPI_PLUGIN_ABI_VERSION_UNIFIED,
+        abi_version: sdk::SHOB_PLUGIN_ABI_VERSION_UNIFIED,
         struct_size: std::mem::size_of::<sdk::PluginApi>() as u32,
         free_string: sdk::callbacks::free_string,
         register_tool: None,
@@ -179,7 +179,7 @@ fn exported_provider_prefers_streaming_and_returns_terminal_message() {
     let mut api = api();
     api.register_provider = Some(unused_one_shot);
     api.register_streaming_provider = Some(register_stream);
-    assert_eq!(rpi_plugin_register(&api), 0);
+    assert_eq!(shob_plugin_register(&api), 0);
 }
 
 #[test]
@@ -187,7 +187,7 @@ fn exported_provider_falls_back_to_one_shot_without_declarations() {
     let mut api = api();
     api.declare = None;
     api.register_provider = Some(register_one_shot);
-    assert_eq!(rpi_plugin_register(&api), 0);
+    assert_eq!(shob_plugin_register(&api), 0);
 }
 
 #[test]
@@ -198,10 +198,10 @@ fn exported_provider_propagates_declaration_errors() {
     let mut api = api();
     api.declare = Some(refuse);
     api.register_provider = Some(unused_one_shot);
-    assert_eq!(rpi_plugin_register(&api), 42);
+    assert_eq!(shob_plugin_register(&api), 42);
 }
 
 #[test]
 fn exported_provider_requires_a_host_registration_slot() {
-    assert_ne!(rpi_plugin_register(&api()), 0);
+    assert_ne!(shob_plugin_register(&api()), 0);
 }

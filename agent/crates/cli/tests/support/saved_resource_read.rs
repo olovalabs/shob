@@ -28,11 +28,11 @@ async fn saved_reader_missing_selected_resources_preserves_real_history_without_
     async fn read(root: &Path) -> Value {
         let output = tokio::time::timeout(
             Duration::from_secs(15),
-            tokio::process::Command::new(env!("CARGO_BIN_EXE_rpi"))
+            tokio::process::Command::new(env!("CARGO_BIN_EXE_shob"))
                 .current_dir(root)
-                .env("RPI_CODING_AGENT_DIR", root.join("agent"))
+                .env("SHOB_CODING_AGENT_DIR", root.join("agent"))
                 .env(
-                    "RPI_PLUGIN_STUB_REGISTRATION_LOG",
+                    "SHOB_PLUGIN_STUB_REGISTRATION_LOG",
                     root.join("registrations.log"),
                 )
                 .args(["--resource-session-read", "reader.json"])

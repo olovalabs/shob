@@ -2,7 +2,7 @@ use super::*;
 #[tokio::test]
 async fn both_legacy_writers_reject_native_artifact_without_byte_or_sidecar_changes() {
     let f = Fixture::new();
-    let artifact = f.temp.path().join("foreign.rpinative");
+    let artifact = f.temp.path().join("foreign.shobnative");
     // Reserved IDs are checked even without native feature. Fixture schema is
     // intentionally small; the writer must refuse before adopting any of it.
     for app in [0x5250494e, 0x5250494f, 0x52504951] {

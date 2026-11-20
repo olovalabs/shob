@@ -8,7 +8,7 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 readme = "README.md"
-description = "Backend-independent checkpoint and recovery primitives for the native rpi host"
+description = "Backend-independent checkpoint and recovery primitives for the native shob host"
 
 [dependencies]
 serde = { workspace = true }

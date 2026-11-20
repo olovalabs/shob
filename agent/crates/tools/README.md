@@ -131,7 +131,7 @@ sanitized stream after display truncation, batching existing backlogs up to
 output (once, never grown) so a *failed* truncated command can show a bounded
 head window alongside the tail — see below. First progress is immediate; Bash and
 PowerShell coalesce later checkpoints with one 16 ms timer, including when
-output goes quiet. `RPI_BASH_UPDATE_THROTTLE_MS` overrides that window.
+output goes quiet. `SHOB_BASH_UPDATE_THROTTLE_MS` overrides that window.
 `ShellCaptureOptions::update_interval = None` retains per-chunk callbacks for
 other capture consumers.
 

@@ -1,7 +1,7 @@
 //! The `libloading` loader: discover and register cdylib plugins.
 //!
 //! [`load_one`] loads a single cdylib and looks up the unified
-//! `rpi_plugin_register` entrypoint (ABI v4). The entrypoint is called exactly
+//! `shob_plugin_register` entrypoint (ABI v4). The entrypoint is called exactly
 //! once; a nonzero return is reported via diagnostics.
 //!
 //! [`load_dir`] walks a directory for `.{dll,so,dylib}` files and loads each.
@@ -15,7 +15,7 @@ use std::sync::Arc;
 use libloading::Library;
 use thiserror::Error;
 
-use plugin_sdk::{RpiPluginRegisterUnified, RPI_PLUGIN_ABI_VERSION_UNIFIED};
+use plugin_sdk::{ShobPluginRegisterUnified, SHOB_PLUGIN_ABI_VERSION_UNIFIED};
 
 use crate::registry::{ExtensionRegistry, RegistrySnapshot};
 use crate::{enter_current_api, ActionBridge, HostApi, NullDiagnostics, PluginDiagnostics};
@@ -34,7 +34,7 @@ pub enum PluginLoadError {
         #[source]
         source: libloading::Error,
     },
-    #[error("`rpi_plugin_register` was not found in {path}: {error}")]
+    #[error("`shob_plugin_register` was not found in {path}: {error}")]
     Symbol { path: PathBuf, error: String },
     #[error("register returned nonzero code {code} for {path}")]
     RegisterReturned { path: PathBuf, code: i32 },
@@ -61,7 +61,7 @@ pub struct LoadedPlugin {
     pub library: std::mem::ManuallyDrop<Library>,
     /// Where it was loaded from (for diagnostics).
     pub path: PathBuf,
-    /// ABI version (always [`RPI_PLUGIN_ABI_VERSION_UNIFIED`] for plugins
+    /// ABI version (always [`SHOB_PLUGIN_ABI_VERSION_UNIFIED`] for plugins
     /// loaded by this version of the loader).
     pub abi_version: u32,
     /// The registry snapshot built from this plugin's registrations. The host
@@ -135,7 +135,7 @@ impl Drop for LoadedPlugin {
     }
 }
 
-fn call_register(register: RpiPluginRegisterUnified, host_api: &Arc<HostApi>) -> i32 {
+fn call_register(register: ShobPluginRegisterUnified, host_api: &Arc<HostApi>) -> i32 {
     // Leak the API struct. The SDK asks plugins to *copy* the function pointers
     // they need during `register`, but real-world plugins retain the `api`
     // pointer to call e.g. `runtime_action` later. The host already keeps the
@@ -202,16 +202,16 @@ fn load_one_guarded(
     })?;
 
     // 2. Look up the unified entrypoint.
-    let register: RpiPluginRegisterUnified = unsafe {
+    let register: ShobPluginRegisterUnified = unsafe {
         library
-            .get::<RpiPluginRegisterUnified>(plugin_sdk::REGISTER_SYMBOL_UNIFIED)
+            .get::<ShobPluginRegisterUnified>(plugin_sdk::REGISTER_SYMBOL_UNIFIED)
             .map(|symbol| *symbol)
     }
     .map_err(|e| PluginLoadError::Symbol {
         path: path.clone(),
         error: e.to_string(),
     })?;
-    let abi_version = RPI_PLUGIN_ABI_VERSION_UNIFIED;
+    let abi_version = SHOB_PLUGIN_ABI_VERSION_UNIFIED;
 
     // Plugin display name (file stem) — stamped onto every registration the
     // plugin makes so host diagnostics (e.g. lifecycle veto messages) can name
@@ -671,11 +671,11 @@ mod tests {
     fn build_cdylib_fixture(name: &str, source: &str) -> CdylibFixture {
         static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
         let unique = NEXT_FIXTURE.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::var_os("RPI_TEST_GUARD_PROCESS_DIR")
+        let dir = std::env::var_os("SHOB_TEST_GUARD_PROCESS_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(std::env::temp_dir)
             .join(format!(
-                "rpi-abi-loader-{}-{name}-{unique}",
+                "shob-abi-loader-{}-{name}-{unique}",
                 std::process::id()
             ));
         fs::create_dir_all(&dir).expect("create ABI fixture directory");
@@ -728,7 +728,7 @@ mod tests {
             .and_then(Path::parent)
             .map(Path::to_path_buf)
             .unwrap_or_else(std::env::temp_dir)
-            .join(format!("rpi-lifecycle-{}-{name}", std::process::id()));
+            .join(format!("shob-lifecycle-{}-{name}", std::process::id()));
         let _ = fs::remove_file(&marker);
         let offset = std::mem::offset_of!(plugin_sdk::PluginApi, register_plugin_lifecycle);
         let fixture = build_cdylib_fixture(
@@ -757,7 +757,7 @@ extern "C" fn finish(_: *mut c_void) -> i32 {{
 #[no_mangle]
 pub extern "C" fn still_mapped() -> i32 {{ 42 }}
 #[no_mangle]
-pub extern "C" fn rpi_plugin_register(api: *const u8) -> i32 {{
+pub extern "C" fn shob_plugin_register(api: *const u8) -> i32 {{
     type Register = extern "C" fn(extern "C" fn(*mut c_void), extern "C" fn(*mut c_void) -> i32, *mut c_void) -> i32;
     let register: Option<Register> = unsafe {{ std::ptr::read_unaligned(api.add({offset}).cast()) }};
     assert_eq!(register.unwrap()(begin, finish, std::ptr::null_mut()), 0);
@@ -816,13 +816,13 @@ pub extern "C" fn rpi_plugin_register(api: *const u8) -> i32 {{
 
     #[test]
     fn host_guard_covers_inflight_keepalives_async_cleanup_and_unsafe_shutdown() {
-        const CHILD_DIR: &str = "RPI_TEST_GUARD_PROCESS_DIR";
+        const CHILD_DIR: &str = "SHOB_TEST_GUARD_PROCESS_DIR";
         let Some(directory) = std::env::var_os(CHILD_DIR) else {
             for failed in [false, true] {
                 let directory = tempfile::tempdir().unwrap();
                 let output=Command::new(std::env::current_exe().unwrap())
                     .args(["--exact","loader::tests::host_guard_covers_inflight_keepalives_async_cleanup_and_unsafe_shutdown","--nocapture"])
-                    .env(CHILD_DIR,directory.path()).env("RPI_TEST_GUARD_FAIL",failed.to_string()).output().unwrap();
+                    .env(CHILD_DIR,directory.path()).env("SHOB_TEST_GUARD_FAIL",failed.to_string()).output().unwrap();
                 // Child process exit releases even intentionally leaked DLLs.
                 // This parent owns and explicitly removes every fixture byte.
                 directory
@@ -837,7 +837,7 @@ pub extern "C" fn rpi_plugin_register(api: *const u8) -> i32 {{
             }
             return;
         };
-        for failed in [std::env::var("RPI_TEST_GUARD_FAIL").unwrap() == "true"] {
+        for failed in [std::env::var("SHOB_TEST_GUARD_FAIL").unwrap() == "true"] {
             let gate = PathBuf::from(directory.clone()).join("finish-gate");
             struct ReleaseGate(PathBuf);
             impl Drop for ReleaseGate {
@@ -983,11 +983,11 @@ pub extern "C" fn rpi_plugin_register(api: *const u8) -> i32 {{
         let unified = build_cdylib_fixture(
             "abi_unified_only",
             &format!(
-                "{PREFIX}#[no_mangle]\npub extern \"C\" fn rpi_plugin_register(api: *const c_void) -> i32 {{ if !api.is_null() {{ 0 }} else {{ 91 }} }}\n"
+                "{PREFIX}#[no_mangle]\npub extern \"C\" fn shob_plugin_register(api: *const c_void) -> i32 {{ if !api.is_null() {{ 0 }} else {{ 91 }} }}\n"
             ),
         );
         let loaded = load_one(&unified.path, Arc::clone(&diag), None).expect("load unified plugin");
-        assert_eq!(loaded.abi_version, RPI_PLUGIN_ABI_VERSION_UNIFIED);
+        assert_eq!(loaded.abi_version, SHOB_PLUGIN_ABI_VERSION_UNIFIED);
         drop(loaded);
         drop(unified);
     }
@@ -1000,7 +1000,7 @@ pub extern "C" fn rpi_plugin_register(api: *const u8) -> i32 {{
         let failed = build_cdylib_fixture(
             "abi_unified_failure",
             &format!(
-                "{PREFIX}#[no_mangle]\npub extern \"C\" fn rpi_plugin_register(_: *const c_void) -> i32 {{ 73 }}\n"
+                "{PREFIX}#[no_mangle]\npub extern \"C\" fn shob_plugin_register(_: *const c_void) -> i32 {{ 73 }}\n"
             ),
         );
         let error = match load_one(&failed.path, diag, None) {
@@ -1029,7 +1029,7 @@ pub extern "C" fn rpi_plugin_register(api: *const u8) -> i32 {{
             r#"{PREFIX}
 fn body() -> i32 {{ panic!("register body exploded"); }}
 #[no_mangle]
-pub extern "C" fn rpi_plugin_register(_: *const c_void) -> i32 {{
+pub extern "C" fn shob_plugin_register(_: *const c_void) -> i32 {{
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)) {{
         Ok(code) => code,
         Err(_) => {panic_status},
@@ -1068,7 +1068,7 @@ pub extern "C" fn rpi_plugin_register(_: *const c_void) -> i32 {{
 use std::sync::atomic::{AtomicUsize, Ordering};
 static COUNT: AtomicUsize = AtomicUsize::new(0);
 #[no_mangle]
-pub extern "C" fn rpi_plugin_register(_: *const std::ffi::c_void) -> i32 {
+pub extern "C" fn shob_plugin_register(_: *const std::ffi::c_void) -> i32 {
     if COUNT.fetch_add(1, Ordering::SeqCst) == 0 { 0 } else { 73 }
 }
 "#,
@@ -1125,7 +1125,7 @@ fn mark(path: &str, bytes: &[u8]) {
     /// slot. The current host must still dispatch to it, with no control.
     #[test]
     fn legacy_oauth_slot_from_an_older_plugin_reaches_the_host() {
-        let marker = std::env::temp_dir().join(format!("rpi-oauth-legacy-{}", std::process::id()));
+        let marker = std::env::temp_dir().join(format!("shob-oauth-legacy-{}", std::process::id()));
         let _ = fs::remove_file(&marker);
         let offset = std::mem::offset_of!(plugin_sdk::PluginApi, register_oauth_provider);
         let fixture = build_cdylib_fixture(
@@ -1137,7 +1137,7 @@ extern "C" fn legacy(_req: Str, _out: *mut Owned, _data: *mut c_void) -> i32 {{
     9
 }}
 #[no_mangle]
-pub extern "C" fn rpi_plugin_register(api: *const u8) -> i32 {{
+pub extern "C" fn shob_plugin_register(api: *const u8) -> i32 {{
     type Register = extern "C" fn(Str, extern "C" fn(Str, *mut Owned, *mut c_void) -> i32,
         extern "C" fn(Owned), *mut c_void) -> i32;
     let register: Option<Register> = unsafe {{ std::ptr::read_unaligned(api.add({offset}).cast()) }};
@@ -1199,7 +1199,7 @@ extern "C" fn controlled(_req: Str, control: *const Control, _out: *mut Owned, _
     9
 }}
 #[no_mangle]
-pub extern "C" fn rpi_plugin_register(api: *const u8) -> i32 {{
+pub extern "C" fn shob_plugin_register(api: *const u8) -> i32 {{
     type Register = extern "C" fn(Str, extern "C" fn(Str, *const Control, *mut Owned, *mut c_void) -> i32,
         extern "C" fn(Owned), *mut c_void) -> i32;
     let register: Option<Register> = unsafe {{ std::ptr::read_unaligned(api.add({offset}).cast()) }};
@@ -1216,7 +1216,7 @@ pub extern "C" fn rpi_plugin_register(api: *const u8) -> i32 {{
     /// across the real cdylib boundary.
     #[test]
     fn cancellable_oauth_slot_delivers_host_cancellation_across_the_abi() {
-        let marker = std::env::temp_dir().join(format!("rpi-oauth-cancel-{}", std::process::id()));
+        let marker = std::env::temp_dir().join(format!("shob-oauth-cancel-{}", std::process::id()));
         let _ = fs::remove_file(&marker);
         let fixture = cancellable_oauth_fixture("oauth_cancellable_slot", &marker);
         let session = load_session_mixed(
@@ -1268,7 +1268,7 @@ pub extern "C" fn rpi_plugin_register(api: *const u8) -> i32 {{
     /// share one mapping for the same path; the keepalive count is what is pinned.)
     #[test]
     fn cancellable_oauth_call_survives_a_reload_and_still_cancels() {
-        let marker = std::env::temp_dir().join(format!("rpi-oauth-reload-{}", std::process::id()));
+        let marker = std::env::temp_dir().join(format!("shob-oauth-reload-{}", std::process::id()));
         let _ = fs::remove_file(&marker);
         let fixture = cancellable_oauth_fixture("oauth_cancellable_reload", &marker);
         let load = || {
@@ -1381,7 +1381,7 @@ pub extern "C" fn rpi_plugin_register(api: *const u8) -> i32 {{
     /// the keepalive is released only once the call has returned.
     #[test]
     fn cancellable_oauth_call_survives_an_unload_and_releases_the_library_after_return() {
-        let marker = std::env::temp_dir().join(format!("rpi-oauth-unload-{}", std::process::id()));
+        let marker = std::env::temp_dir().join(format!("shob-oauth-unload-{}", std::process::id()));
         let _ = fs::remove_file(&marker);
         let fixture = cancellable_oauth_fixture("oauth_cancellable_unload", &marker);
         let session = load_session_mixed(
@@ -1455,7 +1455,7 @@ extern "C" fn legacy(_req: Str, out: *mut Owned, _data: *mut c_void) -> i32 {{
     0
 }}
 #[no_mangle]
-pub extern "C" fn rpi_plugin_register(api: *const u8) -> i32 {{
+pub extern "C" fn shob_plugin_register(api: *const u8) -> i32 {{
     type Register = extern "C" fn(Str, extern "C" fn(Str, *mut Owned, *mut c_void) -> i32,
         extern "C" fn(Owned), *mut c_void) -> i32;
     let register: Option<Register> = unsafe {{ std::ptr::read_unaligned(api.add({offset}).cast()) }};
@@ -1474,8 +1474,8 @@ pub extern "C" fn rpi_plugin_register(api: *const u8) -> i32 {{
     #[test]
     fn legacy_oauth_call_in_flight_across_an_unload_returns_cancelled() {
         let pid = std::process::id();
-        let marker = std::env::temp_dir().join(format!("rpi-oauth-legacy-unload-{pid}"));
-        let release = std::env::temp_dir().join(format!("rpi-oauth-legacy-release-{pid}"));
+        let marker = std::env::temp_dir().join(format!("shob-oauth-legacy-unload-{pid}"));
+        let release = std::env::temp_dir().join(format!("shob-oauth-legacy-release-{pid}"));
         let _ = fs::remove_file(&marker);
         let _ = fs::remove_file(&release);
         let fixture = legacy_oauth_fixture("oauth_legacy_unload", &marker, &release);

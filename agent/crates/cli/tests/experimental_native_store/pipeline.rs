@@ -97,7 +97,7 @@ async fn text_and_json_report_nonzero_when_native_assistant_persistence_fails() 
             let path = std::fs::read_dir(native)
                 .unwrap()
                 .map(|e| e.unwrap().path())
-                .find(|p| p.extension().is_some_and(|s| s == "rpinative"))
+                .find(|p| p.extension().is_some_and(|s| s == "shobnative"))
                 .unwrap();
             let db = rusqlite::Connection::open(path).unwrap();
             db.busy_timeout(Duration::from_secs(3)).unwrap();

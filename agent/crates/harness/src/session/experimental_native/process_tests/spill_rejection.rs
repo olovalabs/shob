@@ -94,7 +94,7 @@ fn process_recognized_header_can_recover_but_never_accept_a_bad_root_format() {
         let db = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)
             .unwrap();
         db.execute(
-            "UPDATE root SET format='rpi-native-fact-experimental-v2'",
+            "UPDATE root SET format='shob-native-fact-experimental-v2'",
             [],
         )
         .unwrap();
@@ -166,7 +166,7 @@ fn process_header_gate_rejects_partial_bad_and_missing_artifacts_without_creatio
         }
         for (index, bytes) in cases.into_iter().enumerate() {
             let dir = tempfile::tempdir().unwrap();
-            let path = dir.path().join("fixture.rpinative");
+            let path = dir.path().join("fixture.shobnative");
             if let Some(bytes) = &bytes {
                 std::fs::write(&path, bytes).unwrap();
             }

@@ -265,7 +265,7 @@ impl FileSystem for FaultyFs {
     ) -> Result<(), FileError> {
         if matches!(self.target, FaultTarget::AppendInitialValue)
             && path.ends_with(".tmp")
-            && matches!(&content, FileContent::Text(text) if text.contains("rpi.value"))
+            && matches!(&content, FileContent::Text(text) if text.contains("shob.value"))
             && self.armed.swap(false, Ordering::SeqCst)
         {
             return Err(Self::fault_error("append initial fork value").with_path(path));
@@ -508,7 +508,7 @@ async fn initialized_fork_append_and_publish_failures_leave_no_destination() {
                 &ForkOptions::default(),
                 |_| {
                     Ok(vec![(
-                        "rpi.resource-selection.v1".into(),
+                        "shob.resource-selection.v1".into(),
                         serde_json::json!({"revision": 1}),
                     )])
                 },

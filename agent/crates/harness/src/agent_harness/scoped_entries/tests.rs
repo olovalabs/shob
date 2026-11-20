@@ -408,7 +408,7 @@ mod scoped_drop_probe {
     }
 
     async fn probe(drop_caller: bool) {
-        let dir = match std::env::var_os("RPI_NOTICE_TEST_ROOT") {
+        let dir = match std::env::var_os("SHOB_NOTICE_TEST_ROOT") {
             Some(root) => tempfile::tempdir_in(root).unwrap(),
             None => tempfile::tempdir().unwrap(),
         };
@@ -735,8 +735,8 @@ async fn guarded_custom_appends_cannot_mint_native_journal_on_main_or_side() {
             h.lane = lane.into();
         }
         for typ in [
-            "rpi.tool_program.child_begin.v1",
-            "rpi.tool_program.child_phase.v1",
+            "shob.tool_program.child_begin.v1",
+            "shob.tool_program.child_phase.v1",
         ] {
             let before = h.session.storage().history_revision().await.unwrap();
             let guard = BranchWriteGuard {
@@ -761,7 +761,7 @@ async fn guarded_custom_appends_cannot_mint_native_journal_on_main_or_side() {
                 before
             );
         }
-        let typ = "rpi.tool_program.child_begin.v1.other";
+        let typ = "shob.tool_program.child_begin.v1.other";
         let guard = BranchWriteGuard {
             session_id: h.session.storage().metadata().id,
             leaf_id: h.view().get_leaf_id().await.unwrap(),

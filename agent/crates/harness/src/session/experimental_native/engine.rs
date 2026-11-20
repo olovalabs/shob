@@ -16,7 +16,7 @@ pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
 pub(super) struct ReservationError(#[source] pub(super) std::io::Error);
-pub const FORMAT: &str = "rpi-native-fact-experimental-v3";
+pub const FORMAT: &str = "shob-native-fact-experimental-v3";
 pub const TAIL: u64 = 16;
 const APP: i64 = 0x52504951;
 pub(super) const META_LIMIT: usize = 16384;

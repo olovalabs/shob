@@ -1,10 +1,10 @@
 //! # Layout
 //!
-//! Uses a nested layout: a `~/.rpi/agent/` directory (or one pointed at via
-//! `RPI_CODING_AGENT_DIR`) "just works":
+//! Uses a nested layout: a `~/.shob/agent/` directory (or one pointed at via
+//! `SHOB_CODING_AGENT_DIR`) "just works":
 //!
 //! ```text
-//! ~/.rpi/                 (RPI_CODING_AGENT_DIR env overrides the agent/ dir)
+//! ~/.shob/                 (SHOB_CODING_AGENT_DIR env overrides the agent/ dir)
 //! └── agent/
 //!     ├── auth.json       # persisted credentials (mode 0o600 on Unix)
 //!     ├── models.json     # user-defined provider/model catalog (hand-edited)
@@ -13,7 +13,7 @@
 //!     ├── .setup_done     # first-time-setup sentinel (extras.rs)
 //! ```
 //!
-//! Flat-installed `~/.rpi/{auth.json,models.json}` from older rpi releases are
+//! Flat-installed `~/.shob/{auth.json,models.json}` from older shob releases are
 //! migrated under `agent/` on the next launch by [`migrate_legacy_layout`]
 //! (best-effort, idempotent; only when the env override is unset).
 //!
@@ -24,7 +24,7 @@
 //! then `chmod 0o600` on Unix (Windows chmod is a no-op, matching Node).
 //! Within one process, auth.json read-modify-write updates (upsert and delete)
 //! run under a short in-memory lock, so concurrent provider renewals cannot
-//! drop each other's entries. Across processes, two `rpi auth login` runs from
+//! drop each other's entries. Across processes, two `shob auth login` runs from
 //! two shells could still lose one update — that's accepted and documented;
 //! adding a file lock is deferred.
 //!
@@ -33,7 +33,7 @@
 //! [`resolve_config_value`] expands `$ENV`/`${ENV}`/`!command` inside
 //! `apiKey`/`headers` exactly like upstream's `resolve-config-value.ts` — so a
 //! copied pi `models.json`/`auth.json` that references env vars or shell
-//! commands resolves the same way. Applied where rpi consumes those values
+//! commands resolves the same way. Applied where shob consumes those values
 //! (auth.json key, models.json bearer apiKey, provider/model `headers`).
 
 use std::collections::BTreeMap;
@@ -50,13 +50,13 @@ pub use runtime::config::{
 };
 
 /// The config directory name under the home dir.
-pub const CONFIG_DIR_NAME: &str = ".rpi";
+pub const CONFIG_DIR_NAME: &str = ".shob";
 
 /// Env var that overrides the whole config dir. Absolute path; relative
 /// values are rejected.
-pub const CONFIG_DIR_ENV: &str = "RPI_CODING_AGENT_DIR";
+pub const CONFIG_DIR_ENV: &str = "SHOB_CODING_AGENT_DIR";
 
-/// The provider id under which `rpi auth login` stores the Anthropic key.
+/// The provider id under which `shob auth login` stores the Anthropic key.
 /// Mirrors upstream's fixed `anthropic` provider id.
 pub use runtime::config::DEFAULT_PROVIDER_ID;
 
@@ -64,12 +64,14 @@ pub use runtime::config::DEFAULT_PROVIDER_ID;
 // Path resolution
 // ---------------------------------------------------------------------------
 
-/// The rpi config directory (`~/.rpi/agent` by default, `RPI_CODING_AGENT_DIR`
+/// The shob config directory (`~/.shob/agent` by default, `SHOB_CODING_AGENT_DIR`
 /// override). Creates nothing — purely a path computation. The `agent/` layer
 /// is `join(homedir(), CONFIG_DIR_NAME, "agent")`. The env override points at
 /// the agent dir itself.
 pub fn agent_dir() -> Result<PathBuf, ConfigError> {
-    if let Some(val) = std::env::var_os(CONFIG_DIR_ENV) {
+    if let Some(val) =
+        std::env::var_os(CONFIG_DIR_ENV).or_else(|| std::env::var_os("RPI_CODING_AGENT_DIR"))
+    {
         let p = PathBuf::from(&val);
         if !p.is_absolute() {
             return Err(ConfigError::RelativeOverride {
@@ -82,10 +84,20 @@ pub fn agent_dir() -> Result<PathBuf, ConfigError> {
     let home = dirs::home_dir().ok_or(ConfigError::NoHomeDir {
         env: CONFIG_DIR_ENV,
     })?;
-    Ok(home.join(CONFIG_DIR_NAME).join("agent"))
+    Ok(default_agent_dir(&home))
 }
 
-/// The config dir one level above the agent dir (`~/.rpi`, or the parent of an
+fn default_agent_dir(home: &Path) -> PathBuf {
+    let preferred = home.join(CONFIG_DIR_NAME).join("agent");
+    let legacy = home.join(".rpi").join("agent");
+    if !preferred.exists() && legacy.is_dir() {
+        legacy
+    } else {
+        preferred
+    }
+}
+
+/// The config dir one level above the agent dir (`~/.shob`, or the parent of an
 /// env override). Used by [`migrate_legacy_layout`] to locate the old flat
 /// layout. Returns `None` when the env override has no parent (a root path).
 fn config_root_dir() -> Result<PathBuf, ConfigError> {
@@ -98,22 +110,22 @@ fn config_root_dir() -> Result<PathBuf, ConfigError> {
         })
 }
 
-/// `~/.rpi/agent/auth.json`.
+/// `~/.shob/agent/auth.json`.
 pub fn auth_path() -> Result<PathBuf, ConfigError> {
     Ok(agent_dir()?.join("auth.json"))
 }
 
-/// `~/.rpi/agent/models.json`.
+/// `~/.shob/agent/models.json`.
 pub fn models_path() -> Result<PathBuf, ConfigError> {
     Ok(agent_dir()?.join("models.json"))
 }
 
-/// `~/.rpi/agent/settings.json` (saved default provider/model/thinking + theme).
+/// `~/.shob/agent/settings.json` (saved default provider/model/thinking + theme).
 pub fn settings_path() -> Result<PathBuf, ConfigError> {
     Ok(agent_dir()?.join("settings.json"))
 }
 
-/// `~/.rpi/agent/trust.json` (per-cwd project trust decisions).
+/// `~/.shob/agent/trust.json` (per-cwd project trust decisions).
 pub fn trust_path() -> Result<PathBuf, ConfigError> {
     Ok(agent_dir()?.join("trust.json"))
 }
@@ -145,15 +157,17 @@ fn read_text_with_fallback(
 }
 
 /// One-time best-effort migration of a pre-nesting flat layout
-/// (`~/.rpi/{auth.json,models.json,.setup_done}`) into the
-/// nested `~/.rpi/agent/` layout. **No-op when `RPI_CODING_AGENT_DIR` is set**
+/// (`~/.shob/{auth.json,models.json,.setup_done}`) into the
+/// nested `~/.shob/agent/` layout. **No-op when `SHOB_CODING_AGENT_DIR` is set**
 /// (never touch an explicit override), when the agent dir already exists, or
 /// when no flat files are present. Idempotent: a partial move resumes. Errors
 /// are swallowed (logged via the returned `Result` only so tests can observe);
 /// `app::run` ignores them so a migration hiccup never blocks startup.
 pub fn migrate_legacy_layout() -> Result<usize, ConfigError> {
     // Only migrate the default home-backed layout — never an env override.
-    if std::env::var_os(CONFIG_DIR_ENV).is_some() {
+    if std::env::var_os(CONFIG_DIR_ENV).is_some()
+        || std::env::var_os("RPI_CODING_AGENT_DIR").is_some()
+    {
         return Ok(0);
     }
     let root = match config_root_dir() {
@@ -340,7 +354,7 @@ pub fn delete_credential(provider_id: &str) -> Result<bool, ConfigError> {
 // models.json — provider/model catalog
 // ---------------------------------------------------------------------------
 
-/// Load `~/.rpi/models.json`. Missing file ⇒ empty config (no error).
+/// Load `~/.shob/models.json`. Missing file ⇒ empty config (no error).
 pub fn load_models_config() -> Result<ModelsConfig, ConfigError> {
     let path = models_path()?;
     match read_text_with_fallback(path, None)? {
@@ -353,7 +367,7 @@ pub fn load_models_config() -> Result<ModelsConfig, ConfigError> {
 
 /// Diagnose unsupported compat keys and malformed values without rejecting
 /// unrelated providers.
-/// Atomically write the whole `~/.rpi/models.json` (used by the interactive
+/// Atomically write the whole `~/.shob/models.json` (used by the interactive
 /// provider form). Note: unlike [`crate::settings::save_settings`], this
 /// serializes the modeled config directly, so hand-written comments and unknown
 /// fields in `models.json` are not preserved on rewrite. A timestamped
@@ -561,12 +575,12 @@ pub fn delete_provider(provider_id: &str) -> Result<(), String> {
 
 /// The trust store: `canonicalCwd -> decision` (`true`/`false`/`null`). Mirrors
 /// pi's `TrustFile = Record<string, boolean | null | undefined>`
-/// (`trust-manager.ts`). rpi reads this for layout parity (a copied pi
+/// (`trust-manager.ts`). shob reads this for layout parity (a copied pi
 /// `trust.json` parses + is located correctly) but does **not** gate any
 /// project resources behind trust in v1 — there is no trust prompt. Deferred.
 pub type TrustStore = BTreeMap<String, Option<bool>>;
 
-/// Read `~/.rpi/agent/trust.json`. Missing file ⇒ empty store (not an error).
+/// Read `~/.shob/agent/trust.json`. Missing file ⇒ empty store (not an error).
 /// Malformed JSON ⇒ `ConfigError::Json`. `null` decisions deserialize as
 /// `None`; absent entries are simply not present.
 pub fn read_trust() -> Result<TrustStore, ConfigError> {
@@ -839,7 +853,7 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), ConfigError>
     })?;
     let tmp = dir.join(format!(
         ".{}.{}.tmp",
-        path.file_name().and_then(|n| n.to_str()).unwrap_or("rpi"),
+        path.file_name().and_then(|n| n.to_str()).unwrap_or("shob"),
         uuid::Uuid::new_v4().simple()
     ));
     let mut options = std::fs::OpenOptions::new();
@@ -889,7 +903,7 @@ fn set_owner_only(_path: &Path) {
 #[cfg(test)]
 pub(crate) mod test_support {
     /// A shared workspace lock for tests that touch process-global env vars
-    /// (`RPI_CODING_AGENT_DIR`, `ANTHROPIC_*`). All env-mutating tests across
+    /// (`SHOB_CODING_AGENT_DIR`, `ANTHROPIC_*`). All env-mutating tests across
     /// the crate (config / provider / auth) share this ONE mutex so they can't
     /// race on the shared environment. Hold the returned guard for the whole
     /// test (store it in a RAII struct).
@@ -909,10 +923,10 @@ pub(crate) mod test_support {
     impl SessionDirEnv {
         pub(crate) fn new(directory: Option<&std::path::Path>) -> Self {
             let guard = env_lock().lock().unwrap();
-            let previous = std::env::var_os("RPI_CODING_AGENT_SESSION_DIR");
+            let previous = std::env::var_os("SHOB_CODING_AGENT_SESSION_DIR");
             match directory {
-                Some(directory) => std::env::set_var("RPI_CODING_AGENT_SESSION_DIR", directory),
-                None => std::env::remove_var("RPI_CODING_AGENT_SESSION_DIR"),
+                Some(directory) => std::env::set_var("SHOB_CODING_AGENT_SESSION_DIR", directory),
+                None => std::env::remove_var("SHOB_CODING_AGENT_SESSION_DIR"),
             }
             Self {
                 _guard: guard,
@@ -924,8 +938,8 @@ pub(crate) mod test_support {
     impl Drop for SessionDirEnv {
         fn drop(&mut self) {
             match self.previous.take() {
-                Some(value) => std::env::set_var("RPI_CODING_AGENT_SESSION_DIR", value),
-                None => std::env::remove_var("RPI_CODING_AGENT_SESSION_DIR"),
+                Some(value) => std::env::set_var("SHOB_CODING_AGENT_SESSION_DIR", value),
+                None => std::env::remove_var("SHOB_CODING_AGENT_SESSION_DIR"),
             }
         }
     }
@@ -936,7 +950,7 @@ mod tests {
     use super::*;
     use crate::config::test_support::env_lock;
 
-    /// Point `RPI_CODING_AGENT_DIR` at a fresh temp dir for the duration of the
+    /// Point `SHOB_CODING_AGENT_DIR` at a fresh temp dir for the duration of the
     /// test (cleaned up on drop). Holds the prior value of the env var to
     /// restore it. Hold the env lock for its whole lifetime.
     struct TempConfig {
@@ -1525,12 +1539,12 @@ mod tests {
     #[test]
     fn custom_openai_provider_resolves_explicit_api_key_environment_reference() {
         let _guard = env_lock().lock().unwrap();
-        let env_name = "RPI_FAKE_PROVIDER_API_KEY";
+        let env_name = "SHOB_FAKE_PROVIDER_API_KEY";
         std::env::set_var(env_name, "env-secret");
         let cfg = ProviderConfig {
             name: None,
             base_url: Some("https://gateway.example.com/v1".into()),
-            api_key: Some("$RPI_FAKE_PROVIDER_API_KEY".into()),
+            api_key: Some("$SHOB_FAKE_PROVIDER_API_KEY".into()),
             api: Some("openai-completions".into()),
             headers: None,
             auth_header: None,
@@ -1548,9 +1562,9 @@ mod tests {
                 compat: None,
             }],
         };
-        let models = provider_to_models("rpi-fake-provider", &cfg).unwrap();
+        let models = provider_to_models("shob-fake-provider", &cfg).unwrap();
         assert_eq!(
-            openai_provider_api_key("rpi-fake-provider", &cfg).as_deref(),
+            openai_provider_api_key("shob-fake-provider", &cfg).as_deref(),
             Some("env-secret")
         );
         assert!(
@@ -1625,25 +1639,20 @@ mod tests {
 
     #[test]
     fn agent_dir_nests_under_agent_by_default() {
-        // With no env override, agent_dir() must end in `.../.rpi/agent`
-        // (mirrors pi's `getAgentDir`). We can't assertion the home prefix
-        // portably, but the leaf two segments are stable.
-        let _guard = env_lock().lock().unwrap();
-        let prev = std::env::var_os(CONFIG_DIR_ENV);
-        std::env::remove_var(CONFIG_DIR_ENV);
-        let dir = agent_dir().unwrap();
-        restore_env(CONFIG_DIR_ENV, prev);
-        assert!(dir.ends_with("agent"));
-        assert!(dir
-            .parent()
-            .map(|p| p.ends_with(CONFIG_DIR_NAME))
-            .unwrap_or(false));
+        let home = tempfile::tempdir().unwrap();
+        let preferred = home.path().join(".shob/agent");
+        let legacy = home.path().join(".rpi/agent");
+        assert_eq!(default_agent_dir(home.path()), preferred);
+        std::fs::create_dir_all(&legacy).unwrap();
+        assert_eq!(default_agent_dir(home.path()), legacy);
+        std::fs::create_dir_all(&preferred).unwrap();
+        assert_eq!(default_agent_dir(home.path()), preferred);
     }
 
     #[test]
     fn migrate_legacy_layout_moves_flat_files_into_agent() {
         // Drive the core migration directly against a temp root/agent so the
-        // result is independent of whatever RPI_CODING_AGENT_DIR the parallel
+        // result is independent of whatever SHOB_CODING_AGENT_DIR the parallel
         // TempConfig tests happen to set.
         let tmp = tempfile::TempDir::new().unwrap();
         let root = tmp.path().to_path_buf();
@@ -1681,7 +1690,7 @@ mod tests {
 
     #[test]
     fn migrate_legacy_layout_public_skips_env_override() {
-        // When RPI_CODING_AGENT_DIR is set, the public entry point is a no-op
+        // When SHOB_CODING_AGENT_DIR is set, the public entry point is a no-op
         // (it must never touch an explicit override). TempConfig sets it.
         let _cfg = TempConfig::new();
         let moved = migrate_legacy_layout().unwrap();
@@ -1725,46 +1734,46 @@ mod tests {
     #[test]
     fn resolve_config_value_env_var() {
         let _guard = env_lock().lock().unwrap();
-        let prev = std::env::var_os("RPI_TEST_CFG_KEY");
-        let prev2 = std::env::var_os("RPI_TEST_CFG_KEY2");
-        std::env::set_var("RPI_TEST_CFG_KEY", "secret-from-env");
+        let prev = std::env::var_os("SHOB_TEST_CFG_KEY");
+        let prev2 = std::env::var_os("SHOB_TEST_CFG_KEY2");
+        std::env::set_var("SHOB_TEST_CFG_KEY", "secret-from-env");
         assert_eq!(
-            resolve_config_value("$RPI_TEST_CFG_KEY", None),
+            resolve_config_value("$SHOB_TEST_CFG_KEY", None),
             Some("secret-from-env".into())
         );
         assert_eq!(
-            resolve_config_value("prefix-${RPI_TEST_CFG_KEY}-suffix", None),
+            resolve_config_value("prefix-${SHOB_TEST_CFG_KEY}-suffix", None),
             Some("prefix-secret-from-env-suffix".into())
         );
         // Two vars in one template.
-        std::env::set_var("RPI_TEST_CFG_KEY2", "two");
+        std::env::set_var("SHOB_TEST_CFG_KEY2", "two");
         assert_eq!(
-            resolve_config_value("a-$RPI_TEST_CFG_KEY-b-$RPI_TEST_CFG_KEY2-c", None),
+            resolve_config_value("a-$SHOB_TEST_CFG_KEY-b-$SHOB_TEST_CFG_KEY2-c", None),
             Some("a-secret-from-env-b-two-c".into())
         );
         // Env overlay wins over process env.
         let mut overlay = BTreeMap::new();
-        overlay.insert("RPI_TEST_CFG_KEY".into(), "overlay-value".into());
+        overlay.insert("SHOB_TEST_CFG_KEY".into(), "overlay-value".into());
         assert_eq!(
-            resolve_config_value("$RPI_TEST_CFG_KEY", Some(&overlay)),
+            resolve_config_value("$SHOB_TEST_CFG_KEY", Some(&overlay)),
             Some("overlay-value".into())
         );
-        restore_env("RPI_TEST_CFG_KEY", prev);
-        restore_env("RPI_TEST_CFG_KEY2", prev2);
+        restore_env("SHOB_TEST_CFG_KEY", prev);
+        restore_env("SHOB_TEST_CFG_KEY2", prev2);
     }
 
     #[test]
     fn resolve_config_value_unset_env_is_none() {
         let _guard = env_lock().lock().unwrap();
-        let prev = std::env::var_os("RPI_TEST_CFG_ABSENT");
-        std::env::remove_var("RPI_TEST_CFG_ABSENT");
+        let prev = std::env::var_os("SHOB_TEST_CFG_ABSENT");
+        std::env::remove_var("SHOB_TEST_CFG_ABSENT");
         // Any referenced unset var ⇒ the whole value is None (pi semantics).
-        assert_eq!(resolve_config_value("$RPI_TEST_CFG_ABSENT", None), None);
+        assert_eq!(resolve_config_value("$SHOB_TEST_CFG_ABSENT", None), None);
         assert_eq!(
-            resolve_config_value("prefix-$RPI_TEST_CFG_ABSENT-suffix", None),
+            resolve_config_value("prefix-$SHOB_TEST_CFG_ABSENT-suffix", None),
             None
         );
-        restore_env("RPI_TEST_CFG_ABSENT", prev);
+        restore_env("SHOB_TEST_CFG_ABSENT", prev);
     }
 
     #[test]
@@ -1780,8 +1789,8 @@ mod tests {
     fn resolve_config_value_command_runs_shell() {
         // `!echo resolved` → "resolved" (sh on Unix; `echo` works under cmd too).
         assert_eq!(
-            resolve_config_value_uncached("!echo rpi-cfg-resolved", None),
-            Some("rpi-cfg-resolved".into())
+            resolve_config_value_uncached("!echo shob-cfg-resolved", None),
+            Some("shob-cfg-resolved".into())
         );
         // Non-zero exit ⇒ None.
         assert_eq!(resolve_config_value_uncached("!false", None), None);
@@ -1790,11 +1799,11 @@ mod tests {
     #[test]
     fn resolve_headers_drops_unresolvable() {
         let _guard = env_lock().lock().unwrap();
-        let prev = std::env::var_os("RPI_TEST_HDR_SET");
-        std::env::set_var("RPI_TEST_HDR_SET", "set-value");
+        let prev = std::env::var_os("SHOB_TEST_HDR_SET");
+        std::env::set_var("SHOB_TEST_HDR_SET", "set-value");
         let mut h = BTreeMap::new();
-        h.insert("x-set".into(), "$RPI_TEST_HDR_SET".into());
-        h.insert("x-unset".into(), "$RPI_TEST_HDR_UNSET".into());
+        h.insert("x-set".into(), "$SHOB_TEST_HDR_SET".into());
+        h.insert("x-unset".into(), "$SHOB_TEST_HDR_UNSET".into());
         h.insert("x-literal".into(), "literal-value".into());
         let resolved = resolve_headers(&h, None);
         assert_eq!(resolved.len(), 2);
@@ -1804,7 +1813,7 @@ mod tests {
             Some("literal-value")
         );
         assert!(!resolved.contains_key("x-unset"));
-        restore_env("RPI_TEST_HDR_SET", prev);
+        restore_env("SHOB_TEST_HDR_SET", prev);
     }
 
     #[test]

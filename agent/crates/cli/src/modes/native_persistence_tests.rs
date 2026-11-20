@@ -29,7 +29,7 @@ async fn native_print_and_json_keep_queued_write_failure_sticky_across_successfu
         })
         .await
         .unwrap();
-        let db = rusqlite::Connection::open(temp.path().join(format!("{id}.rpinative"))).unwrap();
+        let db = rusqlite::Connection::open(temp.path().join(format!("{id}.shobnative"))).unwrap();
         db.execute_batch("CREATE TRIGGER seed_failure BEFORE INSERT ON facts BEGIN SELECT RAISE(ABORT,'seeded native write failure');END;").unwrap();
         assert!(harness
             .append_message(ai::UserMessage::new("refused out-of-band", 42).into())

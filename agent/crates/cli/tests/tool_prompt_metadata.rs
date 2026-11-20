@@ -4,7 +4,7 @@ use cli::session::{build, reload_extension_resources};
 
 #[test]
 fn explicit_tool_prompts_follow_startup_reload_and_tool_filtering() {
-    const CHILD: &str = "RPI_TOOL_PROMPT_METADATA_TEST_CHILD";
+    const CHILD: &str = "SHOB_TOOL_PROMPT_METADATA_TEST_CHILD";
     if std::env::var_os(CHILD).is_none() {
         let executable = std::env::current_exe().unwrap();
         let profile = executable.parent().unwrap().parent().unwrap();
@@ -27,8 +27,8 @@ fn explicit_tool_prompts_follow_startup_reload_and_tool_filtering() {
                 "--nocapture",
             ])
             .env(CHILD, &library)
-            .env("RPI_CODING_AGENT_DIR", temp.path())
-            .env_remove("RPI_EXTENSIONS_DIR")
+            .env("SHOB_CODING_AGENT_DIR", temp.path())
+            .env_remove("SHOB_EXTENSIONS_DIR")
             .output()
             .unwrap();
         assert!(

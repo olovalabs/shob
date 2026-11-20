@@ -24,8 +24,8 @@ const GITHUB_RELEASES_API: &str =
 /// Authoritative version source for the stable CLI channel.
 const GITHUB_RELEASES_LATEST_API: &str =
     "https://api.github.com/repos/bigfish1913/pi-rust/releases/latest";
-const STAGED_RPI_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-const MAX_STAGED_RPI_OUTPUT_BYTES: usize = 4 * 1024;
+const STAGED_SHOB_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const MAX_STAGED_SHOB_OUTPUT_BYTES: usize = 4 * 1024;
 const MAX_SELF_UPDATE_STATUS_BYTES: u64 = 64 * 1024;
 const MAX_SELF_UPDATE_STATUS_MESSAGE_CHARS: usize = 2 * 1024;
 /// How long a running self-update may stay in a non-terminal state before a
@@ -33,7 +33,7 @@ const MAX_SELF_UPDATE_STATUS_MESSAGE_CHARS: usize = 2 * 1024;
 /// from source, so the window is generous; a helper that outlives it is stuck,
 /// not slow.
 const STALE_SELF_UPDATE_STATUS_TTL_MS: i64 = 60 * 60 * 1000;
-/// How long a completed update keeps its status record. `rpi update` prints
+/// How long a completed update keeps its status record. `shob update` prints
 /// that path, so the file has to outlive the command that named it by long
 /// enough to actually be read; after that it is just clutter.
 const COMPLETED_SELF_UPDATE_STATUS_TTL_MS: i64 = 24 * 60 * 60 * 1000;
@@ -83,7 +83,7 @@ pub(crate) async fn check_app_update() -> Option<UpdateNotice> {
 
 pub(crate) async fn check_tui_updates() -> UpdateReport {
     if !cfg!(feature = "shob") {
-        return check_rpi_startup().await;
+        return check_shob_startup().await;
     }
     if update_checks_disabled() {
         return UpdateReport::default();
@@ -96,7 +96,7 @@ pub(crate) async fn check_tui_updates() -> UpdateReport {
 struct UpdateCache {
     /// Legacy aggregate timestamp retained for backward-compatible cache reads.
     checked_at: i64,
-    rpi_latest: Option<String>,
+    shob_latest: Option<String>,
     #[serde(default)]
     native_packages: BTreeMap<String, String>,
     #[serde(default)]
@@ -106,7 +106,7 @@ struct UpdateCache {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct UpdateCacheFreshness {
-    rpi: i64,
+    shob: i64,
     #[serde(default)]
     native_packages: BTreeMap<String, i64>,
 }
@@ -160,17 +160,17 @@ enum RegistryLookup {
     TransientFailure,
 }
 
-/// Best-effort startup check for the rpi release and installed Rust extensions.
+/// Best-effort startup check for the shob release and installed Rust extensions.
 pub async fn check_startup(cwd: &Path) -> UpdateReport {
     let _ = cwd;
-    check_rpi_startup().await
+    check_shob_startup().await
 }
 
-/// Check the rpi release and every installed Rust cdylib extension.
+/// Check the shob release and every installed Rust cdylib extension.
 ///
 /// Native-only: the npm/Git package halves of the old scope went away with the
 /// Pi compatibility layer, so this never shells out to a package manager.
-pub async fn check_rpi_startup() -> UpdateReport {
+pub async fn check_shob_startup() -> UpdateReport {
     if update_checks_disabled() {
         return report_without_remote_checks();
     }
@@ -178,7 +178,7 @@ pub async fn check_rpi_startup() -> UpdateReport {
 }
 
 fn update_checks_disabled() -> bool {
-    crate::args::offline_env_enabled() || std::env::var_os("RPI_DISABLE_UPDATE_CHECK").is_some()
+    crate::args::offline_env_enabled() || std::env::var_os("SHOB_DISABLE_UPDATE_CHECK").is_some()
 }
 
 /// Report the outcome of a self-update that ran in a previous process.
@@ -203,13 +203,13 @@ fn startup_http_client() -> Option<reqwest::Client> {
 
 async fn check_startup_with_client(
     client: Option<reqwest::Client>,
-    include_rpi: bool,
+    include_shob: bool,
 ) -> UpdateReport {
     let agent_dir = match crate::config::agent_dir() {
         Ok(dir) => dir,
         Err(_) => return UpdateReport::default(),
     };
-    let warnings = if include_rpi {
+    let warnings = if include_shob {
         consume_self_update_statuses(&agent_dir)
     } else {
         Vec::new()
@@ -217,7 +217,7 @@ async fn check_startup_with_client(
     let cache_path = agent_dir.join(CACHE_FILE);
     let previous_cache = read_cache(&cache_path);
 
-    // Installed Rust extensions come from `rpi install`'s registry, so this
+    // Installed Rust extensions come from `shob install`'s registry, so this
     // path stays independent of any Pi package resource discovery.
     let native_checks = crate::install::installed_native_packages()
         .into_iter()
@@ -243,35 +243,35 @@ async fn check_startup_with_client(
                 (native_cache_key(&package), latest)
             }
         });
-    let rpi_check = async {
-        if !include_rpi {
+    let shob_check = async {
+        if !include_shob {
             return None;
         }
         Some(match client.as_ref() {
-            Some(client) => fetch_rpi_latest(client).await,
+            Some(client) => fetch_shob_latest(client).await,
             None => RegistryLookup::TransientFailure,
         })
     };
-    let (rpi_result, native_results) = tokio::join!(rpi_check, collect_bounded(native_checks));
+    let (shob_result, native_results) = tokio::join!(shob_check, collect_bounded(native_checks));
 
     let checked_at = now_ms();
-    let mut rpi_update = None;
-    if let Some(rpi_result) = rpi_result {
+    let mut shob_update = None;
+    if let Some(shob_result) = shob_result {
         let cached_at = previous_cache
             .as_ref()
-            .map(rpi_cache_checked_at)
+            .map(shob_cache_checked_at)
             .unwrap_or_default();
         let fallback_allowed = timestamp_is_fresh(cached_at, checked_at);
         let (latest, used_fallback) = lookup_with_cache_fallback(
-            rpi_result,
+            shob_result,
             previous_cache
                 .as_ref()
-                .and_then(|cache| cache.rpi_latest.as_deref()),
+                .and_then(|cache| cache.shob_latest.as_deref()),
             fallback_allowed,
         );
         let value_checked_at =
             resolved_checked_at(latest.as_deref(), used_fallback, cached_at, checked_at);
-        rpi_update = Some((latest, value_checked_at));
+        shob_update = Some((latest, value_checked_at));
     }
 
     let legacy_checked_at = previous_cache
@@ -288,8 +288,8 @@ async fn check_startup_with_client(
         checked_at,
     );
 
-    let cache = merge_and_write_cache(&cache_path, checked_at, rpi_update, native_packages);
-    let mut report = report_from_cache(&cache, include_rpi);
+    let cache = merge_and_write_cache(&cache_path, checked_at, shob_update, native_packages);
+    let mut report = report_from_cache(&cache, include_shob);
     report.warnings = warnings;
     report
 }
@@ -305,9 +305,9 @@ where
         .await
 }
 
-fn rpi_cache_checked_at(cache: &UpdateCache) -> i64 {
-    if cache.freshness.rpi > 0 {
-        cache.freshness.rpi
+fn shob_cache_checked_at(cache: &UpdateCache) -> i64 {
+    if cache.freshness.shob > 0 {
+        cache.freshness.shob
     } else {
         cache.checked_at
     }
@@ -375,7 +375,7 @@ fn results_with_individual_cache_fallback(
 fn merge_and_write_cache(
     path: &Path,
     checked_at: i64,
-    rpi_update: Option<(Option<String>, i64)>,
+    shob_update: Option<(Option<String>, i64)>,
     native_packages: RegistryCacheUpdate,
 ) -> UpdateCache {
     let _guard = UPDATE_CACHE_WRITE_LOCK
@@ -385,9 +385,9 @@ fn merge_and_write_cache(
     if cache.checked_at <= 0 {
         cache.checked_at = checked_at;
     }
-    if let Some((latest, latest_checked_at)) = rpi_update {
-        cache.rpi_latest = latest;
-        cache.freshness.rpi = latest_checked_at;
+    if let Some((latest, latest_checked_at)) = shob_update {
+        cache.shob_latest = latest;
+        cache.freshness.shob = latest_checked_at;
     }
     cache.native_packages = native_packages.0;
     cache.freshness.native_packages = native_packages.1;
@@ -426,15 +426,15 @@ fn native_cache_key(package: &crate::install::InstalledNativePackage) -> String 
     }
 }
 
-fn report_from_cache(cache: &UpdateCache, include_rpi: bool) -> UpdateReport {
+fn report_from_cache(cache: &UpdateCache, include_shob: bool) -> UpdateReport {
     let mut notices = Vec::new();
-    if let Some(latest) = cache.rpi_latest.as_deref().filter(|_| include_rpi) {
+    if let Some(latest) = cache.shob_latest.as_deref().filter(|_| include_shob) {
         if is_newer(crate::VERSION, latest) {
             notices.push(UpdateNotice {
-                name: "rpi".into(),
+                name: "shob".into(),
                 current: crate::VERSION.into(),
                 latest: latest.into(),
-                command: "rpi update".into(),
+                command: "shob update".into(),
             });
         }
     }
@@ -485,7 +485,7 @@ fn windows_paths_equal(left: &Path, right: &Path) -> bool {
     }
 }
 
-async fn fetch_rpi_latest(client: &reqwest::Client) -> RegistryLookup {
+async fn fetch_shob_latest(client: &reqwest::Client) -> RegistryLookup {
     fetch_stable_from_github(client, GITHUB_RELEASES_LATEST_API).await
 }
 
@@ -547,7 +547,7 @@ fn latest_preview_version(releases: impl IntoIterator<Item = GithubRelease>) -> 
         .unwrap_or(RegistryLookup::Missing)
 }
 
-async fn fetch_rpi_preview_latest(client: &reqwest::Client) -> RegistryLookup {
+async fn fetch_shob_preview_latest(client: &reqwest::Client) -> RegistryLookup {
     let response = match client
         .get(GITHUB_RELEASES_API)
         .header(reqwest::header::ACCEPT, "application/vnd.github+json")
@@ -646,7 +646,7 @@ enum SelfUpdateArgs {
     Usage,
 }
 
-/// Parse `rpi update`'s own arguments after the global `--offline` flag has been
+/// Parse `shob update`'s own arguments after the global `--offline` flag has been
 /// stripped.
 fn parse_self_update_args(args: &[String]) -> SelfUpdateArgs {
     let mut force = false;
@@ -685,14 +685,14 @@ fn parse_self_update_args(args: &[String]) -> SelfUpdateArgs {
 
 fn print_self_update_help() {
     println!(
-        "Usage: rpi update [preview] [--force] [--offline] [--build] [--cdn <URL>]\n\n\
-         Update the rpi CLI using verified GitHub prebuilt releases.\n\
+        "Usage: shob update [preview] [--force] [--offline] [--build] [--cdn <URL>]\n\n\
+         Update the shob CLI using verified GitHub prebuilt releases.\n\
          The optional `preview` channel installs the latest GitHub prerelease;\n\
          it is never selected by the normal update check.\n\n\
          Options:\n  \
          preview    use the GitHub prerelease channel instead of stable releases\n  \
          --build    explicitly compile with Cargo instead of downloading a prebuilt binary\n  \
-         --force    reinstall even when this rpi is already the latest release\n  \
+         --force    reinstall even when this shob is already the latest release\n  \
          --offline  do not touch the network; report the last known answer only"
     );
 }
@@ -704,14 +704,17 @@ fn print_self_update_help() {
 /// cannot hide a newer release. A value read from the
 /// 6-hour cache is only trusted for the offline report, where there is no
 /// alternative and the output says so.
-fn known_latest_rpi(registry_lookup: Option<&str>, cached: Option<&str>) -> Option<(String, bool)> {
+fn known_latest_shob(
+    registry_lookup: Option<&str>,
+    cached: Option<&str>,
+) -> Option<(String, bool)> {
     registry_lookup
         .map(|latest| (latest.to_string(), false))
         .or_else(|| cached.map(|latest| (latest.to_string(), true)))
 }
 
-async fn lookup_latest_rpi() -> Option<(String, bool)> {
-    lookup_latest_rpi_from(GITHUB_RELEASES_LATEST_API).await
+async fn lookup_latest_shob() -> Option<(String, bool)> {
+    lookup_latest_shob_from(GITHUB_RELEASES_LATEST_API).await
 }
 
 /// Resolve the latest stable version and report whether it came from a live
@@ -719,14 +722,14 @@ async fn lookup_latest_rpi() -> Option<(String, bool)> {
 ///
 /// The endpoint is a parameter so the whole decision — including `verified`
 /// and the cache fallback — can be exercised offline.
-async fn lookup_latest_rpi_from(github_latest_url: &str) -> Option<(String, bool)> {
+async fn lookup_latest_shob_from(github_latest_url: &str) -> Option<(String, bool)> {
     let cache_path = crate::config::agent_dir()
         .ok()
         .map(|dir| dir.join(CACHE_FILE));
     let cached = cache_path.as_deref().and_then(read_cache);
     let result = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
-        .user_agent(format!("rpi/{}", crate::VERSION))
+        .user_agent(format!("shob/{}", crate::VERSION))
         .build()
     {
         Ok(client) => fetch_stable_from_github(&client, github_latest_url).await,
@@ -738,24 +741,24 @@ async fn lookup_latest_rpi_from(github_latest_url: &str) -> Option<(String, bool
     let verified = matches!(result, RegistryLookup::Found(_));
     let previous = cached
         .as_ref()
-        .filter(|cache| timestamp_is_fresh(rpi_cache_checked_at(cache), now_ms()))
-        .and_then(|cache| cache.rpi_latest.as_deref());
+        .filter(|cache| timestamp_is_fresh(shob_cache_checked_at(cache), now_ms()))
+        .and_then(|cache| cache.shob_latest.as_deref());
     let (latest, _) = lookup_with_cache_fallback(result, previous, true);
     latest.map(|latest| (latest, verified))
 }
 
-/// `rpi update` is synchronous, so its registry lookup runs on its own thread and
+/// `shob update` is synchronous, so its registry lookup runs on its own thread and
 /// current-thread runtime. That also keeps it safe to call from inside a Tokio
 /// runtime, which is where the CLI enters it.
-fn lookup_latest_rpi_blocking() -> Option<(String, bool)> {
+fn lookup_latest_shob_blocking() -> Option<(String, bool)> {
     std::thread::Builder::new()
-        .name("rpi-update-latest-lookup".to_string())
+        .name("shob-update-latest-lookup".to_string())
         .spawn(|| {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .ok()?;
-            runtime.block_on(lookup_latest_rpi())
+            runtime.block_on(lookup_latest_shob())
         })
         .ok()?
         .join()
@@ -765,10 +768,10 @@ fn lookup_latest_rpi_blocking() -> Option<(String, bool)> {
 async fn lookup_latest_preview() -> Option<(String, bool)> {
     let result = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
-        .user_agent(format!("rpi/{}", crate::VERSION))
+        .user_agent(format!("shob/{}", crate::VERSION))
         .build()
     {
-        Ok(client) => fetch_rpi_preview_latest(&client).await,
+        Ok(client) => fetch_shob_preview_latest(&client).await,
         Err(_) => RegistryLookup::TransientFailure,
     };
     let verified = matches!(result, RegistryLookup::Found(_));
@@ -780,7 +783,7 @@ async fn lookup_latest_preview() -> Option<(String, bool)> {
 
 fn lookup_latest_preview_blocking() -> Option<(String, bool)> {
     std::thread::Builder::new()
-        .name("rpi-update-preview-lookup".to_string())
+        .name("shob-update-preview-lookup".to_string())
         .spawn(|| {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -796,7 +799,7 @@ fn lookup_latest_preview_blocking() -> Option<(String, bool)> {
 /// The newest version already staged in a `pending-*` directory.
 ///
 /// A staged update is a fully validated binary waiting for the running process
-/// to exit. Re-running `rpi update` while one is queued must not start a second
+/// to exit. Re-running `shob update` while one is queued must not start a second
 /// compile, so the staged version joins the up-to-date comparison.
 fn staged_pending_version(update_root: &Path, channel: UpdateChannel) -> Option<semver::Version> {
     let entries = std::fs::read_dir(update_root).ok()?;
@@ -818,11 +821,11 @@ fn staged_pending_version(update_root: &Path, channel: UpdateChannel) -> Option<
         if validated_real_directory(&staging, "self-update staging directory").is_err() {
             continue;
         }
-        let Ok(version) = validate_rpi_executable_version(
-            &staging.join("bin").join(staged_rpi_file_name()),
+        let Ok(version) = validate_shob_executable_version(
+            &staging.join("bin").join(staged_shob_file_name()),
             update_root,
             crate::VERSION,
-            "staged rpi",
+            "staged shob",
         ) else {
             continue;
         };
@@ -838,9 +841,9 @@ fn staged_pending_version(update_root: &Path, channel: UpdateChannel) -> Option<
     newest
 }
 
-fn staged_rpi_file_name() -> &'static str {
+fn staged_shob_file_name() -> &'static str {
     if cfg!(windows) {
-        "rpi.exe"
+        "shob.exe"
     } else {
         crate::APP_NAME
     }
@@ -849,9 +852,9 @@ fn staged_rpi_file_name() -> &'static str {
 /// Reclaim debris and surface a previous run's failure, without a network
 /// round trip.
 ///
-/// `rpi update` is the command that creates `self-update` records and staging
+/// `shob update` is the command that creates `self-update` records and staging
 /// directories, so it is also the right place to clean them up: leaving it to
-/// the startup check means a machine that only ever runs `rpi chat` keeps the
+/// the startup check means a machine that only ever runs `shob chat` keeps the
 /// debris from every interrupted update until the next start.
 fn reclaim_self_update_artifacts() {
     let Ok(agent_dir) = crate::config::agent_dir() else {
@@ -880,7 +883,7 @@ pub fn run_self_update(args: &[String]) -> i32 {
         } => (force, build, channel, cdn_base),
         SelfUpdateArgs::Usage => {
             eprintln!(
-                "error: `rpi update` accepts only `preview`, `--force`, `--offline`, `--build` and `--cdn <URL>`"
+                "error: `shob update` accepts only `preview`, `--force`, `--offline`, `--build` and `--cdn <URL>`"
             );
             return 2;
         }
@@ -890,39 +893,39 @@ pub fn run_self_update(args: &[String]) -> i32 {
         reclaim_self_update_artifacts();
         if channel == UpdateChannel::Preview {
             println!(
-                "rpi preview update skipped: offline mode is enabled;\n\
-                 run `rpi update preview` without --offline to query GitHub."
+                "shob preview update skipped: offline mode is enabled;\n\
+                 run `shob update preview` without --offline to query GitHub."
             );
             return 0;
         }
         // The cache is the only source available without a network round trip,
         // so it may be stale — say so rather than assert a version.
-        match known_latest_rpi(None, cached_latest_rpi().as_deref()) {
+        match known_latest_shob(None, cached_latest_shob().as_deref()) {
             Some((latest, true)) if is_newer(crate::VERSION, &latest) => println!(
-                "rpi {} -> {} is available (offline: last known, not verified)\n\
-                 Run `rpi update` without --offline to install it.",
+                "shob {} -> {} is available (offline: last known, not verified)\n\
+                 Run `shob update` without --offline to install it.",
                 crate::VERSION,
                 latest
             ),
             Some(_) => println!(
-                "rpi is up to date with the last known release ({})\n\
+                "shob is up to date with the last known release ({})\n\
                  Offline mode is enabled; the registry was not contacted.",
                 crate::VERSION
             ),
             None => println!(
-                "rpi update skipped: offline mode is enabled and no cached release is known"
+                "shob update skipped: offline mode is enabled and no cached release is known"
             ),
         }
         return 0;
     }
 
-    // Without this gate `rpi update` at the newest release still runs a full
+    // Without this gate `shob update` at the newest release still runs a full
     // `cargo install` and schedules a binary replacement for the version that
     // is already installed — which is exactly what makes a working update look
     // broken. `--force` keeps an explicit reinstall available.
     let release = if !build || !force {
         match channel {
-            UpdateChannel::Stable => lookup_latest_rpi_blocking(),
+            UpdateChannel::Stable => lookup_latest_shob_blocking(),
             UpdateChannel::Preview => lookup_latest_preview_blocking(),
         }
     } else {
@@ -947,7 +950,7 @@ pub fn run_self_update(args: &[String]) -> i32 {
             None => {
                 println!(
                     "could not reach the latest {} release\n\
-                     Retry later, or use `rpi update --build --force` for an explicit Cargo build.",
+                     Retry later, or use `shob update --build --force` for an explicit Cargo build.",
                     if channel == UpdateChannel::Preview {
                         "preview"
                     } else {
@@ -980,19 +983,19 @@ pub fn run_self_update(args: &[String]) -> i32 {
         if !needs_update {
             if staged_wins.is_some() {
                 println!(
-                    "rpi {target} is already staged; quit this rpi and it will be applied\n\
-                     Run `rpi update --force` to stage it again."
+                    "shob {target} is already staged; quit this shob and it will be applied\n\
+                     Run `shob update --force` to stage it again."
                 );
             } else if verified {
                 println!(
-                    "rpi is up to date ({} is the latest release)\n\
-                     Run `rpi update --force` to reinstall anyway.",
+                    "shob is up to date ({} is the latest release)\n\
+                     Run `shob update --force` to reinstall anyway.",
                     crate::VERSION
                 );
             } else {
                 println!(
-                    "rpi is up to date ({}; last known release {latest}, unverified)\n\
-                     Run `rpi update --force` to reinstall anyway.",
+                    "shob is up to date ({}; last known release {latest}, unverified)\n\
+                     Run `shob update --force` to reinstall anyway.",
                     crate::VERSION
                 );
             }
@@ -1023,7 +1026,7 @@ pub fn run_self_update(args: &[String]) -> i32 {
         }
     };
     if code == 0 {
-        clear_cached_latest_rpi();
+        clear_cached_latest_shob();
     }
     code
 }
@@ -1034,17 +1037,17 @@ fn pending_staged_version(channel: UpdateChannel) -> Option<semver::Version> {
     staged_pending_version(&update_root, channel)
 }
 
-fn cached_latest_rpi() -> Option<String> {
+fn cached_latest_shob() -> Option<String> {
     let agent_dir = crate::config::agent_dir().ok()?;
     let cache = read_cache(&agent_dir.join(CACHE_FILE))?;
-    cache.rpi_latest
+    cache.shob_latest
 }
 
 /// A self-update just changed the binary on disk, so the cached release is the
 /// version being replaced. Dropping it stops the next startup (and the next
-/// `rpi update`) from announcing an update that is already installed; the
+/// `shob update`) from announcing an update that is already installed; the
 /// following registry check refills it.
-fn clear_cached_latest_rpi() {
+fn clear_cached_latest_shob() {
     let Ok(agent_dir) = crate::config::agent_dir() else {
         return;
     };
@@ -1055,8 +1058,8 @@ fn clear_cached_latest_rpi() {
     let Some(mut cache) = read_cache(&path) else {
         return;
     };
-    cache.rpi_latest = None;
-    cache.freshness.rpi = 0;
+    cache.shob_latest = None;
+    cache.freshness.shob = 0;
     let _ = write_cache(&path, &cache);
 }
 
@@ -1111,7 +1114,7 @@ fn prepare_self_update(
     let staging = staging.to_path_buf();
     let cdn_base = cdn_base.cloned();
     std::thread::Builder::new()
-        .name("rpi-prebuilt-update".into())
+        .name("shob-prebuilt-update".into())
         .spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -1128,15 +1131,15 @@ fn prepare_self_update(
         .map_err(|_| "prebuilt update worker failed".to_string())?
 }
 
-pub(crate) fn validate_downloaded_rpi(
+pub(crate) fn validate_downloaded_shob(
     path: &Path,
     staging: &Path,
     expected: &str,
 ) -> Result<(), String> {
-    let found = validate_rpi_executable_version(path, staging, crate::VERSION, "downloaded rpi")?;
+    let found = validate_shob_executable_version(path, staging, crate::VERSION, "downloaded shob")?;
     if found.to_string() != expected {
         return Err(format!(
-            "downloaded rpi version {found} does not match manifest {expected}"
+            "downloaded shob version {found} does not match manifest {expected}"
         ));
     }
     Ok(())
@@ -1179,7 +1182,7 @@ fn create_self_update_command_dir() -> Result<tempfile::TempDir, String> {
         );
     }
     let directory = tempfile::Builder::new()
-        .prefix("rpi-self-update-command-")
+        .prefix("shob-self-update-command-")
         .tempdir_in(&canonical_root)
         .map_err(|error| format!("could not allocate Cargo command directory: {error}"))?;
     validated_self_update_command_dir(directory.path())?;
@@ -1322,7 +1325,7 @@ fn run_direct_self_update(
     let current_exe = match std::env::current_exe() {
         Ok(path) => path,
         Err(error) => {
-            eprintln!("error: could not resolve the current rpi executable: {error}");
+            eprintln!("error: could not resolve the current shob executable: {error}");
             return 1;
         }
     };
@@ -1335,7 +1338,7 @@ fn run_direct_self_update(
     };
     match activate_direct_update(&plan) {
         Ok(version) => {
-            println!("rpi updated successfully to {version}");
+            println!("shob updated successfully to {version}");
             0
         }
         Err(error) => {
@@ -1373,9 +1376,9 @@ fn build_direct_update_plan(
     let staging_dir = validated_real_directory(staging_dir, "self-update staging directory")?;
     let staged_exe = validated_regular_file(
         &staging_dir.join("bin").join(crate::APP_NAME),
-        "staged rpi executable",
+        "staged shob executable",
     )?;
-    let target_exe = validated_regular_file(target_exe, "current rpi executable")?;
+    let target_exe = validated_regular_file(target_exe, "current shob executable")?;
     let target_dir = validated_real_directory(
         target_exe
             .parent()
@@ -1386,8 +1389,8 @@ fn build_direct_update_plan(
         return Err("current executable is not a direct child of its validated directory".into());
     }
     let token = uuid::Uuid::new_v4().simple().to_string();
-    let replacement_temp = target_dir.join(format!(".rpi-update-{token}.new"));
-    let backup_file = target_dir.join(format!(".rpi-update-{token}.old"));
+    let replacement_temp = target_dir.join(format!(".shob-update-{token}.new"));
+    let backup_file = target_dir.join(format!(".shob-update-{token}.old"));
     if replacement_temp.exists() || backup_file.exists() {
         return Err("self-update replacement path collision".to_string());
     }
@@ -1402,56 +1405,56 @@ fn build_direct_update_plan(
 
 #[cfg(not(windows))]
 fn activate_direct_update(plan: &DirectUpdatePlan) -> Result<semver::Version, String> {
-    let staged_version = validate_rpi_executable_version(
+    let staged_version = validate_shob_executable_version(
         &plan.staged_exe,
         &plan.staging_dir,
         crate::VERSION,
-        "staged rpi",
+        "staged shob",
     )?;
     preflight_direct_replacement(plan)?;
 
     let result = (|| {
         std::fs::copy(&plan.staged_exe, &plan.replacement_temp).map_err(|error| {
-            format!("could not copy staged rpi beside the current executable: {error}")
+            format!("could not copy staged shob beside the current executable: {error}")
         })?;
-        validated_regular_file(&plan.replacement_temp, "replacement rpi executable")?;
-        let copied_version = validate_rpi_executable_version(
+        validated_regular_file(&plan.replacement_temp, "replacement shob executable")?;
+        let copied_version = validate_shob_executable_version(
             &plan.replacement_temp,
             plan.target_exe
                 .parent()
                 .ok_or_else(|| "current executable has no parent directory".to_string())?,
             crate::VERSION,
-            "replacement rpi",
+            "replacement shob",
         )?;
         if copied_version != staged_version
             || !files_are_identical(&plan.staged_exe, &plan.replacement_temp)?
         {
             return Err(
-                "replacement rpi does not match the validated staged executable".to_string(),
+                "replacement shob does not match the validated staged executable".to_string(),
             );
         }
 
         std::fs::hard_link(&plan.target_exe, &plan.backup_file)
-            .map_err(|error| format!("could not preserve the current rpi executable: {error}"))?;
-        let installed_version = validate_rpi_executable_version(
+            .map_err(|error| format!("could not preserve the current shob executable: {error}"))?;
+        let installed_version = validate_shob_executable_version(
             &plan.backup_file,
             plan.target_exe
                 .parent()
                 .ok_or_else(|| "current executable has no parent directory".to_string())?,
             crate::VERSION,
-            "current rpi",
+            "current shob",
         )?;
         if staged_version < installed_version {
             return Err(format!(
-                "refusing to replace rpi {installed_version} with older version {staged_version}"
+                "refusing to replace shob {installed_version} with older version {staged_version}"
             ));
         }
         if !files_are_identical(&plan.target_exe, &plan.backup_file)? {
-            return Err("current rpi executable changed while preparing the update".to_string());
+            return Err("current shob executable changed while preparing the update".to_string());
         }
 
         std::fs::rename(&plan.replacement_temp, &plan.target_exe).map_err(|error| {
-            format!("could not atomically replace the current rpi executable: {error}")
+            format!("could not atomically replace the current shob executable: {error}")
         })?;
         Ok(())
     })();
@@ -1464,19 +1467,19 @@ fn activate_direct_update(plan: &DirectUpdatePlan) -> Result<semver::Version, St
 
     let validation = (|| {
         if !files_are_identical(&plan.staged_exe, &plan.target_exe)? {
-            return Err("updated rpi executable does not match the staged executable".to_string());
+            return Err("updated shob executable does not match the staged executable".to_string());
         }
-        let updated_version = validate_rpi_executable_version(
+        let updated_version = validate_shob_executable_version(
             &plan.target_exe,
             plan.target_exe
                 .parent()
                 .ok_or_else(|| "current executable has no parent directory".to_string())?,
             crate::VERSION,
-            "updated rpi",
+            "updated shob",
         )?;
         if updated_version != staged_version {
             return Err(format!(
-                "updated rpi reported version {updated_version}, expected {staged_version}"
+                "updated shob reported version {updated_version}, expected {staged_version}"
             ));
         }
         Ok(())
@@ -1514,7 +1517,7 @@ fn preflight_direct_replacement(plan: &DirectUpdatePlan) -> Result<(), String> {
 fn rollback_direct_update(plan: &DirectUpdatePlan, failure: &str) -> String {
     let _ = remove_file_if_exists(&plan.replacement_temp);
     match std::fs::rename(&plan.backup_file, &plan.target_exe) {
-        Ok(()) => format!("{failure}; restored the previous rpi executable"),
+        Ok(()) => format!("{failure}; restored the previous shob executable"),
         Err(rollback) => format!(
             "{failure}; automatic rollback failed ({rollback}); the previous executable remains at {}",
             plan.backup_file.display()
@@ -1700,7 +1703,7 @@ try {
         throw 'replacement, backup, or rollback path already exists'
     }
 
-    Write-UpdateStatus -State 'waiting' -Message 'waiting for the current rpi process to exit'
+    Write-UpdateStatus -State 'waiting' -Message 'waiting for the current shob process to exit'
     if ($ParentPid -lt 1 -or $ParentPid -gt [int]::MaxValue) {
         throw 'parent process id is outside the supported Windows range'
     }
@@ -1727,7 +1730,7 @@ try {
     if ($null -ne $parentProcess) {
         try {
             if (-not $parentProcess.WaitForExit(600000)) {
-                throw 'timed out waiting for the current rpi process to exit'
+                throw 'timed out waiting for the current shob process to exit'
             }
         } finally {
             $parentProcess.Dispose()
@@ -1738,14 +1741,14 @@ try {
     Assert-WindowsExecutable -Path $stagedFull -Label 'staged executable'
     Assert-WindowsExecutable -Path $targetFull -Label 'current executable'
     if ((Get-FileSha256 -Path $stagedFull) -ne $expectedHash) {
-        throw 'staged executable changed while waiting for rpi to exit'
+        throw 'staged executable changed while waiting for shob to exit'
     }
     if ((Get-FileSha256 -Path $targetFull) -ne $originalTargetHash) {
-        throw 'current executable changed while waiting for rpi to exit'
+        throw 'current executable changed while waiting for shob to exit'
     }
     if ([IO.File]::Exists($tempFull) -or [IO.File]::Exists($backupFull) -or
         [IO.File]::Exists($rollbackDisplacedFull)) {
-        throw 'replacement, backup, or rollback path appeared while waiting for rpi to exit'
+        throw 'replacement, backup, or rollback path appeared while waiting for shob to exit'
     }
 
     [IO.File]::Copy($stagedFull, $tempFull, $false)
@@ -1795,7 +1798,7 @@ try {
     exit 1
 }
 
-try { Write-UpdateStatus -State 'succeeded' -Message 'rpi executable replaced successfully' } catch {}
+try { Write-UpdateStatus -State 'succeeded' -Message 'shob executable replaced successfully' } catch {}
 if ([IO.File]::Exists($BackupPath)) {
     try { Remove-Item -LiteralPath $BackupPath -Force } catch {}
 }
@@ -1827,7 +1830,7 @@ fn run_windows_self_update(
     let current_exe = match std::env::current_exe() {
         Ok(path) => path,
         Err(error) => {
-            let message = format!("could not resolve the current rpi executable: {error}");
+            let message = format!("could not resolve the current shob executable: {error}");
             let _ = write_windows_update_status(&status_file, "failed", &message);
             eprintln!("error: {message}");
             return 1;
@@ -1856,7 +1859,7 @@ fn run_windows_self_update(
             return 1;
         }
     };
-    let staged_version = match validate_staged_rpi(&plan) {
+    let staged_version = match validate_staged_shob(&plan) {
         Ok(version) => version,
         Err(error) => {
             let _ = write_windows_update_status(&plan.status_file, "failed", &error);
@@ -1884,7 +1887,9 @@ fn run_windows_self_update(
     let _ = write_windows_update_status(
         &plan.status_file,
         "scheduled",
-        &format!("validated rpi {staged_version}; waiting to replace rpi after this process exits"),
+        &format!(
+            "validated shob {staged_version}; waiting to replace shob after this process exits"
+        ),
     );
     let mut command = windows_update_helper_command(
         &powershell,
@@ -1898,7 +1903,7 @@ fn run_windows_self_update(
         Ok(_) => {
             let persisted_staging = staging.directory.keep();
             println!(
-                "rpi {staged_version} staged; quit this rpi and it will be applied.\n\
+                "shob {staged_version} staged; quit this shob and it will be applied.\n\
                  Status: {}",
                 plan.status_file.display()
             );
@@ -1960,10 +1965,10 @@ fn build_windows_update_plan(
         validated_regular_file(status_file, "self-update status file")?;
     }
     let staged_exe = validated_windows_executable(
-        &staging_dir.join("bin").join("rpi.exe"),
-        "staged rpi executable",
+        &staging_dir.join("bin").join("shob.exe"),
+        "staged shob executable",
     )?;
-    let target_exe = validated_windows_executable(target_exe, "current rpi executable")?;
+    let target_exe = validated_windows_executable(target_exe, "current shob executable")?;
     let target_dir = validated_real_directory(
         target_exe
             .parent()
@@ -1974,9 +1979,9 @@ fn build_windows_update_plan(
         return Err("current executable is not a direct child of its validated directory".into());
     }
     let token = uuid::Uuid::new_v4().simple().to_string();
-    let replacement_temp = target_dir.join(format!(".rpi-update-{token}.new.exe"));
-    let backup_file = target_dir.join(format!(".rpi-update-{token}.old.exe"));
-    let rollback_displaced_file = target_dir.join(format!(".rpi-update-{token}.rollback-new.exe"));
+    let replacement_temp = target_dir.join(format!(".shob-update-{token}.new.exe"));
+    let backup_file = target_dir.join(format!(".shob-update-{token}.old.exe"));
+    let rollback_displaced_file = target_dir.join(format!(".shob-update-{token}.rollback-new.exe"));
     if replacement_temp.exists() || backup_file.exists() || rollback_displaced_file.exists() {
         return Err("self-update replacement path collision".to_string());
     }
@@ -2019,12 +2024,12 @@ fn preflight_windows_replacement(plan: &WindowsUpdatePlan) -> Result<(), String>
 }
 
 #[cfg(windows)]
-fn validate_staged_rpi(plan: &WindowsUpdatePlan) -> Result<semver::Version, String> {
+fn validate_staged_shob(plan: &WindowsUpdatePlan) -> Result<semver::Version, String> {
     let cwd = plan
         .helper_script
         .parent()
         .ok_or_else(|| "self-update staging directory is missing".to_string())?;
-    validate_rpi_executable_version(&plan.staged_exe, cwd, crate::VERSION, "staged rpi")
+    validate_shob_executable_version(&plan.staged_exe, cwd, crate::VERSION, "staged shob")
 }
 
 /// Captured output of a bounded self-update probe.
@@ -2037,7 +2042,7 @@ struct BoundedProcessOutput {
 /// Run a short-lived probe under both a wall-clock and an output cap.
 ///
 /// The child runs on its own thread and current-thread runtime so this stays
-/// safe when `rpi update` is entered from inside a Tokio runtime. The old
+/// safe when `shob update` is entered from inside a Tokio runtime. The old
 /// implementation reused the npm bridge's process runner, which went away with
 /// the Pi compatibility layer.
 fn run_bounded_process_blocking(
@@ -2051,7 +2056,7 @@ fn run_bounded_process_blocking(
     let args = args.to_vec();
     let cwd = cwd.to_path_buf();
     std::thread::Builder::new()
-        .name("rpi-bounded-version-probe".to_string())
+        .name("shob-bounded-version-probe".to_string())
         .spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -2093,7 +2098,7 @@ fn cap_bytes(bytes: Vec<u8>, limit: usize) -> Vec<u8> {
     }
 }
 
-/// Byte-for-byte comparison, used to prove a copied or replaced rpi binary is
+/// Byte-for-byte comparison, used to prove a copied or replaced shob binary is
 /// the one that was validated.
 #[cfg(not(windows))]
 fn files_are_identical(left: &Path, right: &Path) -> Result<bool, String> {
@@ -2134,7 +2139,7 @@ fn files_are_identical(left: &Path, right: &Path) -> Result<bool, String> {
     }
 }
 
-fn validate_rpi_executable_version(
+fn validate_shob_executable_version(
     executable: &Path,
     cwd: &Path,
     current: &str,
@@ -2148,37 +2153,37 @@ fn validate_rpi_executable_version(
         program,
         &args,
         cwd,
-        STAGED_RPI_CHECK_TIMEOUT,
-        MAX_STAGED_RPI_OUTPUT_BYTES,
+        STAGED_SHOB_CHECK_TIMEOUT,
+        MAX_STAGED_SHOB_OUTPUT_BYTES,
     )
     .map_err(|error| format!("{label} version check failed: {error}"))?;
     if !output.status.success() {
         return Err(format!("{label} --version exited with {}", output.status));
     }
-    validate_staged_rpi_version_output(&output.stdout, &output.stderr, current)
+    validate_staged_shob_version_output(&output.stdout, &output.stderr, current)
 }
 
-fn validate_staged_rpi_version_output(
+fn validate_staged_shob_version_output(
     stdout: &[u8],
     stderr: &[u8],
     current: &str,
 ) -> Result<semver::Version, String> {
     if !stderr.is_empty() {
-        return Err("staged rpi --version wrote unexpected stderr output".to_string());
+        return Err("staged shob --version wrote unexpected stderr output".to_string());
     }
-    let staged = parse_rpi_version_output(stdout)
-        .ok_or_else(|| "staged rpi returned an invalid --version response".to_string())?;
+    let staged = parse_shob_version_output(stdout)
+        .ok_or_else(|| "staged shob returned an invalid --version response".to_string())?;
     let current = semver::Version::parse(current)
-        .map_err(|_| "the running rpi version is not valid semantic versioning".to_string())?;
+        .map_err(|_| "the running shob version is not valid semantic versioning".to_string())?;
     if staged < current {
         return Err(format!(
-            "refusing to replace rpi {current} with older version {staged}"
+            "refusing to replace shob {current} with older version {staged}"
         ));
     }
     Ok(staged)
 }
 
-fn parse_rpi_version_output(output: &[u8]) -> Option<semver::Version> {
+fn parse_shob_version_output(output: &[u8]) -> Option<semver::Version> {
     let output = std::str::from_utf8(output).ok()?;
     let line = output
         .strip_suffix("\r\n")
@@ -2196,7 +2201,7 @@ fn parse_rpi_version_output(output: &[u8]) -> Option<semver::Version> {
 
 /// A real directory *by its own entry*: the leaf is not a link, so the update
 /// is free to write into it. Links further up are resolved rather than
-/// refused — a launch path such as `C:\tools\current\rpi.exe` where `current`
+/// refused — a launch path such as `C:\tools\current\shob.exe` where `current`
 /// is a junction names the real install directory, which is exactly what an
 /// update should rewrite.
 fn validated_real_directory(path: &Path, label: &str) -> Result<PathBuf, String> {
@@ -2396,7 +2401,7 @@ fn consume_self_update_statuses(agent_dir: &Path) -> Vec<UpdateWarning> {
 
         if status.state == "succeeded" {
             // Kept as the durable record of what was installed. The path is
-            // printed by `rpi update`, so deleting the file on the next start
+            // printed by `shob update`, so deleting the file on the next start
             // made a finished update look like it had never run. It ages out
             // with the rest of the record set instead.
             let old = status.updated_at_ms > 0
@@ -2420,10 +2425,10 @@ fn consume_self_update_statuses(agent_dir: &Path) -> Vec<UpdateWarning> {
         }
         warnings.push(UpdateWarning {
             message: format!(
-                "The previously scheduled rpi update failed: {}",
+                "The previously scheduled shob update failed: {}",
                 sanitized_self_update_status_message(&status.message)
             ),
-            command: "rpi update".to_string(),
+            command: "shob update".to_string(),
         });
     }
 
@@ -2455,7 +2460,7 @@ fn consume_self_update_statuses(agent_dir: &Path) -> Vec<UpdateWarning> {
 /// directory stays behind forever: nothing else in the update path removes it,
 /// and because its status file was still `preparing` the next start never
 /// looked at it either. Those are the directories that pile up in
-/// `~/.rpi/agent/self-update`.
+/// `~/.shob/agent/self-update`.
 ///
 /// A directory a status file already proved dead (`obsolete`) goes as soon as
 /// its name validates. Otherwise the evidence has to come from the directory
@@ -2690,7 +2695,7 @@ mod tests {
         cache
             .native_packages
             .insert(super::native_cache_key(&record), "2.0.0".into());
-        cache.rpi_latest = Some("99.0.0".into());
+        cache.shob_latest = Some("99.0.0".into());
         assert_eq!(super::report_from_cache(&cache, true).notices.len(), 2);
         let report = super::report_from_cache(&cache, false);
         assert_eq!(report.notices.len(), 1);
@@ -2744,7 +2749,7 @@ mod tests {
     /// valid fixture — and using one keeps these tests honest about that.
     fn real_tempdir() -> tempfile::TempDir {
         tempfile::Builder::new()
-            .prefix("rpi-update-test-")
+            .prefix("shob-update-test-")
             .tempdir()
             .unwrap()
     }
@@ -2780,9 +2785,10 @@ mod tests {
     };
     use super::{
         cargo_home_is_project_local, cargo_install_command, collect_bounded,
-        create_self_update_command_dir, fetch_crates_url, is_newer, parse_rpi_version_output,
-        path_is_within, results_with_individual_cache_fallback, validate_staged_rpi_version_output,
-        RegistryLookup, CACHE_FALLBACK_MAX_AGE_MS, UPDATE_CHECK_CONCURRENCY,
+        create_self_update_command_dir, fetch_crates_url, is_newer, parse_shob_version_output,
+        path_is_within, results_with_individual_cache_fallback,
+        validate_staged_shob_version_output, RegistryLookup, CACHE_FALLBACK_MAX_AGE_MS,
+        UPDATE_CHECK_CONCURRENCY,
     };
 
     struct RestoreConfigDir(Option<OsString>);
@@ -2828,7 +2834,7 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn fake_unix_rpi(path: &Path, version: &str, fail_after_rename_to: Option<&str>) {
+    fn fake_unix_shob(path: &Path, version: &str, fail_after_rename_to: Option<&str>) {
         use std::os::unix::fs::PermissionsExt;
 
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -2839,7 +2845,7 @@ mod tests {
         });
         std::fs::write(
             path,
-            format!("#!/bin/sh\n{failure}printf 'rpi {version}\\n'\n"),
+            format!("#!/bin/sh\n{failure}printf 'shob {version}\\n'\n"),
         )
         .unwrap();
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -2972,10 +2978,10 @@ mod tests {
     fn direct_update_replaces_the_selected_target_and_rejects_downgrades() {
         let temp = real_tempdir();
         let staging = temp.path().join("staging");
-        let staged = staging.join("bin/rpi");
-        let target = temp.path().join("target/rpi-current");
-        fake_unix_rpi(&staged, "9.9.9", None);
-        fake_unix_rpi(&target, crate::VERSION, None);
+        let staged = staging.join("bin/shob");
+        let target = temp.path().join("target/shob-current");
+        fake_unix_shob(&staged, "9.9.9", None);
+        fake_unix_shob(&target, crate::VERSION, None);
         let expected = std::fs::read(&staged).unwrap();
 
         let plan = build_direct_update_plan(&staging, &target).unwrap();
@@ -2984,7 +2990,7 @@ mod tests {
         assert!(!plan.replacement_temp.exists());
         assert!(!plan.backup_file.exists());
 
-        fake_unix_rpi(&staged, "0.0.1", None);
+        fake_unix_shob(&staged, "0.0.1", None);
         let plan = build_direct_update_plan(&staging, &target).unwrap();
         let error = activate_direct_update(&plan).unwrap_err();
         assert!(error.contains("older version"), "{error}");
@@ -2996,10 +3002,10 @@ mod tests {
     fn direct_update_rolls_back_when_post_replace_validation_fails() {
         let temp = real_tempdir();
         let staging = temp.path().join("staging");
-        let staged = staging.join("bin/rpi");
-        let target = temp.path().join("target/rpi-current");
-        fake_unix_rpi(&staged, "9.9.9", Some("rpi-current"));
-        fake_unix_rpi(&target, crate::VERSION, None);
+        let staged = staging.join("bin/shob");
+        let target = temp.path().join("target/shob-current");
+        fake_unix_shob(&staged, "9.9.9", Some("shob-current"));
+        fake_unix_shob(&target, crate::VERSION, None);
         let original = std::fs::read(&target).unwrap();
 
         let plan = build_direct_update_plan(&staging, &target).unwrap();
@@ -3081,32 +3087,32 @@ mod tests {
     #[test]
     fn self_update_honors_env_and_early_dispatched_offline_flag() {
         let _guard = crate::config::test_support::env_lock().lock().unwrap();
-        let _restore = RestoreEnv::capture(crate::args::RPI_OFFLINE_ENV);
+        let _restore = RestoreEnv::capture(crate::args::SHOB_OFFLINE_ENV);
 
-        std::env::set_var(crate::args::RPI_OFFLINE_ENV, "tRuE");
+        std::env::set_var(crate::args::SHOB_OFFLINE_ENV, "tRuE");
         assert_eq!(super::run_self_update(&[]), 0);
 
-        std::env::set_var(crate::args::RPI_OFFLINE_ENV, "0");
+        std::env::set_var(crate::args::SHOB_OFFLINE_ENV, "0");
         assert_eq!(super::run_self_update(&["--offline".into()]), 0);
         assert_eq!(
-            std::env::var(crate::args::RPI_OFFLINE_ENV).as_deref(),
+            std::env::var(crate::args::SHOB_OFFLINE_ENV).as_deref(),
             Ok("1")
         );
     }
 
     #[tokio::test]
-    async fn offline_skips_rpi_startup_checks_before_cache_io() {
+    async fn offline_skips_shob_startup_checks_before_cache_io() {
         let _guard = crate::config::test_support::env_lock().lock().unwrap();
         let _restore_config = RestoreConfigDir(std::env::var_os(crate::config::CONFIG_DIR_ENV));
-        let _restore_offline = RestoreEnv::capture(crate::args::RPI_OFFLINE_ENV);
-        let _restore_disabled = RestoreEnv::capture("RPI_DISABLE_UPDATE_CHECK");
+        let _restore_offline = RestoreEnv::capture(crate::args::SHOB_OFFLINE_ENV);
+        let _restore_disabled = RestoreEnv::capture("SHOB_DISABLE_UPDATE_CHECK");
         let temp = real_tempdir();
         let agent = temp.path().join("offline-agent");
         std::env::set_var(crate::config::CONFIG_DIR_ENV, &agent);
-        std::env::set_var(crate::args::RPI_OFFLINE_ENV, "YES");
-        std::env::remove_var("RPI_DISABLE_UPDATE_CHECK");
+        std::env::set_var(crate::args::SHOB_OFFLINE_ENV, "YES");
+        std::env::remove_var("SHOB_DISABLE_UPDATE_CHECK");
 
-        let report = super::check_rpi_startup().await;
+        let report = super::check_shob_startup().await;
 
         assert_eq!(report, super::UpdateReport::default());
         assert!(
@@ -3139,12 +3145,12 @@ mod tests {
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0]
             .message
-            .contains("rpi update failed: permission [31m denied"));
+            .contains("shob update failed: permission [31m denied"));
         assert!(!warnings[0].message.chars().any(char::is_control));
-        assert_eq!(warnings[0].command, "rpi update");
+        assert_eq!(warnings[0].command, "shob update");
         assert!(!failed.exists());
         // A `succeeded` record is the receipt for the version now installed —
-        // `rpi update` prints its path — so it survives consumption instead of
+        // `shob update` prints its path — so it survives consumption instead of
         // being deleted the moment the next start looks at it.
         assert!(succeeded.exists());
         assert!(waiting.exists());
@@ -3179,7 +3185,7 @@ mod tests {
         let live_status = name('1');
         let live_staging = update_root.join("pending-Live001");
         std::fs::create_dir_all(live_staging.join("bin")).unwrap();
-        std::fs::write(live_staging.join("bin").join("rpi.exe"), b"payload").unwrap();
+        std::fs::write(live_staging.join("bin").join("shob.exe"), b"payload").unwrap();
         std::fs::write(
             &live_status,
             serde_json::to_vec(&serde_json::json!({
@@ -3196,7 +3202,7 @@ mod tests {
         let dead_status = name('2');
         let dead_staging = update_root.join("pending-Dead002");
         std::fs::create_dir_all(dead_staging.join("bin")).unwrap();
-        std::fs::write(dead_staging.join("bin").join("rpi.exe"), b"payload").unwrap();
+        std::fs::write(dead_staging.join("bin").join("shob.exe"), b"payload").unwrap();
         write_test_update_status_at(&dead_status, "preparing", "installing", stale_ms);
         // Name the staging directory in the stale record, the way the Windows
         // helper does: that is the evidence its payload is debris even though
@@ -3210,7 +3216,7 @@ mod tests {
         // Orphan: no status file ever named it, and it was created long ago.
         let orphan = update_root.join("pending-Orphan3");
         std::fs::create_dir_all(orphan.join("bin")).unwrap();
-        std::fs::write(orphan.join("bin").join("rpi.exe"), b"payload").unwrap();
+        std::fs::write(orphan.join("bin").join("shob.exe"), b"payload").unwrap();
 
         // Debris that can never be serving an update: an empty staging
         // directory, even while it is brand new.
@@ -3246,7 +3252,7 @@ mod tests {
         let now = super::now_ms();
         let staging = update_root.join("pending-Done001");
         std::fs::create_dir_all(staging.join("bin")).unwrap();
-        std::fs::write(staging.join("bin").join("rpi.exe"), b"payload").unwrap();
+        std::fs::write(staging.join("bin").join("shob.exe"), b"payload").unwrap();
 
         // A `waiting` leftover naming the same directory as a completed run.
         let leftover = update_root.join(format!("status-{}.json", "3".repeat(32)));
@@ -3266,7 +3272,7 @@ mod tests {
             &recent,
             serde_json::to_vec(&serde_json::json!({
                 "state": "succeeded",
-                "message": "rpi executable replaced successfully",
+                "message": "shob executable replaced successfully",
                 "staging": staging,
                 "updatedAtMs": now,
             }))
@@ -3279,7 +3285,7 @@ mod tests {
             &aged,
             serde_json::to_vec(&serde_json::json!({
                 "state": "succeeded",
-                "message": "rpi executable replaced successfully",
+                "message": "shob executable replaced successfully",
                 "updatedAtMs": now - super::COMPLETED_SELF_UPDATE_STATUS_TTL_MS - 60_000,
             }))
             .unwrap(),
@@ -3388,8 +3394,8 @@ mod tests {
     fn windows_update_helper_atomically_replaces_a_valid_target() {
         let temp = real_tempdir();
         let staging = temp.path().join("staging 'semi;& with spaces");
-        let staged = staging.join("bin/rpi.exe");
-        let target = temp.path().join("target 'semi;& with spaces/rpi-copy.exe");
+        let staged = staging.join("bin/shob.exe");
+        let target = temp.path().join("target 'semi;& with spaces/shob-copy.exe");
         fake_windows_executable(&staged, b"new-version");
         fake_windows_executable(&target, b"old-version");
         let expected = std::fs::read(&staged).unwrap();
@@ -3450,8 +3456,8 @@ mod tests {
     fn windows_update_helper_failure_preserves_the_old_executable() {
         let temp = real_tempdir();
         let staging = temp.path().join("staging with spaces");
-        let staged = staging.join("bin/rpi.exe");
-        let target = temp.path().join("target with spaces/rpi-copy.exe");
+        let staged = staging.join("bin/shob.exe");
+        let target = temp.path().join("target with spaces/shob-copy.exe");
         fake_windows_executable(&staged, b"new-version");
         fake_windows_executable(&target, b"old-version");
         let expected = std::fs::read(&target).unwrap();
@@ -3498,8 +3504,8 @@ mod tests {
     fn windows_update_helper_rolls_back_after_post_replace_validation_failure() {
         let temp = real_tempdir();
         let staging = temp.path().join("staging");
-        let staged = staging.join("bin/rpi.exe");
-        let target = temp.path().join("target/rpi-copy.exe");
+        let staged = staging.join("bin/shob.exe");
+        let target = temp.path().join("target/shob-copy.exe");
         fake_windows_executable(&staged, b"new-version");
         fake_windows_executable(&target, b"old-version");
         let expected = std::fs::read(&target).unwrap();
@@ -3554,8 +3560,8 @@ mod tests {
     fn windows_update_plan_rejects_a_non_executable_staged_file() {
         let temp = real_tempdir();
         let staging = temp.path().join("staging");
-        let staged = staging.join("bin/rpi.exe");
-        let target = temp.path().join("target/rpi.exe");
+        let staged = staging.join("bin/shob.exe");
+        let target = temp.path().join("target/shob.exe");
         std::fs::create_dir_all(staged.parent().unwrap()).unwrap();
         std::fs::write(&staged, b"not-a-pe").unwrap();
         fake_windows_executable(&target, b"old-version");
@@ -3575,35 +3581,35 @@ mod tests {
     }
 
     #[test]
-    fn staged_rpi_version_output_is_exact_and_cannot_downgrade() {
+    fn staged_shob_version_output_is_exact_and_cannot_downgrade() {
         assert_eq!(
-            parse_rpi_version_output(b"rpi 1.2.3\r\n").unwrap(),
+            parse_shob_version_output(b"shob 1.2.3\r\n").unwrap(),
             semver::Version::new(1, 2, 3)
         );
         assert_eq!(
-            validate_staged_rpi_version_output(b"rpi 1.2.3\n", b"", "1.2.3").unwrap(),
+            validate_staged_shob_version_output(b"shob 1.2.3\n", b"", "1.2.3").unwrap(),
             semver::Version::new(1, 2, 3)
         );
         assert!(
-            validate_staged_rpi_version_output(b"rpi 1.2.2\n", b"", "1.2.3")
+            validate_staged_shob_version_output(b"shob 1.2.2\n", b"", "1.2.3")
                 .unwrap_err()
                 .contains("older version")
         );
 
         for output in [
             &b"pi 1.2.3\n"[..],
-            &b"rpi v1.2.3\n"[..],
-            &b"rpi 1.2.3 extra\n"[..],
-            &b"rpi 1.2.3\nsecond line\n"[..],
-            &b" rpi 1.2.3\n"[..],
+            &b"shob v1.2.3\n"[..],
+            &b"shob 1.2.3 extra\n"[..],
+            &b"shob 1.2.3\nsecond line\n"[..],
+            &b" shob 1.2.3\n"[..],
         ] {
             assert!(
-                parse_rpi_version_output(output).is_none(),
+                parse_shob_version_output(output).is_none(),
                 "output={output:?}"
             );
         }
         assert!(
-            validate_staged_rpi_version_output(b"rpi 1.2.3\n", b"warning", "1.2.3")
+            validate_staged_shob_version_output(b"shob 1.2.3\n", b"warning", "1.2.3")
                 .unwrap_err()
                 .contains("stderr")
         );
@@ -3967,9 +3973,9 @@ Connection: close
                 let stamp = super::now_ms() - if fresh { 1000 } else { 48 * 60 * 60 * 1000 };
                 let cached = super::UpdateCache {
                     checked_at: stamp,
-                    rpi_latest: Some("0.10.0".into()),
+                    shob_latest: Some("0.10.0".into()),
                     freshness: super::UpdateCacheFreshness {
-                        rpi: stamp,
+                        shob: stamp,
                         native_packages: Default::default(),
                     },
                     ..Default::default()
@@ -3980,7 +3986,7 @@ Connection: close
                 )
                 .unwrap();
                 let (url, stop, server) = serve_once(status.into(), body.into());
-                let result = super::lookup_latest_rpi_from(&url).await;
+                let result = super::lookup_latest_shob_from(&url).await;
                 stop_and_join(stop, server, &url);
                 assert_eq!(
                     result,
@@ -4002,9 +4008,9 @@ Connection: close
         let stamp = super::now_ms() - 48 * 60 * 60 * 1000;
         let cached = super::UpdateCache {
             checked_at: stamp,
-            rpi_latest: Some("0.10.0".into()),
+            shob_latest: Some("0.10.0".into()),
             freshness: super::UpdateCacheFreshness {
-                rpi: stamp,
+                shob: stamp,
                 native_packages: Default::default(),
             },
             ..Default::default()
@@ -4015,7 +4021,7 @@ Connection: close
         )
         .unwrap();
         let (url, stop, server) = serve_once("200 OK".into(), stable_release("v0.11.0"));
-        let result = super::lookup_latest_rpi_from(&url).await;
+        let result = super::lookup_latest_shob_from(&url).await;
         assert_eq!(stop_and_join(stop, server, &url), 1);
         assert_eq!(result, Some(("0.11.0".into(), true)));
     }

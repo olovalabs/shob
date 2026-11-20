@@ -230,8 +230,8 @@ mod linked_scope_roots {
     const STYLES: [&str; 3] = ["project", "global-home", "global-override"];
     fn addressed_root(prefix: &Path, style: &str) -> PathBuf {
         prefix.join(match style {
-            "project" => "project/.rpi",
-            "global-home" => "home/.rpi/agent",
+            "project" => "project/.shob",
+            "global-home" => "home/.shob/agent",
             "global-override" => "custom/agent",
             _ => unreachable!(),
         })
@@ -376,12 +376,12 @@ mod linked_scope_roots {
             assert!(selected_root(&alias, style).is_err());
         }
         assert!(!target.exists(), "broken link target was recreated");
-        assert!(resolve_scope_root(Path::new("relative/.rpi")).is_err());
+        assert!(resolve_scope_root(Path::new("relative/.shob")).is_err());
         for suffix in [
-            "../outside/.rpi",
-            "absent/../.rpi",
-            "absent/.rpi/..",
-            "alias/../.rpi",
+            "../outside/.shob",
+            "absent/../.shob",
+            "absent/.shob/..",
+            "alias/../.shob",
         ] {
             // PathBuf::push normalizes '..' for Windows verbatim prefixes.
             // Preserve the addressed traversal so the resolver must reject it.

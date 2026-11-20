@@ -62,7 +62,7 @@ async fn rejected_reopen_never_registers_native_code_and_public_apis_cannot_eras
     let root = temp.path();
     fixture_model_config(root);
     let suffix = std::env::consts::DLL_EXTENSION;
-    let unwanted = root.join(format!(".rpi/extensions/unwanted.{suffix}"));
+    let unwanted = root.join(format!(".shob/extensions/unwanted.{suffix}"));
     std::fs::create_dir_all(unwanted.parent().unwrap()).unwrap();
     std::fs::copy(&fixture.library, &unwanted).unwrap();
     put(
@@ -75,15 +75,15 @@ async fn rejected_reopen_never_registers_native_code_and_public_apis_cannot_eras
     );
     let mut host = Host::start(root, "none.json", "bound").await;
     for key in [
-        "rpi.resource-selection.v1",
-        "rpi.resource-inventory.v1",
-        "rpi.resource-selection.v2",
+        "shob.resource-selection.v1",
+        "shob.resource-inventory.v1",
+        "shob.resource-selection.v2",
     ] {
         for value in [Value::Null, json!({"forged":true})] {
             let response = host
                 .request(
                     "append_entry",
-                    json!({"customType":"rpi.value","data":{"key":key,"value":value}}),
+                    json!({"customType":"shob.value","data":{"key":key,"value":value}}),
                 )
                 .await;
             assert_eq!(response["success"], false, "{response}");
@@ -93,7 +93,7 @@ async fn rejected_reopen_never_registers_native_code_and_public_apis_cannot_eras
     assert_eq!(
         host.request(
             "append_entry",
-            json!({"customType":"rpi.value","data":{"key":"user.preference","value":1}})
+            json!({"customType":"shob.value","data":{"key":"user.preference","value":1}})
         )
         .await["success"],
         true
@@ -149,7 +149,7 @@ async fn rejected_reopen_never_registers_native_code_and_public_apis_cannot_eras
     );
     let mut reopened = Host::start(root, "none.json", "bound").await;
     let history = reopened
-        .request("get_session_branch", json!({"customTypes":["rpi.value"]}))
+        .request("get_session_branch", json!({"customTypes":["shob.value"]}))
         .await;
     assert_eq!(history["success"], true, "{history}");
     assert!(history.to_string().contains("user.preference"));
@@ -208,9 +208,9 @@ async fn rejected_reopen_never_registers_native_code_and_public_apis_cannot_eras
     // Validate exact mode before even looking for a Cargo project/dev build.
     let output = tokio::time::timeout(
         Duration::from_secs(25),
-        tokio::process::Command::new(env!("CARGO_BIN_EXE_rpi"))
+        tokio::process::Command::new(env!("CARGO_BIN_EXE_shob"))
             .current_dir(root)
-            .env("RPI_CODING_AGENT_DIR", root.join("agent"))
+            .env("SHOB_CODING_AGENT_DIR", root.join("agent"))
             .args(["dev", "--mode", "rpc", "--resource-config", "none.json"])
             .stdin(Stdio::null())
             .kill_on_drop(true)
@@ -247,7 +247,7 @@ async fn selected_skills_preflight_precedes_registration_and_native_writer() {
         let root = evidence.0.as_ref().unwrap().path();
         fixture_model_config(root);
         let path = if source == "package" {
-            root.join(".rpi/packages/probe/skills/review/SKILL.md")
+            root.join(".shob/packages/probe/skills/review/SKILL.md")
         } else {
             root.join("skills/review/SKILL.md")
         };
@@ -256,7 +256,7 @@ async fn selected_skills_preflight_precedes_registration_and_native_writer() {
         if source == "package" {
             config["main_package"] = json!({"name":"probe"});
             put(
-                root.join(".rpi/packages.json"),
+                root.join(".shob/packages.json"),
                 json!({"packages":[{
                     "name":"probe","version":"1","source":"fixture",
                     "cargo_package":"none","artifacts":[]
@@ -457,7 +457,7 @@ async fn package_identities_and_canonical_resources_cannot_escape() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
         fixture_model_config(root);
-        put(root.join(".rpi/packages.json"),json!({"packages":[{"name":name,"version":"1","source":"fixture","cargo_package":"fixture","artifacts":[]}]}).to_string());
+        put(root.join(".shob/packages.json"),json!({"packages":[{"name":name,"version":"1","source":"fixture","cargo_package":"fixture","artifacts":[]}]}).to_string());
         put(
             root.join("invalid.json"),
             json!({"version":1,"main_package":{"name":name},"tools":{"mode":"none"}}).to_string(),
@@ -473,7 +473,7 @@ async fn package_identities_and_canonical_resources_cannot_escape() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
         fixture_model_config(root);
-        let package = root.join(".rpi/packages/safe");
+        let package = root.join(".shob/packages/safe");
         let outside = root.join("outside");
         std::fs::create_dir_all(&outside).unwrap();
         let filename = format!("escape.{}", std::env::consts::DLL_EXTENSION);
@@ -490,7 +490,7 @@ async fn package_identities_and_canonical_resources_cannot_escape() {
         } else {
             json!([])
         };
-        put(root.join(".rpi/packages.json"),json!({"packages":[{"name":"safe","version":"recorded-version","source":"fixture-identity","cargo_package":"fixture-cargo","artifacts":artifacts}]}).to_string());
+        put(root.join(".shob/packages.json"),json!({"packages":[{"name":"safe","version":"recorded-version","source":"fixture-identity","cargo_package":"fixture-cargo","artifacts":artifacts}]}).to_string());
         match kind {
             "root" => directory_alias(&package, &outside).await,
             "artifact" => directory_alias(&package.join("extensions"), &outside).await,
@@ -510,7 +510,7 @@ async fn package_identities_and_canonical_resources_cannot_escape() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn source_fixture_builds_are_isolated_across_processes() {
-    const CHILD: &str = "RPI_RESOURCE_FIXTURE_CHILD_ROOT";
+    const CHILD: &str = "SHOB_RESOURCE_FIXTURE_CHILD_ROOT";
     if let Some(root) = std::env::var_os(CHILD) {
         let root = PathBuf::from(root);
         let fixture = Fixture::build().await;

@@ -137,7 +137,7 @@ Shob follows Zed's per-platform directory convention (`src/paths.rs`):
 
 Environment overrides: `SHOB_DATA_DIR=/absolute/path` (derives config/state/logs from it) and `SHOB_DISABLE_RESTORE=1` (clean launch without reading saved state).
 
-### 2.6 Embedded rpi agent (`agent/`)
+### 2.6 Embedded shob agent (`agent/`)
 
 The pi-rust v0.21.0 library crates and CLI sources are vendored as a Git subtree
 under `agent/` and kept as its own Cargo workspace. Non-build upstream assets
@@ -146,7 +146,7 @@ were removed after import; `examples/plugin-stub` remains as a test fixture.
 Shob path-depends on `agent/crates/embedded`, a host-facing library built
 from the upstream library crates.
 
-- **Default backend.** `src/agent_bridge.rs` opens one `EmbeddedSession` per rpi
+- **Default backend.** `src/agent_bridge.rs` opens one `EmbeddedSession` per shob
   conversation. The session owns a dedicated multi-thread Tokio runtime and
   reuses upstream's `cli::session::build`: model/credential resolution,
   built-in `read`/`bash`/`edit`/`write`/`docs` tools, the coding system prompt,
@@ -156,14 +156,14 @@ from the upstream library crates.
   4 MiB, admitting one oversized final record exclusively. Async text/lifecycle
   delivery backpressures without blocking runtime workers; intermediate
   identified snapshots can coalesce. GPUI drains 64 records / 256 KiB per pane
-  and resignals pending work. The default backend uses no `rpi` subprocess.
+  and resignals pending work. The default backend uses no `shob` subprocess.
 - **Lifecycle.** Prompts run on the session runtime. Stop and pane close call
   `request_stop_round` + `abort_reclaiming`, which cancels active tools. A
   stale resumed session id falls back to a fresh durable session.
 - **Discovery and login.** Model catalogs and provider readiness are read
-  in-process through `embedded::catalog`/`providers`. rpi-only API-key and
+  in-process through `embedded::catalog`/`providers`. shob-only API-key and
   OAuth logins are driven in-process through the embedded provider configuration.
-- **Baseline.** `SHOB_RPI_BACKEND=rpc` runs `shob --mode rpc` as a child process
+- **Baseline.** `SHOB_AGENT_BACKEND=rpc` runs `shob --mode rpc` as a child process
   for before/after measurements; no separate agent executable is needed.
   `SHOB_STREAM_TIMINGS=1` reports startup, UI drain/apply, render, markdown parse
   and tool arrival→card/output percentiles for both backends.
@@ -282,7 +282,7 @@ reproduction commands and measurement limitations.
   the `before_tool_call` / `after_tool_call` hook slots, mapping
   `AgentToolResult` → text → pure decision → `AfterToolCallResult`.
 - The decisions live in pure functions over plain data so they test without a
-  harness; the module is the only place that names rpi types, and it stays a client
+  harness; the module is the only place that names shob types, and it stays a client
   of the hooks. The dependency direction is `shob → token-efficiency → embedded`,
   never the reverse, so upstream subtree syncs stay merge-clean.
 - Covers read dedupe, search cache, anchor edits, output minimization, cheap-task

@@ -99,11 +99,11 @@ async fn configured_native_fork_clone_and_old_message_keep_current_package_witho
     );
     for name in ["a", "b"] {
         put(
-            root.join(format!(".rpi/packages/{name}/persistent.md")),
+            root.join(format!(".shob/packages/{name}/persistent.md")),
             format!("FORK_PACKAGE_{name}"),
         );
     }
-    put(root.join(".rpi/packages.json"),json!({"packages":[{"name":"a","version":"1","source":"fixture-a","cargo_package":"none","artifacts":[]},{"name":"b","version":"2","source":"fixture-b","cargo_package":"none","artifacts":[]}]}).to_string());
+    put(root.join(".shob/packages.json"),json!({"packages":[{"name":"a","version":"1","source":"fixture-a","cargo_package":"none","artifacts":[]},{"name":"b","version":"2","source":"fixture-b","cargo_package":"none","artifacts":[]}]}).to_string());
     let selected = |name: &str| json!({"version":1,"main_package":{"name":name,"instructions":["persistent.md"]},"tools":{"mode":"none"}});
     put(root.join("a.json"), selected("a").to_string());
     put(root.join("b.json"), selected("b").to_string());
@@ -216,7 +216,7 @@ async fn configured_native_fork_clone_and_old_message_keep_current_package_witho
         let binding = rows
             .iter()
             .rev()
-            .find(|v| v["data"]["key"] == "rpi.resource-selection.v1")
+            .find(|v| v["data"]["key"] == "shob.resource-selection.v1")
             .unwrap();
         assert_eq!(binding["data"]["value"]["revision"], 1);
         assert!(binding["data"]["value"].get("operations").is_none());

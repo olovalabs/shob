@@ -710,7 +710,7 @@ async fn cold_entry_payload_filters_stop_before_corrupt_unconsumed_rows() {
                     agent::message::AgentMessage::Custom(agent::message::CustomMessage::new(
                         "outbox",
                         Vec::new(),
-                        json!({"__rpiOutbox":{"key":key}}),
+                        json!({"__shobOutbox":{"key":key}}),
                         1,
                     ))
                 } else {

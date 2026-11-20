@@ -1,7 +1,7 @@
-//! `rpi install` — install a prebuilt or explicitly built Rust `cdylib` extension.
+//! `shob install` — install a prebuilt or explicitly built Rust `cdylib` extension.
 //!
 //! Cargo's `cargo install` command is intended for binaries and does not copy
-//! dynamic-library targets. rpi extensions are cdylibs loaded by
+//! dynamic-library targets. shob extensions are cdylibs loaded by
 //! `extensions`. The default async path uses the prebuilt distribution
 //! protocol; the explicit source backend creates a tiny temporary Cargo workspace,
 //! resolves the requested crate through Cargo, builds the dependency in
@@ -17,12 +17,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::prebuilt_extensions::{asset_paths_conflict, validate_asset_path};
 
-const INSTALLER_MANIFEST: &str = "rpi-extension-installer";
+const INSTALLER_MANIFEST: &str = "shob-extension-installer";
 const NATIVE_PACKAGES_FILE: &str = "native-packages.json";
 const NATIVE_PACKAGES_LOCK_FILE: &str = "native-packages.lock";
-const CDYLIB_EXTENSION_HINT: &str = "hint: the crate must declare `crate-type = [\"cdylib\"]` and export `rpi_plugin_register` (the unified ABI; legacy `rpi_plugin_register_v2` and `rpi_plugin_register_v3` remain supported for migration)";
+const CDYLIB_EXTENSION_HINT: &str = "hint: the crate must declare `crate-type = [\"cdylib\"]` and export `shob_plugin_register` (the unified ABI; legacy `shob_plugin_register_v2` and `shob_plugin_register_v3` remain supported for migration)";
 
-/// A Rust-native extension installed through `rpi install`.
+/// A Rust-native extension installed through `shob install`.
 ///
 /// `source` is absent for Cargo registry builds, contains the local source
 /// path for `--path`, or marks prebuilt packages so older hosts do not rebuild
@@ -244,7 +244,7 @@ struct CargoTarget {
     crate_types: Vec<String>,
 }
 
-/// Run `rpi install ...`. This is intentionally synchronous: it is a short
+/// Run `shob install ...`. This is intentionally synchronous: it is a short
 /// lived package operation and keeping Cargo's build output attached to the
 /// user's terminal makes failures actionable.
 pub fn run(args: &[String]) -> i32 {
@@ -345,7 +345,7 @@ pub fn run(args: &[String]) -> i32 {
         .collect();
     if cdylib_targets.is_empty() {
         eprintln!(
-            "error: `{}` is not an rpi extension crate; it has no `cdylib` target",
+            "error: `{}` is not an shob extension crate; it has no `cdylib` target",
             options.package
         );
         eprintln!("{CDYLIB_EXTENSION_HINT}");
@@ -369,7 +369,7 @@ pub fn run(args: &[String]) -> i32 {
     let agent_dir = match crate::config::agent_dir() {
         Ok(dir) => dir,
         Err(error) => {
-            eprintln!("error: could not resolve the rpi config directory: {error}");
+            eprintln!("error: could not resolve the shob config directory: {error}");
             return 1;
         }
     };
@@ -415,14 +415,14 @@ pub fn run(args: &[String]) -> i32 {
         println!("installed {}", target.display());
     }
     gc_retired_native_artifacts(&agent_dir);
-    println!("rpi will load this extension on the next start.");
+    println!("shob will load this extension on the next start.");
     0
 }
 
-/// Remove a Rust-native extension installed by `rpi install`.
+/// Remove a Rust-native extension installed by `shob install`.
 ///
 /// The install registry is authoritative for new installs. For metadata from
-/// older rpi versions, dynamic libraries whose normalized file stem matches
+/// older shob versions, dynamic libraries whose normalized file stem matches
 /// the crate name are removed as a compatibility fallback.
 pub fn uninstall(args: &[String]) -> i32 {
     if args.len() == 1 && matches!(args[0].as_str(), "--help" | "-h") {
@@ -440,7 +440,7 @@ pub fn uninstall(args: &[String]) -> i32 {
     let agent = match crate::config::agent_dir() {
         Ok(path) => path,
         Err(error) => {
-            eprintln!("error: could not resolve the rpi config directory: {error}");
+            eprintln!("error: could not resolve the shob config directory: {error}");
             return 1;
         }
     };
@@ -564,7 +564,7 @@ fn parse_uninstall_name(args: &[String]) -> Result<String, String> {
     let mut name = None;
     for arg in args {
         match arg.as_str() {
-            "--help" | "-h" => return Err("use `rpi uninstall --help` for usage".into()),
+            "--help" | "-h" => return Err("use `shob uninstall --help` for usage".into()),
             value if value.starts_with('-') => {
                 return Err(format!("unknown uninstall option `{value}`"))
             }
@@ -1163,7 +1163,7 @@ struct StagedDirectory {
 impl StagedDirectory {
     fn create(destination: &Path) -> Result<Self, String> {
         let path = destination.join(format!(
-            ".rpi-assets-stage-{}",
+            ".shob-assets-stage-{}",
             uuid::Uuid::new_v4().simple()
         ));
         std::fs::create_dir(&path).map_err(|error| {
@@ -1404,7 +1404,7 @@ fn adjacent_transaction_path(target: &Path, kind: &str) -> Result<PathBuf, Strin
         .unwrap_or("artifact");
     for _ in 0..8 {
         let candidate = parent.join(format!(
-            ".{leaf}.rpi-{kind}-{}",
+            ".{leaf}.shob-{kind}-{}",
             uuid::Uuid::new_v4().simple()
         ));
         match std::fs::symlink_metadata(&candidate) {
@@ -1769,17 +1769,17 @@ fn help_requested() -> &'static str {
     if cfg!(feature = "shob") {
         "use `shob install --help` for usage"
     } else {
-        "use `rpi install --help` for usage"
+        "use `shob install --help` for usage"
     }
 }
 
 pub fn print_help() {
-    println!("Usage: {command} install [<crate>] [options]\n\nInstall or upgrade a prebuilt Rust extension using the versioned rpi-extension.json protocol.\nRepository and latest stable version are resolved from crates.io metadata.\nNewer versions upgrade automatically; an already installed version is skipped.\n\nOptions:\n  --version <version>  Install an exact package version\n  --github <owner/repo> Use this GitHub repository; default version comes from package-specific tags\n  --cdn <URL>           Download release archives from this HTTPS CDN; manifests remain on GitHub\n  --build              Explicitly compile the extension with Cargo\n  --path <directory>   Build a local extension crate; crate name may be omitted\n  --locked             Require Cargo.lock to remain unchanged (with --build/--path)\n  --force, -f          Reinstall the same version or allow a downgrade/replacement\n  --help, -h           Show this help\n\nExamples:\n  {command} install rpi-todo\n  {command} install rpi-todo --version 0.2.0\n  {command} install my-extension --github owner/repo --version 1.2.3\n  {command} install rpi-todo --build\n  {command} install --path . --force\n\nA missing or incompatible prebuilt release is an error; Cargo compilation requires --build.", command = crate::COMMAND);
+    println!("Usage: {command} install [<crate>] [options]\n\nInstall or upgrade a prebuilt Rust extension using the versioned shob-extension.json protocol.\nRepository and latest stable version are resolved from crates.io metadata.\nNewer versions upgrade automatically; an already installed version is skipped.\n\nOptions:\n  --version <version>  Install an exact package version\n  --github <owner/repo> Use this GitHub repository; default version comes from package-specific tags\n  --cdn <URL>           Download release archives from this HTTPS CDN; manifests remain on GitHub\n  --build              Explicitly compile the extension with Cargo\n  --path <directory>   Build a local extension crate; crate name may be omitted\n  --locked             Require Cargo.lock to remain unchanged (with --build/--path)\n  --force, -f          Reinstall the same version or allow a downgrade/replacement\n  --help, -h           Show this help\n\nExamples:\n  {command} install shob-todo\n  {command} install shob-todo --version 0.2.0\n  {command} install my-extension --github owner/repo --version 1.2.3\n  {command} install shob-todo --build\n  {command} install --path . --force\n\nA missing or incompatible prebuilt release is an error; Cargo compilation requires --build.", command = crate::COMMAND);
 }
 
 fn print_uninstall_help() {
     println!(
-        "Usage: {command} uninstall <crate>\n\nRemove a Rust cdylib extension installed by `{command} install`.\n\nOptions:\n  --help, -h           Show this help\n\nExample:\n  {command} uninstall rpi-extension-example",
+        "Usage: {command} uninstall <crate>\n\nRemove a Rust cdylib extension installed by `{command} install`.\n\nOptions:\n  --help, -h           Show this help\n\nExample:\n  {command} uninstall shob-extension-example",
         command = crate::COMMAND
     );
 }
@@ -1791,7 +1791,7 @@ fn write_manifest(path: &Path, options: &InstallOptions) -> Result<(), String> {
         .join("src");
     std::fs::create_dir_all(&source_dir).map_err(|error| error.to_string())?;
     // Cargo requires the temporary root package to have a target even though
-    // rpi never builds it; the requested extension is built as a dependency.
+    // shob never builds it; the requested extension is built as a dependency.
     std::fs::write(source_dir.join("lib.rs"), "pub fn installer_marker() {}\n")
         .map_err(|error| error.to_string())?;
     let dependency = if let Some(local_path) = &options.path {
@@ -1803,14 +1803,14 @@ fn write_manifest(path: &Path, options: &InstallOptions) -> Result<(), String> {
                 .join(local_path)
         };
         format!(
-            "rpi_extension_dep = {{ package = {:?}, path = {:?} }}",
+            "shob_extension_dep = {{ package = {:?}, path = {:?} }}",
             options.package,
             absolute.display().to_string()
         )
     } else {
         let version = options.version.as_deref().unwrap_or("*");
         format!(
-            "rpi_extension_dep = {{ package = {:?}, version = {:?} }}",
+            "shob_extension_dep = {{ package = {:?}, version = {:?} }}",
             options.package, version
         )
     };
@@ -2211,9 +2211,9 @@ mod tests {
 
     #[test]
     fn cdylib_hint_recommends_unified_and_documents_legacy_compatibility() {
-        assert!(CDYLIB_EXTENSION_HINT.contains("rpi_plugin_register"));
-        assert!(CDYLIB_EXTENSION_HINT.contains("rpi_plugin_register_v2"));
-        assert!(CDYLIB_EXTENSION_HINT.contains("rpi_plugin_register_v3"));
+        assert!(CDYLIB_EXTENSION_HINT.contains("shob_plugin_register"));
+        assert!(CDYLIB_EXTENSION_HINT.contains("shob_plugin_register_v2"));
+        assert!(CDYLIB_EXTENSION_HINT.contains("shob_plugin_register_v3"));
     }
 
     #[test]
@@ -2435,10 +2435,10 @@ mod tests {
     fn assert_no_native_transaction_files(directory: &Path) {
         for entry in std::fs::read_dir(directory).unwrap() {
             let name = entry.unwrap().file_name().to_string_lossy().into_owned();
-            assert!(!name.contains(".rpi-stage-"), "left staged file: {name}");
-            assert!(!name.contains(".rpi-backup-"), "left backup file: {name}");
+            assert!(!name.contains(".shob-stage-"), "left staged file: {name}");
+            assert!(!name.contains(".shob-backup-"), "left backup file: {name}");
             assert!(
-                !name.contains(".rpi-assets-stage-"),
+                !name.contains(".shob-assets-stage-"),
                 "left asset stage: {name}"
             );
         }

@@ -79,10 +79,10 @@ fn update_notices_mount_before_live_transcript_slot() {
         &history.updates,
         &crate::updates::UpdateReport {
             notices: vec![crate::updates::UpdateNotice {
-                name: "rpi-im-message".into(),
+                name: "shob-im-message".into(),
                 current: "0.1.0".into(),
                 latest: "0.2.0".into(),
-                command: "rpi extension update rpi-im-message".into(),
+                command: "shob extension update shob-im-message".into(),
             }],
             warnings: Vec::new(),
         },

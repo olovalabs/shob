@@ -32,7 +32,7 @@ impl Drop for Cli {
 }
 impl Cli {
     fn new() -> Self {
-        let directory = if let Some(path) = std::env::var_os("RPI_RESOURCE_REVIEW_EVIDENCE_DIR") {
+        let directory = if let Some(path) = std::env::var_os("SHOB_RESOURCE_REVIEW_EVIDENCE_DIR") {
             std::fs::create_dir_all(&path).unwrap();
             tempfile::tempdir_in(path).unwrap()
         } else {
@@ -90,10 +90,10 @@ fn main() {
         }
     }
     fn native(&self) -> PathBuf {
-        self.root.join("project/.rpi")
+        self.root.join("project/.shob")
     }
     async fn run(&self, args: &[&str]) -> Output {
-        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_rpi"));
+        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_shob"));
         command.env_clear();
         for key in [
             "SystemRoot",
@@ -117,7 +117,7 @@ fn main() {
                 .current_dir(self.root.join("project"))
                 .env("HOME", self.root.join("home"))
                 .env("USERPROFILE", self.root.join("home"))
-                .env("RPI_CODING_AGENT_DIR", self.root.join("agent"))
+                .env("SHOB_CODING_AGENT_DIR", self.root.join("agent"))
                 .env("FIXTURE_CARGO_ROOT", &self.root)
                 .env("PATH", self.root.join("bin"))
                 .args(args)
@@ -365,7 +365,7 @@ async fn legacy_package_artifact_alias_is_checked_and_versioned_force_preserves_
     // active registry entry points at the newly published versioned artifact.
     assert_eq!(std::fs::read(&target).unwrap(), b"managed bytes");
     let registry: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(cli.root.join("project/.rpi/packages.json")).unwrap(),
+        &std::fs::read(cli.root.join("project/.shob/packages.json")).unwrap(),
     )
     .unwrap();
     let active = registry["packages"]

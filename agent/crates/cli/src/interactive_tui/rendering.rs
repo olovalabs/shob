@@ -73,14 +73,18 @@ pub(super) fn add_welcome_message_with_capabilities(
     skills: &[String],
     context_files: &[String],
 ) -> Arc<Container> {
+    let welcome = Arc::new(Container::new());
+    container.add_child(Arc::new(crate::brand::CenteredWelcome(welcome.clone())));
+    let container = &welcome;
     let c = current_theme().colors;
+    container.add_child(Arc::new(Spacer::new(1)));
     // The mark, wordmark and language mark live in `crate::brand`. See that
     // module for why the layout is built from single-width characters only.
     container.add_child(Arc::new(crate::brand::BrandLockup::new()));
     container.add_child(Arc::new(Spacer::new(1)));
-    // The mark carries the product name, so the line under it is the tagline
-    // rather than a second logotype.
-    let title = c.muted.fg("interactive TUI · library-first agent runtime");
+    let title = c.text.fg(&tui_bold(
+        "TIP: Use /session to browse previous conversations",
+    ));
     container.add_child(Arc::new(Text::new(title, 1, 0)));
     container.add_child(Arc::new(Spacer::new(1)));
     container.add_child(Arc::new(Text::new(
@@ -106,7 +110,7 @@ pub(super) fn add_welcome_message_with_capabilities(
         1,
         0,
     )));
-    container.add_child(Arc::new(DynamicBorder::new()));
+    container.add_child(Arc::new(Spacer::new(2)));
     context_listing
 }
 
@@ -304,7 +308,7 @@ pub(super) fn add_version_message(container: &Arc<Container>) {
     container.add_child(Arc::new(Text::new(
         format!(
             "  {} {}",
-            c.muted.fg("rpi-cli"),
+            c.muted.fg("shob-cli"),
             c.text.fg(&format!("v{}", crate::VERSION))
         ),
         1,
@@ -448,7 +452,7 @@ pub(super) fn collect_transcript_lines(chat_container: &Arc<Container>) -> Vec<S
 
 /// Build the shell command that resumes `session_id` in this project, or
 /// `None` when there is nothing to resume. Mirrors upstream's
-/// `formatResumeCommand`: `rpi --session <id>`, prefixing
+/// `formatResumeCommand`: `shob --session <id>`, prefixing
 /// `--session-dir <dir>` only when a non-default directory was requested.
 pub(super) fn format_resume_command(
     session_id: &str,
@@ -608,7 +612,7 @@ pub(super) fn show_skills_panel(
     let mut lines = Vec::new();
     lines.push("🧩 Skills available in this session:".to_string());
     if skills.is_empty() {
-        lines.push("  (none discovered — create .rpi/skills/ or ~/.rpi/agent/skills/)".into());
+        lines.push("  (none discovered — create .shob/skills/ or ~/.shob/agent/skills/)".into());
     } else {
         for skill in skills {
             let hidden = if skill.disable_model_invocation == Some(true) {
@@ -652,7 +656,7 @@ pub(super) fn context_panel_lines(
 
     if skills.is_empty() {
         lines.push(
-            "  Skills: (none discovered — create .rpi/skills/ or ~/.rpi/agent/skills/)".into(),
+            "  Skills: (none discovered — create .shob/skills/ or ~/.shob/agent/skills/)".into(),
         );
     } else {
         lines.push(format!("  Skills ({}):", skills.len()));
@@ -669,7 +673,7 @@ pub(super) fn context_panel_lines(
 
     if templates.is_empty() {
         lines.push(
-            "  Prompt templates: (none — create .rpi/prompts/ or ~/.rpi/agent/prompts/)".into(),
+            "  Prompt templates: (none — create .shob/prompts/ or ~/.shob/agent/prompts/)".into(),
         );
     } else {
         lines.push(format!("  Prompt templates ({}):", templates.len()));

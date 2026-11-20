@@ -48,7 +48,7 @@ fn addressed(root: &Path, id: &str) -> SessionResult<PathBuf> {
             "experimental session ID is not a safe artifact name",
         ));
     }
-    Ok(root.join(format!("{id}.rpinative")))
+    Ok(root.join(format!("{id}.shobnative")))
 }
 fn open_store(path: &Path) -> super::engine::Result<(Store, SessionMetadata)> {
     let file = std::fs::symlink_metadata(path)?;
@@ -213,7 +213,7 @@ impl SessionRepo for ExperimentalNativeRepo {
             let mut result = Vec::new();
             for entry in std::fs::read_dir(&root).map_err(error)? {
                 let path = entry.map_err(error)?.path();
-                if path.extension().and_then(|s| s.to_str()) != Some("rpinative") {
+                if path.extension().and_then(|s| s.to_str()) != Some("shobnative") {
                     continue;
                 }
                 // A file with our suffix but a bad format fails closed, not silently hidden.

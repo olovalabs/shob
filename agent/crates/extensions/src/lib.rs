@@ -1,11 +1,11 @@
-//! Rust-native (cdylib) plugin loader + `AgentTool` adapter for rpi.
+//! Rust-native (cdylib) plugin loader + `AgentTool` adapter for shob.
 //!
-//! This is Part B1 of the extension-alignment plan. `rpi` loads extensions as
+//! This is Part B1 of the extension-alignment plan. `shob` loads extensions as
 //! **compiled Rust cdylibs** (`.dll`/`.so`/`.dylib`) via `libloading` — **not**
 //! TS/jiti — because we control both sides and the plugin is Rust
 //! (`动态加载可以加载rs 的代码 没必要是 ts`). The ABI contract lives in
 //! [`plugin_sdk`]; this crate is the **host side** that loads plugins and
-//! bridges their tools/events into rpi's native async types.
+//! bridges their tools/events into shob's native async types.
 //!
 //! ## Crate DAG position
 //!
@@ -274,7 +274,7 @@ impl HostApi {
         self.registry.lock().expect("host api registry lock").take()
     }
 
-    /// Build the [`PluginApi`] struct passed to `rpi_plugin_register`.
+    /// Build the [`PluginApi`] struct passed to `shob_plugin_register`.
     ///
     /// Every optional registrar slot resolves to a real `extern "C"` trampoline
     /// that forwards into `self`'s registry (so a plugin that calls
@@ -309,7 +309,7 @@ impl HostApi {
             ),
         };
         plugin_sdk::PluginApi {
-            abi_version: plugin_sdk::RPI_PLUGIN_ABI_VERSION_UNIFIED,
+            abi_version: plugin_sdk::SHOB_PLUGIN_ABI_VERSION_UNIFIED,
             struct_size: std::mem::size_of::<plugin_sdk::PluginApi>() as u32,
             free_string: host_free_string,
             register_tool: Some(trampoline_register_tool),

@@ -71,7 +71,7 @@ pub fn missing_session_cwd_note(recorded: &Path, fallback: &Path) -> String {
 ///
 /// Restoring a conversation moves the whole run — tools, system prompt, context
 /// files, extensions — to the recorded directory, so the user has to hear about
-/// it: a `rpi -c` launched in one project must not silently start editing files
+/// it: a `shob -c` launched in one project must not silently start editing files
 /// in another. Mirrors pi's `Session found in different project: <cwd>` notice.
 pub fn adopted_session_cwd_note(launch: &Path, adopted: &Path) -> String {
     format!(
@@ -229,7 +229,7 @@ mod tests {
 
     /// Adopting another project's directory is a behaviour change the user must
     /// see: the tools, context files, and extensions all switch projects. A
-    /// silent adoption would look like `rpi -c` started editing files in the
+    /// silent adoption would look like `shob -c` started editing files in the
     /// launch directory while it is actually working somewhere else.
     #[test]
     fn adopting_a_directory_is_announced_with_both_paths() {

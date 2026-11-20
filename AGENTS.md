@@ -50,7 +50,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **status source** means one of the ways state arrives: socket, OSC 7501, screen detection, CLI report, Command Code compat.
 - **attention** means the state machine that decides when the user is alerted, and how strongly.
 - **conversation** means the append-only JSONL transcript of one pane's agent chat.
-- **embedded backend** means the in-process rpi agent runtime (`agent/` subtree) that powers native agent chat.
+- **embedded backend** means the in-process shob agent runtime (`agent/` subtree) that powers native agent chat.
 - **provider** means a model provider (Anthropic, OpenAI, Gemini, Antigravity, Bedrock, Vertex, Ollama, ...) in the native catalog.
 - **scrollback** means the saved terminal output for a pane (`sessions/<pane-uid>.txt`).
 - **Shob home** means the platform data directory (`~/.local/share/shob` on Linux by default). Runtime state lives below it.
@@ -71,7 +71,7 @@ The most common defect in this repo is a change that works on the path you teste
 - **Integrations.** Claude Code, Codex, Pi, OMP, OpenCode, and Command Code each have an integration surface (`shob integration setup|status|doctor|remove`). Agent-shaped features need a decision per integration, even if the decision is "not supported here".
 - **Attention surfaces.** A state change reaches the sidebar badge, sounds, toasts, and sub-agent grouping. A new state needs a decision for each — and for `SHOB_NO_SOUND=1`.
 - **Themes.** Light, dark, and system appearance all exist, plus user overrides in `theme_colors`. A hardcoded color in a view is a bug unless the token does not exist yet.
-- **Backends.** The embedded backend is the default; the legacy subprocess bridge survives behind `SHOB_RPI_BACKEND=rpc`. Agent-bridge changes must not silently break the fallback.
+- **Backends.** The embedded backend is the default; the legacy subprocess bridge survives behind `SHOB_AGENT_BACKEND=rpc`. Agent-bridge changes must not silently break the fallback.
 - **Persistence.** Anything touching pane, tab, project, or conversation state must round-trip through restore, respect the v2 `workspace.json` shape and generation guard, and keep the v1 migration path working. Reverse states count too: setup needs remove, latch needs clear-on-view, approval needs deny.
 - **Docs.** Check whether the change makes `README.md` or `ARCHITECTURE.md` inaccurate. Apply the [documentation rules](#documentation) before adding anything.
 
@@ -128,7 +128,7 @@ Most code changes do not need a documentation change. Agents can read the code.
 
 ## How it works
 
-Each pane owns a PTY (`portable-pty`). Output streams through a 1 ms coalescer into alacritty's VTE parser and lands in the cell grid, capped at 128 KiB per frame; GPUI paints glyphs from the grid with embedded fonts. Agent state arrives from the five status sources into the status bus, which validates the pane generation and dispatches to the attention state machine; the machine computes priority and visibility, latches unviewed completions, and drives badges, sounds, and toasts. Agent chat opens an embedded rpi session in-process — model/credential resolution from the frozen provider catalog, built-in tools, durable JSONL sessions — streaming typed events into bounded queues that GPUI drains per pane. Persistence is debounced (300 ms) atomic writes: `workspace.json` for structure, `sessions/` for scrollback, `conversations/` for transcripts, `settings.json` (JSONC) for appearance and toggles.
+Each pane owns a PTY (`portable-pty`). Output streams through a 1 ms coalescer into alacritty's VTE parser and lands in the cell grid, capped at 128 KiB per frame; GPUI paints glyphs from the grid with embedded fonts. Agent state arrives from the five status sources into the status bus, which validates the pane generation and dispatches to the attention state machine; the machine computes priority and visibility, latches unviewed completions, and drives badges, sounds, and toasts. Agent chat opens an embedded shob session in-process — model/credential resolution from the frozen provider catalog, built-in tools, durable JSONL sessions — streaming typed events into bounded queues that GPUI drains per pane. Persistence is debounced (300 ms) atomic writes: `workspace.json` for structure, `sessions/` for scrollback, `conversations/` for transcripts, `settings.json` (JSONC) for appearance and toggles.
 
 Architecture and its constraints: [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -137,7 +137,7 @@ Architecture and its constraints: [ARCHITECTURE.md](ARCHITECTURE.md).
 - `src/` — the main application crate.
   - `attention.rs`, `status.rs`, `status_bus.rs` — attention state machine, status schemas, socket IPC.
   - `integrations.rs`, `agent_rules.rs`, `shob_compat.rs` — agent hook setup and compatibility.
-  - `agent_bridge.rs`, `agent_bridge_rpc.rs`, `agent_auth.rs`, `rpi_storage.rs` — embedded backend host, legacy RPC bridge, auth, session storage.
+  - `agent_bridge.rs`, `agent_bridge_rpc.rs`, `agent_auth.rs`, `shob_storage.rs` — embedded backend host, legacy RPC bridge, auth, session storage.
   - `agent_ui/` — agent chat view, composer, interaction.
   - `workspace_state.rs`, `conversations.rs`, `settings.rs`, `paths.rs` — persistence and platform paths.
   - `file_preview.rs`, `project_diff.rs`, `file_icons.rs` — changes/diff and preview panes.
@@ -165,5 +165,5 @@ Architecture and its constraints: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Additional tips
 
-- Environment variables are the configuration surface for development and debugging (`SHOB_DATA_DIR`, `SHOB_DISABLE_RESTORE`, `SHOB_STREAM_TIMINGS`, `SHOB_DIAGNOSTICS`, `SHOB_NO_SOUND`, `SHOB_RPI_BACKEND`, `SHOB_AGENT_BROWSER_BIN`). When you add one, follow the naming pattern and document it in the README section it belongs to.
+- Environment variables are the configuration surface for development and debugging (`SHOB_DATA_DIR`, `SHOB_DISABLE_RESTORE`, `SHOB_STREAM_TIMINGS`, `SHOB_DIAGNOSTICS`, `SHOB_NO_SOUND`, `SHOB_AGENT_BACKEND`, `SHOB_AGENT_BROWSER_BIN`). When you add one, follow the naming pattern and document it in the README section it belongs to.
 - Security matters, but should not be over-indexed on for dev-only diagnostics paths. The status socket's authentication is not one of those paths — it is a real boundary.

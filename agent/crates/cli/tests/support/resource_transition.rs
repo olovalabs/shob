@@ -149,7 +149,7 @@ async fn transition_skill_preflight_and_committed_retry_precede_registration_and
         let initial = host.state().await;
         host.stop().await;
         let path = if source == "package" {
-            root.join(".rpi/packages/probe/skills/review/SKILL.md")
+            root.join(".shob/packages/probe/skills/review/SKILL.md")
         } else {
             root.join("skills/review/SKILL.md")
         };
@@ -158,7 +158,7 @@ async fn transition_skill_preflight_and_committed_retry_precede_registration_and
         if source == "package" {
             target["main_package"] = json!({"name":"probe"});
             put(
-                root.join(".rpi/packages.json"),
+                root.join(".shob/packages.json"),
                 json!({"packages":[{
                     "name":"probe","version":"1","source":"fixture",
                     "cargo_package":"none","artifacts":[]
@@ -294,14 +294,14 @@ async fn transition_conflicts_invalid_targets_and_concurrent_writers_are_read_on
     )
     .await;
     for key in [
-        "rpi.resource-selection.v1",
-        "rpi.resource-selection.operations",
-        "rpi.resource-inventory.v2",
+        "shob.resource-selection.v1",
+        "shob.resource-selection.operations",
+        "shob.resource-inventory.v2",
     ] {
         assert_eq!(
             host.request(
                 "append_entry",
-                json!({"customType":"rpi.value","data":{"key":key,"value":null}})
+                json!({"customType":"shob.value","data":{"key":key,"value":null}})
             )
             .await["success"],
             false
@@ -388,7 +388,7 @@ async fn pure_capability_negotiation_never_starts_resources_or_reads_credentials
     let fixture = Fixture::build().await;
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
-    for base in [root.join(".rpi"), root.join("agent")] {
+    for base in [root.join(".shob"), root.join("agent")] {
         put(base.join("packages.json"), "{malformed registry");
         put(base.join("resource-receipts.json"), "{malformed receipts");
         put(base.join("resource-transaction.json"), "{malformed journal");
@@ -472,13 +472,13 @@ async fn pure_capability_negotiation_never_starts_resources_or_reads_credentials
         ],
         vec!["--resource-capabilities=invalid"],
     ] {
-        let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_rpi"))
+        let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_shob"))
             .current_dir(root)
-            .env("RPI_CODING_AGENT_DIR", root.join("agent"))
-            .env("RPI_CODING_AGENT_SESSION_DIR", root.join("sessions"))
-            .env("RPI_EXTENSIONS_DIR", root.join(".rpi/extensions"))
+            .env("SHOB_CODING_AGENT_DIR", root.join("agent"))
+            .env("SHOB_CODING_AGENT_SESSION_DIR", root.join("sessions"))
+            .env("SHOB_EXTENSIONS_DIR", root.join(".shob/extensions"))
             .env(
-                "RPI_PLUGIN_STUB_REGISTRATION_LOG",
+                "SHOB_PLUGIN_STUB_REGISTRATION_LOG",
                 root.join("registrations.log"),
             )
             .args(&args)

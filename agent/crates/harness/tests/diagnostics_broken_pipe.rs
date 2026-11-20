@@ -10,11 +10,11 @@ use std::{
 };
 use tools::{FileSystem, OsExecutionEnv};
 
-const CHILD_ENV: &str = "RPI_DIAGNOSTICS_BROKEN_PIPE_CHILD";
-const HISTORY_ENV: &str = "RPI_DIAGNOSTICS_BROKEN_PIPE_HISTORY";
-const HOME_ENV: &str = "RPI_DIAGNOSTICS_BROKEN_PIPE_HOME";
-const READY_ENV: &str = "RPI_DIAGNOSTICS_BROKEN_PIPE_READY";
-const GO_ENV: &str = "RPI_DIAGNOSTICS_BROKEN_PIPE_GO";
+const CHILD_ENV: &str = "SHOB_DIAGNOSTICS_BROKEN_PIPE_CHILD";
+const HISTORY_ENV: &str = "SHOB_DIAGNOSTICS_BROKEN_PIPE_HISTORY";
+const HOME_ENV: &str = "SHOB_DIAGNOSTICS_BROKEN_PIPE_HOME";
+const READY_ENV: &str = "SHOB_DIAGNOSTICS_BROKEN_PIPE_READY";
+const GO_ENV: &str = "SHOB_DIAGNOSTICS_BROKEN_PIPE_GO";
 
 struct OwnedChild(Child);
 
@@ -67,7 +67,7 @@ fn broken_stderr_does_not_change_streaming_load_result() {
         Command::new(env::current_exe().unwrap())
             .args(["--exact", "child_load_with_broken_stderr", "--nocapture"])
             .env(CHILD_ENV, "1")
-            .env("RPI_SESSION_DIAGNOSTICS", "1")
+            .env("SHOB_SESSION_DIAGNOSTICS", "1")
             .env(HISTORY_ENV, &history)
             .env(HOME_ENV, &home)
             .env(READY_ENV, &ready)

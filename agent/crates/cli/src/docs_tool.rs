@@ -1,7 +1,7 @@
-//! Built-in `docs` tool for looking up rpi usage documentation.
+//! Built-in `docs` tool for looking up shob usage documentation.
 //!
 //! Pi ships its coding-agent documentation with the CLI and lets the model
-//! reach it through the normal read/documentation flow. rpi keeps the same
+//! reach it through the normal read/documentation flow. shob keeps the same
 //! model-facing behavior with a small, read-only topic index. The selected
 //! Markdown pages are embedded at compile time so an installed binary does
 //! not depend on the source checkout being present.
@@ -30,25 +30,25 @@ struct DocPage {
 static DOCS: &[DocPage] = &[
     DocPage {
         topic: "authoring",
-        description: "Rust cdylib 扩展开发最佳实践：统一 C ABI 入口、工具生命周期、事件处理器、资源发现、rpi dev 开发、rpi-extcore 复用边界与发布检查清单",
+        description: "Rust cdylib 扩展开发最佳实践：统一 C ABI 入口、工具生命周期、事件处理器、资源发现、shob dev 开发、shob-extcore 复用边界与发布检查清单",
         content: include_str!("../embedded-docs/extension-authoring.md"),
         aliases: &["package-authoring", "extension-authoring", "create-package", "create-extension"],
     },
     DocPage {
         topic: "guide",
-        description: "完整使用手册：安装、模型、CLI、.rpi 资源、Rust 扩展、SDK、排错和发布",
+        description: "完整使用手册：安装、模型、CLI、.shob 资源、Rust 扩展、SDK、排错和发布",
         content: include_str!("../embedded-docs/user-guide.md"),
         aliases: &["manual", "user-guide", "cli", "quickstart", "package", "packages", "extension", "extensions"],
     },
     DocPage {
         topic: "overview",
-        description: "rpi installation, built-in tools, configuration, extensions, and release basics",
+        description: "shob installation, built-in tools, configuration, extensions, and release basics",
         content: include_str!("../embedded-docs/README.md"),
         aliases: &["readme", "getting-started", "start", "usage"],
     },
     DocPage {
         topic: "agent",
-        description: "用 rpi SDK 创建自己的 Agent 项目的默认结构与规范：目录布局、内嵌 Agent、cdylib 适配、工具单一登记点、prompts/skills、配置与开发循环",
+        description: "用 shob SDK 创建自己的 Agent 项目的默认结构与规范：目录布局、内嵌 Agent、cdylib 适配、工具单一登记点、prompts/skills、配置与开发循环",
         content: include_str!("../embedded-docs/agent-project.md"),
         aliases: &[
             "agent-project",
@@ -60,13 +60,13 @@ static DOCS: &[DocPage] = &[
     },
     DocPage {
         topic: "architecture",
-        description: "rpi crate layering, agent loop, provider, harness, sessions, and extension boundaries",
+        description: "shob crate layering, agent loop, provider, harness, sessions, and extension boundaries",
         content: include_str!("../embedded-docs/architecture.md"),
         aliases: &["design", "crates", "sdk"],
     },
     DocPage {
         topic: "debugging",
-        description: "Rust cdylib 扩展编写（统一 C ABI、工具生命周期、事件处理器）与 agent/扩展调试（事件日志、rpi dev-local、常见失败定位）",
+        description: "Rust cdylib 扩展编写（统一 C ABI、工具生命周期、事件处理器）与 agent/扩展调试（事件日志、shob dev-local、常见失败定位）",
         content: include_str!("../embedded-docs/rust-debugging.md"),
         aliases: &["rust", "rust-debug", "extension-debug", "troubleshoot", "debug"],
     },
@@ -92,7 +92,7 @@ impl DocsTool {
         Self {
             schema: Tool {
                 name: "docs".to_string(),
-                description: "Look up rpi usage documentation. Omit topic (or use topic=list) to list topics; pass a topic such as guide, authoring, agent, debugging, architecture, or overview. Add query to find relevant sections. Use this before guessing rpi commands, creating an agent project or extension, extension APIs, or .rpi configuration.".to_string(),
+                description: "Look up shob usage documentation. Omit topic (or use topic=list) to list topics; pass a topic such as guide, authoring, agent, debugging, architecture, or overview. Add query to find relevant sections. Use this before guessing shob commands, creating an agent project or extension, extension APIs, or .shob configuration.".to_string(),
                 parameters: ai::types::Schema::new(
                     serde_json::to_value(params).unwrap_or_default(),
                 ),
@@ -149,7 +149,7 @@ impl AgentTool for DocsTool {
             })
             .ok_or_else(|| {
                 AgentError::Tool(format!(
-                    "Unknown rpi docs topic `{topic}`. Available topics: {}",
+                    "Unknown shob docs topic `{topic}`. Available topics: {}",
                     DOCS.iter()
                         .map(|page| page.topic)
                         .collect::<Vec<_>>()
@@ -167,14 +167,14 @@ impl AgentTool for DocsTool {
             None => truncate_result(page.content),
         };
         Ok(AgentToolResult::text(format!(
-            "# rpi docs: {}\n\n{}",
+            "# shob docs: {}\n\n{}",
             page.topic, body
         )))
     }
 }
 
 fn format_catalog() -> String {
-    let mut out = String::from("Available rpi documentation topics:\n");
+    let mut out = String::from("Available shob documentation topics:\n");
     for page in DOCS {
         out.push_str(&format!("- {}: {}\n", page.topic, page.description));
     }
@@ -201,7 +201,7 @@ fn query_terms(query: &str) -> Vec<String> {
 
 /// A line matches when **every** term appears in it. AND is deliberate: a
 /// multi-word query is a narrowing request, and OR would flood the result with
-/// lines that contain only `rpi` or only `config`.
+/// lines that contain only `shob` or only `config`.
 fn line_matches(line: &str, terms: &[String]) -> bool {
     let lower = line.to_lowercase();
     terms.iter().all(|term| lower.contains(term))
@@ -318,8 +318,8 @@ mod tests {
 
     #[tokio::test]
     async fn returns_rust_debugging_guide() {
-        let output = execute(serde_json::json!({"topic": "debugging", "query": "rpi dev"})).await;
-        assert!(output.contains("rpi dev"));
+        let output = execute(serde_json::json!({"topic": "debugging", "query": "shob dev"})).await;
+        assert!(output.contains("shob dev"));
         assert!(output.contains("cdylib"));
     }
 
@@ -327,10 +327,10 @@ mod tests {
     async fn returns_runtime_diagnostics_guide() {
         let output = execute(serde_json::json!({
             "topic": "debugging",
-            "query": "RPI_FRAME_DIAGNOSTICS"
+            "query": "SHOB_FRAME_DIAGNOSTICS"
         }))
         .await;
-        assert!(output.contains("RPI_FRAME_DIAGNOSTICS"));
+        assert!(output.contains("SHOB_FRAME_DIAGNOSTICS"));
         assert!(output.contains("frame writer"));
     }
 
@@ -338,10 +338,10 @@ mod tests {
     async fn returns_runtime_diagnostics_from_overview() {
         let output = execute(serde_json::json!({
             "topic": "overview",
-            "query": "RPI_AGENT_DIAGNOSTICS"
+            "query": "SHOB_AGENT_DIAGNOSTICS"
         }))
         .await;
-        assert!(output.contains("RPI_AGENT_DIAGNOSTICS"));
+        assert!(output.contains("SHOB_AGENT_DIAGNOSTICS"));
         assert!(output.contains("latencies"));
     }
 
@@ -354,10 +354,10 @@ mod tests {
 
     #[tokio::test]
     async fn returns_extension_authoring_practices() {
-        let output = execute(serde_json::json!({"topic": "authoring", "query": "rpi dev"})).await;
-        assert!(output.contains("rpi dev"));
+        let output = execute(serde_json::json!({"topic": "authoring", "query": "shob dev"})).await;
+        assert!(output.contains("shob dev"));
 
-        // The cdylib build contract is a separate section from the `rpi`
+        // The cdylib build contract is a separate section from the `shob`
         // dev workflow text, so query for it directly rather than relying
         // on both terms co-occurring in one excerpt window.
         let cdylib = execute(serde_json::json!({"topic": "authoring", "query": "cdylib"})).await;
@@ -368,10 +368,10 @@ mod tests {
     async fn returns_extcore_reuse_guidance() {
         let output = execute(serde_json::json!({
             "topic": "authoring",
-            "query": "rpi-extcore"
+            "query": "shob-extcore"
         }))
         .await;
-        assert!(output.contains("rpi-extcore"));
+        assert!(output.contains("shob-extcore"));
         assert!(output.contains("plugin-sdk"));
     }
 
@@ -389,14 +389,14 @@ mod tests {
     #[tokio::test]
     async fn agent_aliases_resolve() {
         let output = execute(serde_json::json!({"topic": "create-agent"})).await;
-        assert!(output.contains("rpi Agent 项目结构创建指南"));
+        assert!(output.contains("shob Agent 项目结构创建指南"));
     }
 
     #[tokio::test]
     async fn package_and_extension_aliases_resolve() {
         for topic in ["package", "packages", "extension", "extensions", "PACKAGES"] {
             let output = execute(serde_json::json!({"topic": topic, "query": "packages"})).await;
-            assert!(output.starts_with("# rpi docs: guide"));
+            assert!(output.starts_with("# shob docs: guide"));
             assert!(output.contains("Matches for"));
         }
     }
@@ -413,7 +413,7 @@ mod tests {
             .await
             .unwrap_err()
             .to_string();
-        assert!(error.contains("Unknown rpi docs topic"));
+        assert!(error.contains("Unknown shob docs topic"));
     }
 
     /// The audit recorded 32 `No matches` responses out of 51 `docs` calls.
@@ -422,8 +422,8 @@ mod tests {
     #[test]
     fn review_issue14_compound_queries_are_tokenized() {
         let cases = [
-            "rpi dev 开发 循环",
-            "extension APIs .rpi configuration",
+            "shob dev 开发 循环",
+            "extension APIs .shob configuration",
             "models.json provider config",
             "session resume 分页",
             "RUSTFLAGS -D warnings cargo check",
@@ -462,20 +462,20 @@ mod tests {
     /// answered from that other topic, with the substituted topic named.
     #[tokio::test]
     async fn review_issue14_no_match_falls_back_to_another_topic() {
-        // `RPI_FRAME_DIAGNOSTICS` lives in the debugging page; searching for it
+        // `SHOB_FRAME_DIAGNOSTICS` lives in the debugging page; searching for it
         // under `agent` used to return a bare `No matches`.
         let output = execute(serde_json::json!({
             "topic": "agent",
-            "query": "RPI_FRAME_DIAGNOSTICS"
+            "query": "SHOB_FRAME_DIAGNOSTICS"
         }))
         .await;
         assert!(
-            output.contains("No matches for `RPI_FRAME_DIAGNOSTICS` in `agent`"),
+            output.contains("No matches for `SHOB_FRAME_DIAGNOSTICS` in `agent`"),
             "{output}"
         );
         assert!(output.contains("Found it in `"), "{output}");
         assert!(!output.contains("Found it in `agent`"), "{output}");
-        assert!(output.contains("RPI_FRAME_DIAGNOSTICS"), "{output}");
+        assert!(output.contains("SHOB_FRAME_DIAGNOSTICS"), "{output}");
     }
 
     /// A genuinely absent keyword must still say "No matches" and must not
@@ -492,12 +492,12 @@ mod tests {
     }
 
     /// Single-term and exact-phrase queries keep their previous behaviour: the
-    /// existing `rpi dev` / `cdylib` lookups must not regress into AND-only
+    /// existing `shob dev` / `cdylib` lookups must not regress into AND-only
     /// misses.
     #[tokio::test]
     async fn review_issue14_existing_single_term_queries_still_hit() {
-        let output = execute(serde_json::json!({"topic": "debugging", "query": "rpi dev"})).await;
-        assert!(output.contains("Matches for `rpi dev`"), "{output}");
-        assert!(output.contains("rpi dev"), "{output}");
+        let output = execute(serde_json::json!({"topic": "debugging", "query": "shob dev"})).await;
+        assert!(output.contains("Matches for `shob dev`"), "{output}");
+        assert!(output.contains("shob dev"), "{output}");
     }
 }

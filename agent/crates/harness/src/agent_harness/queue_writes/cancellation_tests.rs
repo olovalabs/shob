@@ -58,7 +58,7 @@ async fn dropped_clear_queue_caller_keeps_atomic_owned_gate() {
 }
 
 async fn probe(abort: bool, active: bool) {
-    let dir = match std::env::var_os("RPI_NOTICE_TEST_ROOT") {
+    let dir = match std::env::var_os("SHOB_NOTICE_TEST_ROOT") {
         Some(root) => tempfile::tempdir_in(root).unwrap(),
         None => tempfile::tempdir().unwrap(),
     };

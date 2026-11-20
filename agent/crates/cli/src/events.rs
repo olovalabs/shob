@@ -1,17 +1,17 @@
-//! `rpi events …` — inspect the extension event journal (P3).
+//! `shob events …` — inspect the extension event journal (P3).
 //!
-//! The journal is written only when `RPI_EVENT_LOG=1` is set (see
+//! The journal is written only when `SHOB_EVENT_LOG=1` is set (see
 //! [`extensions::event_log`]). This subcommand reads the same file:
 //!
-//! - `rpi events path` — print the resolved log path.
-//! - `rpi events tail` — print the log and follow new entries (Ctrl+C to stop).
+//! - `shob events path` — print the resolved log path.
+//! - `shob events tail` — print the log and follow new entries (Ctrl+C to stop).
 
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::time::Duration;
 
 use crate::app::{EXIT_RUNTIME, EXIT_USAGE};
 
-/// Dispatch `rpi events <subcommand>`.
+/// Dispatch `shob events <subcommand>`.
 pub async fn run(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         Some("tail") => tail().await,
@@ -21,7 +21,7 @@ pub async fn run(args: &[String]) -> i32 {
                 0
             }
             None => {
-                eprintln!("error: could not resolve the event log path (set RPI_EVENT_LOG_PATH)");
+                eprintln!("error: could not resolve the event log path (set SHOB_EVENT_LOG_PATH)");
                 EXIT_RUNTIME
             }
         },
@@ -44,7 +44,7 @@ fn print_help() {
     println!("  path    Print the event log path (JSONL)");
     println!("  tail    Print the log and follow new entries (Ctrl+C to stop)");
     println!();
-    println!("The journal is written only when RPI_EVENT_LOG=1 is set at run time.");
+    println!("The journal is written only when SHOB_EVENT_LOG=1 is set at run time.");
 }
 
 /// Follow the event log, printing complete lines as they appear. Never returns
@@ -52,7 +52,7 @@ fn print_help() {
 /// tick rather than emitted split.
 async fn tail() -> i32 {
     let Some(path) = extensions::event_log_path() else {
-        eprintln!("error: could not resolve the event log path (set RPI_EVENT_LOG_PATH)");
+        eprintln!("error: could not resolve the event log path (set SHOB_EVENT_LOG_PATH)");
         return EXIT_RUNTIME;
     };
     eprintln!("tailing {} — Ctrl+C to stop", path.display());

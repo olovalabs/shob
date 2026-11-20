@@ -92,7 +92,7 @@ async fn independent_connections_use_fresh_projection_and_sql_transaction_fences
     let (dir, storage) = fixture().await;
     let path = dir
         .path()
-        .join(format!("{}.rpinative", storage.metadata.id));
+        .join(format!("{}.shobnative", storage.metadata.id));
     let identity = storage.run(|s, _| Ok(s.identity.clone())).await.unwrap();
     let independent = ExperimentalNativeStorage::from_store(
         Store::open(&path, identity).unwrap(),

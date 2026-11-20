@@ -82,7 +82,8 @@ impl SavedPaneNode {
 #[serde(default)]
 pub struct SavedModelChat {
     pub model: Option<AgentModel>,
-    pub rpi_session_id: Option<String>,
+    #[serde(alias = "rpi_session_id")]
+    pub shob_session_id: Option<String>,
     pub conversation: String,
     /// Conversation name reported by the agent for this model.
     pub agent_title: Option<String>,
@@ -102,14 +103,15 @@ pub struct SavedChat {
     /// Provider that produced the first assistant text in this conversation.
     pub first_response_provider: Option<String>,
     /// True when `selected_model` is a deliberate choice, so `None` can mean
-    /// "Automatic (rpi)" instead of "never picked one".
+    /// "Automatic (shob)" instead of "never picked one".
     #[serde(default)]
     pub model_explicit: bool,
     /// Conversation name reported by the agent itself, when it generates one.
     pub agent_title: Option<String>,
     /// Name derived from the first prompt, shown until the agent reports one.
     pub prompt_title: Option<String>,
-    pub rpi_session_id: Option<String>,
+    #[serde(alias = "rpi_session_id")]
+    pub shob_session_id: Option<String>,
     pub conversation_key: Option<String>,
     #[serde(default)]
     pub workspace_override: Option<PathBuf>,
@@ -138,7 +140,7 @@ impl Default for SavedChat {
             model_explicit: false,
             agent_title: None,
             prompt_title: None,
-            rpi_session_id: None,
+            shob_session_id: None,
             conversation_key: None,
             workspace_override: None,
             models: Vec::new(),
@@ -610,7 +612,7 @@ pub struct PendingDeletion {
     pub session_uid: String,
     pub pane_uids: Vec<String>,
     #[serde(default)]
-    pub rpi_session_ids: Vec<String>,
+    pub shob_session_ids: Vec<String>,
 }
 
 fn safe_uid(uid: &str) -> bool {
@@ -644,7 +646,7 @@ pub fn record_deletion(deletion: &PendingDeletion) -> io::Result<PathBuf> {
 }
 
 pub fn finish_deletion(path: &Path, deletion: &PendingDeletion) -> io::Result<()> {
-    crate::rpi_storage::delete_sessions(&deletion.rpi_session_ids)?;
+    crate::shob_storage::delete_sessions(&deletion.shob_session_ids)?;
     for uid in &deletion.pane_uids {
         if !safe_uid(uid) {
             return Err(io::Error::new(
@@ -817,7 +819,7 @@ mod tests {
                     uid: "s-1".into(),
                     title: "agent".into(),
                     display_title: "agent".into(),
-                    logo: "rpi".into(),
+                    logo: "shob".into(),
                     maximized_pane_id: Some(5),
                     focused_pane: Some(4),
                     tree: SavedPaneNode::Split {
@@ -850,7 +852,7 @@ mod tests {
                                 model_explicit: true,
                                 agent_title: None,
                                 prompt_title: None,
-                                rpi_session_id: Some("session-1".into()),
+                                shob_session_id: Some("session-1".into()),
                                 conversation_key: None,
                                 workspace_override: None,
                                 models: vec![SavedModelChat {
@@ -859,7 +861,7 @@ mod tests {
                                         id: "deepseek/deepseek-v4-flash".into(),
                                         backend: crate::agent_auth::ModelBackend::Shob,
                                     }),
-                                    rpi_session_id: None,
+                                    shob_session_id: None,
                                     conversation: "omp_commandcode_deepseek_deepseek-v4-flash"
                                         .into(),
                                     agent_title: Some("🧠 DEEP: Wire the flash model".into()),
@@ -882,12 +884,24 @@ mod tests {
         let text = serde_json::to_string(&workspace).unwrap();
         let restored = load_from_text(&text);
         assert_eq!(restored, workspace);
+        let legacy = text.replace("shob_session_id", "rpi_session_id");
+        assert_eq!(load_from_text(&legacy), workspace);
+        let legacy_chat = serde_json::json!({
+            "rpi_session_id": "existing-session",
+            "selected_model": {"provider": "anthropic", "id": "model", "backend": "Rpi"}
+        });
+        let chat: SavedChat = serde_json::from_value(legacy_chat).unwrap();
+        assert_eq!(chat.shob_session_id.as_deref(), Some("existing-session"));
+        assert_eq!(
+            chat.selected_model.unwrap().backend,
+            crate::agent_auth::ModelBackend::Embedded
+        );
     }
 
     #[test]
     fn explicit_automatic_model_survives_a_round_trip() {
         // `None` alone is ambiguous: never-picked vs deliberately "Automatic
-        // (rpi)". The flag is what distinguishes them after a restart.
+        // (shob)". The flag is what distinguishes them after a restart.
         let workspace = SavedWorkspace {
             version: CURRENT_VERSION,
             active_project: Some(PathBuf::from("/tmp/one")),

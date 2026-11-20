@@ -36,13 +36,13 @@ fn copied_text_survives_copy_to_clipboard_returning() {
 }
 
 #[test]
-// Manual live-desktop harness, not a CI probe: with RPI_CLIP_LIVE_TEST=1 it
+// Manual live-desktop harness, not a CI probe: with SHOB_CLIP_LIVE_TEST=1 it
 // copies and then serves the selection for 20s so an OUT-OF-PROCESS reader
 // (e.g. `xclip -o -selection clipboard`) can verify persistence on a real
 // X11/Wayland session. Skipped everywhere else; the in-process read-back in
 // `copied_text_survives_copy_to_clipboard_returning` is the automated check.
 fn live_cross_process_serving_manual() {
-    if std::env::var("RPI_CLIP_LIVE_TEST").is_err() {
+    if std::env::var("SHOB_CLIP_LIVE_TEST").is_err() {
         return;
     }
     assert!(copy_to_clipboard("LIVE_X11_PROBE_OK"));

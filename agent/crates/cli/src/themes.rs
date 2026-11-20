@@ -151,8 +151,8 @@ pub fn apply_spec(spec: &ThemeSpec, session_manager: &ThemeManager) -> Result<()
 /// A registry of discovered custom theme files: display name → path.
 ///
 /// Built once per TUI session by scanning the resource theme dirs; names are
-/// file stems, first-wins on conflict (project `.rpi/themes` overrides the
-/// global `~/.rpi/agent/themes`). Parsing is lazy: the registry only lists
+/// file stems, first-wins on conflict (project `.shob/themes` overrides the
+/// global `~/.shob/agent/themes`). Parsing is lazy: the registry only lists
 /// files, and a theme is parsed when selected or applied, so a broken JSON
 /// file cannot break the other themes.
 #[derive(Debug, Clone, Default)]
@@ -392,8 +392,8 @@ mod tests {
 
     #[test]
     fn merge_discovered_fills_after_static_dirs() {
-        let root = std::env::temp_dir().join(format!("rpi-themes-ext-{}", std::process::id()));
-        let project = root.join("proj/.rpi/themes");
+        let root = std::env::temp_dir().join(format!("shob-themes-ext-{}", std::process::id()));
+        let project = root.join("proj/.shob/themes");
         write_theme(&project, "shared.json");
         let ext_a = root.join("pkgA/themes/shared.json");
         let ext_b = root.join("pkgB/themes/extra.json");
@@ -421,7 +421,7 @@ mod tests {
         // No active spec: nothing to do.
         assert!(reconcile_after_reload(None, &ThemeRegistry::default(), &manager).is_none());
         // An existing file theme stays.
-        let dir = std::env::temp_dir().join(format!("rpi-themes-recon-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("shob-themes-recon-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = temp_theme_file(&dir, "ocean.json", "#123456");
         assert!(reconcile_after_reload(
@@ -451,7 +451,7 @@ mod tests {
     fn restart_watcher_targets_files_only_and_swaps_handles() {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        let dir = std::env::temp_dir().join(format!("rpi-theme-watch-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("shob-theme-watch-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = temp_theme_file(&dir, "ocean.json", "#112233");
         let spec = path.to_string_lossy().to_string();
@@ -531,8 +531,8 @@ mod tests {
     // cwd-relative path.
     #[test]
     fn review_pr202_watcher_follows_registry_names() {
-        let root = std::env::temp_dir().join(format!("rpi-theme-watchreg-{}", std::process::id()));
-        let project = root.join("proj/.rpi/themes");
+        let root = std::env::temp_dir().join(format!("shob-theme-watchreg-{}", std::process::id()));
+        let project = root.join("proj/.shob/themes");
         std::fs::create_dir_all(&project).unwrap();
         let path = temp_theme_file(&project, "ocean.json", "#112233");
         let (registry, _) = ThemeRegistry::discover_from(None, Some(&project));
@@ -572,8 +572,8 @@ mod tests {
 
     #[test]
     fn registry_name_resolves_through_resolve_spec_in() {
-        let root = std::env::temp_dir().join(format!("rpi-themes-loop-{}", std::process::id()));
-        let project = root.join("proj/.rpi/themes");
+        let root = std::env::temp_dir().join(format!("shob-themes-loop-{}", std::process::id()));
+        let project = root.join("proj/.shob/themes");
         let path = write_theme(&project, "ocean.json");
         let (registry, _) = ThemeRegistry::discover_from(None, Some(&project));
 
@@ -613,7 +613,7 @@ mod tests {
     #[test]
     fn apply_and_persist_file_theme_message_uses_stem() {
         let manager = ThemeManager::new();
-        let dir = std::env::temp_dir().join(format!("rpi-theme-persist-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("shob-theme-persist-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = temp_theme_file(&dir, "ocean.json", "#112233");
         let spec = path.to_string_lossy().to_string();
@@ -651,8 +651,8 @@ mod tests {
             ThemeSpec::File(ref p) if p == &PathBuf::from("themes/ocean.json")
         ));
         assert!(matches!(
-            resolve_spec("~/.rpi/agent/themes/ocean.json"),
-            ThemeSpec::File(ref p) if *p == expand_home("~/.rpi/agent/themes/ocean.json")
+            resolve_spec("~/.shob/agent/themes/ocean.json"),
+            ThemeSpec::File(ref p) if *p == expand_home("~/.shob/agent/themes/ocean.json")
         ));
     }
 
@@ -669,7 +669,7 @@ mod tests {
 
     #[test]
     fn load_file_theme_end_to_end() {
-        let dir = std::env::temp_dir().join(format!("rpi-theme-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("shob-theme-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = temp_theme_file(&dir, "ocean.json", "#3366ff");
         let loaded = LoadedTheme::load(&path).unwrap();
@@ -688,7 +688,7 @@ mod tests {
 
     #[test]
     fn load_failure_message_contains_path_and_reason() {
-        let dir = std::env::temp_dir().join(format!("rpi-theme-bad-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("shob-theme-bad-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("broken.json");
         std::fs::write(&path, r#"{"name":"broken","colors":{"accent":"nope"}}"#).unwrap();
@@ -715,7 +715,7 @@ mod tests {
         ));
 
         // File spec applies the parsed colors.
-        let dir = std::env::temp_dir().join(format!("rpi-theme-apply-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("shob-theme-apply-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = temp_theme_file(&dir, "ocean.json", "#ff0000");
         apply_spec(&ThemeSpec::File(path.clone()), &manager).unwrap();
@@ -749,7 +749,7 @@ mod tests {
 
     #[test]
     fn discover_scans_global_and_project_dirs() {
-        let root = std::env::temp_dir().join(format!("rpi-themes-disc-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("shob-themes-disc-{}", std::process::id()));
         let global = root.join("global/themes");
         std::fs::create_dir_all(&global).unwrap();
         write_theme(&global, "ocean.json");
@@ -769,9 +769,9 @@ mod tests {
 
     #[test]
     fn project_theme_overrides_global_same_name() {
-        let root = std::env::temp_dir().join(format!("rpi-themes-ovr-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("shob-themes-ovr-{}", std::process::id()));
         let global = root.join("global/themes");
-        let project = root.join("proj/.rpi/themes");
+        let project = root.join("proj/.shob/themes");
         std::fs::create_dir_all(&global).unwrap();
         write_theme(&global, "ocean.json");
         write_theme(&project, "ocean.json");
@@ -785,9 +785,9 @@ mod tests {
 
     #[test]
     fn untrusted_project_dir_is_skipped() {
-        let root = std::env::temp_dir().join(format!("rpi-themes-untrust-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("shob-themes-untrust-{}", std::process::id()));
         let cwd = root.join("proj");
-        let project = cwd.join(".rpi/themes");
+        let project = cwd.join(".shob/themes");
         write_theme(&project, "evil.json");
 
         // Untrusted: the project dir is never scanned, so evil.json cannot
@@ -803,9 +803,9 @@ mod tests {
 
     #[test]
     fn missing_dirs_are_silent_bad_dir_is_a_diagnostic() {
-        let root = std::env::temp_dir().join(format!("rpi-themes-miss-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("shob-themes-miss-{}", std::process::id()));
         let (registry, diagnostics) =
-            ThemeRegistry::discover_from(None, Some(&root.join("proj/.rpi/themes")));
+            ThemeRegistry::discover_from(None, Some(&root.join("proj/.shob/themes")));
         assert!(registry.is_empty());
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
 
@@ -829,7 +829,7 @@ mod tests {
         // parallel test suite (sibling tests share the process-wide manager),
         // so this only pins that loading produces the parsed colors; by
         // construction `LoadedTheme::load` touches no manager.
-        let dir = std::env::temp_dir().join(format!("rpi-theme-prev-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("shob-theme-prev-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = temp_theme_file(&dir, "solo.json", "#00ff00");
         let loaded = LoadedTheme::load(&path).unwrap();
@@ -844,8 +844,8 @@ mod tests {
     // relative path) must survive a restart once the registry is in scope.
     #[test]
     fn review_pr200_startup_saved_registry_name_round_trips() {
-        let root = std::env::temp_dir().join(format!("rpi-theme-start-{}", std::process::id()));
-        let project = root.join("proj/.rpi/themes");
+        let root = std::env::temp_dir().join(format!("shob-theme-start-{}", std::process::id()));
+        let project = root.join("proj/.shob/themes");
         std::fs::create_dir_all(&project).unwrap();
         let path = temp_theme_file(&project, "ocean.json", "#112233");
         let (registry, _) = ThemeRegistry::discover_from(None, Some(&project));
@@ -871,8 +871,8 @@ mod tests {
     // lookup (case-sensitive stems) while presets stay case-folded.
     #[test]
     fn review_pr200_command_theme_preserves_custom_case() {
-        let root = std::env::temp_dir().join(format!("rpi-theme-case-{}", std::process::id()));
-        let project = root.join("proj/.rpi/themes");
+        let root = std::env::temp_dir().join(format!("shob-theme-case-{}", std::process::id()));
+        let project = root.join("proj/.shob/themes");
         write_theme(&project, "Ocean.json");
         let (registry, _) = ThemeRegistry::discover_from(None, Some(&project));
 

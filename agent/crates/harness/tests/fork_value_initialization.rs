@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tools::env::FileContent;
 use tools::{FileSystem, OsExecutionEnv};
 
-const BINDING: &str = "rpi.resource-selection.v1";
+const BINDING: &str = "shob.resource-selection.v1";
 
 fn options(id: &str, cwd: &str) -> JsonlSessionCreateOptions {
     JsonlSessionCreateOptions {
@@ -33,7 +33,7 @@ fn value(id: &str, key: &str, value: Value) -> ProvisionedEntry {
     ProvisionedEntry {
         id: id.into(),
         kind: ProvisionedKind::Custom {
-            custom_type: "rpi.value".into(),
+            custom_type: "shob.value".into(),
             data: Some(json!({"key": key, "value": value})),
         },
     }
@@ -167,7 +167,7 @@ async fn cold_fork_stages_validated_initial_binding_after_every_cut_including_tr
         let Entry::Custom(binding) = appended else {
             panic!("initialization must be a custom value")
         };
-        assert_eq!(binding.custom_type, "rpi.value");
+        assert_eq!(binding.custom_type, "shob.value");
         assert_eq!(
             binding.data,
             Some(json!({"key": BINDING, "value": initial}))

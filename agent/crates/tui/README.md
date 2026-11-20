@@ -3,11 +3,11 @@
 [![crates.io](https://img.shields.io/crates/v/rpi-tui.svg)](https://crates.io/crates/rpi-tui)
 [![docs.rs](https://docs.rs/rpi-tui/badge.svg)](https://docs.rs/rpi-tui)
 
-The terminal UI primitives behind the `rpi` interactive agent: a component
+The terminal UI primitives behind the `shob` interactive agent: a component
 model, layout containers, an editor, transcript rendering, and both fullscreen
 and main-screen terminal modes.
 
-This is the rendering layer, not an extension point. Agents extend `rpi` by
+This is the rendering layer, not an extension point. Agents extend `shob` by
 registering tools and event handlers (see
 [`plugin-sdk`](https://crates.io/crates/rpi-plugin-sdk)), and the CLI decides
 how to draw them.

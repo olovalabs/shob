@@ -2557,7 +2557,7 @@ l12",
         }
     }
 
-    /// Regression: a host terminal can rewrite Shift+Enter before rpi ever sees
+    /// Regression: a host terminal can rewrite Shift+Enter before shob ever sees
     /// it. Windows Terminal's `sendInput "\n"` binding emits a bare LF, which
     /// ConPTY delivers as `Enter + CONTROL` — the same record a real Ctrl+Enter
     /// produces. #108's guard only covers `Enter` with empty modifiers, so this

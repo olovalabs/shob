@@ -39,7 +39,7 @@ async fn selected_root_survives_build_runtime_actions_and_both_reload_host_paths
         };
         std::fs::write(&settings_path, settings.to_string()).unwrap();
         std::env::set_var(
-            "RPI_CODING_AGENT_SESSION_DIR",
+            "SHOB_CODING_AGENT_SESSION_DIR",
             if mode == "environment" {
                 &root
             } else {
@@ -70,7 +70,7 @@ async fn selected_root_survives_build_runtime_actions_and_both_reload_host_paths
         // Extension discovery must not make later session setup re-resolve the
         // root from changed settings or process environment.
         let changed_root = temporary.path().join(format!("{mode} changed sessions"));
-        std::env::set_var("RPI_CODING_AGENT_SESSION_DIR", &changed_root);
+        std::env::set_var("SHOB_CODING_AGENT_SESSION_DIR", &changed_root);
         std::fs::write(
             &settings_path,
             serde_json::json!({"sessionDir": changed_root}).to_string(),
@@ -151,7 +151,7 @@ async fn selected_root_survives_build_runtime_actions_and_both_reload_host_paths
             !changed_root.exists(),
             "{mode}: runtime must not drift to the changed root"
         );
-        assert!(!cwd.join(".rpi/sessions").exists());
+        assert!(!cwd.join(".shob/sessions").exists());
     }
 }
 

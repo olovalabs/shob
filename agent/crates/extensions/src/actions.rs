@@ -12,7 +12,7 @@
 //!
 //! Synchronous tool callbacks inherit a host-owned invocation via a scoped
 //! thread-local; workers forward the invocation handle and capability injected
-//! into `__rpi`. ChildAgent rejects registration-only, cancelled and child
+//! into `__shob`. ChildAgent rejects registration-only, cancelled and child
 //! invocations. A cached registration cannot override a child's driver scope.
 //!
 //! [`ActionBridge`] captures a Tokio [`Handle`] at construction. Dispatch can
@@ -590,7 +590,7 @@ pub trait RuntimeActionHost: Send + Sync {
         _args: serde_json::Value,
         _sink: SideQuestionSink,
     ) -> Result<serde_json::Value, String> {
-        Err("SideQuestion is not supported by this host; upgrade rpi".into())
+        Err("SideQuestion is not supported by this host; upgrade shob".into())
     }
 
     /// Refresh the host-side model selector after provider packages reload.
@@ -1541,7 +1541,7 @@ fn run_action(
 
     let runtime_key = args
         .as_object_mut()
-        .and_then(|args| args.remove("__rpiRuntimeKey"));
+        .and_then(|args| args.remove("__shobRuntimeKey"));
 
     // Drive the host's async dispatch on the bridge's runtime. STD mpsc so the
     // plugin thread can recv from any thread (no ambient runtime). sync_channel
@@ -1886,7 +1886,7 @@ mod tests {
 
     #[test]
     fn runtime_action_from_a_tokio_worker_does_not_block_its_dispatch() {
-        const CHILD: &str = "RPI_RUNTIME_ACTION_WORKER_REGRESSION_CHILD";
+        const CHILD: &str = "SHOB_RUNTIME_ACTION_WORKER_REGRESSION_CHILD";
         if std::env::var_os(CHILD).is_some() {
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(1)

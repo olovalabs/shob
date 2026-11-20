@@ -330,8 +330,8 @@ fn emit_agent_event(event: &AgentEvent) {
 /// Commands: `prompt`, `resume_pending`, and `compact` (drive the lane),
 /// `abort`, `get_state`, `set_model`,
 /// `set_thinking_level`, `set_active_tools`, `ping`, `stop`. `stop` (or stdin
-/// EOF) ends the loop. This is the process `rpi-server` spawns and that
-/// `rpi --connect` talks to. Mirrors TS `runRpcMode` / `modes/rpc`.
+/// EOF) ends the loop. This is the process `shob-server` spawns and that
+/// `shob --connect` talks to. Mirrors TS `runRpcMode` / `modes/rpc`.
 ///
 /// The extension `UiDialog` mailbox is bridged over the same channel: the host
 /// emits `{"type":"ui_dialog_request","requestId","toolCallId","ui"}`, and the
@@ -370,7 +370,7 @@ impl RpcPhaseTiming {
     fn start(enabled: bool, phase: &'static str) -> Self {
         let started = enabled.then(std::time::Instant::now);
         if enabled {
-            eprintln!("RPI_RPC_DIAGNOSTICS phase={phase} event=begin");
+            eprintln!("SHOB_RPC_DIAGNOSTICS phase={phase} event=begin");
         }
         Self { phase, started }
     }
@@ -378,7 +378,7 @@ impl RpcPhaseTiming {
     fn finish(self) {
         if let Some(started) = self.started {
             eprintln!(
-                "RPI_RPC_DIAGNOSTICS phase={} event=end elapsed_ns={}",
+                "SHOB_RPC_DIAGNOSTICS phase={} event=end elapsed_ns={}",
                 self.phase,
                 started.elapsed().as_nanos()
             );
@@ -401,7 +401,7 @@ where
     W: Write + Send + 'static,
 {
     let phase_diagnostics =
-        std::env::var_os("RPI_RPC_DIAGNOSTICS").is_some_and(|value| value != "0");
+        std::env::var_os("SHOB_RPC_DIAGNOSTICS").is_some_and(|value| value != "0");
     let setup_timing = RpcPhaseTiming::start(phase_diagnostics, "setup_to_ready_enqueue");
     let mut command_tasks: Vec<RetainedRpcTask<()>> = Vec::new();
     let lane: Arc<dyn AgentLane> = harness.lane("main");
@@ -586,7 +586,7 @@ where
             Ok(Some(line)) => line,
             Ok(None) => break, // EOF
             Err(error) => {
-                eprintln!("[rpi] rpc stdin error: {error}");
+                eprintln!("[shob] rpc stdin error: {error}");
                 run_cancel.cancel();
                 let _ = lane.abort().await;
                 external_tools.shutdown();
@@ -695,7 +695,7 @@ where
                     };
                     write_line(&stdout, &response).await;
                 } else if let Err(error) = result {
-                    eprintln!("[rpi] ui_dialog_response: {error}");
+                    eprintln!("[shob] ui_dialog_response: {error}");
                 }
                 continue;
             }
@@ -1048,7 +1048,7 @@ where
             }
         };
         if let Err(error) = result {
-            eprintln!("[rpi] rpc prompt task failed: {error}");
+            eprintln!("[shob] rpc prompt task failed: {error}");
             exit_code = 1;
         }
     }
@@ -1058,7 +1058,7 @@ where
     // receiver forward queued commits before the output writer is flushed.
     drop(commit_tx);
     if let Err(error) = commit_task.await {
-        eprintln!("[rpi] rpc commit event task failed: {error}");
+        eprintln!("[shob] rpc commit event task failed: {error}");
         exit_code = 1;
     }
     let _ = dialog_task.await;
@@ -1070,7 +1070,7 @@ where
     match writer_task.await {
         Ok(Ok(())) => {}
         error => {
-            eprintln!("[rpi] rpc output failed: {error:?}");
+            eprintln!("[shob] rpc output failed: {error:?}");
             exit_code = 1;
         }
     }
@@ -1124,7 +1124,7 @@ impl<T: Send + 'static> Drop for RetainedRpcTask<T> {
             }
             tokio::spawn(async move {
                 if let Err(error) = task.await {
-                    eprintln!("[rpi] cancelled RPC task cleanup failed: {error}");
+                    eprintln!("[shob] cancelled RPC task cleanup failed: {error}");
                 }
             });
         }
@@ -2861,12 +2861,12 @@ pub async fn interactive(
     )
     .await
     {
-        eprintln!("[rpi] startup vetoed by extension: {reason}");
+        eprintln!("[shob] startup vetoed by extension: {reason}");
         return crate::app::EXIT_VETOED;
     }
 
     // Check if TUI is supported
-    let force_tui = std::env::var("RPI_FORCE_TUI")
+    let force_tui = std::env::var("SHOB_FORCE_TUI")
         .map(|v| v == "1")
         .unwrap_or(false);
     let code = if force_tui || crate::interactive_tui::is_tui_supported() {
@@ -2905,7 +2905,7 @@ pub async fn interactive(
     .await
     {
         tracing::warn!(
-            "[rpi] extension vetoed SessionShutdown (ignored, session closing): {reason}"
+            "[shob] extension vetoed SessionShutdown (ignored, session closing): {reason}"
         );
     }
 
@@ -2927,7 +2927,7 @@ pub async fn interactive_repl(
 
     if is_tty {
         println!(
-            "rpi interactive (v1 minimal REPL). Type /exit to quit, /abort to cancel a run.\n"
+            "shob interactive (v1 minimal REPL). Type /exit to quit, /abort to cancel a run.\n"
         );
     }
 
@@ -3150,19 +3150,19 @@ mod tests {
         crate::extensions_actions::HarnessActionHost::set_harness(&cell, Arc::new(harness.clone()));
         let (_, session_id, leaf_id) = branch_snapshot(
             &harness,
-            &branch_entry_query(&serde_json::json!({"customTypes":["rpi.value"]})).unwrap(),
+            &branch_entry_query(&serde_json::json!({"customTypes":["shob.value"]})).unwrap(),
         )
         .await
         .unwrap();
         let guard = serde_json::json!({
             "sessionId": session_id, "leafId": leaf_id,
-            "customType": "rpi.value", "entryId": null
+            "customType": "shob.value", "entryId": null
         });
-        for key in ["rpi.resource-selection.v1", "rpi.resource-inventory.v1"] {
+        for key in ["shob.resource-selection.v1", "shob.resource-inventory.v1"] {
             for value in [serde_json::Value::Null, serde_json::json!({"forged":true})] {
                 for scoped in [false, true] {
                     let mut request = serde_json::json!({
-                        "customType":"rpi.value", "data":{"key":key,"value":value}
+                        "customType":"shob.value", "data":{"key":key,"value":value}
                     });
                     if scoped {
                         request["expected"] = guard.clone();
@@ -3180,7 +3180,7 @@ mod tests {
             }
         }
         let request = serde_json::json!({
-            "customType":"rpi.value", "data":{"key":"user.preference","value":1},
+            "customType":"shob.value", "data":{"key":"user.preference","value":1},
             "expected":guard
         });
         assert_eq!(host.append_entry(request).await.unwrap()["scoped"], true);
@@ -3206,13 +3206,13 @@ mod tests {
             .await
             .unwrap();
         let values = host
-            .get_session_branch(serde_json::json!({"customTypes":["rpi.value"]}))
+            .get_session_branch(serde_json::json!({"customTypes":["shob.value"]}))
             .await
             .unwrap();
-        for key in ["rpi.resource-selection.v1", "rpi.resource-inventory.v1"] {
+        for key in ["shob.resource-selection.v1", "shob.resource-inventory.v1"] {
             let forged = serde_json::json!({
-                "customType":"rpi.value", "data":{"key":key,"value":{}},
-                "expected":{"sessionId":values["sessionId"],"leafId":values["leafId"],"customType":"rpi.value","entryId":null}
+                "customType":"shob.value", "data":{"key":key,"value":{}},
+                "expected":{"sessionId":values["sessionId"],"leafId":values["leafId"],"customType":"shob.value","entryId":null}
             });
             assert!(host
                 .append_entry(forged.clone())

@@ -22,7 +22,7 @@ pub enum ScopedEntry {
     },
 }
 
-const OUTBOX: &str = "__rpiOutbox";
+const OUTBOX: &str = "__shobOutbox";
 
 fn notice_metadata(message: &AgentMessage) -> Option<&JsonValue> {
     match message {

@@ -90,7 +90,7 @@ impl AgentTool for Effect {
             .await
             .unwrap();
         let encoded = serde_json::to_value(entries).unwrap().to_string();
-        assert!(encoded.contains("rpi.tool_program.intent.v1"));
+        assert!(encoded.contains("shob.tool_program.intent.v1"));
         assert!(encoded.contains(id));
         self.count.fetch_add(1, Ordering::SeqCst);
         Ok(AgentToolResult::text("effect"))
@@ -346,8 +346,8 @@ impl SessionStorage for FaultStorage {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn custom_marker_storage_failures_cancel_run_without_retrying_effects() {
     for (marker, expected_effects) in [
-        ("rpi.tool_program.intent.v1", 0),
-        ("rpi.tool_program.finished.v1", 1),
+        ("shob.tool_program.intent.v1", 0),
+        ("shob.tool_program.finished.v1", 1),
     ] {
         let memory = AgentHarnessOptions::default().session;
         let session = Session::new(

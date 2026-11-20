@@ -33,10 +33,10 @@ pub const HTTP_IDLE_TIMEOUT_CHOICES: &[(&str, i64)] = &[
 pub const UNSUPPORTED_PROXY_PROTOCOL_MESSAGE: &str =
     "Unsupported proxy protocol. SOCKS and PAC proxy URLs are not supported; use an HTTP or HTTPS proxy URL.";
 
-/// The User-Agent rpi sends on provider requests (native `getPiUserAgent`).
+/// The User-Agent shob sends on provider requests (native `getPiUserAgent`).
 pub fn user_agent() -> String {
     format!(
-        "rpi/{} ({}; {})",
+        "shob/{} ({}; {})",
         env!("CARGO_PKG_VERSION"),
         std::env::consts::OS,
         std::env::consts::ARCH

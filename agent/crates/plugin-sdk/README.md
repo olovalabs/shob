@@ -3,11 +3,11 @@
 [![crates.io](https://img.shields.io/crates/v/rpi-plugin-sdk.svg)](https://crates.io/crates/rpi-plugin-sdk)
 [![docs.rs](https://docs.rs/rpi-plugin-sdk/badge.svg)](https://docs.rs/rpi-plugin-sdk)
 
-The stable `#[repr(C)]` ABI contract for rpi plugins. Depend on this crate, and
-nothing else, to build a Rust `cdylib` that extends the `rpi` agent with tools,
+The stable `#[repr(C)]` ABI contract for shob plugins. Depend on this crate, and
+nothing else, to build a Rust `cdylib` that extends the `shob` agent with tools,
 providers, slash commands, event handlers, renderers and discovered resources.
 
-The default SDK has **no dependency on the rpi runtime** on purpose. A plugin
+The default SDK has **no dependency on the shob runtime** on purpose. A plugin
 must not link the host — both sides share only the ABI types defined here.
 The optional `provider` feature adds plugin-side AI helpers, without depending
 on the CLI or host loader.
@@ -16,7 +16,7 @@ on the CLI or host loader.
 
 ```toml
 [package]
-name = "my-rpi-extension"
+name = "my-shob-extension"
 
 [lib]
 crate-type = ["cdylib"]
@@ -43,7 +43,7 @@ export_plugin!(|api| {
 });
 ```
 
-The macro emits the `rpi_plugin_register` symbol. The version lives *inside* the
+The macro emits the `shob_plugin_register` symbol. The version lives *inside* the
 `PluginApi` struct (`abi_version`, `struct_size`) rather than in the symbol name,
 so the entrypoint signature does not change when the struct grows.
 
@@ -188,8 +188,8 @@ The `provider` feature enables `json` and the AI, Tokio and HTTP dependencies.
 It is **off by default**; tool-only plugins retain the lightweight ABI SDK,
 and `default-features = false` still provides the std-only ABI core.
 
-This replaces the former `rpi-provider-runtime` crate. Remove that dependency,
-enable the SDK's `provider` feature, replace `rpi_provider_runtime::` helper
+This replaces the former `shob-provider-runtime` crate. Remove that dependency,
+enable the SDK's `provider` feature, replace `shob_provider_runtime::` helper
 paths with `plugin_sdk::provider::`, and invoke the export macro as
 `plugin_sdk::export_provider!`.
 
@@ -297,11 +297,11 @@ Do not silently fall back to `{}` or replay an unfiltered response.
 
 ## Compatibility
 
-The host loader only resolves `rpi_plugin_register`, exported with
+The host loader only resolves `shob_plugin_register`, exported with
 `export_plugin!`. The host passes a `PluginApi` containing registration slots,
 `runtime_action` and `declare` (priority and platforms).
 
-The SDK checks `abi_version` against `RPI_PLUGIN_ABI_VERSION_UNIFIED` and
+The SDK checks `abi_version` against `SHOB_PLUGIN_ABI_VERSION_UNIFIED` and
 requires `struct_size` to cover the `PluginApi` expected by the plugin before
 calling its registration body. A mismatch returns a nonzero status and the
 host reports a load failure. Extensions using retired entrypoints must be
@@ -325,7 +325,7 @@ Rebuild extensions when the SDK contract they require changes.
   templates, safety rules, testing and release checklist.
 - Host-side loader: [`extensions`](https://crates.io/crates/rpi-extensions).
 - Ready-to-install extensions:
-  [`pi-rust/rpi-package`](https://github.com/pi-rust/rpi-package).
+  [`pi-rust/shob-package`](https://github.com/pi-rust/rpi-package).
 
 ## License
 

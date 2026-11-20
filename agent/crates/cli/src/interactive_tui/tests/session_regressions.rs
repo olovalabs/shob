@@ -102,7 +102,7 @@ async fn tui_fork_locks_the_copy_and_keeps_the_selected_root_for_switch_and_pick
         panic!("session selection expected")
     };
     assert!(metadata.iter().any(|row| row.path.contains(&selected)));
-    assert!(!cwd.join(".rpi/sessions").exists());
+    assert!(!cwd.join(".shob/sessions").exists());
 }
 
 #[tokio::test]

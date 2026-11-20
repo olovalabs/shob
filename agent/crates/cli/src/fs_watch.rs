@@ -4,7 +4,7 @@
 //! uses Node's `fs.watch` with a retry-on-error wrapper to (a) keep the git
 //! footer's branch/status fresh and (b) hot-reload the active theme file.
 //!
-//! rpi watches by polling modification times. That avoids a native watcher
+//! shob watches by polling modification times. That avoids a native watcher
 //! dependency and behaves predictably on every platform (network drives, WSL
 //! mounts, editors that replace files by rename). The retry delay matches
 //! native [`FS_WATCH_RETRY_DELAY_MS`].

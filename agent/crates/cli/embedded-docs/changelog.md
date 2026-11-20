@@ -1,11 +1,11 @@
 # Changelog
 
-All notable changes to the `rpi-*` crate family are documented in this file.
+All notable changes to the `shob-*` crate family are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-The rpi-* crates share one workspace version and are released together
+The shob-* crates share one workspace version and are released together
 in dependency order. `git tag vX.Y.Z` marks the commit that a release was cut
 from; the matching [GitHub Release](../../releases) carries the same notes.
 
@@ -510,7 +510,7 @@ from; the matching [GitHub Release](../../releases) carries the same notes.
 - Merge remote-tracking branch 'origin/main' into preview
 - raise minimum supported Rust to 1.88
 - 更新文档开篇说明与来源许可章节
-- 补充 rpi-extcore 复用边界并更新 SDK 版本
+- 补充 shob-extcore 复用边界并更新 SDK 版本
 - *(harness)* batch durable recovery mutations
 - optimize long Anthropic request preparation
 - *(agent)* cache incrementally converted provider messages
@@ -685,7 +685,7 @@ from; the matching [GitHub Release](../../releases) carries the same notes.
 
 - Merge remote-tracking branch 'origin/main' into codex/fix-pr74-cursor
 - Merge branch 'main' into ui
-- add RPI_CODING_AGENT_SESSION_DIR env config
+- add SHOB_CODING_AGENT_SESSION_DIR env config
 - share transcript rows and slice the viewport in fullscreen
 - measure idle tool workers and check Windows ownership
 - *(harness)* serialize run budget environment tests
@@ -725,7 +725,7 @@ from; the matching [GitHub Release](../../releases) carries the same notes.
 
 ### Other
 
-- update README website links to rpi.bigfisharc.cn
+- update README website links to shob.bigfisharc.cn
 - *(sdk)* consolidate provider bridge into optional SDK feature
 
 ## [0.6.2](https://github.com/bigfish1913/pi-rust/compare/v0.6.1...v0.6.2) - 2026-10-19
@@ -840,10 +840,10 @@ from; the matching [GitHub Release](../../releases) carries the same notes.
 
 ### Changed
 
-- Allow `rpi install` to upgrade an installed extension without `--force` and
+- Allow `shob install` to upgrade an installed extension without `--force` and
   skip an already-installed version. Require `--force` only to reinstall the
   same version or downgrade, consistently across prebuilt, source and local
-  installs; apply the same version policy to `rpi package update`.
+  installs; apply the same version policy to `shob package update`.
 - Synchronize the 0.4.0 installation channels and website release metadata.
 
 ### Fixed
@@ -882,7 +882,7 @@ from; the matching [GitHub Release](../../releases) carries the same notes.
   free-form answers and editor submissions from deadlocking the TUI.
 - Restore enhanced keyboard input on compatible macOS terminals so Shift+Enter
   inserts a newline. Otty retains legacy input for CJK IME compatibility, with
-  `RPI_KITTY_KEYBOARD` available as an explicit override.
+  `SHOB_KITTY_KEYBOARD` available as an explicit override.
 - Wrap long Markdown code lines instead of clipping their tails with an ellipsis.
 - Keep different versions in separate publish queues and synchronize embedded
   release notes before the Release PR becomes ready.
@@ -891,11 +891,11 @@ from; the matching [GitHub Release](../../releases) carries the same notes.
 
 ### Added
 
-- Install prebuilt native extensions through the versioned `rpi-extension.json`
+- Install prebuilt native extensions through the versioned `shob-extension.json`
   protocol. Resolve repositories from crates.io metadata or `--github`, use
   package-specific release tags, and verify archive size, SHA-256, SDK ABI and
   the exact native platform before installing.
-- Update the CLI from verified GitHub release binaries using `rpi-release.json`.
+- Update the CLI from verified GitHub release binaries using `shob-release.json`.
   Keep Cargo compilation explicit with `--build`, and preserve the existing
   executable or installed extension when validation or replacement fails.
 - Add a dedicated author sponsorship page with WeChat Pay, Alipay and Binance
@@ -1011,7 +1011,7 @@ from; the matching [GitHub Release](../../releases) carries the same notes.
 - Batch confirmed Windows console text pastes instead of dispatching each
   character separately, substantially reducing the delay before large pasted
   text folds. Preserve Unicode, tabs, line endings, shortcuts and trailing Enter.
-- Track rpi release notes independently from imported Pi settings so updates
+- Track shob release notes independently from imported Pi settings so updates
   appear once on the next new interactive session. `/changelog` defaults to the
   latest release; `/changelog all` shows the complete history.
 - Read scroll position and follow-output state from the primary scroll view,
@@ -1114,29 +1114,29 @@ from; the matching [GitHub Release](../../releases) carries the same notes.
   real `delta` field once, so it no longer has to diff successive cumulative
   snapshots and stream size stays linear — matching the JSON/RPC contract the
   other Pi runtimes emit.
-- `rpi update` no longer stages a brand new build of the version that is
+- `shob update` no longer stages a brand new build of the version that is
   already running. It now asks crates.io first and reports
-  `rpi is up to date (0.3.13 is the latest release)` instead of compiling and
+  `shob is up to date (0.3.13 is the latest release)` instead of compiling and
   scheduling a replacement for the same version — the behaviour that made a
   working update look broken. `--force` keeps an explicit reinstall available,
   and an unverified answer (cached, or a registry that could not be reached) is
   labelled as such rather than asserted. A `pending-*` directory that already
   holds a validated binary counts as "about to happen", so re-running
-  `rpi update` while an update is queued does not start a second compile.
-- `rpi update` prunes the debris previous interrupted runs left in
-  `~/.rpi/agent/self-update`. A Windows update persists its `pending-*` staging
+  `shob update` while an update is queued does not start a second compile.
+- `shob update` prunes the debris previous interrupted runs left in
+  `~/.shob/agent/self-update`. A Windows update persists its `pending-*` staging
   directory so the PowerShell helper can install from it after the parent exits;
   when the helper died first — a reboot at the wrong moment, a machine-wide
   `taskkill` — the directory stayed forever, because nothing in the update path
   removed it and its still-`preparing` status file meant the next start never
   looked at it either. Staging directories no live status file claims are now
   reclaimed, along with the `preparing`/`waiting` records that named them.
-- The status file `rpi update` prints is readable by the time you go looking for
-  it. A `succeeded` record used to be deleted by the very next rpi start, so the
+- The status file `shob update` prints is readable by the time you go looking for
+  it. A `succeeded` record used to be deleted by the very next shob start, so the
   path in that message was dead on arrival and a finished update read as one
   that never ran. Completed records now survive as the receipt for the installed
   version (aging out after a day), and the `staged` line names the version and
-  says what to do: `rpi 0.3.13 staged; quit this rpi and it will be applied.`
+  says what to do: `shob 0.3.13 staged; quit this shob and it will be applied.`
 
 ## [0.3.12] - 2026-10-01
 
@@ -1144,7 +1144,7 @@ from; the matching [GitHub Release](../../releases) carries the same notes.
 
 - Plugins can now replace the system prompt at runtime via
   `register_before_agent_start` — the mechanism pi's extensions use as a
-  `before_agent_start` handler returning `systemPrompt`. rpi already broadcast
+  `before_agent_start` handler returning `systemPrompt`. shob already broadcast
   `BeforeAgentStart` so a plugin could watch a turn start, but the event handler
   ABI is fire-and-forget (`i32` only), so it could not influence one. The new
   slot carries an `out` pointer instead, which is the shape
@@ -1165,14 +1165,14 @@ from; the matching [GitHub Release](../../releases) carries the same notes.
 
 ### Fixed
 
-- A spawned shell no longer inherits rpi-langfuse's subagent-nesting channel
+- A spawned shell no longer inherits shob-langfuse's subagent-nesting channel
   (`LANGFUSE_PI_PARENT_TRACE_ID` / `_SPAN_ID` / `_SESSION_ID` / `_DEPTH`). The
-  extension publishes those variables so a launcher can attach a nested `rpi` to
+  extension publishes those variables so a launcher can attach a nested `shob` to
   the turn that spawned it, and decides it is a subagent by reading them back —
-  but a bash/powershell child inherits the environment, so a plain `rpi` started
+  but a bash/powershell child inherits the environment, so a plain `shob` started
   from inside a shell adopted its ancestor's trace: it reused the parent trace
   id, hung its root off the parent's root span, and named it `Subagent Turn`
-  instead of opening its own trace. Only `RPI_SESSION_ID` was on the
+  instead of opening its own trace. Only `SHOB_SESSION_ID` was on the
   host-private exclusion list, because the prefix-based check could not see
   these. They are now excluded; a launcher that sets them deliberately still
   gets through, which is the supported nesting path. Two tests pin both halves.
@@ -1192,18 +1192,18 @@ from; the matching [GitHub Release](../../releases) carries the same notes.
 ### Added
 
 - The plugin contract now owns the host identity: `plugin_sdk::HOST_NAME`
-  (`"rpi"`) and `HOST_VERSION`, with `cli::APP_NAME` / `VERSION` defined as
+  (`"shob"`) and `HOST_VERSION`, with `cli::APP_NAME` / `VERSION` defined as
   aliases of them so the two cannot drift. `BeforeAgentStart`'s payload carries
   `host: {name, version}`, giving an extension a way to label its own output (a
   trace name, a tag, `service.name`) from the host instead of hardcoding a brand
-  that a rename silently invalidates. `rpi-langfuse` had been reporting the
+  that a rename silently invalidates. `shob-langfuse` had been reporting the
   upstream TypeScript plugin's `"Pi Turn"` / `"pi"` for exactly that reason.
 - The host now publishes the session id twice, so an extension that observes a
-  run can name the session it is watching. `RPI_SESSION_ID` (constant:
+  run can name the session it is watching. `SHOB_SESSION_ID` (constant:
   `plugin_sdk::SESSION_ID_ENV`) is written whenever a session becomes active,
   and `BeforeAgentStart`'s payload carries `sessionId` next to
   `prompt`/`imageCount`, recomputed each turn. Previously the only channel was
-  `__rpi.sessionId` on a plugin **tool** call, so a tracing extension reported a
+  `__shob.sessionId` on a plugin **tool** call, so a tracing extension reported a
   placeholder session for a pure-chat run and for every turn before the first
   tool call. The payload field is the one that makes the first turn correct; the
   environment variable is a convenience for plugins that never see a tool call.
@@ -1212,29 +1212,29 @@ from; the matching [GitHub Release](../../releases) carries the same notes.
 
 - Switching sessions no longer leaves plugins naming the previous one. The
   session id reaches a plugin on two channels — the `ToolCallContext` (read per
-  plugin **tool** call) and `RPI_SESSION_ID` (read per turn by the provider
+  plugin **tool** call) and `SHOB_SESSION_ID` (read per turn by the provider
   hooks) — and only the startup build republished them. An in-process swap
   (`/import`, `/fork`, the `/session` selector, and the plugin
   `NewSession`/`Fork`/`SwitchSession` runtime actions) changed the session the
   harness serves without touching either, so a plugin keyed to the old id went
   on serving it. All of them now route through one funnel that republishes both.
-- `RPI_SESSION_ID` no longer leaks into the shell that `bash`/`powershell`
+- `SHOB_SESSION_ID` no longer leaks into the shell that `bash`/`powershell`
   spawn. The shell inherited the whole process environment, so the variable
-  reached anything the command ran — including another `rpi`, which had no way
+  reached anything the command ran — including another `shob`, which had no way
   to tell its ancestor's session from its own. A small deny-list now keeps the
   host's own plumbing out of a spawned shell, while explicit per-call values
   still pass through.
-- `rpi update` no longer refuses to run when the running `rpi` was launched
+- `shob update` no longer refuses to run when the running `shob` was launched
   through a link, junction, or `subst` drive. The path validation demanded that
   `canonicalize()` reproduce the launch path byte for byte, so any link *above*
-  the executable — a `C:\tools\current\rpi.exe` junction, a `subst`, scoop's
-  `current` directories — aborted the update with "current rpi executable
+  the executable — a `C:\tools\current\shob.exe` junction, a `subst`, scoop's
+  `current` directories — aborted the update with "current shob executable
   resolves through a link or junction". The message named neither the path nor
   the link, and the check was the wrong shape: the leaf is what matters, so a
   linked *file* is still refused, now with both paths printed, while links
   *above* the executable resolve to the real install directory the update
   should rewrite.
-- `rpi update` no longer tells you to add the staging directory to `PATH`.
+- `shob update` no longer tells you to add the staging directory to `PATH`.
   Cargo's install advice named `<agent>/self-update/pending-*/bin`, which the
   atomic replace consumes, so following it added a path that stopped existing a
   second later; the child `cargo install` now runs `--quiet` (errors still
@@ -1244,7 +1244,7 @@ from; the matching [GitHub Release](../../releases) carries the same notes.
 
 - `docs/README.md` is marked as a historical 0.1.13 release post,
   and its update-commands section now carries a correction. It still told
-  readers to run `rpi pi-update` and `rpi self-update`, neither of which exists
+  readers to run `shob pi-update` and `shob self-update`, neither of which exists
   any more — the article only documented 0.1.13-era behavior and was never
   revisited when the Pi layer was removed and the alias was dropped.
 
@@ -1252,30 +1252,30 @@ from; the matching [GitHub Release](../../releases) carries the same notes.
 
 ### Added
 
-- `rpi update` performs a real self-update again. `a5506dd` had reduced it to a
-  bare `cargo install` that ignored its arguments, so `rpi update --help`
+- `shob update` performs a real self-update again. `a5506dd` had reduced it to a
+  bare `cargo install` that ignored its arguments, so `shob update --help`
   reinstalled the crate instead of printing help and `--offline` did nothing.
   Restored: argument validation, `--help`, the `cargo binstall`/`cargo install`
   path, direct binary replacement on Unix, the staged PowerShell replacement on
   Windows (a running `.exe` cannot replace itself), staged-binary version
   validation, rollback, and the status report shown on the next start.
-- The startup update check covers the rpi release and installed Rust extensions
+- The startup update check covers the shob release and installed Rust extensions
   again, with the 6-hour cache and per-item fallback that survived a registry
   outage.
 
 ### Changed
 
-- The Pi compatibility layer is *not* restored: `rpi package`, `pi-package
+- The Pi compatibility layer is *not* restored: `shob package`, `pi-package
   update`, `install-pi`, `uninstall-pi` and `--enable-pi-packages` stay removed,
   along with the npm/Git package stores and the Node extension host.
 
 ### Fixed
 
-- Removed subcommands no longer fall through to the prompt path. `rpi package
+- Removed subcommands no longer fall through to the prompt path. `shob package
   update` used to be sent to the model as the message "package update" and
-  appeared to hang; it now fails immediately with a pointer to `rpi install` /
-  `rpi uninstall` / `rpi update`. `rpi self-update` reports the same way and
-  points at `rpi update`.
+  appeared to hang; it now fails immediately with a pointer to `shob install` /
+  `shob uninstall` / `shob update`. `shob self-update` reports the same way and
+  points at `shob update`.
 
 ## [0.3.8] - 2026-09-30
 
@@ -1304,7 +1304,7 @@ from; the matching [GitHub Release](../../releases) carries the same notes.
 ### Changed
 
 - **Transcript repaints are now O(1) per unchanged message, closing the
-  long-session lag against native pi.** rpi re-parsed every finished message's
+  long-session lag against native pi.** shob re-parsed every finished message's
   markdown/layout on every frame, so a 400-message session cost ~18 ms per
   frame (over the 16 ms budget) and got slower as it grew. It now mirrors
   native pi's caching layers: `Markdown` and `Text` memoize
@@ -1318,14 +1318,14 @@ from; the matching [GitHub Release](../../releases) carries the same notes.
   stays under budget past 3000 messages; `crates/tui/examples/bench_transcript.rs`
   reproduces the measurement.
 - **The terminal window/tab title now carries the startup mark.** An idle
-  session sets `▃ ▅ ▂ rpi · 🦀` instead of `🦀π rpi`, keeping the activity
+  session sets `▃ ▅ ▂ shob · 🦀` instead of `🦀π shob`, keeping the activity
   suffix it had before (`⟳` in flight, `↻` retrying), so the tab and the startup
   lockup read as one brand: the title's three eighth-blocks are the lockup's
   3:5:2 bar silhouette flattened into a single row, and a test reads the bar
   heights back out of the lockup so the two cannot drift apart. Each bar is one
   cell wide — the first cut used `██` per bar and read as three fat slabs in a
   tab strip. The title is built by `pi-cli`'s `brand` module, so it drops the
-  crab with `RPI_NO_EMOJI` exactly like the lockup — and it drops `π`, which is
+  crab with `SHOB_NO_EMOJI` exactly like the lockup — and it drops `π`, which is
   East-Asian *Ambiguous* and therefore measured differently under a CJK locale.
   Block elements share `█`'s width class, so the title is still single-width
   everywhere.
@@ -1347,13 +1347,13 @@ from; the matching [GitHub Release](../../releases) carries the same notes.
   comment that named the old key was updated with it.
 - **The last native-only keybindings are wired up.** `Ctrl+Z` suspends to the
   background on Unix (`app.suspend` — native binds no key on Windows, so neither
-  does rpi): it stops the renderer, hands the terminal back to the shell, and
+  does shob): it stops the renderer, hands the terminal back to the shell, and
   re-enters the alternate screen when the process is resumed with `fg`. On
   Windows, `Ctrl+Q` joins `Alt+Enter` for follow-ups and `Alt+V` joins `Ctrl+V`
-  for image paste — native's Windows keys, added alongside rpi's rather than
+  for image paste — native's Windows keys, added alongside shob's rather than
   replacing them, because the Windows clipboard-*text* fallback still rides
   `Ctrl+V`. The registry now matches native's defaults for every app-level
-  action rpi implements.
+  action shob implements.
 
 ### Fixed
 
@@ -1375,7 +1375,7 @@ from; the matching [GitHub Release](../../releases) carries the same notes.
 ### Added
 
 - **Plugin tools now receive the session they run in.** The host merges a
-  reserved `__rpi` object — `{"cwd", "sessionId"}` — into every plugin tool
+  reserved `__shob` object — `{"cwd", "sessionId"}` — into every plugin tool
   call's arguments, in the tool adapter's `execute` rather than in the agent loop
   or `prepare_arguments`, so the field reaches the plugin and nothing else: not
   the model, not the `ToolExecutionStart`/`Update` events, not the session log.
@@ -1386,7 +1386,7 @@ from; the matching [GitHub Release](../../releases) carries the same notes.
   documents the contract, including the one failure mode worth naming: a
   `#[serde(deny_unknown_fields)]` parameter struct will reject the injected key.
 - `cargo binstall cli` works: `[package.metadata.binstall]` points at the
-  release assets, which are named after the binary (`rpi`) rather than the crate,
+  release assets, which are named after the binary (`shob`) rather than the crate,
   so the URL template uses `{ bin }`.
 
 ### Changed
@@ -1409,8 +1409,8 @@ from; the matching [GitHub Release](../../releases) carries the same notes.
   (raw seqs untouched, so later appends stay consistent), and re-chains an entry
   onto the lane leaf; when it dropped anything the file is republished
   atomically.
-- A session already open in another `rpi` process is refused with `session … is
-  already open in another rpi process` instead of being written to by both. The
+- A session already open in another `shob` process is refused with `session … is
+  already open in another shob process` instead of being written to by both. The
   host holds an exclusive OS advisory lock per session (`<path>.lock`) for its
   lifetime.
 - `Could not open the saved session:` was printed twice when a session could not
@@ -1420,7 +1420,7 @@ from; the matching [GitHub Release](../../releases) carries the same notes.
 
 ### Added
 
-- Session pickers (`rpi -r` and `/session`) show readable rows instead of a wall
+- Session pickers (`shob -r` and `/session`) show readable rows instead of a wall
   of near-identical timestamped file names. Each row comes from a cheap
   head/tail summary of the session file — display name, first user prompt
   (single-lined and truncated to a label), and on-disk size — so saved sessions
@@ -1438,7 +1438,7 @@ from; the matching [GitHub Release](../../releases) carries the same notes.
   The old mark mixed an emoji with a box-drawing glyph, whose east-asian width is
   ambiguous, so the header rendered inconsistently depending on the terminal.
   The mark follows the active theme's accent colour for its middle bar.
-  `RPI_NO_EMOJI=1` renders the lockup without the crab (and without the
+  `SHOB_NO_EMOJI=1` renders the lockup without the crab (and without the
   separator that would otherwise dangle).
 - The workspace is now `rustfmt`-clean. The sweep is listed in
   `.git-blame-ignore-revs` so `git blame` skips it.
@@ -1489,15 +1489,15 @@ on `main` and fixes how every crate presents itself on crates.io and docs.rs.
 
 - Added `docs/performance/benchmark-vs-pi.md` and `scripts/bench-vs-pi.mjs` — a reproducible,
   same-machine comparison against native Pi over the same JSONL command channel,
-  with isolated config directories and both tools offline. rpi is 9.7× faster to
+  with isolated config directories and both tools offline. shob is 9.7× faster to
   start, 10.7× faster to cold start, 7.6× smaller in memory and ~18× smaller
   installed. **Corrected after release:** an earlier run set only pi's `PI_*`
-  isolation variables, so rpi read the real `~/.rpi/agent` and loaded the
+  isolation variables, so shob read the real `~/.shob/agent` and loaded the
   machine's global plugins (reported 103.6 ms / 1.7×); a second bug started the
-  cold-start stopwatch after `spawn()`. With both fixed, rpi's `--version` (17.5 ms) and
+  cold-start stopwatch after `spawn()`. With both fixed, shob's `--version` (17.5 ms) and
   a cold start (17.7 ms) are effectively equal — the cost is process creation.
 - `crates/cli/embedded-docs/` — the documentation snapshot compiled into the
-  `rpi` binary for the `docs` tool — is refreshed and now guarded: CI runs
+  `shob` binary for the `docs` tool — is refreshed and now guarded: CI runs
   `scripts/sync-embedded-docs.sh` and fails if the snapshot drifts from the
   repository documents. It had fallen behind by several releases.
 
@@ -1505,13 +1505,13 @@ on `main` and fixes how every crate presents itself on crates.io and docs.rs.
 
 ### Changed
 
-- **Breaking:** the plugin ABI is unified on a single `rpi_plugin_register`
-  entrypoint (`RPI_PLUGIN_ABI_VERSION_UNIFIED`), with the version carried inside
+- **Breaking:** the plugin ABI is unified on a single `shob_plugin_register`
+  entrypoint (`SHOB_PLUGIN_ABI_VERSION_UNIFIED`), with the version carried inside
   the `PluginApi` struct instead of the symbol name. `extensions` still
-  resolves `rpi_plugin_register_v3` and then `rpi_plugin_register_v2`, so plugins
+  resolves `shob_plugin_register_v3` and then `shob_plugin_register_v2`, so plugins
   built against an older ABI keep loading; extension authors should rebuild
   against the current SDK when convenient.
-- Workspace dependencies (`rpi-*` internal crates) bumped to `0.2.0`, then to
+- Workspace dependencies (`shob-*` internal crates) bumped to `0.2.0`, then to
   `0.3.0` for the whole family.
 
 ### Added
@@ -1616,20 +1616,20 @@ on `main` and fixes how every crate presents itself on crates.io and docs.rs.
 
 ### Added
 
-- **Remote mode.** `rpi --mode rpc` is a real JSONL command loop, `rpi --server`
+- **Remote mode.** `shob --mode rpc` is a real JSONL command loop, `shob --server`
   runs the agent headless over TCP and prints a token at startup, and
-  `rpi --connect <host:port>` attaches a terminal client that holds no local
+  `shob --connect <host:port>` attaches a terminal client that holds no local
   provider, tools, extensions or session files. Token auth is connection-level
   (`-32001` on missing/invalid token); `--no-token` disables it, and
-  `RPI_SERVER_TOKEN` is honoured. Shared wire types (`RemoteEvent` /
+  `SHOB_SERVER_TOKEN` is honoured. Shared wire types (`RemoteEvent` /
   `RemoteCommand` / `RemoteResponse`) live in one module so the two ends cannot
   drift.
 - **Extension lifecycle events (P0–P5) with veto support** — a handler can
   refuse startup by returning `EVENT_HANDLER_ABORT` (new `BeforeTuiStart` hook,
   exit code `3`).
 - **ABI v3** (`PluginApiVt3Ext.declare`) adds priority and platform declarations.
-- Optional JSONL event journal (`RPI_EVENT_LOG=1`) with `rpi events tail` and
-  `rpi events path`.
+- Optional JSONL event journal (`SHOB_EVENT_LOG=1`) with `shob events tail` and
+  `shob events path`.
 
 ### Docs
 
@@ -1651,7 +1651,7 @@ on `main` and fixes how every crate presents itself on crates.io and docs.rs.
 
 ### Added
 
-- `rpi dev-local` degrades gracefully to skills-only mode when no Cargo `cdylib`
+- `shob dev-local` degrades gracefully to skills-only mode when no Cargo `cdylib`
   is present.
 
 ### Fixed
@@ -1757,9 +1757,9 @@ on `main` and fixes how every crate presents itself on crates.io and docs.rs.
 
 ### Added
 
-- `rpi dev-local` and `rpi dev --local-only` load only resources from the current
+- `shob dev-local` and `shob dev --local-only` load only resources from the current
   project and the active development extension, including project-local
-  `.rpi/skills`, `.pi/skills`, configured project resource paths, and the
+  `.shob/skills`, `.pi/skills`, configured project resource paths, and the
   extension's own resources. `/reload` matches the local-only scope.
 
 ## [0.1.12] - 2026-09-14
@@ -1769,7 +1769,7 @@ on `main` and fixes how every crate presents itself on crates.io and docs.rs.
 - Pi-compatible managed npm and Git package stores: structured `npmCommand`
   argv, npm aliases, trusted project settings, bounded subprocesses and
   conservative provenance checks.
-- Independent rpi and package update checks at startup, with `PI_OFFLINE`
+- Independent shob and package update checks at startup, with `PI_OFFLINE`
   support across startup and manual update commands.
 - Resumable, clean-tree release workflow for the nine published crates.
 
@@ -1827,9 +1827,9 @@ on `main` and fixes how every crate presents itself on crates.io and docs.rs.
 
 ### Added
 
-- `rpi dev` builds and watches a local Rust extension; `/reload` forces a fresh
+- `shob dev` builds and watches a local Rust extension; `/reload` forces a fresh
   build without replacing a working extension when compilation fails.
-- `rpi uninstall` and `rpi uninstall-pi`.
+- `shob uninstall` and `shob uninstall-pi`.
 - Multiplexed Node extension transport allowing concurrent requests with
   out-of-order responses; tool and command cancellation propagates through
   `AbortSignal`.
@@ -1861,17 +1861,17 @@ on `main` and fixes how every crate presents itself on crates.io and docs.rs.
 - Session history, sharing and exports request entries in chronological order,
   matching the terminal transcript.
 - The package catalog distinguishes core Rust libraries (`cargo add tools`)
-  from loadable `cdylib` extensions (`rpi install rpi-todo`).
+  from loadable `cdylib` extensions (`shob install shob-todo`).
 
 ## [0.1.7] - 2026-09-09
 
 ### Added
 
-- `rpi install <crate>` for crates.io `cdylib` extensions, with `--version`,
+- `shob install <crate>` for crates.io `cdylib` extensions, with `--version`,
   `--path`, `--locked` and `--force`.
-- Nine published extensions added to the website catalog: `rpi-mcp-adapter`,
-  `rpi-web-access`, `rpi-subagents`, `rpi-background-tasks`, `rpi-lens`,
-  `rpi-todo`, `rpi-codegraph`, `rpi-memory`, `rpi-token-usage`.
+- Nine published extensions added to the website catalog: `shob-mcp-adapter`,
+  `shob-web-access`, `shob-subagents`, `shob-background-tasks`, `shob-lens`,
+  `shob-todo`, `shob-codegraph`, `shob-memory`, `shob-token-usage`.
 
 ## [0.1.6] - 2026-09-09
 

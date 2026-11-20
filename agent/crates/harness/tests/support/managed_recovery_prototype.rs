@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs::OpenOptions as FsOptions, path::Path, time::Duration};
 
-pub const FORMAT: &str = "rpi-managed-recovery-prototype-v1";
+pub const FORMAT: &str = "shob-managed-recovery-prototype-v1";
 pub const MAX_TAIL: u64 = 16;
 const APPLICATION_ID: i64 = 0x5250_4950;
 const MAX_METADATA: usize = 16 * 1024;

@@ -81,7 +81,7 @@ fn provider_keys_survive_process_restart() {
     for phase in ["save", "read"] {
         let status = Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "provider_keys_survive_process_restart"])
-            .env("RPI_CODING_AGENT_DIR", config.path())
+            .env("SHOB_CODING_AGENT_DIR", config.path())
             .env_remove("COMMAND_CODE_API_KEY")
             .env_remove("COMMANDCODE_API_KEY")
             .env(PHASE, phase)

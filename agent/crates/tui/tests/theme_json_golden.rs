@@ -4,7 +4,7 @@
 //! (badlogic/pi-mono `packages/coding-agent/src/modes/interactive/theme/`). The
 //! `*.expected.json` tables hold the exact RGB hex each token resolves to when
 //! run through the upstream TS `parseColor` + vars resolution; every token with
-//! a `ThemeColors` consumer must match those channels exactly so rpi renders
+//! a `ThemeColors` consumer must match those channels exactly so shob renders
 //! pi-authored themes with the same colors as upstream pi.
 
 use tui::theme::Color;

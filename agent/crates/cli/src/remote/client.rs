@@ -1,7 +1,7 @@
-//! TCP JSON-RPC client for the `rpi --server` endpoint.
+//! TCP JSON-RPC client for the `shob --server` endpoint.
 //!
-//! Wire shape (one JSON object per line), spoken by `rpi-package`'s
-//! `rpi-server` extension:
+//! Wire shape (one JSON object per line), spoken by `shob-package`'s
+//! `shob-server` extension:
 //!
 //! ```text
 //! -> {"jsonrpc":"2.0","id":1,"method":"start_session","params":{…}}

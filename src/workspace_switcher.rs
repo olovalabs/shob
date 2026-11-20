@@ -105,7 +105,7 @@ impl AppState {
                         pane.chat.bridge = None;
                         pane.chat.bridge_model = None;
                         pane.chat.bridge_resume = None;
-                        pane.chat.rpi_session_id = None;
+                        pane.chat.shob_session_id = None;
                         pane.chat.cwd = Some(project_path.clone());
                         pane.chat.bridge_needs_context = !pane.chat.messages.is_empty();
                         reset_panes.push(pane.id);
@@ -164,7 +164,7 @@ impl AppState {
             pane.chat.bridge = None;
             pane.chat.bridge_model = None;
             pane.chat.bridge_resume = None;
-            pane.chat.rpi_session_id = None;
+            pane.chat.shob_session_id = None;
             pane.chat.cwd = Some(target_dir.clone());
             pane.chat.bridge_needs_context = !pane.chat.messages.is_empty();
             git_workspace::invalidate_branch_cache(&target_dir);

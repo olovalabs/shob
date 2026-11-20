@@ -59,7 +59,7 @@ async fn lifecycle_owner_retains_gate_after_create_caller_is_cancelled() {
 #[tokio::test]
 async fn failed_initialization_does_not_publish_a_partial_schema_or_overwrite_it() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("rejected.rpinative");
+    let path = dir.path().join("rejected.shobnative");
     let identity = Identity {
         session: "rejected".into(),
         generation: "generation".into(),
@@ -108,18 +108,18 @@ async fn catalog_rejects_a_misnamed_or_foreign_experimental_artifact() {
         .unwrap();
     drop(storage);
     std::fs::rename(
-        dir.path().join("fixture.rpinative"),
-        dir.path().join("mismatch.rpinative"),
+        dir.path().join("fixture.shobnative"),
+        dir.path().join("mismatch.shobnative"),
     )
     .unwrap();
     assert!(repo.list().await.is_err());
     std::fs::rename(
-        dir.path().join("mismatch.rpinative"),
-        dir.path().join("fixture.rpinative"),
+        dir.path().join("mismatch.shobnative"),
+        dir.path().join("fixture.shobnative"),
     )
     .unwrap();
     assert_eq!(repo.list().await.unwrap().len(), 1);
-    let path = dir.path().join("foreign.rpinative");
+    let path = dir.path().join("foreign.shobnative");
     std::fs::write(&path, b"not sqlite").unwrap();
     assert!(repo.list().await.is_err());
     assert_eq!(std::fs::read(&path).unwrap(), b"not sqlite");
@@ -228,7 +228,7 @@ async fn atomic_reservation_conflict_is_already_exists_without_overwrite() {
     .unwrap();
     // The clock is after exists() but before create_new(). This actor bypasses
     // the in-process repo gate, just as an independent filesystem writer can.
-    let path = dir.path().join("reservation-race.rpinative");
+    let path = dir.path().join("reservation-race.shobnative");
     let sentinel = b"synthetic conflicting reservation\n";
     let mut file = std::fs::OpenOptions::new()
         .write(true)
@@ -252,7 +252,7 @@ async fn atomic_reservation_conflict_is_already_exists_without_overwrite() {
     for suffix in ["-journal", "-wal", "-shm"] {
         assert!(!dir
             .path()
-            .join(format!("reservation-race.rpinative{suffix}"))
+            .join(format!("reservation-race.shobnative{suffix}"))
             .exists());
     }
     let retry = match repo.create(&options).await {
@@ -305,7 +305,7 @@ fn creation_error_only_classifies_atomic_reservation_already_exists() {
 #[test]
 fn initializer_already_exists_is_not_an_artifact_reservation_conflict() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("initializer.rpinative");
+    let path = dir.path().join("initializer.shobnative");
     let result = Store::create_initialized(
         &path,
         Identity {

@@ -10,7 +10,7 @@
 //! - Tokens without a [`ThemeColors`] consumer in tui yet (`scrollbar*`,
 //!   `searchMatch*`, `userMessageText`, `syntax*`, `thinkingOff`…`thinkingMax`)
 //!   are parsed and validated so pi-authored files load unchanged, but do not
-//!   affect rendering. rpi's syntax highlighting and thinking-level borders
+//!   affect rendering. shob's syntax highlighting and thinking-level borders
 //!   use their own palettes.
 //! - `export` colors are HTML-export-only upstream and are ignored here.
 //! - Root keys and color tokens are validated strictly (mirrors the upstream
