@@ -126,7 +126,9 @@ fn pet_lines(state: &PetState, width: usize, height: usize, frame: u64) -> Vec<S
     };
     let mut lines = vec![
         fit(
-            &colors.accent.fg(&format!("rpi / pet · {name} · {voice}")),
+            &colors
+                .accent
+                .fg(&format!("{} / pet · {name} · {voice}", crate::COMMAND)),
             width,
         ),
         String::new(),

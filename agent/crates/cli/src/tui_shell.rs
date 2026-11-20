@@ -351,7 +351,11 @@ impl ChatChrome {
             "Enter: Send | Shift+Enter: New line | Ctrl+C: Clear/Exit | Esc: Abort | /help",
         );
         Self {
-            header: Arc::new(Text::new(format!("rpi · {addr} · connecting…"), 1, 0)),
+            header: Arc::new(Text::new(
+                format!("{} · {addr} · connecting…", crate::COMMAND),
+                1,
+                0,
+            )),
             status: Arc::new(Container::new()),
             footer,
             retry: Mutex::new(None),
@@ -364,7 +368,8 @@ impl ChatChrome {
         let thinking = status.thinking.as_deref().unwrap_or("off");
         let connection = if status.ready { "ready" } else { "connecting" };
         self.header.set_text(tui_bold(&format!(
-            "rpi · {addr} · {connection} · model {} · thinking {thinking}",
+            "{} · {addr} · {connection} · model {} · thinking {thinking}",
+            crate::COMMAND,
             if model.is_empty() { "(default)" } else { model }
         )));
         self.footer.set_model(&short_model_name(model));

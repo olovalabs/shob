@@ -2,7 +2,8 @@
 """Run the Shob bridge benchmark against a deterministic local SSE endpoint.
 
 Build with cargo test --locked --bin shob --no-run, then pass the printed
-test executable. Pass --cli to also run a matching rpi RPC workload.
+test executable. Pass --cli with the path to a Shob binary to run a matching
+RPC workload or to select the subprocess backend with --rpc.
 """
 
 import argparse
@@ -200,10 +201,12 @@ def benchmark_cli(executable, env, cwd):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("test_executable", type=lambda value: str(Path(value).resolve()))
-    parser.add_argument("--cli", metavar="RPI")
-    parser.add_argument("--rpc", action="store_true", help="use the subprocess rpi RPC bridge")
+    parser.add_argument("--cli", metavar="SHOB", type=lambda value: str(Path(value).resolve()))
+    parser.add_argument("--rpc", action="store_true", help="use the subprocess RPC bridge")
     parser.add_argument("--settle", action="store_true", help="allow baseline completion to settle between turns")
     args = parser.parse_args()
+    if args.rpc and not args.cli:
+        parser.error("--rpc requires --cli pointing to a built Shob binary")
     with tempfile.TemporaryDirectory() as tmp, http.server.ThreadingHTTPServer(
         ("127.0.0.1", 0), Fixture
     ) as server:
@@ -237,6 +240,7 @@ def main():
         (config / "models.json").write_text(json.dumps({"providers": providers}))
         env = dict(os.environ, RPI_CODING_AGENT_DIR=str(config),
                    RPI_CODING_AGENT_SESSION_DIR=str(Path(tmp, "sessions")),
+                   SHOB_DATA_DIR=str(Path(tmp, "shob")),
                    SHOB_BENCH_CWD=str(cwd))
         for key in ("SHOB_RPI_BACKEND", "SHOB_BENCH_SETTLE", "SHOB_STREAM_TIMINGS"):
             env.pop(key, None)
@@ -244,6 +248,7 @@ def main():
             env["SHOB_BENCH_SETTLE"] = "1"
         if args.rpc:
             env["SHOB_RPI_BACKEND"] = "rpc"
+            env["SHOB_BENCH_CLI"] = args.cli
         before = resource.getrusage(resource.RUSAGE_CHILDREN)
         subprocess.run([args.test_executable, "loopback_agent_stream_benchmark",
                         "--ignored", "--nocapture"], env=env, check=True, timeout=60)

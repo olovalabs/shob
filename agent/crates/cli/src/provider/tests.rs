@@ -693,7 +693,7 @@ mod package_oauth_refresh {
             error.contains("provider package returned status 1"),
             "{error}"
         );
-        assert!(error.contains("rpi auth login --provider acme"), "{error}");
+        assert!(error.contains("Sign in again"), "{error}");
         assert!(
             !error.contains("stale-access")
                 && !error.contains("refresh-1")

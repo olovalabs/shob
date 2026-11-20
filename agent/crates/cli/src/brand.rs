@@ -55,13 +55,12 @@ fn crab_enabled() -> bool {
     crab_enabled_from(std::env::var(NO_EMOJI_ENV).ok().as_deref())
 }
 
-/// The wordmark plus the language mark, in plain text: `rpi · 🦀`, or bare
-/// `rpi` when the crab is disabled.
+/// The wordmark, optionally followed by the Rust mascot.
 fn plain_name(crab: bool) -> String {
     if crab {
-        format!("rpi {SEPARATOR} {CRAB}")
+        format!("{} {SEPARATOR} {CRAB}", crate::COMMAND)
     } else {
-        "rpi".to_string()
+        crate::COMMAND.to_string()
     }
 }
 
@@ -100,11 +99,11 @@ fn render_lockup(crab: bool) -> Vec<String> {
     let name = if crab {
         format!(
             "{} {} {CRAB}",
-            c.accent.fg(&tui_bold("rpi")),
+            c.accent.fg(&tui_bold(crate::COMMAND)),
             c.muted.fg(SEPARATOR)
         )
     } else {
-        c.accent.fg(&tui_bold("rpi"))
+        c.accent.fg(&tui_bold(crate::COMMAND))
     };
 
     vec![
@@ -190,7 +189,7 @@ mod tests {
         let rows = plain(true);
 
         // The crab replaces the word "rust" rather than sitting beside it.
-        assert_eq!(rows[4], "   ██ ██ ██   rpi · 🦀");
+        assert_eq!(rows[4], format!("   ██ ██ ██   {} · 🦀", crate::COMMAND));
 
         // The crab is wider than the word it replaces, and the layout must
         // account for exactly that much: the separator plus the emoji.
@@ -203,17 +202,19 @@ mod tests {
 
     #[test]
     fn title_flattens_the_lockup_and_keeps_status_last() {
-        assert_eq!(window_title_from(true, ""), "▃ ▅ ▂ rpi · 🦀");
-        assert_eq!(window_title_from(true, "⟳"), "▃ ▅ ▂ rpi · 🦀 ⟳");
-        assert_eq!(window_title_from(true, "↻"), "▃ ▅ ▂ rpi · 🦀 ↻");
+        let title = format!("▃ ▅ ▂ {} · 🦀", crate::COMMAND);
+        assert_eq!(window_title_from(true, ""), title);
+        assert_eq!(window_title_from(true, "⟳"), format!("{title} ⟳"));
+        assert_eq!(window_title_from(true, "↻"), format!("{title} ↻"));
     }
 
     #[test]
     fn title_shares_the_lockup_opt_out() {
         // Disabling the crab must not leave a dangling separator in the title
         // either — the lockup and the tab title must never disagree.
-        assert_eq!(window_title_from(false, ""), "▃ ▅ ▂ rpi");
-        assert_eq!(window_title_from(false, "⟳"), "▃ ▅ ▂ rpi ⟳");
+        let title = format!("▃ ▅ ▂ {}", crate::COMMAND);
+        assert_eq!(window_title_from(false, ""), title);
+        assert_eq!(window_title_from(false, "⟳"), format!("{title} ⟳"));
         assert!(!window_title_from(false, "").contains(CRAB));
     }
 

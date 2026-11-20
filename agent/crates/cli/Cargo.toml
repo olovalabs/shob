@@ -95,6 +95,7 @@ pkg-fmt = "zip"
 
 [features]
 default = ["clipboard"]
+shob = []
 # Enables real clipboard support for `/copy` and image paste (best-effort).
 clipboard = ["dep:arboard"]
 # Explicit new-session print opt-in only; never enabled by default.

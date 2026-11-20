@@ -422,7 +422,7 @@ fn update_at(
         .as_ref()
         .is_some_and(|name| resource_owned.contains(name))
     {
-        eprintln!("error: resource-owned Package; use rpi resource update package NAME --scope project --path PATH");
+        eprintln!("error: resource-owned Package; use {} resource update package NAME --scope project --path PATH", crate::COMMAND);
         return 1;
     }
     let packages = registry
@@ -526,7 +526,7 @@ fn update_global_package(
     let executable = match std::env::current_exe() {
         Ok(path) => path,
         Err(error) => {
-            eprintln!("error: could not resolve rpi executable: {error}");
+            eprintln!("error: could not resolve the current executable: {error}");
             return false;
         }
     };
@@ -539,7 +539,10 @@ fn update_global_package(
             false
         }
         Err(error) => {
-            eprintln!("error: could not run rpi install for `{name}`: {error}");
+            eprintln!(
+                "error: could not run {} install for `{name}`: {error}",
+                crate::COMMAND
+            );
             false
         }
     }
@@ -868,17 +871,17 @@ pub fn active_project_package_artifacts(cwd: &Path) -> Vec<PathBuf> {
         .collect()
 }
 fn print_extension_help() {
-    println!("Usage: rpi extension <command>\n\nCommands:\n  update [name] [--debug] [--locked]  Update project and global installed extensions\n\nSee `rpi extension update --help` for options.");
+    println!("Usage: {command} extension <command>\n\nCommands:\n  update [name] [--debug] [--locked]  Update project and global installed extensions\n\nSee `{command} extension update --help` for options.", command = crate::COMMAND);
 }
 
 pub fn print_help() {
-    println!("Usage: rpi package <command>\n\nCommands:\n  link [name] [--path <dir>] [--package <name>] [--force]  Build and link a project-local Rust extension\n  list                                                   List project packages\n  update [name] [--debug] [--locked]                    Legacy compatibility alias for `rpi extension update`\n  unlink <name>                                          Remove a project package");
+    println!("Usage: {command} package <command>\n\nCommands:\n  link [name] [--path <dir>] [--package <name>] [--force]  Build and link a project-local Rust extension\n  list                                                   List project packages\n  update [name] [--debug] [--locked]                    Legacy compatibility alias for `{command} extension update`\n  unlink <name>                                          Remove a project package", command = crate::COMMAND);
 }
 fn print_link_help() {
-    println!("Usage: rpi package link [name] [options]\n\nOptions:\n  --path <dir>       Extension source directory (default: current directory)\n  --package, -P <n>  Select a Cargo cdylib package\n  --debug            Build debug artifacts instead of release\n  --locked           Pass --locked to Cargo\n  --force, -f        Replace an existing package");
+    println!("Usage: {} package link [name] [options]\n\nOptions:\n  --path <dir>       Extension source directory (default: current directory)\n  --package, -P <n>  Select a Cargo cdylib package\n  --debug            Build debug artifacts instead of release\n  --locked           Pass --locked to Cargo\n  --force, -f        Replace an existing package", crate::COMMAND);
 }
 fn print_update_help() {
-    println!("Usage: rpi extension update [name] [options]\n\nOptions:\n  --debug            Build debug artifacts instead of release\n  --locked           Pass --locked to Cargo\n  --help, -h         Show this help\n\nWithout a name, all project and global installed extensions are updated.\nLegacy compatibility alias: rpi package update [name] [options]");
+    println!("Usage: {command} extension update [name] [options]\n\nOptions:\n  --debug            Build debug artifacts instead of release\n  --locked           Pass --locked to Cargo\n  --help, -h         Show this help\n\nWithout a name, all project and global installed extensions are updated.\nLegacy compatibility alias: {command} package update [name] [options]", command = crate::COMMAND);
 }
 
 #[cfg(test)]

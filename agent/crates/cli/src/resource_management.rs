@@ -1389,7 +1389,7 @@ fn success(o: &Options, data: Value) -> Value {
 }
 pub fn run(args: &[String]) -> i32 {
     if args.is_empty() || args.iter().any(|a| matches!(a.as_str(), "--help" | "-h")) {
-        println!("rpi resource list|inspect|install|update|reinstall|remove|recover --scope project|global\nMutations: KIND NAME --path PATH [--version TEXT]; remove/inspect: KIND NAME.\nLocal snapshots only; no builds or native registration. JSON v1, 256 KiB bound.");
+        println!("{} resource list|inspect|install|update|reinstall|remove|recover --scope project|global\nMutations: KIND NAME --path PATH [--version TEXT]; remove/inspect: KIND NAME.\nLocal snapshots only; no builds or native registration. JSON v1, 256 KiB bound.", crate::COMMAND);
         return 0;
     }
     let result: Result<Value> = (|| {

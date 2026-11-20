@@ -655,6 +655,11 @@ pub enum RunMode {
 /// Print the help text to stdout. Mirrors TS `printHelp`, scoped to v1 flags.
 pub fn print_help() {
     let builtin = "read, bash, edit, write, docs";
+    let update_help = if cfg!(feature = "shob") {
+        ""
+    } else {
+        "  update                       Update the rpi CLI from crates.io\n"
+    };
     println!(
         "{name} - AI coding assistant with read, bash, edit, write, docs tools
 
@@ -719,22 +724,21 @@ pub fn print_help() {
   --version, -v                  Show version
 
 {u}Subcommands:{r}
-  update                       Update the rpi CLI from crates.io
-  auth login|check|logout        Manage persisted credentials in ~/.rpi/auth.json
-                                (see `rpi auth --help`)
+{update_help}  auth login|check|logout        Manage persisted credentials
+                                (see `{name} auth --help`)
   events path|tail               Inspect the extension event journal (needs
-                                RPI_EVENT_LOG=1; see `rpi events --help`)
+                                RPI_EVENT_LOG=1; see `{name} events --help`)
   install <crate>                Install a prebuilt Rust extension (--build for source)
-                                (see `rpi install --help`)
+                                (see `{name} install --help`)
   uninstall <crate>              Remove an installed Rust cdylib extension
   extension update [name]        Update project and global installed Rust extensions
-                                (see `rpi extension update --help`)
+                                (see `{name} extension update --help`)
   package link|list|update|unlink Manage project-local Rust extension packages
-                                (update is a legacy alias; see `rpi package --help`)
+                                (update is a legacy alias; see `{name} package --help`)
   dev [options]                  Build, watch, and hot-reload a Rust extension
-                                (see `rpi dev --help`)
+                                (see `{name} dev --help`)
   dev-local [options]            Debug only the current Rust extension
-                                (shortcut for `rpi dev --local-only`)
+                                (shortcut for `{name} dev --local-only`)
 
 {u}Built-in Tools:{r}
   {builtin}  (enabled by default)
@@ -779,7 +783,7 @@ pub fn print_help() {
   commands are available in the current build. OAuth, RPC, and full model
   cycling remain outside the current implementation.
 ",
-        name = crate::APP_NAME,
+        name = crate::COMMAND,
         builtin = builtin,
         u = "\x1b[1m",
         r = "\x1b[0m",
@@ -788,6 +792,9 @@ pub fn print_help() {
 
 /// Print the version line. Mirrors TS `--version` output (`pi <version>`).
 pub fn print_version() {
+    #[cfg(feature = "shob")]
+    println!("{} agent engine {}", crate::COMMAND, crate::VERSION);
+    #[cfg(not(feature = "shob"))]
     println!("{} {}", crate::APP_NAME, crate::VERSION);
 }
 

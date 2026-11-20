@@ -38,7 +38,7 @@ pub async fn run(args: &[String]) -> i32 {
 }
 
 fn print_help() {
-    println!("Usage: rpi events <command>");
+    println!("Usage: {} events <command>", crate::COMMAND);
     println!();
     println!("Commands:");
     println!("  path    Print the event log path (JSONL)");

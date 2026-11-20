@@ -291,6 +291,7 @@ jobs:
               <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
                 <Component Id="shob.exe" Guid="8CD2BADD-7F87-4013-B283-16A4859EF571">
                   <File Id="shob.exe" Source="$($exe.FullName)" KeyPath="yes" />
+                  <Environment Id="ShobPath" Name="PATH" Value="[INSTALLFOLDER]" Part="last" Action="set" System="yes" />
                 </Component>
               </ComponentGroup>
             </Fragment>
@@ -447,13 +448,10 @@ jobs:
             fi
           done
           # StartupWMClass has to equal the app_id the app sets from `app_id` in
-          # main.rs, or desktop-file matching silently falls back to a generic
-          # icon. Exec is rewritten to the installed path and TryExec dropped,
-          # since the dev path in the template is not valid once installed.
+          # main.rs, or desktop-file matching falls back to a generic icon.
+          # Use the installed executable and preserve the launch arguments.
           mkdir -p payload/usr/share/applications
-          sed -e 's|^Exec=.*|Exec=/usr/bin/shob %F|' \
-              -e '/^TryExec=/d' \
-              shob.desktop > payload/usr/share/applications/shob.desktop
+          sed 's|^Exec=shob |Exec=/usr/bin/shob |' shob.desktop > payload/usr/share/applications/shob.desktop
           desktop-file-validate payload/usr/share/applications/shob.desktop
 
       # Anything left at the root of payload/ gets installed at / by dpkg-deb

@@ -68,23 +68,22 @@ fn resolve_connect_token(argv: &[String]) -> Option<String> {
 
 /// The v1 CLI entry point. Mirrors TS `export async function main(args)`.
 ///
-/// Returns the process exit code (0 = success). The binary wrapper
-/// ([`crate::bin`] / `src/bin/rpi.rs`) calls this under a tokio runtime and
-/// `std::process::exit`s with the returned code.
+/// Runs the standalone CLI with the process arguments.
 pub async fn run() -> i32 {
-    // Startup profiling wrapper: RPI_TIMING=1 records namespace timings and
-    // flushes them to stderr once the run completes, regardless of exit path.
+    run_with_args(std::env::args().skip(1).collect()).await
+}
+
+/// Runs the CLI with arguments excluding the executable name.
+pub async fn run_with_args(argv: Vec<String>) -> i32 {
+    // Startup profiling wrapper: RPI_TIMING=1 flushes timings on every exit path.
     crate::timings::reset(crate::timings::TimingNamespace::Main);
-    let code = run_inner().await;
+    let code = run_inner(argv).await;
     crate::timings::print_timings();
     code
 }
 
-async fn run_inner() -> i32 {
+async fn run_inner(mut argv: Vec<String>) -> i32 {
     let startup = StartupSpan::start(Phase::StartupToHarness);
-    // argv[0] is the program name; skip it (TS `main(args)` receives the same,
-    // already sliced by the Node CLI entry).
-    let mut argv: Vec<String> = std::env::args().skip(1).collect();
     if let Err(error) = crate::native_store::early_check(&argv) {
         eprintln!("error: {error}");
         return EXIT_USAGE;
@@ -200,6 +199,7 @@ async fn run_inner() -> i32 {
                 .await;
         }
         Some("events") => return crate::events::run(&argv[1..]).await,
+        #[cfg(not(feature = "shob"))]
         Some("update") => return crate::updates::run_self_update(&argv[1..]),
         Some("install") => return crate::install::run_async(&argv[1..]).await,
         Some("uninstall") => return crate::install::uninstall(&argv[1..]),
@@ -210,7 +210,8 @@ async fn run_inner() -> i32 {
         // falling through to the prompt path.
         Some(removed @ ("pi-package" | "pi-update" | "install-pi" | "uninstall-pi")) => {
             eprintln!(
-                "error: `rpi {removed}` is not available; use `rpi package`, `rpi install`, or `rpi update`."
+                "error: `{command} {removed}` is not available; use `{command} package` or `{command} install`.",
+                command = crate::COMMAND,
             );
             return EXIT_USAGE;
         }
@@ -502,7 +503,7 @@ async fn run_inner() -> i32 {
         })
         .unwrap_or(false);
     if web_requested && (!web_registered || !stdio_claimed) {
-        eprintln!("error: --web requires the rpi-web server extension; it is missing, disabled, or failed to load.\nInstall it with: rpi install rpi-web --github pi-rust/rpi-package\nThen restart with: rpi --web");
+        eprintln!("error: --web requires the rpi-web server extension; it is missing, disabled, or failed to load.\nInstall it with: {command} install rpi-web --github pi-rust/rpi-package\nThen restart with: {command} --web", command = crate::COMMAND);
         return EXIT_USAGE;
     }
     let stdio_lifecycle = reload_context
@@ -1108,10 +1109,9 @@ fn build_initial_message(
 /// auth-guidance / model-resolver error formatting (condensed to stderr lines).
 fn print_resolve_error(e: &ResolveError) {
     match e {
-        ResolveError::NoApiKey { hint } => {
+        ResolveError::NoApiKey { .. } => {
             eprintln!("error: {e}");
-            eprintln!();
-            eprintln!("Provide credentials via one of: {hint}.");
+            eprintln!("Or run `{} auth login --provider <id>`.", crate::COMMAND);
         }
         ResolveError::Config(_) => {
             eprintln!("error: {e}");

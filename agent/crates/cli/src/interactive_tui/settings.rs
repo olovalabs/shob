@@ -1365,7 +1365,8 @@ pub(super) async fn switch_provider(
         .collect();
     if candidates.is_empty() {
         return Err(format!(
-            "Provider \"{provider_id}\" has no authenticated model loaded in this session. Check rpi auth check --provider {provider_id}, then /reload and retry. The current provider is unchanged."
+            "Provider \"{provider_id}\" has no authenticated model loaded in this session. Check {} auth check --provider {provider_id}, then /reload and retry. The current provider is unchanged.",
+            crate::COMMAND
         ));
     }
     let mut settings = crate::settings::load_settings().map_err(|error| error.to_string())?;
@@ -1756,7 +1757,8 @@ pub(super) fn remove_provider(input: &str) -> Result<String, String> {
     let id = input.trim();
     if cfg.providers.shift_remove(id).is_none() {
         return Err(format!(
-            "Provider \"{id}\" has no models.json configuration to remove. To remove an installed package, use rpi package unlink <name>."
+            "Provider \"{id}\" has no models.json configuration to remove. To remove an installed package, use {} package unlink <name>.",
+            crate::COMMAND
         ));
     }
     crate::config::save_models_config(&cfg).map_err(|error| error.to_string())?;
@@ -1769,7 +1771,7 @@ pub(super) fn remove_provider(input: &str) -> Result<String, String> {
         settings.default_model = None;
         let _ = crate::settings::save_settings(&settings);
     }
-    Ok(format!("Removed models.json configuration for provider \"{id}\" — restart rpi to apply. Installed provider packages remain available; use rpi package unlink to remove a package."))
+    Ok(format!("Removed models.json configuration for provider \"{id}\" — restart {command} to apply. Installed provider packages remain available; use {command} package unlink to remove a package.", command = crate::COMMAND))
 }
 
 /// Write the completed form into `models.json` as a new provider with one
@@ -1787,8 +1789,11 @@ pub(super) fn save_provider_from_form(form: &ProviderFormState) -> Result<String
         None,
     )?;
     Ok(format!(
-        "Added provider \"{}\" ({} · {} model) — restart rpi to use it.",
-        form.id, form.api, form.model_id
+        "Added provider \"{}\" ({} · {} model) — restart {} to use it.",
+        form.id,
+        form.api,
+        form.model_id,
+        crate::COMMAND
     ))
 }
 

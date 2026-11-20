@@ -1617,19 +1617,31 @@ pub async fn interactive_tui(
     tui.start_render_scheduler();
     tui.start_readerless();
 
-    // Consume local self-update results even when network checks are disabled.
-    // Check rpi and installed registry packages in the background so startup
-    // remains responsive while their latest versions are fetched.
-    let mut update_check_handles = Vec::new();
     let update_container = state.history_page.updates.clone();
     let update_tui = tui.clone();
-    update_check_handles.push(tokio::spawn(async move {
-        let report = crate::updates::check_rpi_startup().await;
+    let package_updates = tokio::spawn(async move {
+        let report = crate::updates::check_tui_updates().await;
         if !report.is_empty() {
             add_update_notices(&update_container, &report);
+            update_tui.request_render(false);
         }
-        update_tui.request_render(false);
-    }));
+    });
+    let app_updates = cfg!(feature = "shob").then(|| {
+        let update_container = state.history_page.updates.clone();
+        let update_tui = tui.clone();
+        tokio::spawn(async move {
+            if let Some(notice) = crate::updates::check_app_update().await {
+                add_update_notices(
+                    &update_container,
+                    &crate::updates::UpdateReport {
+                        notices: vec![notice],
+                        warnings: Vec::new(),
+                    },
+                );
+                update_tui.request_render(false);
+            }
+        })
+    });
 
     // ---- Streaming drain task ----
     let drain_handle = if let Some(rx) = event_rx {
@@ -3740,7 +3752,7 @@ pub async fn interactive_tui(
 
     ask_user_bridge.shutdown();
     *running.lock().unwrap() = false;
-    for handle in update_check_handles {
+    for handle in [Some(package_updates), app_updates].into_iter().flatten() {
         handle.abort();
         let _ = handle.await;
     }

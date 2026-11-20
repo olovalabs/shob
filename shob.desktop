@@ -2,7 +2,7 @@
 Name=Shob
 GenericName=Terminal Emulator
 Comment=GPU-accelerated terminal emulator built for developers orchestrating AI coding agents
-Exec=shob %F
+Exec=shob gui
 Icon=shob-brand-v3
 Terminal=false
 Type=Application

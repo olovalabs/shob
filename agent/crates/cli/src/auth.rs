@@ -106,7 +106,10 @@ async fn run_login(args: &[String], snapshot: Option<&Arc<extensions::RegistrySn
         }
     };
     println!("Credentials saved to {}", path.display());
-    println!("Run `rpi auth check --provider {provider}` to verify.");
+    println!(
+        "Run `{} auth check --provider {provider}` to verify.",
+        crate::COMMAND
+    );
     0
 }
 
@@ -135,7 +138,7 @@ async fn run_check(args: &[String], snapshot: Option<&Arc<extensions::RegistrySn
     } else {
         println!("not_ready — no credentials found.");
         eprintln!();
-        eprintln!("Run `rpi auth login --provider {provider}`, configure this provider's apiKey in models.json, or pass --api-key when starting rpi.");
+        eprintln!("Run `{command} auth login --provider {provider}`, configure this provider's apiKey in models.json, or pass --api-key when starting {command}.", command = crate::COMMAND);
         let env = match snapshot.and_then(|snapshot| snapshot.provider_manifest(provider)) {
             Some(manifest) => manifest.api_key_env.as_deref(),
             None => crate::credentials::builtin_api_key_env(provider),
@@ -530,7 +533,7 @@ Notes:
   `refresh` and `logout` use extension actions. API-key providers may still
   use ~/.rpi/agent/models.json or environment variables.
 ",
-        name = crate::APP_NAME
+        name = crate::COMMAND
     );
 }
 

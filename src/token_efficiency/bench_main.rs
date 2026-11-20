@@ -17,13 +17,18 @@ use crate::token_efficiency::bench;
 use crate::token_efficiency::config::TokenEfficiencySettings;
 
 pub fn main() -> ExitCode {
+    let mut args = std::env::args().skip(1);
+    run(&mut args)
+}
+
+pub fn run(args: impl IntoIterator<Item = String>) -> ExitCode {
     let mut fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("bench")
         .join("token-efficiency")
         .join("fixtures");
     let mut out: Option<PathBuf> = None;
 
-    let mut args = std::env::args().skip(1);
+    let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--fixtures" => match args.next() {

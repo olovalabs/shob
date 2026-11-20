@@ -50,7 +50,7 @@ pub fn parse_args(args: &[String]) -> Result<DevOptions, String> {
                     let package = args
                         .get(index)
                         .filter(|value| !value.trim().is_empty())
-                        .ok_or("rpi dev --package requires a package name")?;
+                        .ok_or("--package requires a package name")?;
                     options.package = Some(package.clone());
                 }
                 _ => options.passthrough.push(value.clone()),
@@ -63,7 +63,7 @@ pub fn parse_args(args: &[String]) -> Result<DevOptions, String> {
 
 pub fn print_help() {
     println!(
-        "Usage: rpi dev [dev options] [--] [rpi options/messages...]\n       rpi dev-local [dev options] [--] [rpi options/messages...]\n\n\
+        "Usage: {command} dev [dev options] [--] [agent options/messages...]\n       {command} dev-local [dev options] [--] [agent options/messages...]\n\n\
 Build the current Rust rpi extension, load it, and watch for changes.\n\n\
 Dev options:\n  \
 --package, -P <name>  Select a cdylib package in a multi-package workspace\n  \
@@ -72,10 +72,11 @@ Dev options:\n  \
 --local-only           Load only this extension and its discovered resources\n  \
 --help, -h             Show this help\n\n\
 Examples:\n  \
-rpi dev\n  \
-rpi dev-local\n  \
-rpi dev --package my-extension\n  \
-rpi dev --release -- --model gateway/model\n"
+{command} dev\n  \
+{command} dev-local\n  \
+{command} dev --package my-extension\n  \
+{command} dev --release -- --model gateway/model\n",
+        command = crate::COMMAND
     );
 }
 
@@ -327,12 +328,13 @@ fn detect_project(cwd: &Path, requested: Option<&str>) -> Result<ExtensionProjec
         return Ok(candidates.remove(0));
     }
     Err(format!(
-        "multiple cdylib extensions found: {}. Select one with `rpi dev --package <name>`",
+        "multiple cdylib extensions found: {}. Select one with `{} dev --package <name>`",
         candidates
             .iter()
             .map(|project| project.package.as_str())
             .collect::<Vec<_>>()
-            .join(", ")
+            .join(", "),
+        crate::COMMAND
     ))
 }
 
