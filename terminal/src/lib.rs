@@ -37,8 +37,8 @@ pub use search::SearchState;
 pub use shell_integration::{
     BlockLine, BlockRun, BlockSnapshot, MAX_BLOCK_BYTES, ShellEvent, render_output_lines,
 };
-pub use terminal::{TermDimensions, TerminalState};
+pub use terminal::{TermDimensions, TerminalMemory, TerminalState};
 pub use view::{
     BellCallback, ClipboardStoreCallback, ExitCallback, KeyHandler, LinkCallback, ResizeCallback,
-    TerminalConfig, TerminalView, TitleCallback,
+    TerminalConfig, TerminalView, TerminalViewMemory, TitleCallback,
 };

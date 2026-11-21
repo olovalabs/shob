@@ -161,8 +161,8 @@ pub type NotifierSlot = Arc<Mutex<Option<TerminalNotifier>>>;
 
 /// Cheap, clonable handle to the shared PTY notifier slot.
 ///
-/// `GpuiEventProxy` itself is not `Clone` (its event channel is not), but the
-/// notifier lives behind an `Arc`, so this handle can be stored anywhere.
+/// The notifier lives behind an `Arc`, so this handle can be stored anywhere
+/// without keeping the proxy (and its event channel) alive.
 /// A write before the host installs the notifier is dropped, which is also
 /// what the inline path does.
 #[derive(Clone)]
@@ -180,6 +180,10 @@ impl TerminalNotifierHandle {
     }
 }
 
+/// Clone shares the event channel and notifier slot, so a terminal whose grid is
+/// rebuilt (hibernate/wake) keeps answering protocol queries through the same
+/// PTY writer.
+#[derive(Clone)]
 pub struct GpuiEventProxy {
     tx: Sender<TerminalEvent>,
     notifier: NotifierSlot,

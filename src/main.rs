@@ -62,6 +62,7 @@ mod project_diff;
 mod shob_compat;
 mod shob_storage;
 use terminal::pty_session;
+mod session_lifecycle;
 mod settings;
 mod shell_history;
 #[path = "blocks/shell_integration.rs"]
@@ -3333,6 +3334,51 @@ impl Render for AgentChatView {
 }
 
 impl PaneChat {
+    /// Lower-bound text bytes of the transcript. Render caches are reported
+    /// separately because idle panes drop them.
+    fn message_bytes(&self) -> usize {
+        let messages: usize = self
+            .messages
+            .iter()
+            .map(|message| {
+                let mut bytes = message.text.len();
+                if let Some(tool) = message.tool.as_ref() {
+                    bytes += tool.name.len() + tool.output.len() + tool.preview.len();
+                    bytes += tool.web_sources.iter().map(String::len).sum::<usize>();
+                }
+                bytes
+            })
+            .sum();
+        messages
+            + self.follow_ups.iter().map(String::len).sum::<usize>()
+            + self.agent_draft.len()
+            + self.terminal_draft.len()
+    }
+
+    /// Built rows are the disposable part of the transcript: each carries
+    /// laid-out text and element state that a render rebuilds from messages.
+    fn row_cache_bytes(&self) -> usize {
+        let cache = self.row_cache.borrow();
+        cache.rows.len() * (std::mem::size_of::<ChatRow>() + 128)
+            + cache.workers.len() * std::mem::size_of::<WorkerRowSnapshot>()
+    }
+
+    /// Entities this pane currently keeps alive (a chat view, its scrollbar
+    /// handle, a worker transcript).
+    fn retained_entities(&self) -> usize {
+        let mut count = 0;
+        if self.view.borrow().is_some() {
+            count += 1;
+        }
+        if self.focused_scrollbar.borrow().is_some() {
+            count += 1;
+        }
+        if self.worker_view.is_some() {
+            count += 1;
+        }
+        count
+    }
+
     /// Called once per drained content batch, never from rendering itself.
     fn notify_content(&self, cx: &mut App) {
         if self.view_visible.get()
@@ -3904,6 +3950,9 @@ pub struct TerminalPane {
     /// Keeps the terminal's `ShellEvent` subscription alive for this pane.
     pub terminal_subscription: Option<gpui::Subscription>,
     idle_resources_released: bool,
+    /// Active -> Idle -> Hibernated. Hibernation drops the terminal grid, so
+    /// `idle_resources_released` is only the lighter, cache-sized step.
+    lifecycle: session_lifecycle::PaneLifecycle,
 }
 
 /// Commands handled by the agent composer itself.
@@ -4054,6 +4103,7 @@ impl TerminalPane {
             command_running: false,
             terminal_subscription: None,
             idle_resources_released: false,
+            lifecycle: session_lifecycle::PaneLifecycle::new(std::time::Instant::now()),
         }
     }
 
@@ -4989,6 +5039,7 @@ impl AppState {
                             weak,
                             saved_pane.id.max(1),
                             scrollback,
+                            self.settings.memory.scrollback(),
                             cx,
                         )
                     else {
@@ -5247,6 +5298,7 @@ impl AppState {
                     weak,
                     id,
                     None,
+                    self.settings.memory.scrollback(),
                     cx,
                 )
             {
@@ -5499,6 +5551,7 @@ impl AppState {
         window_title_target: gpui::WeakEntity<Self>,
         pane_id: usize,
         scrollback: Option<String>,
+        scrollback_lines: usize,
         cx: &mut Context<Self>,
     ) -> Result<(
         Entity<TerminalView>,
@@ -5591,7 +5644,7 @@ impl AppState {
             font_size: px(13.5),
             cols: 80,
             rows: 24,
-            scrollback: 10_000,
+            scrollback: scrollback_lines.max(1),
             line_height_multiplier: 1.2,
             padding: Edges::all(px(8.0)),
             colors: palette,
@@ -6188,6 +6241,26 @@ impl AppState {
                             terminal.osc_progress().to_owned(),
                         )
                     };
+                    // Real activity (PTY output or a grid resize) restarts
+                    // the hibernation clock. A hibernated pane is excluded:
+                    // its screen is frozen by definition, and touching it
+                    // here would make it impossible to fall asleep again.
+                    let terminal_hibernated = pane.terminal.read(cx).is_hibernated();
+                    let output_changed = pane
+                        .poll_cache
+                        .as_ref()
+                        .is_none_or(|cached| cached.0 != screen_revision);
+                    if !terminal_hibernated {
+                        let now = std::time::Instant::now();
+                        if pane.lifecycle.state().is_hibernated() {
+                            // The view woke itself (a render or an input) before
+                            // this tick: restart the clock instead of leaving a
+                            // stale state that could never fall asleep again.
+                            pane.lifecycle.woke(now);
+                        } else if output_changed {
+                            pane.lifecycle.touch(now);
+                        }
+                    }
                     let report_was_cleared = agent_report.is_none() && pane.osc_report_active;
                     pane.osc_report_active = agent_report.is_some();
                     if report_was_cleared {
@@ -6884,6 +6957,7 @@ impl AppState {
             self_weak,
             next_id,
             None,
+            self.settings.memory.scrollback(),
             cx,
         ) {
             let session_count = self
@@ -7217,6 +7291,7 @@ impl AppState {
             self_weak,
             next_id,
             None,
+            self.settings.memory.scrollback(),
             cx,
         ) {
             let title = SharedString::from("terminal 1");
@@ -7322,6 +7397,7 @@ impl AppState {
             self_weak,
             next_id,
             None,
+            self.settings.memory.scrollback(),
             cx,
         ) {
             let title = SharedString::from(format!("terminal {}", pane_count + 1));
@@ -10600,15 +10676,136 @@ impl AppState {
         streaming
     }
 
+    /// Per-pane memory and lifecycle totals, for the `SHOB_DIAGNOSTICS` line.
+    ///
+    /// Every field is an estimate of a named structure, not an allocator
+    /// measurement. That is enough to rank consumers and to prove what
+    /// hibernation actually gave back.
+    fn memory_report(&self, cx: &App) -> session_lifecycle::WorkspaceMemory {
+        let mut totals = session_lifecycle::WorkspaceMemory::default();
+        for project in &self.projects {
+            for session in &project.sessions {
+                for pane in &session.panes {
+                    let terminal = pane.terminal.read(cx);
+                    let view = terminal.memory_usage();
+                    let mut entities = pane.chat.retained_entities();
+                    if pane.input_state.is_some() {
+                        entities += 1;
+                    }
+                    if pane.files_surface.is_some() {
+                        entities += 1;
+                    }
+                    let mut tasks = 0;
+                    if pane.terminal_subscription.is_some() {
+                        tasks += 1;
+                    }
+                    if pane.input_subscription.is_some() {
+                        tasks += 1;
+                    }
+                    let mut threads = terminal.thread_count();
+                    if pane.chat.bridge.is_some() {
+                        // The embedded backend owns its own runtime; count the
+                        // handle as one provider thread rather than guessing
+                        // the runtime's worker count.
+                        tasks += 1;
+                        threads += 1;
+                    }
+                    totals.record(
+                        pane.lifecycle.state(),
+                        &session_lifecycle::MemoryUsage {
+                            grid_bytes: view.grid.grid_bytes,
+                            grid_reserved_bytes: view.grid.reserved_bytes,
+                            hibernated_text_bytes: view.hibernated_text_bytes,
+                            backlog_bytes: view.backlog_bytes,
+                            view_cache_bytes: view.renderer_bytes + pane.chat.row_cache_bytes(),
+                            message_bytes: pane.chat.message_bytes(),
+                            entities,
+                            tasks,
+                            threads,
+                        },
+                    );
+                }
+            }
+        }
+        totals
+    }
+
+    /// Reclaim what an unselected pane does not need.
+    ///
+    /// Two levels, both reversible without touching the shell:
+    /// 1. every idle pane releases render caches and any releasable agent
+    ///    bridge (the pre-existing behaviour);
+    /// 2. a pane that has been quiet for the configured threshold and has no
+    ///    work in flight drops its terminal grid, keeping the PTY, a bounded
+    ///    text snapshot and a bounded backlog of whatever arrives while asleep.
+    ///
+    /// Everything expensive about waking is a render: the grid is rebuilt from
+    /// the kept text, so returning to a session never waits on the disk.
     fn release_inactive_resources(&mut self, cx: &mut Context<Self>) -> bool {
         let selected = self.active_session().map(|session| session.id);
+        let policy = self.settings.memory.policy();
+        let now = std::time::Instant::now();
         let mut session_changed = false;
+        // A deep scrollback is thousands of small row allocations, and its drop
+        // runs on this thread. Hibernating one pane per tick keeps the freed
+        // total bounded instead of stalling a restored 50-session workspace.
+        let mut hibernated_this_tick = false;
         for project in &mut self.projects {
             for session in &mut project.sessions {
                 for pane in &mut session.panes {
-                    if Some(session.id) == selected || pane.has_live_work() {
+                    let visible = Some(session.id) == selected;
+                    let (terminal_hibernated, alt_screen) = {
+                        let terminal = pane.terminal.read(cx);
+                        (terminal.is_hibernated(), terminal.is_alt_screen())
+                    };
+                    if visible || pane.has_live_work() {
                         pane.idle_resources_released = false;
+                        if visible {
+                            pane.lifecycle.mark_seen(now);
+                            if pane.lifecycle.state().is_hibernated() {
+                                pane.lifecycle.woke(now);
+                            }
+                        } else {
+                            pane.lifecycle.touch(now);
+                        }
                         continue;
+                    }
+                    // Hibernation is only for a quiet shell prompt. A
+                    // foreground command (`command_running`, which covers an
+                    // agent CLI that is mid-turn), a full-screen program, or a
+                    // preview pane keeps its grid: those repaint on their own
+                    // schedule, so an emptied grid would not come back by
+                    // itself, and no process is ever stalled or killed behind
+                    // the person's back.
+                    let quiescent = !terminal_hibernated
+                        && !pane.command_running
+                        && pane.preview_owner.is_none()
+                        && !pane.tool_panel
+                        && pane.markdown_preview.is_none()
+                        && pane.diff_preview.is_none()
+                        && !alt_screen;
+                    let allowed = quiescent && !hibernated_this_tick;
+                    let transition = pane.lifecycle.evaluate(now, policy, allowed);
+                    if allowed && transition == session_lifecycle::Transition::ToHibernated {
+                        let text = pane.terminal.update(cx, |terminal, _| terminal.hibernate());
+                        if let Some(text) = text {
+                            hibernated_this_tick = true;
+                            pane.idle_resources_released = true;
+                            pane.poll_cache = None;
+                            pane.screen_scratch = Vec::new();
+                            pane.chat.view.borrow_mut().take();
+                            pane.chat.focused_scrollbar.borrow_mut().take();
+                            let rows = std::mem::take(&mut *pane.chat.row_cache.borrow_mut());
+                            let uid = pane.uid.clone();
+                            cx.background_executor()
+                                .spawn(async move {
+                                    Self::persist_hibernated_scrollback(&uid, &text);
+                                    drop(rows);
+                                    session_lifecycle::return_free_pages();
+                                })
+                                .detach();
+                            continue;
+                        }
                     }
                     let bridge = if pane
                         .chat
@@ -10652,6 +10849,15 @@ impl AppState {
             }
         }
         session_changed
+    }
+
+    /// Persist a hibernated pane's text for crash safety. Failures are reported
+    /// and ignored: the in-memory copy still wakes the pane, and losing a
+    /// scrollback file is not worth failing a save over.
+    fn persist_hibernated_scrollback(uid: &str, text: &str) {
+        if let Err(error) = workspace_state::write_scrollback(uid, text) {
+            eprintln!("failed to persist hibernated scrollback: {error}");
+        }
     }
 
     /// Mirror a pane's conversation name onto its session, so the sidebar names
@@ -21327,11 +21533,16 @@ impl Render for AppState {
         // The wrapper marks only panes mounted by this root pass. Background
         // sessions and panes hidden by previews/maximization stay dormant.
         let selected = self.active_session().map(|session| session.id);
+        let seen_at = std::time::Instant::now();
         for project in &mut self.projects {
             for session in &mut project.sessions {
                 for pane in &mut session.panes {
                     if Some(session.id) == selected {
                         pane.idle_resources_released = false;
+                        // Rendering is the strongest evidence the person is
+                        // looking at this pane, and it records `last_seen` so a
+                        // pane that was viewed once may later be hibernated.
+                        pane.lifecycle.mark_seen(seen_at);
                     }
                     pane.chat.view_visible.set(false);
                 }
@@ -22788,13 +22999,18 @@ fn run_gui() -> Result<()> {
                     // timing, UI-thread work, CPU, RSS and wakeups. Not spawned
                     // at all unless `SHOB_DIAGNOSTICS` is set.
                     if diagnostics::enabled() {
+                        let memory_state = app_state.downgrade();
                         cx.spawn(async move |cx: &mut gpui::AsyncApp| {
                             let mut sampler = diagnostics::Sampler::new();
                             loop {
                                 cx.background_executor()
                                     .timer(diagnostics::REPORT_INTERVAL)
                                     .await;
-                                eprintln!("{}", sampler.report());
+                                let memory = memory_state
+                                    .update(cx, |state, cx| state.memory_report(cx).line())
+                                    .ok()
+                                    .unwrap_or_default();
+                                eprintln!("{}\n{}", sampler.report(), memory);
                             }
                         })
                         .detach();
@@ -23067,6 +23283,59 @@ mod chat_render_isolation_tests {
     }
 
     #[test]
+    fn quiet_background_pane_hibernates_and_wakes_without_touching_its_shell() {
+        let mut app = TestAppContext::new();
+        let (mut cx, state) = open_app(&mut app);
+        cx.update_window_entity(&state, |state, window, cx| {
+            // A pane that was looked at an hour ago and has been quiet since.
+            let idle_since = std::time::Instant::now() - std::time::Duration::from_secs(3_600);
+            let pane = state.pane_mut(1).unwrap();
+            pane.lifecycle = session_lifecycle::PaneLifecycle::new(idle_since);
+            pane.lifecycle.mark_seen(idle_since);
+            // Hibernation must not start I/O that had not started yet, and must
+            // not stop I/O that had: the shell outlives the grid either way.
+            let started_before = pane.terminal.read(cx).is_started();
+
+            state.create_new_session_in_project(0, window, cx);
+            state.release_inactive_resources(cx);
+
+            let pane = state.pane_ref(1).unwrap();
+            assert!(pane.terminal.read(cx).is_hibernated());
+            assert_eq!(
+                pane.lifecycle.state(),
+                session_lifecycle::LifecycleState::Hibernated
+            );
+            assert_eq!(pane.terminal.read(cx).is_started(), started_before);
+
+            // Waking rebuilds the grid in place. Driving it directly keeps the
+            // test from starting a real shell.
+            pane.terminal.update(cx, |terminal, cx| terminal.wake(cx));
+            let pane = state.pane_ref(1).unwrap();
+            assert!(!pane.terminal.read(cx).is_hibernated());
+
+            // Selecting it again heals the policy state on the next tick.
+            state.projects[0].active_session_idx = 0;
+            state.release_inactive_resources(cx);
+            assert_eq!(
+                state.pane_ref(1).unwrap().lifecycle.state(),
+                session_lifecycle::LifecycleState::Active
+            );
+
+            // And it can go back to sleep once it is quiet again: hibernation
+            // is a state, not a one-way transition.
+            state.projects[0].active_session_idx = 1;
+            {
+                let pane = state.pane_mut(1).unwrap();
+                let quiet = std::time::Instant::now() - std::time::Duration::from_secs(3_600);
+                pane.lifecycle = session_lifecycle::PaneLifecycle::new(quiet);
+                pane.lifecycle.mark_seen(quiet);
+            }
+            state.release_inactive_resources(cx);
+            assert!(state.pane_ref(1).unwrap().terminal.read(cx).is_hibernated());
+        });
+    }
+
+    #[test]
     fn dormant_terminal_input_starts_io_and_completes_without_render() {
         struct Output(Arc<std::sync::atomic::AtomicUsize>);
         impl std::io::Read for Output {
@@ -23220,9 +23489,16 @@ mod resize_tests {
         let palette = ColorPalette::default();
         let dir = std::env::current_dir().expect("current dir");
         let weak = cx.entity().downgrade();
-        let (terminal, pid, generation, terminal_subscription) =
-            AppState::spawn_terminal_view(Some(&dir), palette.clone(), weak, 1, None, cx)
-                .expect("terminal view");
+        let (terminal, pid, generation, terminal_subscription) = AppState::spawn_terminal_view(
+            Some(&dir),
+            palette.clone(),
+            weak,
+            1,
+            None,
+            settings::MemorySettings::default().scrollback(),
+            cx,
+        )
+        .expect("terminal view");
         let title = SharedString::from("terminal 1");
 
         let mut pane =

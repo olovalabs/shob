@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Idle sessions now hibernate: a background pane past its quiet threshold drops its terminal grid, keeps its shell, its last 2 000 lines of text and a bounded buffer of new output, and wakes from that text on return. Panes running a command, a full-screen program, or an agent turn stay resident.
+- `SHOB_DIAGNOSTICS=1` reports per-pane grid, text, message and cache bytes with active/idle/hibernated counts, and the in-memory scrollback is configurable (`memory.terminal_scrollback_lines`).
 - `shob` opens the coding-agent TUI from the current terminal; `shob gui` opens the desktop workspace. Both ship in one executable, including the optional RPC backend. From source, `cargo run` opens the desktop and `cargo run -- tui` opens the TUI.
 
 ### Fixed

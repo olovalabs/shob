@@ -226,6 +226,40 @@ pub struct TerminalView {
     /// Last time this view rendered. Used to tell a visible terminal from a
     /// background one, which does not need live search matches.
     last_render: Option<std::time::Instant>,
+
+    /// Hibernated panes drop their grid and history to a stub: the text below,
+    /// plus the PTY still attached (never killed) and its output buffered in a
+    /// bounded backlog. Shared with the reader task so it can skip parsing and
+    /// skip waking the UI entirely.
+    hibernated: Arc<std::sync::atomic::AtomicBool>,
+    /// The pane's history as text, kept in memory so waking needs no disk read.
+    /// Bounded by [`MAX_HIBERNATED_TEXT_BYTES`].
+    hibernated_text: String,
+    /// Raw PTY bytes that arrived while hibernated. Parsing resumes with these
+    /// on wake; the bound is what keeps a noisy background process harmless.
+    hibernated_backlog: Arc<parking_lot::Mutex<Vec<u8>>>,
+}
+
+/// History kept for a hibernated pane. Matches the app's persisted scrollback
+/// cap, so waking shows what a restart would have shown anyway.
+const MAX_HIBERNATED_TEXT_LINES: usize = 2_000;
+/// The text is the only per-pane memory a hibernated pane keeps; cap it so a
+/// pane that printed a giant line cannot defeat hibernation.
+const MAX_HIBERNATED_TEXT_BYTES: usize = 512 * 1024;
+/// PTY output buffered while hibernated before the oldest whole lines are
+/// discarded. A quiet shell (the only kind eligible to hibernate) sends nothing.
+const MAX_HIBERNATED_BACKLOG_BYTES: usize = 256 * 1024;
+/// A hibernated grid retains no scrollback of its own; anything it accumulates
+/// is dropped on the next wake replay and must not grow unnoticed.
+const HIBERNATED_GRID_HISTORY: usize = 0;
+
+/// Estimated cost of a terminal view, for the app's memory overlay.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TerminalViewMemory {
+    pub grid: crate::terminal::TerminalMemory,
+    pub hibernated_text_bytes: usize,
+    pub backlog_bytes: usize,
+    pub renderer_bytes: usize,
 }
 
 /// Minimum gap between full-scrollback search rescans while output streams in.
@@ -276,6 +310,59 @@ async fn yield_to_ui() {
 struct OutputChunk {
     bytes: Vec<u8>,
     read_at: Option<std::time::Instant>,
+}
+
+/// Append PTY bytes to the hibernation backlog, keeping at most
+/// [`MAX_HIBERNATED_BACKLOG_BYTES`]. Trimming happens at a line boundary so a
+/// replay does not start inside an escape sequence; a single unbroken line
+/// larger than the budget falls back to its newest bytes.
+fn append_bounded(backlog: &mut Vec<u8>, bytes: &[u8]) {
+    backlog.extend_from_slice(bytes);
+    let cap = MAX_HIBERNATED_BACKLOG_BYTES;
+    if backlog.len() <= cap {
+        return;
+    }
+    let overflow = backlog.len() - cap;
+    if let Some(offset) = backlog[overflow..].iter().position(|&byte| byte == b'\n') {
+        backlog.drain(..overflow + offset + 1);
+    } else {
+        let cut = backlog.len() - cap;
+        backlog.drain(..cut);
+    }
+}
+
+/// Keep the newest `cap` bytes, at a UTF-8 boundary.
+fn trim_front_to_bytes(text: &mut String, cap: usize) {
+    if text.len() <= cap {
+        return;
+    }
+    let mut cut = text.len() - cap;
+    while cut < text.len() && !text.is_char_boundary(cut) {
+        cut += 1;
+    }
+    text.drain(..cut);
+}
+
+/// Last `max_lines` complete lines of a text buffer.
+fn tail_lines(text: &str, max_lines: usize) -> String {
+    if max_lines == 0 {
+        return String::new();
+    }
+    let total = text.bytes().filter(|&byte| byte == b'\n').count();
+    if total <= max_lines {
+        return text.to_string();
+    }
+    let skip = total - max_lines;
+    let mut seen = 0;
+    for (index, byte) in text.bytes().enumerate() {
+        if byte == b'\n' {
+            seen += 1;
+            if seen == skip {
+                return text[index + 1..].to_string();
+            }
+        }
+    }
+    text.to_string()
 }
 
 impl TerminalView {
@@ -369,6 +456,12 @@ impl TerminalView {
             thread::spawn(move || Self::read_stdout_blocking(stdout_reader, bytes_tx));
         });
 
+        let hibernated = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let hibernated_backlog: Arc<parking_lot::Mutex<Vec<u8>>> =
+            Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let reader_hibernated = Arc::clone(&hibernated);
+        let reader_backlog = Arc::clone(&hibernated_backlog);
+
         let reader_task = cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             if let Some(scrollback) = scrollback.filter(|text| !text.is_empty()) {
                 for bytes in scrollback.as_bytes().chunks(MAX_COALESCE_BYTES) {
@@ -405,6 +498,14 @@ impl TerminalView {
                 };
                 match next {
                     Ok(OutputChunk { mut bytes, read_at }) => {
+                        // A hibernated pane has no grid to parse into. Buffer
+                        // the newest bounded window for the wake replay and do
+                        // not touch the UI: no parse, no notify, no paint.
+                        if reader_hibernated.load(Ordering::Acquire) {
+                            let mut backlog = reader_backlog.lock();
+                            append_bounded(&mut backlog, &bytes);
+                            continue;
+                        }
                         // Coalesce what already arrived so a firehose of output
                         // costs one parse + one repaint, not hundreds — but stop
                         // at a budget so the parse, which runs on the UI thread,
@@ -521,6 +622,9 @@ impl TerminalView {
             search_refresh_pending: false,
             search_refresh_task: None,
             last_render: None,
+            hibernated,
+            hibernated_text: String::new(),
+            hibernated_backlog,
             read_only,
         }
     }
@@ -566,6 +670,88 @@ impl TerminalView {
         self.regex_searches = None;
         self.search.release_idle_resources();
         self.event_scratch = Vec::new();
+    }
+
+    /// Hibernate: replace the grid with an empty one and keep only bounded
+    /// history text, leaving the PTY (and whatever it is running) untouched.
+    /// Returns the text the caller should persist for crash safety, or `None`
+    /// when the pane is already hibernated.
+    ///
+    /// Ownership of the process never changes here: the shell keeps running,
+    /// its output is buffered in a bounded backlog, and waking replays that
+    /// backlog into a rebuilt grid.
+    pub fn hibernate(&mut self) -> Option<String> {
+        if self.hibernated.load(Ordering::Acquire) {
+            return None;
+        }
+        let mut text = self.state.buffer_text(MAX_HIBERNATED_TEXT_LINES);
+        trim_front_to_bytes(&mut text, MAX_HIBERNATED_TEXT_BYTES);
+        // Set the flag before touching the grid so the reader starts buffering
+        // instead of parsing into a grid that is about to disappear.
+        self.hibernated.store(true, Ordering::Release);
+        self.state.reset_grid(HIBERNATED_GRID_HISTORY);
+        self.release_idle_resources();
+        // Whatever had arrived is already inside `text`, so the post-hibernation
+        // backlog starts empty. Deferred events are kept: an exit or a title
+        // that arrived just before sleeping must still apply on wake.
+        self.hibernated_backlog.lock().clear();
+        self.hibernated_text = text.clone();
+        Some(text)
+    }
+
+    pub fn is_hibernated(&self) -> bool {
+        self.hibernated.load(Ordering::Acquire)
+    }
+
+    /// `true` once the PTY reader and input worker have been started.
+    pub fn is_started(&self) -> bool {
+        self.started
+    }
+
+    /// OS threads owned by this pane: the PTY reader and the input worker.
+    /// Transient PTY setup work runs on the shared pool and is not counted.
+    pub fn thread_count(&self) -> usize {
+        if self.started { 2 } else { 0 }
+    }
+
+    /// Wake: restore the scrollback setting and replay the kept text plus any
+    /// output that arrived while asleep. Cheap enough for a render pass.
+    pub fn wake(&mut self, cx: &mut Context<Self>) {
+        if self.wake_inner() {
+            cx.notify();
+        }
+    }
+
+    fn wake_inner(&mut self) -> bool {
+        if !self.hibernated.load(Ordering::Acquire) {
+            return false;
+        }
+        self.hibernated.store(false, Ordering::Release);
+        self.state.set_grid_history(self.config.scrollback);
+        let history = std::mem::take(&mut self.hibernated_text);
+        let backlog = std::mem::take(&mut *self.hibernated_backlog.lock());
+        if !history.is_empty() {
+            self.state.feed_raw(history.as_bytes());
+        }
+        if !backlog.is_empty() {
+            self.state.feed_raw(&backlog);
+        }
+        self.state.scroll_to_bottom();
+        self.screen_revision.fetch_add(1, Ordering::Relaxed);
+        self.search.clear();
+        self.regex_searches = None;
+        true
+    }
+
+    /// Estimated per-view memory. `grid` dominates until the pane hibernates;
+    /// after that only the bounded text and backlog remain.
+    pub fn memory_usage(&self) -> TerminalViewMemory {
+        TerminalViewMemory {
+            grid: self.state.memory_usage(),
+            hibernated_text_bytes: self.hibernated_text.len(),
+            backlog_bytes: self.hibernated_backlog.lock().len(),
+            renderer_bytes: self.renderer.memory_usage(),
+        }
     }
 
     pub fn with_resize_callback(
@@ -690,11 +876,15 @@ impl TerminalView {
 
     /// Send text to the shell as if the user had typed it.
     pub fn send_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        // Input implies the person is looking at this pane, even if the poller
+        // has not seen a render yet.
+        self.wake(cx);
         self.scroll_to_bottom_on_input(cx);
         self.write_to_pty(text.as_bytes());
     }
 
     pub fn send_bytes(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
+        self.wake(cx);
         self.scroll_to_bottom_on_input(cx);
         self.write_to_pty(bytes);
     }
@@ -714,6 +904,7 @@ impl TerminalView {
         bytes: &[u8],
         cx: &mut Context<Self>,
     ) -> Result<WriteCompletion, String> {
+        self.wake(cx);
         self.scroll_to_bottom_on_input(cx);
         self.ensure_started();
         self.stdin_writer.send_with_completion(bytes)
@@ -1958,7 +2149,21 @@ impl TerminalView {
 
     /// Snapshot the whole buffer (scrollback + visible screen) as plain text,
     /// keeping the newest `max_lines` lines.
+    ///
+    /// A hibernated view has no grid history, but its kept text plus buffered
+    /// output *is* its history; reporting the empty grid here would lose it on
+    /// quit.
     pub fn buffer_text(&self, max_lines: usize) -> String {
+        if self.hibernated.load(Ordering::Acquire) {
+            let mut text = self.hibernated_text.clone();
+            {
+                let backlog = self.hibernated_backlog.lock();
+                if !backlog.is_empty() {
+                    text.push_str(&String::from_utf8_lossy(&backlog[..]));
+                }
+            }
+            return tail_lines(&text, max_lines);
+        }
         self.state.buffer_text(max_lines)
     }
 
@@ -2003,8 +2208,16 @@ impl TerminalView {
         self.state.set_shell_token(config.shell_token.clone());
 
         if alac_changed {
+            // A hibernated grid must not start retaining history again just
+            // because fonts or colours changed; wake restores the configured
+            // size from `self.config`.
+            let history = if self.hibernated.load(Ordering::Acquire) {
+                HIBERNATED_GRID_HISTORY
+            } else {
+                config.scrollback
+            };
             self.state.set_config(TerminalState::build_config(
-                config.scrollback,
+                history,
                 &config.semantic_escape_chars,
                 config.allow_osc52_paste,
             ));
@@ -2035,6 +2248,11 @@ impl EventEmitter<ShellEvent> for TerminalView {}
 
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // A render is proof the pane is visible, so it is the wake point. Do
+        // not notify: this frame is already being built.
+        if self.hibernated.load(Ordering::Acquire) {
+            self.wake_inner();
+        }
         self.ensure_started();
         self.process_events(window, cx);
 
@@ -2187,5 +2405,69 @@ impl Render for TerminalView {
                         .child(error),
                 )
             })
+    }
+}
+
+#[cfg(test)]
+mod hibernation_tests {
+    // `use super::*` here re-globs this module's `use gpui::*`, which blows the
+    // crate's macro recursion limit.
+    use super::{MAX_HIBERNATED_BACKLOG_BYTES, append_bounded, tail_lines, trim_front_to_bytes};
+
+    #[test]
+    fn backlog_keeps_small_writes_verbatim() {
+        let mut backlog = Vec::new();
+        append_bounded(&mut backlog, b"one\ntwo\n");
+        append_bounded(&mut backlog, b"three\n");
+        assert_eq!(backlog.as_slice(), b"one\ntwo\nthree\n".as_slice());
+    }
+
+    #[test]
+    fn backlog_is_bounded_and_trimmed_at_a_line_start() {
+        let mut backlog = Vec::new();
+        let line = vec![b'x'; 4096];
+        let mut chunk = Vec::with_capacity(line.len() * 100);
+        for _ in 0..100 {
+            chunk.extend_from_slice(&line);
+            chunk.push(b'\n');
+        }
+        append_bounded(&mut backlog, &chunk);
+        assert!(backlog.len() <= MAX_HIBERNATED_BACKLOG_BYTES);
+        assert!(backlog.len() >= MAX_HIBERNATED_BACKLOG_BYTES - line.len() - 1);
+        // Trimming starts at a newline, so the replay does not begin inside a
+        // partial line or escape sequence.
+        assert_eq!(backlog.first(), Some(&b'x'));
+        assert_eq!(backlog.last(), Some(&b'\n'));
+    }
+
+    #[test]
+    fn backlog_of_one_unbroken_line_stays_bounded() {
+        let mut backlog = Vec::new();
+        append_bounded(
+            &mut backlog,
+            &vec![b'y'; MAX_HIBERNATED_BACKLOG_BYTES + 1024],
+        );
+        assert_eq!(backlog.len(), MAX_HIBERNATED_BACKLOG_BYTES);
+        assert!(backlog.iter().all(|&byte| byte == b'y'));
+    }
+
+    #[test]
+    fn text_trim_keeps_utf8_valid_and_the_newest_bytes() {
+        let mut text = "ab\nééé\nzz".to_string();
+        trim_front_to_bytes(&mut text, 3);
+        assert_eq!(text, "\nzz");
+        assert!(std::str::from_utf8(text.as_bytes()).is_ok());
+
+        let mut text = "short".to_string();
+        trim_front_to_bytes(&mut text, 100);
+        assert_eq!(text, "short");
+    }
+
+    #[test]
+    fn tail_lines_returns_the_newest_complete_lines() {
+        assert_eq!(tail_lines("a\nb\nc\n", 2), "b\nc\n");
+        assert_eq!(tail_lines("a\nb\nc\n", 10), "a\nb\nc\n");
+        assert_eq!(tail_lines("a\nb\nc\n", 0), "");
+        assert_eq!(tail_lines("no newline", 1), "no newline");
     }
 }

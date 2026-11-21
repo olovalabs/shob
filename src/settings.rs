@@ -13,6 +13,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 const DEFAULT_WINDOW_WIDTH: f32 = 1200.0;
 const DEFAULT_WINDOW_HEIGHT: f32 = 780.0;
@@ -120,6 +121,56 @@ impl Default for RestoreOptions {
     }
 }
 
+/// Idle-session resource policy.
+///
+/// Defaults reclaim only sessions the person is not looking at; hiding a pane
+/// never kills its shell. Setting `hibernation` to false restores the old
+/// resident model where every grid stays in memory until the pane is closed.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MemorySettings {
+    pub hibernation: bool,
+    /// Seconds a quiescent pane waits before releasing disposable caches.
+    pub idle_after_secs: u64,
+    /// Seconds of no input or output before its grid is dropped.
+    pub hibernate_after_secs: u64,
+    /// In-memory scrollback for a live grid. A hibernated grid keeps none.
+    pub terminal_scrollback_lines: usize,
+}
+
+impl Default for MemorySettings {
+    fn default() -> Self {
+        Self {
+            hibernation: true,
+            idle_after_secs: 0,
+            hibernate_after_secs: 900,
+            terminal_scrollback_lines: 10_000,
+        }
+    }
+}
+
+impl MemorySettings {
+    /// `SHOB_IDLE_SECS`, `SHOB_HIBERNATE_SECS` and `SHOB_DISABLE_HIBERNATION`
+    /// override the file for one run, as documented in the README.
+    pub fn policy(&self) -> crate::session_lifecycle::LifecyclePolicy {
+        let policy = crate::session_lifecycle::LifecyclePolicy::from_lookup(
+            |key| std::env::var(key).ok(),
+            Duration::from_secs(self.idle_after_secs),
+            Duration::from_secs(self.hibernate_after_secs),
+        );
+        crate::session_lifecycle::LifecyclePolicy {
+            enabled: policy.enabled && self.hibernation,
+            ..policy
+        }
+    }
+
+    /// Hand-edited settings cannot ask for a grid that would exhaust memory or
+    /// one so small that the shell's own startup output is lost.
+    pub fn scrollback(&self) -> usize {
+        self.terminal_scrollback_lines.clamp(1_000, 100_000)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
@@ -144,6 +195,8 @@ pub struct AppSettings {
     /// Token-reduction layer. Every field defaults to a working value, so an
     /// older `settings.json` without this key behaves as intended.
     pub token_efficiency: crate::token_efficiency::TokenEfficiencySettings,
+    /// Idle-session reclamation. Missing in older files, so it defaults on.
+    pub memory: MemorySettings,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -170,6 +223,7 @@ impl Default for AppSettings {
             window: None,
             restore: RestoreOptions::default(),
             token_efficiency: crate::token_efficiency::TokenEfficiencySettings::default(),
+            memory: MemorySettings::default(),
         }
     }
 }
@@ -497,5 +551,50 @@ mod tests {
             window_bounds(Some(saved), &displays),
             WindowBounds::Maximized(_)
         ));
+    }
+}
+
+#[cfg(test)]
+mod memory_settings_tests {
+    use super::*;
+
+    #[test]
+    fn memory_defaults_reclaim_by_default_without_shrinking_scrollback() {
+        let settings = AppSettings::default();
+        assert!(settings.memory.hibernation);
+        assert_eq!(settings.memory.hibernate_after_secs, 900);
+        assert_eq!(settings.memory.scrollback(), 10_000);
+        // The mapping itself (and its environment overrides) is tested in
+        // `session_lifecycle`; here only the persisted defaults matter, because
+        // the test process may carry a developer's `SHOB_*` overrides.
+    }
+
+    #[test]
+    fn hand_edited_scrollback_is_clamped() {
+        let mut memory = MemorySettings {
+            terminal_scrollback_lines: 10,
+            ..MemorySettings::default()
+        };
+        assert_eq!(memory.scrollback(), 1_000);
+        memory.terminal_scrollback_lines = 10_000_000;
+        assert_eq!(memory.scrollback(), 100_000);
+    }
+
+    #[test]
+    fn an_older_settings_file_gains_defaults() {
+        let settings: AppSettings =
+            serde_json::from_str(r#"{"version":1,"agent_layout":false}"#).unwrap();
+        assert_eq!(settings.memory, MemorySettings::default());
+        assert!(!settings.agent_layout);
+    }
+
+    #[test]
+    fn disabling_hibernation_keeps_the_rest_of_the_policy() {
+        let memory = MemorySettings {
+            hibernation: false,
+            hibernate_after_secs: 120,
+            ..MemorySettings::default()
+        };
+        assert!(!memory.policy().enabled);
     }
 }

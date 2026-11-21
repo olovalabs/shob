@@ -282,7 +282,31 @@ AWS SDK credentials or Google ADC at request time, not during local discovery.
 See [STREAMING_PERFORMANCE.md](STREAMING_PERFORMANCE.md) for evidence,
 reproduction commands and measurement limitations.
 
-### 2.10 Token Efficiency Layer (`src/token_efficiency/`)
+### 2.10 Session lifecycle and memory (`src/session_lifecycle.rs`)
+
+Memory follows attention: `Active -> Idle -> Hibernated`. A session is `Active`
+while it is visible, focused, or has work in flight; `Idle` once it is neither,
+which releases disposable render caches and any releasable agent bridge. After
+`memory.hibernate_after_secs` of no input or output, a *quiescent* pane
+hibernates: `TerminalView::hibernate` snapshots the newest 2 000 lines as text,
+replaces the alacritty grid with an empty one at the same dimensions, and keeps
+the PTY, the shell, the shell-integration scanners and a 256 KiB backlog of new
+output. The grid is the dominant per-pane allocation — 24 bytes per cell, plus
+alacritty's up-to-1 000 retained spare rows — so this is where an unviewed
+workspace's memory goes. A pane with a foreground command, alternate screen,
+agent turn, chat, or preview is never hibernated, so no process is stalled or
+killed silently; output that arrives anyway is buffered, never parsed, and never repainted.
+
+Waking is a render: replaying the kept text and backlog into a fresh grid takes
+no disk read and is indistinguishable from restored scrollback, which is already
+text-only. `TerminalView::buffer_text` reports that text while asleep, so a quit
+during hibernation persists the same history as one during Idle. The policy is
+pure and unit-tested against injected time; thresholds come from `settings.json`
+and `SHOB_IDLE_SECS` / `SHOB_HIBERNATE_SECS` / `SHOB_DISABLE_HIBERNATION`.
+`SHOB_DIAGNOSTICS=1` reports per-pane estimates, and the app asks glibc to
+`malloc_trim` after dropping a grid so RSS follows the heap down.
+
+### 2.11 Token Efficiency Layer (`src/token_efficiency/`)
 
 - A host-side token-reduction layer that runs inside the embedded agent loop via
   the `before_tool_call` / `after_tool_call` hook slots, mapping

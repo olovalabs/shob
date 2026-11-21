@@ -209,6 +209,28 @@ SHOB_TOKEN_EFFICIENCY=0
 
 Settings are stored in your platform's configuration directory.
 
+### Idle sessions
+
+A session you are not looking at releases its render caches immediately and, after
+a quiet period, hibernates: the terminal grid is dropped and the pane keeps only
+its text, a bounded buffer of any output that arrives while it is away, and its
+still-running shell. Returning rebuilds the grid from that text, so waking never
+waits on the disk, and nothing is killed. A pane running a command, a full-screen
+program, or an agent turn stays resident.
+
+```jsonc
+"memory": {
+  "hibernation": true,
+  "idle_after_secs": 0,          // release render caches
+  "hibernate_after_secs": 900,   // drop the terminal grid
+  "terminal_scrollback_lines": 10000
+}
+```
+
+For one run: `SHOB_IDLE_SECS`, `SHOB_HIBERNATE_SECS`, and
+`SHOB_DISABLE_HIBERNATION=1`. `SHOB_DIAGNOSTICS=1` appends a per-pane memory and
+lifecycle line to its once-a-second report.
+
 ### Token Efficiency
 
 Native agent chat runs a token-reduction layer: it answers repeated file reads and
