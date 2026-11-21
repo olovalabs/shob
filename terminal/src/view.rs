@@ -2410,7 +2410,9 @@ impl Render for TerminalView {
 
 #[cfg(test)]
 mod hibernation_tests {
-    use super::*;
+    // `use super::*` here re-globs this module's `use gpui::*`, which blows the
+    // crate's macro recursion limit.
+    use super::{MAX_HIBERNATED_BACKLOG_BYTES, append_bounded, tail_lines, trim_front_to_bytes};
 
     #[test]
     fn backlog_keeps_small_writes_verbatim() {
@@ -2441,7 +2443,10 @@ mod hibernation_tests {
     #[test]
     fn backlog_of_one_unbroken_line_stays_bounded() {
         let mut backlog = Vec::new();
-        append_bounded(&mut backlog, &vec![b'y'; MAX_HIBERNATED_BACKLOG_BYTES + 1024]);
+        append_bounded(
+            &mut backlog,
+            &vec![b'y'; MAX_HIBERNATED_BACKLOG_BYTES + 1024],
+        );
         assert_eq!(backlog.len(), MAX_HIBERNATED_BACKLOG_BYTES);
         assert!(backlog.iter().all(|&byte| byte == b'y'));
     }

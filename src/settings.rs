@@ -571,8 +571,10 @@ mod memory_settings_tests {
 
     #[test]
     fn hand_edited_scrollback_is_clamped() {
-        let mut memory = MemorySettings::default();
-        memory.terminal_scrollback_lines = 10;
+        let mut memory = MemorySettings {
+            terminal_scrollback_lines: 10,
+            ..MemorySettings::default()
+        };
         assert_eq!(memory.scrollback(), 1_000);
         memory.terminal_scrollback_lines = 10_000_000;
         assert_eq!(memory.scrollback(), 100_000);
@@ -588,9 +590,11 @@ mod memory_settings_tests {
 
     #[test]
     fn disabling_hibernation_keeps_the_rest_of_the_policy() {
-        let mut memory = MemorySettings::default();
-        memory.hibernation = false;
-        memory.hibernate_after_secs = 120;
+        let memory = MemorySettings {
+            hibernation: false,
+            hibernate_after_secs: 120,
+            ..MemorySettings::default()
+        };
         assert!(!memory.policy().enabled);
     }
 }

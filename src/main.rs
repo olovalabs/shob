@@ -23283,7 +23283,7 @@ mod chat_render_isolation_tests {
     }
 
     #[test]
-    fn quiet_background_pane_hibernates_and_wakes_without_starting_its_shell() {
+    fn quiet_background_pane_hibernates_and_wakes_without_touching_its_shell() {
         let mut app = TestAppContext::new();
         let (mut cx, state) = open_app(&mut app);
         cx.update_window_entity(&state, |state, window, cx| {
@@ -23292,6 +23292,9 @@ mod chat_render_isolation_tests {
             let pane = state.pane_mut(1).unwrap();
             pane.lifecycle = session_lifecycle::PaneLifecycle::new(idle_since);
             pane.lifecycle.mark_seen(idle_since);
+            // Hibernation must not start I/O that had not started yet, and must
+            // not stop I/O that had: the shell outlives the grid either way.
+            let started_before = pane.terminal.read(cx).is_started();
 
             state.create_new_session_in_project(0, window, cx);
             state.release_inactive_resources(cx);
@@ -23302,9 +23305,7 @@ mod chat_render_isolation_tests {
                 pane.lifecycle.state(),
                 session_lifecycle::LifecycleState::Hibernated
             );
-            // Hibernation must not start I/O that had not started yet; the
-            // pane had never been shown, so there is no process to preserve.
-            assert!(!pane.terminal.read(cx).is_started());
+            assert_eq!(pane.terminal.read(cx).is_started(), started_before);
 
             // Waking rebuilds the grid in place. Driving it directly keeps the
             // test from starting a real shell.
@@ -23313,6 +23314,7 @@ mod chat_render_isolation_tests {
             assert!(!pane.terminal.read(cx).is_hibernated());
 
             // Selecting it again heals the policy state on the next tick.
+            state.projects[0].active_session_idx = 0;
             state.release_inactive_resources(cx);
             assert_eq!(
                 state.pane_ref(1).unwrap().lifecycle.state(),
@@ -23321,7 +23323,7 @@ mod chat_render_isolation_tests {
 
             // And it can go back to sleep once it is quiet again: hibernation
             // is a state, not a one-way transition.
-            state.projects[0].active_session_idx = 0;
+            state.projects[0].active_session_idx = 1;
             {
                 let pane = state.pane_mut(1).unwrap();
                 let quiet = std::time::Instant::now() - std::time::Duration::from_secs(3_600);
@@ -23487,17 +23489,16 @@ mod resize_tests {
         let palette = ColorPalette::default();
         let dir = std::env::current_dir().expect("current dir");
         let weak = cx.entity().downgrade();
-        let (terminal, pid, generation, terminal_subscription) =
-            AppState::spawn_terminal_view(
-                Some(&dir),
-                palette.clone(),
-                weak,
-                1,
-                None,
-                settings::MemorySettings::default().scrollback(),
-                cx,
-            )
-            .expect("terminal view");
+        let (terminal, pid, generation, terminal_subscription) = AppState::spawn_terminal_view(
+            Some(&dir),
+            palette.clone(),
+            weak,
+            1,
+            None,
+            settings::MemorySettings::default().scrollback(),
+            cx,
+        )
+        .expect("terminal view");
         let title = SharedString::from("terminal 1");
 
         let mut pane =

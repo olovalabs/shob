@@ -98,7 +98,7 @@ impl LifecyclePolicy {
             let value = value.trim().to_ascii_lowercase();
             value == "0" || value == "false" || value == "off"
         });
-        let seconds = |key: &str, fallback: Duration| {
+        let mut seconds = |key: &str, fallback: Duration| {
             get(key)
                 .and_then(|value| value.trim().parse::<u64>().ok())
                 .map(Duration::from_secs)
@@ -336,15 +336,9 @@ mod tests {
         let mut pane = PaneLifecycle::new(now);
         pane.mark_seen(now);
 
-        assert_eq!(
-            pane.evaluate(at(now, 1), policy, true),
-            Transition::ToIdle
-        );
+        assert_eq!(pane.evaluate(at(now, 1), policy, true), Transition::ToIdle);
         assert_eq!(pane.state(), LifecycleState::Idle);
-        assert_eq!(
-            pane.evaluate(at(now, 599), policy, true),
-            Transition::None
-        );
+        assert_eq!(pane.evaluate(at(now, 599), policy, true), Transition::None);
         assert_eq!(
             pane.evaluate(at(now, 600), policy, true),
             Transition::ToHibernated
@@ -370,10 +364,14 @@ mod tests {
         pane.mark_seen(now);
         pane.evaluate(at(now, 1), policy, true);
         pane.touch(at(now, 500));
+        // Activity at 500 s moves the hibernation deadline to 1_100 s. The
+        // tick before it may demote the pane back to idle (which only releases
+        // caches), but it must not hibernate early.
         assert_eq!(
             pane.evaluate(at(now, 1_099), policy, true),
-            Transition::None
+            Transition::ToIdle
         );
+        assert_eq!(pane.state(), LifecycleState::Idle);
         assert_eq!(
             pane.evaluate(at(now, 1_100), policy, true),
             Transition::ToHibernated
@@ -398,10 +396,7 @@ mod tests {
         let policy = LifecyclePolicy::new(false, Duration::ZERO, Duration::from_secs(60));
         let mut pane = PaneLifecycle::new(now);
         pane.mark_seen(now);
-        assert_eq!(
-            pane.evaluate(at(now, 10), policy, true),
-            Transition::ToIdle
-        );
+        assert_eq!(pane.evaluate(at(now, 10), policy, true), Transition::ToIdle);
         assert_eq!(
             pane.evaluate(at(now, 86_400), policy, true),
             Transition::None
@@ -411,19 +406,12 @@ mod tests {
 
     #[test]
     fn policy_clamps_thresholds_so_it_cannot_thrash() {
-        let policy = LifecyclePolicy::new(
-            true,
-            Duration::from_secs(7_200),
-            Duration::from_secs(1),
-        );
+        let policy = LifecyclePolicy::new(true, Duration::from_secs(7_200), Duration::from_secs(1));
         assert!(policy.hibernate_after >= policy.idle_after);
         assert!(policy.hibernate_after >= MIN_HIBERNATE_AFTER);
 
-        let policy = LifecyclePolicy::new(
-            true,
-            Duration::ZERO,
-            Duration::from_secs(u32::MAX as u64),
-        );
+        let policy =
+            LifecyclePolicy::new(true, Duration::ZERO, Duration::from_secs(u32::MAX as u64));
         assert_eq!(policy.hibernate_after, MAX_HIBERNATE_AFTER);
     }
 
