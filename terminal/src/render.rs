@@ -529,6 +529,20 @@ impl TerminalRenderer {
         *self.paint_scratch.lock() = PaintScratch::default();
     }
 
+    /// Bytes held by the reusable paint scratch. This is the render cache a
+    /// hibernated pane releases, and it is reported so the diagnostics line
+    /// does not have to guess.
+    pub fn memory_usage(&self) -> usize {
+        let scratch = self.paint_scratch.lock();
+        scratch.row_backgrounds.capacity() * std::mem::size_of::<BackgroundRect>()
+            + scratch.text_runs.capacity() * std::mem::size_of::<BatchedTextRun>()
+            + (scratch.block_rects.capacity()
+                + scratch.selection_rects.capacity()
+                + scratch.match_rects.capacity()
+                + scratch.decoration_rects.capacity())
+                * std::mem::size_of::<BlockElementRect>()
+    }
+
     pub fn measure_cell(&mut self, window: &mut Window) {
         let font = Font {
             family: self.font_family.clone().into(),

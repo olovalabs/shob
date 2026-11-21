@@ -85,10 +85,44 @@ pub struct TerminalState {
     config: Config,
     /// Kept so protocol passthroughs can reply into the PTY.
     notifier: TerminalNotifierHandle,
+    /// A clone of the proxy inside `term`, so hibernation can replace the grid
+    /// without severing query replies or the event channel.
+    proxy: GpuiEventProxy,
     agent_osc: AgentOscScanner,
     shell: ShellIntegrationScanner,
     /// Current palette, used when snapshotting output into blocks.
     palette: ColorPalette,
+}
+
+/// Bytes one `alacritty_terminal` cell occupies: `char` (4), two `Color` (8),
+/// `Flags` (2), padding, and an optional `Arc` for combining marks or a
+/// hyperlink (8). Counted from the type so an alacritty bump cannot silently
+/// skew the accounting.
+const GRID_CELL_BYTES: usize = std::mem::size_of::<alacritty_terminal::term::cell::Cell>();
+
+/// One row is a `Vec<Cell>` header plus allocator slack. Rows are allocated
+/// individually, so this is paid per line, not per grid.
+const GRID_ROW_OVERHEAD: usize = std::mem::size_of::<Vec<u8>>() + 16;
+
+/// alacritty's `Storage` grows in chunks of up to this many rows and does not
+/// release them until the slack exceeds it (`storage.rs`, `MAX_CACHE_SIZE`).
+/// Hibernation reports the reservation as well as the live cells, so the win it
+/// claims is the win it actually gets.
+const STORAGE_SPARE_ROWS: usize = 1_000;
+
+/// Estimated grid cost of one terminal, for the diagnostics overlay and to
+/// rank what hibernation actually reclaims.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TerminalMemory {
+    pub history_lines: usize,
+    pub screen_lines: usize,
+    pub columns: usize,
+    /// In-use rows: scrollback plus the visible screen.
+    pub rows: usize,
+    /// Live cells plus per-row overhead.
+    pub grid_bytes: usize,
+    /// Upper bound including alacritty's retained spare rows.
+    pub reserved_bytes: usize,
 }
 
 impl TerminalState {
@@ -110,7 +144,7 @@ impl TerminalState {
     ) -> Self {
         let dimensions = TermDimensions::new(cols, rows);
         let notifier = event_proxy.notifier_handle();
-        let term = Term::new(config.clone(), &dimensions, event_proxy);
+        let term = Term::new(config.clone(), &dimensions, event_proxy.clone());
 
         Self {
             term: Arc::new(Mutex::new(term)),
@@ -118,6 +152,7 @@ impl TerminalState {
             theme_protocol: ThemeProtocol::default(),
             config,
             notifier,
+            proxy: event_proxy,
             agent_osc: AgentOscScanner::default(),
             shell: ShellIntegrationScanner::default(),
             palette: ColorPalette::default(),
@@ -320,6 +355,59 @@ impl TerminalState {
 
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    /// Estimated cost of this terminal's grid. Read under the grid lock, so a
+    /// concurrent paint resize cannot make the counts disagree with each other.
+    pub fn memory_usage(&self) -> TerminalMemory {
+        let term = self.term.lock();
+        let history_lines = term.grid().history_size();
+        let screen_lines = term.screen_lines();
+        let columns = term.columns();
+        let rows = history_lines + screen_lines;
+        let row_bytes = columns * GRID_CELL_BYTES + GRID_ROW_OVERHEAD;
+        TerminalMemory {
+            history_lines,
+            screen_lines,
+            columns,
+            rows,
+            grid_bytes: rows * row_bytes,
+            reserved_bytes: rows.saturating_add(STORAGE_SPARE_ROWS) * row_bytes,
+        }
+    }
+
+    /// Change how many scrollback lines the grid retains, without touching its
+    /// contents. Used to stop a hibernated pane accumulating history again.
+    pub fn set_grid_history(&mut self, lines: usize) {
+        if self.config.scrolling_history == lines {
+            return;
+        }
+        self.config.scrolling_history = lines;
+        self.term.lock().set_options(self.config.clone());
+    }
+
+    /// Replace the whole grid with an empty one at the current dimensions and
+    /// return what was dropped. The event proxy, notifier, palette and shell
+    /// scanners survive, so the PTY and status sources stay connected; only the
+    /// cells (the dominant per-pane allocation) and the VTE parser's partial
+    /// escape state are discarded. The caller is responsible for having
+    /// persisted anything it wants to show again.
+    pub fn reset_grid(&mut self, history_lines: usize) -> TerminalMemory {
+        let dropped = self.memory_usage();
+        let dimensions = TermDimensions::new(self.cols(), self.rows());
+        let mut config = self.config.clone();
+        config.scrolling_history = history_lines;
+        let term = Term::new(config.clone(), &dimensions, self.proxy.clone());
+        {
+            let mut slot = self.term.lock();
+            *slot = term;
+        }
+        self.config = config;
+        // Only the parser's partial escape sequence is meaningless against a
+        // fresh grid. The shell token, cwd and agent reporters must survive, or
+        // a woken pane would start rejecting authenticated OSC 133 markers.
+        self.parser = Processor::new();
+        dropped
     }
 
     pub fn mode(&self) -> TermMode {
@@ -694,6 +782,60 @@ mod tests {
     fn state(cols: usize, rows: usize) -> TerminalState {
         let (tx, _rx) = channel();
         TerminalState::new(cols, rows, GpuiEventProxy::new(tx))
+    }
+
+    #[test]
+    fn grid_accounting_tracks_output_and_reset_drops_the_scrollback() {
+        let mut state = state(80, 24);
+        let empty = state.memory_usage();
+        assert_eq!(empty.history_lines, 0);
+        assert_eq!(empty.rows, 24);
+        assert_eq!(empty.columns, 80);
+        assert_eq!(
+            empty.grid_bytes,
+            24 * (80 * GRID_CELL_BYTES + GRID_ROW_OVERHEAD)
+        );
+        assert!(empty.reserved_bytes > empty.grid_bytes);
+
+        let mut output = String::new();
+        for line in 0..2_000 {
+            output.push_str(&format!("line {line}\r\n"));
+        }
+        state.feed_raw(output.as_bytes());
+        let grown = state.memory_usage();
+        assert!(grown.history_lines > 1_000, "{grown:?}");
+        assert!(
+            grown.grid_bytes > empty.grid_bytes * 4,
+            "history should dominate the screen: {grown:?}"
+        );
+
+        let dropped = state.reset_grid(0);
+        assert_eq!(dropped.history_lines, grown.history_lines);
+        let after = state.memory_usage();
+        assert_eq!(after.history_lines, 0);
+        assert_eq!(after.rows, after.screen_lines);
+        assert!(after.grid_bytes < grown.grid_bytes / 4, "{after:?}");
+        assert_eq!(after.grid_bytes, empty.grid_bytes);
+    }
+
+    #[test]
+    fn reset_grid_keeps_the_event_proxy_connected() {
+        let (tx, rx) = channel();
+        let mut state = TerminalState::new(80, 24, GpuiEventProxy::new(tx));
+        state.reset_grid(0);
+        // An OSC 2 title change is forwarded to the view over the proxy's
+        // channel. It must still arrive after the grid (and its copy of the
+        // proxy) was replaced, or a woken pane would stop reporting titles,
+        // bells, clipboard requests and exits.
+        state.feed_raw(b"\x1b]2;woken\x07");
+        let events: Vec<_> = rx.try_iter().collect();
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                crate::event::TerminalEvent::Title(title) if title == "woken"
+            )),
+            "expected a title event after grid reset, got {events:?}"
+        );
     }
 
     #[derive(Clone, Default)]

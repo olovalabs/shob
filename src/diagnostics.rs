@@ -229,6 +229,8 @@ impl Sampler {
 
         let rss_bytes = read_rss_bytes().unwrap_or(0) * self.page_size;
         let threads = read_thread_count().unwrap_or(0);
+        let fds = read_open_fds().unwrap_or(0);
+        let sockets = read_open_sockets().unwrap_or(0);
 
         let avg = |total: u64, count: u64| {
             if count == 0 {
@@ -250,7 +252,8 @@ impl Sampler {
              poll ticks={poll_ticks} panes={poll_panes} avg={poll_avg:.3}ms max={poll_max:.3}ms \
              (scrape {scrape_avg:.3}ms, detect {detect_avg:.3}ms) | \
              fg {fg_ticks} avg={fg_avg:.3}ms max={fg_max:.3}ms | \
-             cpu={cpu_percent:.1}% rss={rss:.1}MB threads={threads} ctxt={ctxt_delta}/s",
+             cpu={cpu_percent:.1}% rss={rss:.1}MB threads={threads} fds={fds} sockets={sockets} \
+             ctxt={ctxt_delta}/s",
             fps = frames as f64 / elapsed.max(f64::EPSILON),
             gap = gap_max as f64 / 1_000_000.0,
             render_avg = avg(render_nanos, frames),
@@ -364,6 +367,29 @@ fn read_rss_bytes() -> Option<u64> {
     fields.get(21)?.parse().ok()
 }
 
+/// Open descriptors, including the ones behind the PTYs, sockets and files.
+/// Counting directory entries is O(fds); diagnostics only, once a second.
+#[cfg(target_os = "linux")]
+fn read_open_fds() -> Option<u64> {
+    Some(std::fs::read_dir("/proc/self/fd").ok()?.count() as u64)
+}
+
+/// Sockets owned by this process. `/proc/self/fd` is the only per-process view;
+/// the system-wide `/proc/net/*` tables say nothing about ownership.
+#[cfg(target_os = "linux")]
+fn read_open_sockets() -> Option<u64> {
+    let mut sockets = 0;
+    for entry in std::fs::read_dir("/proc/self/fd").ok()? {
+        let entry = entry.ok()?;
+        if std::fs::read_link(entry.path())
+            .is_ok_and(|target| target.to_string_lossy().starts_with("socket:"))
+        {
+            sockets += 1;
+        }
+    }
+    Some(sockets)
+}
+
 #[cfg(target_os = "linux")]
 fn read_thread_count() -> Option<u64> {
     let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
@@ -380,6 +406,16 @@ fn read_rss_bytes() -> Option<u64> {
 
 #[cfg(not(target_os = "linux"))]
 fn read_thread_count() -> Option<u64> {
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_open_fds() -> Option<u64> {
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_open_sockets() -> Option<u64> {
     None
 }
 
