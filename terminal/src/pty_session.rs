@@ -100,10 +100,21 @@ pub struct PendingPty {
 }
 
 impl PendingPty {
-    /// Returns without running `prepare` or waiting for any PTY operation.
+    /// Starts preparation immediately on a worker, without waiting for PTY I/O.
     /// Keep a control alive for the pane lifetime and continuously consume events.
     /// Dropping every event receiver also cancels an unfinished/live session.
     pub fn spawn<F>(prepare: F) -> Self
+    where
+        F: FnOnce() -> Result<PreparedPty> + Send + 'static,
+    {
+        let pending = Self::deferred(prepare);
+        pending.control.start();
+        pending
+    }
+
+    /// Defers preparation until `PtyControl::start`; resize and stream I/O do
+    /// not start the session. Closing before start discards `prepare` unused.
+    pub fn deferred<F>(prepare: F) -> Self
     where
         F: FnOnce() -> Result<PreparedPty> + Send + 'static,
     {
@@ -112,6 +123,7 @@ impl PendingPty {
         let (events, event_rx) = smol::channel::bounded(4);
         let shared = Arc::new(Shared {
             closed: AtomicBool::new(false),
+            started: AtomicBool::new(false),
             resize: Mutex::new(None),
             wake,
             reader: Slot::new(),
@@ -119,6 +131,23 @@ impl PendingPty {
         });
         let worker = shared.clone();
         smol::spawn(async move {
+            while !worker.started.load(Ordering::Acquire)
+                && !worker.closed.load(Ordering::Acquire)
+                && !events.is_closed()
+            {
+                smol::future::race(
+                    async {
+                        let _ = wake_rx.recv().await;
+                    },
+                    events.closed(),
+                )
+                .await;
+            }
+            if worker.closed.load(Ordering::Acquire) || events.is_closed() {
+                worker.close();
+                smol::unblock(move || drop(prepare)).await;
+                return;
+            }
             let prepared = smol::unblock(move || {
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(prepare))
                     .unwrap_or_else(|_| Err(anyhow::anyhow!("PTY preparation panicked")))
@@ -233,6 +262,15 @@ impl PendingPty {
 pub struct PtyControl(Arc<Lifetime>);
 
 impl PtyControl {
+    /// Opens the startup gate once. Stream I/O and resize never open it.
+    pub fn start(&self) {
+        if !self.0.shared.closed.load(Ordering::Acquire)
+            && !self.0.shared.started.swap(true, Ordering::AcqRel)
+        {
+            let _ = self.0.shared.wake.try_send(());
+        }
+    }
+
     pub fn resize(&self, size: PtySize) {
         if !self.0.shared.closed.load(Ordering::Acquire) {
             *self.0.shared.resize.lock() = Some(size);
@@ -257,6 +295,7 @@ impl Drop for Lifetime {
 
 struct Shared {
     closed: AtomicBool,
+    started: AtomicBool,
     resize: Mutex<Option<PtySize>>,
     wake: Sender<()>,
     reader: Slot<Box<dyn Read + Send>>,
@@ -628,6 +667,58 @@ mod tests {
     use std::thread::{self, ThreadId};
 
     const DEADLINE: Duration = Duration::from_secs(10);
+
+    #[test]
+    fn deferred_start_is_explicit_and_idempotent() {
+        let (entered, entered_rx) = mpsc::channel();
+        let pending = PendingPty::deferred(move || {
+            entered.send(()).unwrap();
+            let (pair, _, _, _) = fixture(false);
+            PreparedPty::spawn(pair, CommandBuilder::new("test"))
+        });
+        pending.control.resize(PtySize::default());
+        assert!(!pending.control.0.shared.started.load(Ordering::Acquire));
+        assert_eq!(entered_rx.try_recv(), Err(mpsc::TryRecvError::Empty));
+        pending.control.start();
+        pending.control.start();
+        assert!(matches!(event(&pending.events), PtyEvent::Ready { .. }));
+        assert_eq!(entered_rx.recv(), Ok(()));
+        assert_eq!(entered_rx.try_recv(), Err(mpsc::TryRecvError::Disconnected));
+        pending.control.close();
+    }
+
+    #[test]
+    fn deferred_cancellation_never_prepares_and_releases_pending_io() {
+        for cancellation in 0..3 {
+            let (entered, entered_rx) = mpsc::channel();
+            let PendingPty {
+                mut reader,
+                mut writer,
+                control,
+                events,
+            } = PendingPty::deferred(move || {
+                entered.send(()).unwrap();
+                Err(anyhow::anyhow!("cancelled preparation ran"))
+            });
+            let reader = thread::spawn(move || reader.read(&mut [0]).unwrap_err().kind());
+            let writer = thread::spawn(move || writer.write_all(b"input").unwrap_err().kind());
+            match cancellation {
+                0 => {
+                    control.close();
+                    control.start();
+                    assert!(smol::block_on(events.recv()).is_err());
+                }
+                1 => {
+                    drop(control);
+                    assert!(smol::block_on(events.recv()).is_err());
+                }
+                _ => drop(events),
+            }
+            assert_eq!(reader.join().unwrap(), io::ErrorKind::BrokenPipe);
+            assert_eq!(writer.join().unwrap(), io::ErrorKind::BrokenPipe);
+            assert_eq!(entered_rx.recv(), Err(mpsc::RecvError));
+        }
+    }
 
     #[test]
     fn cancelling_pending_io_does_not_wait_for_startup() {

@@ -3903,6 +3903,7 @@ pub struct TerminalPane {
     pub command_running: bool,
     /// Keeps the terminal's `ShellEvent` subscription alive for this pane.
     pub terminal_subscription: Option<gpui::Subscription>,
+    idle_resources_released: bool,
 }
 
 /// Commands handled by the agent composer itself.
@@ -4052,7 +4053,25 @@ impl TerminalPane {
             attachments: Vec::new(),
             command_running: false,
             terminal_subscription: None,
+            idle_resources_released: false,
         }
+    }
+
+    fn has_live_work(&self) -> bool {
+        self.command_running
+            || self.input_submitting
+            || self.chat.running
+            || !self.chat.requests.is_empty()
+            || !self.chat.follow_ups.is_empty()
+            || !self.pending_approvals.is_empty()
+            || self.chat.auth_refresh_pending
+            || matches!(self.status, SessionStatus::Working | SessionStatus::Blocked)
+            || self.sub_agents.values().any(|agent| {
+                matches!(
+                    agent.status,
+                    SessionStatus::Working | SessionStatus::Blocked
+                )
+            })
     }
 
     /// Show the editor at the shell prompt; running commands and alternate
@@ -4080,9 +4099,8 @@ impl TerminalPane {
     }
 }
 
-/// One sidebar tab: an isolated screen with its own split-layout tree of
-/// panes. Switching tabs only swaps which screen is rendered — the panes of
-/// other sessions keep running in the background.
+/// One sidebar tab with its own split-layout tree. Background work stays live;
+/// idle, unselected panes release disposable runtime and rendering resources.
 pub struct Session {
     pub id: usize,
     /// Stable identity across restarts.
@@ -5287,9 +5305,6 @@ impl AppState {
             self.refresh_project_diff(pane_id, cx);
         }
         if let Some(pane_id) = self.focused_pane_id {
-            if self.pane_ref(pane_id).is_some_and(|pane| pane.chat.active) {
-                self.warm_agent_bridge(pane_id);
-            }
             if let Some(pane) = self.pane_ref(pane_id) {
                 let dir = self.agent_working_directory(pane);
                 self.schedule_git_refresh(dir, cx);
@@ -5501,7 +5516,7 @@ impl AppState {
         }
         let startup_generation = generation.clone();
         let dir = dir.cloned();
-        let pending = pty_session::PendingPty::spawn(move || {
+        let pending = pty_session::PendingPty::deferred(move || {
             let generation = startup_generation;
             let (shell_cmd, shell_name) = detect_shell();
             let pair = native_pty_system()
@@ -5590,6 +5605,7 @@ impl AppState {
             read_only: true,
             ..TerminalConfig::default()
         };
+        let start_control = control.clone();
 
         let resize_callback = move |cols: usize, rows: usize| {
             control.resize(PtySize {
@@ -5606,6 +5622,7 @@ impl AppState {
             let mut view =
                 TerminalView::new_with_scrollback(writer, reader, config, scrollback, cx)
                     .with_resize_callback(resize_callback)
+                    .with_start_callback(move || start_control.start())
                     .with_link_callback(move |window, cx, link| {
                         let (path, _, _) = link.path_with_position();
                         let mut handled = false;
@@ -6781,10 +6798,10 @@ impl AppState {
                 })
                 .detach();
         }
+        let session_changed = self.release_inactive_resources(cx);
         diagnostics::panes_polled(panes_polled);
         diagnostics::poll_end(diag_poll);
-        // A sidebar title that changed here must survive a restart.
-        if title_changed {
+        if title_changed || session_changed {
             self.schedule_workspace_save(cx);
         }
         if changed {
@@ -9420,28 +9437,6 @@ impl AppState {
         cx.notify();
     }
 
-    fn warm_agent_bridge(&mut self, pane_id: usize) {
-        let save_history = self.settings.restore.agent_history;
-
-        let Some(pane) = self.pane_ref(pane_id) else {
-            return;
-        };
-        let cwd = self.agent_working_directory(pane);
-        let Some(pane) = self.pane_mut(pane_id) else {
-            return;
-        };
-        if pane.chat.selected_model.is_none() {
-            return;
-        }
-        if save_history && pane.chat.conversation.is_none() {
-            pane.chat.conversation = Some(conversations::Log::open(
-                &pane.uid,
-                &pane.chat.conversation_key,
-            ));
-        }
-        pane.chat.startup_error = pane.chat.ensure_agent(cwd).err();
-    }
-
     fn set_reasoning_effort(&mut self, pane_id: usize, level: &str, cx: &mut Context<Self>) {
         let Some(pane) = self.pane_mut(pane_id) else {
             return;
@@ -9655,12 +9650,9 @@ impl AppState {
             return false;
         }
         self.focus_pane(pane_id, window, cx);
-        if active {
-            self.warm_agent_bridge(pane_id);
-            if let Some(pane) = self.pane_ref(pane_id) {
-                let dir = self.agent_working_directory(pane);
-                self.schedule_git_refresh(dir, cx);
-            }
+        if active && let Some(pane) = self.pane_ref(pane_id) {
+            let dir = self.agent_working_directory(pane);
+            self.schedule_git_refresh(dir, cx);
         }
         true
     }
@@ -9889,7 +9881,6 @@ impl AppState {
             }
         }
         self.schedule_workspace_save(cx);
-        self.warm_agent_bridge(pane_id);
         if keep_picker_open {
             cx.notify();
         } else {
@@ -10244,12 +10235,6 @@ impl AppState {
         for project in &mut self.projects {
             for session in &mut project.sessions {
                 for pane in &mut session.panes {
-                    if save_history && pane.chat.conversation.is_none() {
-                        pane.chat.conversation = Some(conversations::Log::open(
-                            &pane.uid,
-                            &pane.chat.conversation_key,
-                        ));
-                    }
                     if let Some(auth) = pane.chat.auth.as_mut() {
                         if let Some(receiver) = &auth.provider_operation {
                             let result = match receiver.try_recv() {
@@ -10613,6 +10598,60 @@ impl AppState {
             cx.notify();
         }
         streaming
+    }
+
+    fn release_inactive_resources(&mut self, cx: &mut Context<Self>) -> bool {
+        let selected = self.active_session().map(|session| session.id);
+        let mut session_changed = false;
+        for project in &mut self.projects {
+            for session in &mut project.sessions {
+                for pane in &mut session.panes {
+                    if Some(session.id) == selected || pane.has_live_work() {
+                        pane.idle_resources_released = false;
+                        continue;
+                    }
+                    let bridge = if pane
+                        .chat
+                        .bridge
+                        .as_ref()
+                        .is_some_and(ModelBridge::can_release_idle)
+                    {
+                        let bridge = pane.chat.bridge.take().unwrap();
+                        if !pane.chat.bridge_needs_context
+                            && let Some(id) = bridge.session_id()
+                            && pane.chat.shob_session_id.as_ref() != Some(&id)
+                        {
+                            pane.chat.shob_session_id = Some(id);
+                            session_changed = true;
+                        }
+                        pane.chat.bridge_model = None;
+                        pane.chat.bridge_resume = None;
+                        pane.chat.bridge_needs_context = true;
+                        Some(bridge)
+                    } else {
+                        None
+                    };
+                    let rows = if !pane.idle_resources_released {
+                        pane.idle_resources_released = true;
+                        pane.terminal.update(cx, |terminal, _| {
+                            terminal.release_idle_resources();
+                        });
+                        pane.chat.view.borrow_mut().take();
+                        pane.chat.focused_scrollbar.borrow_mut().take();
+                        pane.screen_scratch = Vec::new();
+                        Some(std::mem::take(&mut *pane.chat.row_cache.borrow_mut()))
+                    } else {
+                        None
+                    };
+                    if bridge.is_some() || rows.is_some() {
+                        cx.background_executor()
+                            .spawn(async move { drop((bridge, rows)) })
+                            .detach();
+                    }
+                }
+            }
+        }
+        session_changed
     }
 
     /// Mirror a pane's conversation name onto its session, so the sidebar names
@@ -21287,9 +21326,13 @@ impl Render for AppState {
         APP_ROOT_RENDERS.with(|count| count.set(count.get() + 1));
         // The wrapper marks only panes mounted by this root pass. Background
         // sessions and panes hidden by previews/maximization stay dormant.
-        for project in &self.projects {
-            for session in &project.sessions {
-                for pane in &session.panes {
+        let selected = self.active_session().map(|session| session.id);
+        for project in &mut self.projects {
+            for session in &mut project.sessions {
+                for pane in &mut session.panes {
+                    if Some(session.id) == selected {
+                        pane.idle_resources_released = false;
+                    }
                     pane.chat.view_visible.set(false);
                 }
             }
@@ -22948,6 +22991,136 @@ mod chat_render_isolation_tests {
             draw(&mut cx);
             assert!(view.read_with(&cx, |view, _| view.renders) > chat_before);
         }
+    }
+
+    #[test]
+    fn inactive_idle_views_unload_and_restore_without_losing_conversation_state() {
+        let mut app = TestAppContext::new();
+        let (mut cx, state) = open_app(&mut app);
+        cx.update_window_entity(&state, |state, _, cx| {
+            let pane = state.pane_mut(1).unwrap();
+            pane.chat.active = true;
+            pane.chat.shob_session_id = Some("saved-session".into());
+            pane.chat.agent_draft = "Unsent draft".into();
+            pane.chat.messages.push(Arc::new(ChatMessage::new(
+                ChatRole::Assistant,
+                "A **saved** answer.".into(),
+            )));
+            cx.notify();
+        });
+        draw(&mut cx);
+        let first_view = state.read_with(&cx, |state, _| {
+            let chat = &state.pane_ref(1).unwrap().chat;
+            assert!(!chat.row_cache.borrow().rows.is_empty());
+            chat.view.borrow().as_ref().unwrap().entity_id()
+        });
+        cx.update_window_entity(&state, |state, window, cx| {
+            state.release_inactive_resources(cx);
+            assert!(state.pane_ref(1).unwrap().chat.view.borrow().is_some());
+            state.create_new_session_in_project(0, window, cx);
+            let pane = state.pane_mut(1).unwrap();
+            pane.chat.running = true;
+            pane.status = SessionStatus::Working;
+            state.release_inactive_resources(cx);
+            assert!(state.pane_ref(1).unwrap().chat.view.borrow().is_some());
+            let pane = state.pane_mut(1).unwrap();
+            pane.chat.running = false;
+            pane.status = SessionStatus::Blocked;
+            state.release_inactive_resources(cx);
+            assert!(state.pane_ref(1).unwrap().chat.view.borrow().is_some());
+            let pane = state.pane_mut(1).unwrap();
+            pane.status = SessionStatus::Done;
+            pane.chat.follow_ups.push_back("Continue".into());
+            state.release_inactive_resources(cx);
+            assert!(state.pane_ref(1).unwrap().chat.view.borrow().is_some());
+            state.pane_mut(1).unwrap().chat.follow_ups.clear();
+            state.release_inactive_resources(cx);
+            let pane = state.pane_ref(1).unwrap();
+            assert!(pane.chat.view.borrow().is_none());
+            assert!(pane.chat.row_cache.borrow().rows.is_empty());
+            assert_eq!(pane.status, SessionStatus::Done);
+            assert_eq!(pane.chat.shob_session_id.as_deref(), Some("saved-session"));
+            assert_eq!(pane.chat.agent_draft, "Unsent draft");
+        });
+        draw(&mut cx);
+        cx.update_window_entity(&state, |state, _, cx| {
+            state.projects[0].active_session_idx = 0;
+            cx.notify();
+        });
+        draw(&mut cx);
+        state.read_with(&cx, |state, _| {
+            let pane = state.pane_ref(1).unwrap();
+            assert_ne!(
+                pane.chat.view.borrow().as_ref().unwrap().entity_id(),
+                first_view
+            );
+            assert!(!pane.chat.row_cache.borrow().rows.is_empty());
+            assert_eq!(pane.chat.messages[0].text, "A **saved** answer.");
+            assert_eq!(pane.chat.shob_session_id.as_deref(), Some("saved-session"));
+            assert_eq!(pane.chat.agent_draft, "Unsent draft");
+        });
+        cx.update_window_entity(&state, |state, _, cx| {
+            state.projects[0].active_session_idx = 1;
+            state.release_inactive_resources(cx);
+            assert!(state.pane_ref(1).unwrap().chat.view.borrow().is_none());
+        });
+    }
+
+    #[test]
+    fn dormant_terminal_input_starts_io_and_completes_without_render() {
+        struct Output(Arc<std::sync::atomic::AtomicUsize>);
+        impl std::io::Read for Output {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(0)
+            }
+        }
+        struct Input(Arc<parking_lot::Mutex<Vec<u8>>>);
+        impl std::io::Write for Input {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut app = TestAppContext::new();
+        let (mut cx, _) = open_app(&mut app);
+        let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let writes = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let terminal = cx.update(|_, cx| {
+            cx.new(|cx| {
+                TerminalView::new(
+                    Input(writes.clone()),
+                    Output(reads.clone()),
+                    TerminalConfig::default(),
+                    cx,
+                )
+                .with_start_callback({
+                    let starts = starts.clone();
+                    move || {
+                        starts.fetch_add(1, Ordering::SeqCst);
+                    }
+                })
+            })
+        });
+        cx.run_until_parked();
+        assert_eq!(reads.load(Ordering::SeqCst), 0);
+        assert_eq!(starts.load(Ordering::SeqCst), 0);
+        for text in ["first command\r", "second command\r"] {
+            let completion = cx.update(|_, cx| {
+                terminal.update(cx, |terminal, cx| {
+                    terminal.release_idle_resources();
+                    terminal.send_text_with_completion(text, cx).unwrap()
+                })
+            });
+            cx.run_until_parked();
+            smol::block_on(completion.wait()).unwrap();
+        }
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+        assert_eq!(&*writes.lock(), b"first command\rsecond command\r");
     }
 }
 

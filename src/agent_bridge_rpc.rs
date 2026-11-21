@@ -95,6 +95,12 @@ impl RpcAgentBridge {
         self.session_id.lock().ok().and_then(|id| id.clone())
     }
 
+    pub(crate) fn can_release_idle(&self) -> bool {
+        // agent_settled/get_state do not cover detached extension/subagent work.
+        // A quiet transport is not permission to terminate its process group.
+        false
+    }
+
     fn spawn_session_with(
         binary: Option<&Path>,
         cwd: &Path,

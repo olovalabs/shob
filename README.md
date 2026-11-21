@@ -57,6 +57,10 @@ Built with Rust and GPUI instead of Electron or a browser-based interface.
 - Fast workspace navigation
 - Efficient session management
 
+Terminal shells and their I/O threads start when a pane is first shown or sent input, rather than for every restored tab. Native agent runtimes start on the first prompt. Idle background tabs release disposable view caches and safely settled embedded agent runtimes; opening the conversation again preserves its history, and the next prompt resumes its saved session.
+
+Running commands, blocked agents, and queued work stay live. Already-started shells, terminal buffers, and conversation text remain in memory to preserve state. Legacy RPC agent runtimes remain resident because that backend cannot prove background work has settled.
+
 ### Smart Agent Tracking
 
 Know exactly what your agents are doing.

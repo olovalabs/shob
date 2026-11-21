@@ -147,20 +147,55 @@ pub(crate) struct QueuedWriter {
     max_records: usize,
 }
 
+struct UnstartedInput<W> {
+    writer: Option<W>,
+    receiver: Option<flume::Receiver<Pending>>,
+    shared: Arc<Shared>,
+}
+
+impl<W> Drop for UnstartedInput<W> {
+    fn drop(&mut self) {
+        if let Some(receiver) = self.receiver.take() {
+            let message = "PTY input worker stopped before starting";
+            self.shared.fail(message.into());
+            reject_queued(&receiver, message);
+        }
+    }
+}
+
+/// Startup and cancellation stay off GPUI because the physical writer Drop may block.
+pub(crate) struct InputStarter {
+    start: Option<Box<dyn FnOnce() + Send>>,
+    executor: gpui::BackgroundExecutor,
+}
+
+impl InputStarter {
+    pub(crate) fn start(&mut self) {
+        if let Some(start) = self.start.take() {
+            self.executor.spawn(async move { start() }).detach();
+        }
+    }
+}
+
+impl Drop for InputStarter {
+    fn drop(&mut self) {
+        if let Some(start) = self.start.take() {
+            self.executor.spawn(async move { drop(start) }).detach();
+        }
+    }
+}
+
 impl QueuedWriter {
-    pub(crate) fn new(
+    pub(crate) fn deferred(
         writer: impl Write + Send + 'static,
         executor: &gpui::BackgroundExecutor,
-    ) -> (Self, InputErrors) {
+    ) -> (Self, InputErrors, InputStarter) {
         let (queued, errors, start) = Self::prepare(writer, MAX_INPUT_BYTES, MAX_INPUT_RECORDS);
-        // Even a failed thread spawn drops its captured writer. Do the spawn on
-        // the existing pool so this failure path cannot run a PTY destructor on GPUI.
-        executor
-            .spawn(async move {
-                start();
-            })
-            .detach();
-        (queued, errors)
+        let starter = InputStarter {
+            start: Some(Box::new(start)),
+            executor: executor.clone(),
+        };
+        (queued, errors, starter)
     }
 
     fn prepare(
@@ -184,7 +219,14 @@ impl QueuedWriter {
             max_bytes,
             max_records,
         };
+        let mut unstarted = UnstartedInput {
+            writer: Some(writer),
+            receiver: Some(receiver),
+            shared: shared.clone(),
+        };
         let start = move || {
+            let receiver = unstarted.receiver.take().expect("unstarted input receiver");
+            let writer = unstarted.writer.take().expect("unstarted input writer");
             let worker_shared = shared.clone();
             // Retain ownership until spawn succeeds, so a spawn failure can
             // publish its diagnostic before a potentially blocking writer Drop.
@@ -368,6 +410,66 @@ mod tests {
             records,
         );
         (writer, errors, entering, release, writing, dropping)
+    }
+
+    #[test]
+    fn deferred_writer_preserves_bounded_fifo_and_completion() {
+        let (entered, entering) = mpsc::channel();
+        let (release, releasing) = mpsc::channel();
+        let (written, writing) = mpsc::channel();
+        let (dropped, dropping) = mpsc::channel();
+        let (writer, errors, start) = QueuedWriter::prepare(
+            GateWriter {
+                entered,
+                release: releasing,
+                written,
+                dropped,
+            },
+            8,
+            2,
+        );
+        let first = writer.send_with_completion(b"first").unwrap();
+        let second = writer.send_with_completion(b"two").unwrap();
+        assert!(writer.send(b"x").unwrap_err().contains("not accepted"));
+        assert!(errors.recv().unwrap().contains("not accepted"));
+        assert_eq!(entering.try_recv(), Err(mpsc::TryRecvError::Empty));
+        assert!(first.receiver.as_ref().unwrap().try_recv().is_err());
+        assert!(second.receiver.as_ref().unwrap().try_recv().is_err());
+
+        std::thread::spawn(start).join().unwrap();
+        assert_eq!(entering.recv().unwrap(), b"first");
+        release.send(()).unwrap();
+        assert_eq!(writing.recv().unwrap(), b"first");
+        assert_eq!(first.receiver.unwrap().recv().unwrap(), Ok(()));
+        assert_eq!(entering.recv().unwrap(), b"two");
+        assert!(second.receiver.as_ref().unwrap().try_recv().is_err());
+        release.send(()).unwrap();
+        assert_eq!(writing.recv().unwrap(), b"two");
+        assert_eq!(second.receiver.unwrap().recv().unwrap(), Ok(()));
+        drop(writer);
+        assert_ne!(dropping.recv().unwrap(), std::thread::current().id());
+        assert!(entering.recv().is_err());
+    }
+
+    #[test]
+    fn discarding_deferred_writer_releases_pending_completion_without_starting() {
+        let (entered, entering) = mpsc::channel();
+        let (release, releasing) = mpsc::channel();
+        let (writer, _, start) = QueuedWriter::prepare(
+            DropGate {
+                entered,
+                release: releasing,
+            },
+            10,
+            2,
+        );
+        let receipt = writer.send_with_completion(b"queued").unwrap();
+        let cancellation = std::thread::spawn(move || drop(start));
+        assert_ne!(entering.recv().unwrap(), std::thread::current().id());
+        assert!(receipt.receiver.unwrap().recv().unwrap().is_err());
+        release.send(()).unwrap();
+        cancellation.join().unwrap();
+        assert!(writer.send(b"x").unwrap_err().contains("before starting"));
     }
 
     #[test]

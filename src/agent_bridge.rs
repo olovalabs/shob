@@ -320,6 +320,20 @@ impl AgentBridge {
         }
     }
 
+    /// Called only after the host drains events and observes no run or requests.
+    /// Capture `session_id()` before dropping a releasable bridge to resume it.
+    pub(crate) fn can_release_idle(&self) -> bool {
+        self.first_prompt.is_none()
+            && match &self.backend {
+                Backend::Embedded(bridge) => {
+                    !bridge.closed
+                        && bridge.requests.is_empty()
+                        && bridge.session.can_release_idle()
+                }
+                Backend::Rpc(bridge) => bridge.can_release_idle(),
+            }
+    }
+
     /// Reload saved provider credentials while reopening the same durable session.
     pub fn restart_after_auth(&mut self) -> Result<(), String> {
         match &mut self.backend {

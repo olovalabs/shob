@@ -31,6 +31,8 @@ pub struct SearchState {
     current: Option<usize>,
     /// When `false` the query is treated as a literal string.
     use_regex: bool,
+    caches_released: bool,
+    released_anchor: Option<Point>,
 }
 
 impl Default for SearchState {
@@ -41,6 +43,8 @@ impl Default for SearchState {
             matches: Arc::from(Vec::<Match>::new()),
             current: None,
             use_regex: false,
+            caches_released: false,
+            released_anchor: None,
         }
     }
 }
@@ -55,7 +59,7 @@ impl SearchState {
     }
 
     pub fn is_active(&self) -> bool {
-        self.regex.is_some()
+        self.regex.is_some() || self.caches_released
     }
 
     pub fn use_regex(&self) -> bool {
@@ -89,6 +93,19 @@ impl SearchState {
         self.regex = None;
         self.matches = Arc::from(Vec::<Match>::new());
         self.current = None;
+        self.caches_released = false;
+        self.released_anchor = None;
+    }
+
+    pub(crate) fn release_idle_resources(&mut self) {
+        self.released_anchor = self
+            .current_match()
+            .map(|m| *m.start())
+            .or(self.released_anchor);
+        self.caches_released = self.is_active();
+        self.regex = None;
+        self.matches = Arc::from(Vec::<Match>::new());
+        self.current = None;
     }
 
     /// Set the search query and recompute the match list.
@@ -99,6 +116,8 @@ impl SearchState {
         self.use_regex = use_regex;
         self.current = None;
         self.matches = Arc::from(Vec::<Match>::new());
+        self.caches_released = false;
+        self.released_anchor = None;
 
         if query.is_empty() {
             self.regex = None;
@@ -126,12 +145,22 @@ impl SearchState {
 
     /// Recompute matches after the grid changed (new output, resize, …).
     pub fn refresh(&mut self, state: &TerminalState) {
-        if self.regex.is_none() {
+        if !self.is_active() {
             return;
         }
-        // Remember where the active match started so it can be re-selected
-        // after the grid moved under us.
-        let anchor = self.current_match().map(|m| *m.start());
+        let anchor = self
+            .current_match()
+            .map(|m| *m.start())
+            .or(self.released_anchor.take());
+        if self.caches_released {
+            let pattern = if self.use_regex {
+                self.query.clone()
+            } else {
+                escape_literal(&self.query)
+            };
+            self.regex = RegexSearch::new(&pattern).ok();
+            self.caches_released = false;
+        }
         let Some(regex) = self.regex.as_mut() else {
             return;
         };
@@ -144,6 +173,9 @@ impl SearchState {
     ///
     /// Returns the selected match.
     pub fn advance(&mut self, direction: Direction, state: &TerminalState) -> Option<Match> {
+        if self.caches_released {
+            self.refresh(state);
+        }
         if self.matches.is_empty() {
             return None;
         }
@@ -165,6 +197,9 @@ impl SearchState {
 
     /// Select the first match at or after `origin`.
     pub fn select_first_after(&mut self, origin: Point, state: &TerminalState) -> Option<Match> {
+        if self.caches_released {
+            self.refresh(state);
+        }
         let index = self.matches.iter().position(|m| *m.start() >= origin).or(
             if self.matches.is_empty() {
                 None
@@ -195,6 +230,41 @@ mod tests {
         let mut state = TerminalState::new(40, 8, GpuiEventProxy::new(tx));
         state.process_bytes(content);
         state
+    }
+
+    #[test]
+    fn releasing_caches_preserves_query_and_selected_match() {
+        let state = state_with(b"one1\r\ntwo2\r\nthree3\r\n");
+        let mut search = SearchState::new();
+        assert!(search.set_query(r"\d", true, &state));
+        search.advance(Direction::Right, &state);
+        let selected = search.advance(Direction::Right, &state).unwrap();
+        let display_offset = state.with_term(|term| term.grid().display_offset());
+
+        search.release_idle_resources();
+        search.release_idle_resources();
+        assert_eq!(search.query(), r"\d");
+        assert!(search.use_regex());
+        assert!(search.is_active());
+        assert!(search.regex.is_none());
+        assert!(search.matches().is_empty());
+
+        search.refresh(&state);
+        assert_eq!(search.current_match(), Some(&selected));
+        assert_eq!(search.match_count(), 3);
+        assert_eq!(
+            state.with_term(|term| term.grid().display_offset()),
+            display_offset
+        );
+        search.release_idle_resources();
+        assert_eq!(
+            search
+                .advance(Direction::Left, &state)
+                .unwrap()
+                .start()
+                .line,
+            alacritty_terminal::index::Line(0)
+        );
     }
 
     #[test]

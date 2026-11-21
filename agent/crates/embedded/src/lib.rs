@@ -1020,13 +1020,21 @@ enum Command {
 const COMMAND_RECORDS: usize = 65;
 const COMMAND_BYTES: usize = 32 * 1024 * 1024;
 
+#[derive(Default)]
+struct IdleReadiness {
+    pending: AtomicUsize,
+    ready: AtomicBool,
+}
+
 struct CommandCharge {
     bytes: usize,
     total: Arc<AtomicUsize>,
+    idle: Arc<IdleReadiness>,
 }
 impl Drop for CommandCharge {
     fn drop(&mut self) {
         self.total.fetch_sub(self.bytes, Ordering::Relaxed);
+        self.idle.pending.fetch_sub(1, Ordering::AcqRel);
     }
 }
 struct QueuedCommand {
@@ -1078,6 +1086,7 @@ pub struct EmbeddedSession {
     events: Arc<EventQueue<SessionEvent>>,
     commands: tokio::sync::mpsc::Sender<QueuedCommand>,
     command_bytes: Arc<AtomicUsize>,
+    idle: Arc<IdleReadiness>,
     admission: Mutex<()>,
     shutting_down: Arc<AtomicBool>,
     session_id: Arc<Mutex<Option<String>>>,
@@ -1097,6 +1106,9 @@ impl EmbeddedSession {
         let worker_shutdown = Arc::clone(&shutting_down);
         let session_id = Arc::new(Mutex::new(None));
         let worker_session_id = Arc::clone(&session_id);
+        let idle = Arc::new(IdleReadiness::default());
+        idle.pending.store(1, Ordering::Relaxed);
+        let worker_idle = Arc::clone(&idle);
         let wake = Wake::default();
         let worker_wake = wake.clone();
         std::thread::Builder::new()
@@ -1109,6 +1121,7 @@ impl EmbeddedSession {
                     worker_session_id,
                     worker_shutdown,
                     worker_wake,
+                    worker_idle,
                 );
             })
             .map_err(|error| format!("Could not start the embedded agent: {error}"))?;
@@ -1116,6 +1129,7 @@ impl EmbeddedSession {
             events: event_rx,
             commands: command_tx,
             command_bytes: Arc::new(AtomicUsize::new(0)),
+            idle,
             admission: Mutex::new(()),
             shutting_down,
             session_id,
@@ -1137,6 +1151,24 @@ impl EmbeddedSession {
             .lock()
             .ok()
             .and_then(|session| session.clone())
+    }
+
+    /// True only after startup or a completed run proves no native work remains.
+    /// The host must also drain its own events/requests before releasing a session.
+    pub fn can_release_idle(&self) -> bool {
+        let _admission = self.admission.lock().unwrap_or_else(|e| e.into_inner());
+        !self.closed
+            && !self.shutting_down.load(Ordering::Acquire)
+            && self.idle.pending.load(Ordering::Acquire) == 0
+            && self.idle.ready.load(Ordering::Acquire)
+            && self.session_id.lock().is_ok_and(|id| id.is_some())
+            && self
+                .events
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .events
+                .is_empty()
     }
 
     pub fn send_prompt(&mut self, prompt: &str) -> Result<(), String> {
@@ -1220,7 +1252,9 @@ impl EmbeddedSession {
         let _charge = CommandCharge {
             bytes,
             total: Arc::clone(&self.command_bytes),
+            idle: Arc::clone(&self.idle),
         };
+        self.idle.pending.fetch_add(1, Ordering::AcqRel);
         self.commands
             .try_send(QueuedCommand {
                 command: make(),
@@ -1250,11 +1284,13 @@ impl Drop for EmbeddedSession {
     fn drop(&mut self) {
         // The worker owns its runtime and handles teardown off the host thread.
         self.shutting_down.store(true, Ordering::Release);
+        self.idle.pending.fetch_add(1, Ordering::AcqRel);
         let _ = self.commands.try_send(QueuedCommand {
             command: Command::Shutdown,
             _charge: CommandCharge {
                 bytes: 0,
                 total: Arc::clone(&self.command_bytes),
+                idle: Arc::clone(&self.idle),
             },
         });
         self.events.close();
@@ -1268,6 +1304,7 @@ fn run_worker(
     session_id: Arc<Mutex<Option<String>>>,
     shutting_down: Arc<AtomicBool>,
     wake: Wake,
+    idle: Arc<IdleReadiness>,
 ) {
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         // Each conversation owns a runtime. The provider bridge requires
@@ -1304,6 +1341,7 @@ fn run_worker(
         session_id,
         shutting_down,
         wake,
+        idle,
     ));
 }
 
@@ -1314,6 +1352,7 @@ async fn run_session(
     session_id: Arc<Mutex<Option<String>>>,
     shutting_down: Arc<AtomicBool>,
     wake: Wake,
+    idle: Arc<IdleReadiness>,
 ) {
     let SessionOptions {
         cwd,
@@ -1480,7 +1519,9 @@ async fn run_session(
     let forward_pending = Arc::clone(&pending);
     let running = Arc::new(AtomicBool::new(false));
     let forward_running = Arc::clone(&running);
-    let (finished, mut completions) = tokio::sync::mpsc::channel::<Option<String>>(1);
+    let (finished, mut completions) = tokio::sync::mpsc::channel(1);
+    let (forward_finished, mut forward_completions) =
+        tokio::sync::mpsc::channel::<(Option<String>, CommandCharge)>(1);
     let forward_timing = phase_hook
         .clone()
         .filter(|_| std::env::var_os("SHOB_STREAM_TIMINGS").is_some_and(|value| value != "0"));
@@ -1503,22 +1544,40 @@ async fn run_session(
                     }
                     forward_wake.signal();
                 },
-                Some(error) = completions.recv() => {
+                Some((error, _charge)) = forward_completions.recv() => {
                     if let Some(error) = error {
                         let _ = forward_tx.send(SessionEvent::Error(error)).await;
                     }
-                    forward_running.store(false, Ordering::SeqCst);
                     let _ = forward_tx.send(SessionEvent::Done).await;
+                    forward_running.store(false, Ordering::SeqCst);
+                    drop(_charge);
                     forward_wake.signal();
                 }
             }
         }
     });
+    idle.ready
+        .store(idle_session_ready(&harness).await, Ordering::Release);
+    idle.pending.fetch_sub(1, Ordering::AcqRel);
     wake.signal(); // The durable session id is now available to the host.
 
-    let mut prompt_task = None;
-    while let Some(command) = commands.recv().await {
-        let QueuedCommand { command, _charge } = command;
+    let mut prompt_task: Option<tokio::task::JoinHandle<()>> = None;
+    loop {
+        let queued = tokio::select! {
+            Some((error, charge)) = completions.recv() => {
+                if let Some(task) = prompt_task.take() {
+                    let _ = task.await;
+                }
+                idle.ready.store(idle_session_ready(&harness).await, Ordering::Release);
+                let _ = forward_finished.send((error, charge)).await;
+                continue;
+            }
+            command = commands.recv() => match command {
+                Some(command) => command,
+                None => break,
+            },
+        };
+        let QueuedCommand { command, _charge } = queued;
         if shutting_down.load(Ordering::Acquire) {
             break;
         }
@@ -1533,6 +1592,7 @@ async fn run_session(
                     wake.signal();
                     continue;
                 }
+                idle.ready.store(false, Ordering::Release);
                 if let Some((expected, context)) = fallback {
                     if expected.as_deref() != Some(harness.session_id().as_str()) {
                         text = context;
@@ -1542,10 +1602,14 @@ async fn run_session(
                 let finished = finished.clone();
                 prompt_task = Some(tokio::spawn(async move {
                     let error = lane.prompt_text(&text, Vec::new()).await.err();
-                    let _ = finished.send(error.map(|error| error.to_string())).await;
+                    let _ = finished
+                        .send((error.map(|error| error.to_string()), _charge))
+                        .await;
                 }));
+                continue;
             }
             Command::Steer(text) => {
+                idle.ready.store(false, Ordering::Release);
                 let timestamp = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -1557,6 +1621,7 @@ async fn run_session(
                 }
             }
             Command::Abort => {
+                idle.ready.store(false, Ordering::Release);
                 if running.load(Ordering::SeqCst) {
                     harness.request_stop_round();
                     if let Err(error) = harness.abort_reclaiming(true).await {
@@ -1570,20 +1635,45 @@ async fn run_session(
                     let _ = events.send(SessionEvent::Error(error.to_string())).await;
                     wake.signal();
                 }
+                drop(_charge);
+                wake.signal();
+                continue;
             }
             Command::Shutdown => break,
         }
+        if prompt_task.is_none() {
+            idle.ready
+                .store(idle_session_ready(&harness).await, Ordering::Release);
+        }
+        drop(_charge);
+        wake.signal();
     }
 
     pending.close();
-    harness.request_stop_round();
-    let _ = harness.abort_reclaiming(true).await;
+    // Release must not mutate the durable session after its idle proof.
+    if !idle.ready.load(Ordering::Acquire) {
+        harness.request_stop_round();
+        let _ = harness.abort_reclaiming(true).await;
+    }
     if let Some(task) = prompt_task {
         let _ = task.await;
     }
+    harness.drain_session().await;
     forwarder.abort();
     let _ = events.send(SessionEvent::Closed).await;
     wake.signal();
+}
+
+async fn idle_session_ready(harness: &harness::agent_harness::AgentHarness) -> bool {
+    // Embedded has no extensions or detached tool/subagent executors. Built-ins
+    // await their final callbacks; native deferred/recovery/queue facts still veto.
+    harness.drain_session().await;
+    harness.unsaved_messages().is_empty()
+        && harness::agent_harness::AgentHarness::validate_resource_transition_idle(
+            harness.session(),
+        )
+        .await
+        .is_ok()
 }
 
 fn resolve_session_model(
@@ -2432,6 +2522,7 @@ mod tests {
                 events,
                 commands,
                 command_bytes: Arc::new(AtomicUsize::new(0)),
+                idle: Arc::new(IdleReadiness::default()),
                 admission: Mutex::new(()),
                 shutting_down: Arc::new(AtomicBool::new(false)),
                 session_id: Arc::new(Mutex::new(None)),
@@ -2440,6 +2531,126 @@ mod tests {
             },
             receiver,
         )
+    }
+
+    #[test]
+    fn idle_readiness_waits_for_startup_and_in_flight_zero_byte_commands() {
+        let (session, mut commands) = test_session(Arc::new(EventQueue::default()));
+        assert!(!session.can_release_idle());
+        session.idle.ready.store(true, Ordering::Release);
+        assert!(
+            !session.can_release_idle(),
+            "durable identity must be available"
+        );
+        *session.session_id.lock().unwrap() = Some("durable".into());
+        assert!(session.can_release_idle());
+
+        session.set_thinking_level("medium").unwrap();
+        assert_eq!(session.command_bytes.load(Ordering::Relaxed), 0);
+        assert!(!session.can_release_idle());
+        let command = commands.try_recv().unwrap();
+        assert_eq!(session.commands.capacity(), COMMAND_RECORDS);
+        assert!(!session.can_release_idle(), "dequeued is not completed");
+        drop(command);
+        assert!(session.can_release_idle());
+
+        session.shutting_down.store(true, Ordering::Release);
+        assert!(!session.can_release_idle());
+    }
+
+    #[test]
+    fn idle_readiness_retains_prompt_completion_and_event_backlogs() {
+        let queue = Arc::new(EventQueue::default());
+        let (mut session, mut commands) = test_session(Arc::clone(&queue));
+        session.idle.ready.store(true, Ordering::Release);
+        *session.session_id.lock().unwrap() = Some("durable".into());
+        session.send_prompt("prompt").unwrap();
+        let QueuedCommand { _charge, .. } = commands.try_recv().unwrap();
+        assert!(
+            !session.can_release_idle(),
+            "a prompt owns its command charge"
+        );
+        for _ in 0..POLL_RECORDS {
+            queue.try_send(SessionEvent::Text("delta".into())).unwrap();
+        }
+        queue.try_send(SessionEvent::Done).unwrap();
+        assert!(!session.can_release_idle());
+        drop(_charge);
+        assert!(
+            !session.can_release_idle(),
+            "completion must reach the host"
+        );
+        assert_eq!(session.poll().len(), POLL_RECORDS);
+        assert!(!session.can_release_idle(), "bounded poll leaves a backlog");
+        assert_eq!(session.poll(), vec![SessionEvent::Done]);
+        assert!(session.can_release_idle());
+        session.closed = true;
+        assert!(!session.can_release_idle());
+    }
+
+    #[tokio::test]
+    async fn native_idle_proof_rejects_durable_queues_on_every_lane() {
+        use harness::session::memory::{InMemorySessionStorage, SystemClock};
+        use harness::session::session::{DefaultIdGenerator, Session};
+        use harness::session::types::SessionMetadata;
+        use harness::types::AgentHarnessOptions;
+
+        let session = Session::new(
+            Arc::new(InMemorySessionStorage::new(
+                SessionMetadata {
+                    id: "idle-proof".into(),
+                    created_at: 0,
+                    parent_session_id: None,
+                },
+                Arc::new(SystemClock),
+                Arc::new(DefaultIdGenerator::new()),
+            )),
+            None,
+        );
+        let harness = harness::agent_harness::AgentHarness::create(AgentHarnessOptions {
+            model: ai::Model::new("m", "m", ai::Api::Faux, "faux", "http://unused"),
+            thinking_level: Default::default(),
+            active_tool_names: Vec::new(),
+            tools: Vec::new(),
+            system_prompt: None,
+            resources: Default::default(),
+            stream_options: Default::default(),
+            retry: Default::default(),
+            compaction: Default::default(),
+            steering_mode: Default::default(),
+            follow_up_mode: Default::default(),
+            tool_execution: Default::default(),
+            drive: Default::default(),
+            session,
+            allow_existing_session: true,
+            models: Vec::new(),
+            to_provider_messages: None,
+            entry_projectors: Default::default(),
+            agent_emitter: None,
+            before_tool_call: None,
+            after_tool_call: None,
+            transform_context: None,
+            entry_transforms: Vec::new(),
+            provider_hooks: None,
+        })
+        .await
+        .unwrap();
+        let message = || AgentMessage::User(ai::types::UserMessage::new("queued", 0));
+        assert!(idle_session_ready(&harness).await);
+        harness.steer(message()).await.unwrap();
+        assert!(!idle_session_ready(&harness).await);
+        harness.clear_queue().await.unwrap();
+        assert!(idle_session_ready(&harness).await);
+        let queued = harness.next_run(message()).await.unwrap();
+        assert!(!idle_session_ready(&harness).await);
+        harness.cancel_queued(&queued.entry_id).await.unwrap();
+        assert!(idle_session_ready(&harness).await);
+        harness.session().create_lane("child", None).await.unwrap();
+        let child = harness.lane("child");
+        child.steer(message()).await.unwrap();
+        assert!(!idle_session_ready(&harness).await);
+        child.clear_queue().await.unwrap();
+        assert!(idle_session_ready(&harness).await);
     }
 
     #[test]
@@ -2952,6 +3163,7 @@ mod tests {
             delta_arrival_hook: None,
             phase_hook: None,
             before_tool_call: None,
+            after_tool_call: None,
             user_input: false,
         })
         .expect("worker starts");

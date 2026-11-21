@@ -525,6 +525,10 @@ impl TerminalRenderer {
         }
     }
 
+    pub(crate) fn release_idle_resources(&mut self) {
+        *self.paint_scratch.lock() = PaintScratch::default();
+    }
+
     pub fn measure_cell(&mut self, window: &mut Window) {
         let font = Font {
             family: self.font_family.clone().into(),
@@ -1747,6 +1751,34 @@ mod tests {
             candidate[95],
             48 * matches.len()
         );
+    }
+
+    #[test]
+    fn idle_renderer_release_preserves_metrics_and_clears_shared_scratch() {
+        let mut renderer =
+            TerminalRenderer::new("monospace".into(), px(14.0), 1.2, ColorPalette::default());
+        let retained = renderer.clone();
+        let metrics = (renderer.cell_width, renderer.cell_height);
+        {
+            let mut scratch = renderer.paint_scratch.lock();
+            scratch.row_backgrounds.reserve(256);
+            scratch.text_runs.reserve(256);
+            scratch.block_rects.reserve(256);
+            scratch.selection_rects.reserve(256);
+            scratch.match_rects.reserve(256);
+            scratch.decoration_rects.reserve(256);
+        }
+        renderer.release_idle_resources();
+        renderer.release_idle_resources();
+        assert_eq!((renderer.cell_width, renderer.cell_height), metrics);
+        assert_eq!(renderer.font_family, "monospace");
+        let scratch = retained.paint_scratch.lock();
+        assert_eq!(scratch.row_backgrounds.capacity(), 0);
+        assert_eq!(scratch.text_runs.capacity(), 0);
+        assert_eq!(scratch.block_rects.capacity(), 0);
+        assert_eq!(scratch.selection_rects.capacity(), 0);
+        assert_eq!(scratch.match_rects.capacity(), 0);
+        assert_eq!(scratch.decoration_rects.capacity(), 0);
     }
 
     #[test]

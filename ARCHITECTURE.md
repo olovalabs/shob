@@ -75,7 +75,7 @@ graph TD
 ### 2.1 Terminal Emulation (`terminal`)
 
 The terminal widget is implemented in the `terminal` sub-crate:
-- **PTY Management**: Spawns user shells using `portable-pty` with asynchronous read and write loops.
+- **PTY Management**: Shell preparation and I/O threads start on first render or explicit input. Already-started shells remain live when hidden; idle cache eviction never closes a PTY or discards its grid.
 - **Throughput Protection**: Uncontrolled terminal streams (e.g., fast compiler output or large file dumps) can overwhelm desktop UI threads. Shob employs an adaptive **1 ms stream coalescer** and a **128 KiB parse cap per frame**. This ensures UI responsiveness even at stream rates exceeding 40 MB/s.
 - **Rendering**: Terminal glyphs and styling (bold, italic, 24-bit RGB true color) are painted directly via GPUI primitives using embedded monospace fonts (`Mononoki`).
 
@@ -130,7 +130,7 @@ Shob follows Zed's per-platform directory convention (`src/paths.rs`):
 
 - `settings.json` is user-editable and parsed as JSONC (comments allowed). It stores app appearance, window bounds/state, and the `restore` toggles.
 - `workspace.json` is auto-managed and debounced (300 ms) with an atomic temp+rename write and a generation guard. It records project paths, tab titles/logos, the split tree, per-pane cwd, input drafts, command history, and selected agent models/session ids.
-- Scrollback is written separately (on close, quit, and every 30 s while dirty) so the debounced hot path stays small. Restored panes spawn a fresh shell in the saved cwd and seed the previous buffer above the new prompt.
+- Scrollback is written separately (on close, quit, and every 30 s while dirty) so the debounced hot path stays small. Restored panes seed the previous buffer; a fresh shell starts in the saved cwd only when shown or sent input.
 - Agent transcripts are appended as raw events and replayed through `push_chat_event`, so the restored UI matches the previous session exactly. Embedded sessions reopen their durable session id. Historical OMP sessions restore their transcript.
 - Window geometry is loaded synchronously before `open_window`, validated against the current displays, and saved on close/quit.
 - Legacy v1 `workspace.json` files (including the old `com.Markup.Markup` location) are backed up to `<data>/backups/` and migrated automatically.
@@ -146,9 +146,10 @@ were removed after import; `examples/plugin-stub` remains as a test fixture.
 Shob path-depends on `agent/crates/embedded`, a host-facing library built
 from the upstream library crates.
 
-- **Default backend.** `src/agent_bridge.rs` opens one `EmbeddedSession` per shob
-  conversation. The session owns a dedicated multi-thread Tokio runtime and
-  reuses upstream's `cli::session::build`: model/credential resolution,
+- **Default backend.** `src/agent_bridge.rs` opens an `EmbeddedSession` on the first
+  prompt, not while restoring or selecting a conversation. Each session owns a
+  dedicated multi-thread Tokio runtime and reuses upstream's `cli::session::build`:
+  model/credential resolution,
   built-in `read`/`bash`/`edit`/`write`/`docs` tools, the coding system prompt,
   durable JSONL session storage and `AgentHarness`.
 - **Typed transport.** A dedicated host emitter retains shared tool snapshots
@@ -157,9 +158,14 @@ from the upstream library crates.
   delivery backpressures without blocking runtime workers; intermediate
   identified snapshots can coalesce. GPUI drains 64 records / 256 KiB per pane
   and resignals pending work. The default backend uses no `shob` subprocess.
-- **Lifecycle.** Prompts run on the session runtime. Stop and pane close call
-  `request_stop_round` + `abort_reclaiming`, which cancels active tools. A
-  stale resumed session id falls back to a fresh durable session.
+- **Lifecycle.** Prompts run on the session runtime. Inactive, idle panes release
+  embedded runtimes only after command completion, durable writes, and empty
+  event/request and native-work queues; the next prompt reopens the durable id.
+  View caches are disposable, but transcript text, list anchors, terminal grids,
+  shells, and attention state survive eviction. Running/blocked sessions and
+  queued work stay live. RPC runtimes remain resident without a safe idle proof.
+  Stop and pane close cancel active tools through `request_stop_round` +
+  `abort_reclaiming`. A stale resumed id falls back to a fresh durable session.
 - **Discovery and login.** Model catalogs and provider readiness are read
   in-process through `embedded::catalog`/`providers`. shob-only API-key and
   OAuth logins are driven in-process through the embedded provider configuration.

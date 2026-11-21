@@ -23,7 +23,7 @@ use crate::colors::ColorPalette;
 use crate::event::{GpuiEventProxy, TerminalEvent, TerminalNotifier};
 use crate::hyperlink::{HyperlinkMatch, RegexSearches};
 use crate::input::keystroke_to_bytes;
-use crate::pty_writer::{QueuedWriter, WriteCompletion};
+use crate::pty_writer::{InputStarter, QueuedWriter, WriteCompletion};
 use crate::render::{PaintContext, TerminalRenderer};
 use crate::search::SearchState;
 use crate::shell_integration::ShellEvent;
@@ -161,6 +161,10 @@ pub struct TerminalView {
 
     #[allow(dead_code)]
     _reader_task: Task<()>,
+    start_reader: Option<Box<dyn FnOnce() + Send>>,
+    start_writer: InputStarter,
+    start_callback: Option<Box<dyn Fn() + Send + Sync>>,
+    started: bool,
     blink_task: Option<Task<()>>,
     drag_scroll_task: Option<Task<()>>,
 
@@ -197,7 +201,7 @@ pub struct TerminalView {
     cell_metrics_valid: bool,
 
     search: SearchState,
-    regex_searches: RegexSearches,
+    regex_searches: Option<RegexSearches>,
     hovered_link: Option<HyperlinkMatch>,
 
     cursor_visible: bool,
@@ -327,8 +331,8 @@ impl TerminalView {
 
         let focus_handle = cx.focus_handle();
 
-        let (stdin_writer, input_errors) =
-            QueuedWriter::new(stdin_writer, cx.background_executor());
+        let (stdin_writer, input_errors, start_writer) =
+            QueuedWriter::deferred(stdin_writer, cx.background_executor());
         let input_error_task = cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             while let Ok(error) = input_errors.recv_async().await {
                 if this
@@ -361,8 +365,8 @@ impl TerminalView {
         // queueing an unbounded number of byte chunks in memory.
         let (bytes_tx, bytes_rx) = flume::bounded::<OutputChunk>(256);
 
-        thread::spawn(move || {
-            Self::read_stdout_blocking(stdout_reader, bytes_tx);
+        let start_reader: Box<dyn FnOnce() + Send> = Box::new(move || {
+            thread::spawn(move || Self::read_stdout_blocking(stdout_reader, bytes_tx));
         });
 
         let reader_task = cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -477,6 +481,10 @@ impl TerminalView {
             event_rx,
             config,
             _reader_task: reader_task,
+            start_reader: Some(start_reader),
+            start_writer,
+            start_callback: None,
+            started: false,
             blink_task: None,
             drag_scroll_task: None,
             window_size,
@@ -500,7 +508,7 @@ impl TerminalView {
             last_mouse_position: Point::default(),
             cell_metrics_valid: false,
             search: SearchState::new(),
-            regex_searches: RegexSearches::new(),
+            regex_searches: None,
             hovered_link: None,
             cursor_visible: true,
             was_focused: false,
@@ -520,6 +528,45 @@ impl TerminalView {
     // -----------------------------------------------------------------------
     // Builder-style callbacks
     // -----------------------------------------------------------------------
+
+    pub fn with_start_callback(mut self, callback: impl Fn() + Send + Sync + 'static) -> Self {
+        self.start_callback = Some(Box::new(callback));
+        self
+    }
+
+    /// Start live I/O only when rendered or explicitly sent input.
+    pub fn ensure_started(&mut self) {
+        if self.started {
+            return;
+        }
+        self.started = true;
+        if let Some(callback) = &self.start_callback {
+            callback();
+        }
+        self.start_writer.start();
+        if let Some(start_reader) = self.start_reader.take() {
+            start_reader();
+        }
+    }
+
+    /// Discard only resources which a foreground render can reconstruct.
+    pub fn release_idle_resources(&mut self) {
+        self.blink_task = None;
+        self.search_refresh_task = None;
+        self.drag_scroll_task = None;
+        self.search_refresh_pending = false;
+        self.search_last_refresh = None;
+        self.last_render = None;
+        self.mouse_down_button = None;
+        self.last_reported_cell = None;
+        self.scrollbar_dragging = false;
+        self.scrollbar_hovered = false;
+        self.hovered_link = None;
+        self.renderer.release_idle_resources();
+        self.regex_searches = None;
+        self.search.release_idle_resources();
+        self.event_scratch = Vec::new();
+    }
 
     pub fn with_resize_callback(
         mut self,
@@ -635,7 +682,8 @@ impl TerminalView {
     }
 
     /// Admit one whole frame without touching the physical PTY on GPUI.
-    fn write_to_pty(&self, bytes: &[u8]) {
+    fn write_to_pty(&mut self, bytes: &[u8]) {
+        self.ensure_started();
         // Failures also go to the independently waking input-error task.
         let _ = self.stdin_writer.send(bytes);
     }
@@ -667,6 +715,7 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) -> Result<WriteCompletion, String> {
         self.scroll_to_bottom_on_input(cx);
+        self.ensure_started();
         self.stdin_writer.send_with_completion(bytes)
     }
 
@@ -903,6 +952,7 @@ impl TerminalView {
     ) -> Result<WriteCompletion, String> {
         self.scroll_to_bottom_on_input(cx);
         let payload = self.paste_payload(text);
+        self.ensure_started();
         self.stdin_writer.send_with_completion(&payload)
     }
 
@@ -1130,7 +1180,7 @@ impl TerminalView {
         }
 
         let detect_paths = self.config.detect_path_links;
-        let searches = &mut self.regex_searches;
+        let searches = self.regex_searches.get_or_insert_with(RegexSearches::new);
         let found = self
             .state
             .with_term(|term| crate::hyperlink::find_at(term, point, searches, detect_paths));
@@ -1627,7 +1677,11 @@ impl TerminalView {
         // Only animate when the terminal is focused *and* the application
         // actually asked for a blinking cursor — otherwise we would repaint
         // twice a second for nothing.
-        if !self.config.cursor_blink || !self.was_focused || !self.state.cursor_blinking() {
+        if !self.visible_recently()
+            || !self.config.cursor_blink
+            || !self.was_focused
+            || !self.state.cursor_blinking()
+        {
             self.blink_task = None;
             return;
         }
@@ -1665,7 +1719,7 @@ impl TerminalView {
 
     /// Emit `CSI I` / `CSI O` when the application enabled focus reporting
     /// (DEC mode 1004). Editors like vim use it to refresh buffers.
-    fn report_focus_change(&self, focused: bool) {
+    fn report_focus_change(&mut self, focused: bool) {
         if !self.state.mode().contains(TermMode::FOCUS_IN_OUT) {
             return;
         }
@@ -1981,6 +2035,7 @@ impl EventEmitter<ShellEvent> for TerminalView {}
 
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.ensure_started();
         self.process_events(window, cx);
 
         // Hidden views and resized grids need fresh grid-coordinate matches.
@@ -2013,6 +2068,9 @@ impl Render for TerminalView {
             self.was_focused = is_focused;
             self.state.set_focused(is_focused);
             self.report_focus_change(is_focused);
+            self.restart_blink(cx);
+        }
+        if was_hidden && self.blink_task.is_none() {
             self.restart_blink(cx);
         }
 
