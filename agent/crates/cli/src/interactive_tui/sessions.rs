@@ -601,6 +601,28 @@ pub(super) fn render_history_entries(
                     // convention for every transcript entry) — no host spacer.
                 }
                 AgentMessage::Custom(custom) => {
+                    if custom.role == harness::messages::BASH_EXECUTION_ROLE {
+                        if let Ok(data) = serde_json::from_value::<
+                            harness::messages::BashExecutionData,
+                        >(custom.data.clone())
+                        {
+                            let comp = Arc::new(BashExecutionComponent::new_with_context(
+                                &data.command,
+                                data.exclude_from_context.unwrap_or(false),
+                            ));
+                            comp.append_output(&data.output);
+                            comp.set_complete(
+                                data.exit_code,
+                                data.cancelled,
+                                BashTruncation {
+                                    truncated: data.truncated,
+                                    full_output_path: data.full_output_path.clone(),
+                                },
+                            );
+                            chat.add_child(comp);
+                            continue;
+                        }
+                    }
                     if let Some(session) = &extension_session {
                         if let Some(component) = extension_message_component(
                             session,

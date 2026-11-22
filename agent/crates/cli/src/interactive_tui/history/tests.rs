@@ -1,6 +1,8 @@
 //! In-memory only: no provider, configuration or real sessions.
 use super::*;
-use harness::session::types::{ProvisionedEntry, ProvisionedKind, SessionMetadata};
+use harness::session::types::{
+    EntryBase, MessageEntry, ProvisionedEntry, ProvisionedKind, SessionMetadata,
+};
 use harness::session::{CounterIdGenerator, FakeClock, InMemorySessionStorage};
 
 #[path = "tests/startup_header.rs"]
@@ -518,3 +520,49 @@ async fn capability_header_survives_restore_and_page_replacement_once() {
 
 #[path = "tests/notice_order.rs"]
 mod notice_order;
+
+#[tokio::test]
+async fn bash_execution_history_renders_block_not_json() {
+    let chat = Arc::new(Container::new());
+    let message = harness::messages::bash_execution_message(
+        "ls",
+        "build\ndeps",
+        Some(0),
+        false,
+        false,
+        None,
+        Some(false),
+        1,
+    );
+    render_history_entries(
+        vec![Entry::Message(MessageEntry {
+            base: EntryBase {
+                entry_type: "message".into(),
+                id: "entry-bash".into(),
+                seq: 1,
+                parent_id: None,
+                timestamp: 1,
+            },
+            message,
+            terminate: None,
+        })],
+        &chat,
+        None,
+        None,
+        false,
+    );
+    assert!(
+        chat.get_children().iter().any(|child| child
+            .as_any()
+            .downcast_ref::<BashExecutionComponent>()
+            .is_some()),
+        "bashExecution must replay as a BashExecutionComponent"
+    );
+    let output = strip_ansi(&chat.render(100).join("\n"));
+    assert!(output.contains("$ ls"), "command header missing: {output}");
+    assert!(output.contains("build"), "output missing: {output}");
+    assert!(
+        !output.contains("bashExecution:"),
+        "raw JSON fallback leaked: {output}"
+    );
+}
