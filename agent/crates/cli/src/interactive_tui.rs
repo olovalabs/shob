@@ -3198,10 +3198,6 @@ pub async fn interactive_tui(
                         let cursor = text.chars().count();
                         editor.set_text(&text);
                         editor.set_cursor(0, cursor);
-                        add_note_message(
-                            &state.notice_container(),
-                            "Draft updated from external editor.",
-                        );
                     }
                     Err(error) => add_error_message(&state.notice_container(), &error),
                 }
