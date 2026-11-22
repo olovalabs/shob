@@ -2495,7 +2495,9 @@ pub async fn interactive_tui(
                 &key,
                 tui::keybindings::keys::EXTERNAL_EDITOR,
             ) {
-                launch_external_editor(editor_for_key.get_expanded_text(), tx_for_key.clone());
+                let result =
+                    run_external_editor_blocking(&tui_for_key, editor_for_key.get_expanded_text());
+                let _ = tx_for_key.send(TuiMessage::ExternalEditorResult(result));
                 continue;
             }
 
@@ -3194,10 +3196,6 @@ pub async fn interactive_tui(
                         let cursor = text.chars().count();
                         editor.set_text(&text);
                         editor.set_cursor(0, cursor);
-                        add_note_message(
-                            &state.notice_container(),
-                            "Draft updated from external editor.",
-                        );
                     }
                     Err(error) => add_error_message(&state.notice_container(), &error),
                 }
