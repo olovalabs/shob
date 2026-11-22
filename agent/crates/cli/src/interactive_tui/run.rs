@@ -69,52 +69,70 @@ pub(super) async fn maybe_add_startup_changelog(
 // Run a single prompt (streaming or blocking)
 // ===========================================================================
 
-pub(super) fn launch_external_editor(draft: String, tx: mpsc::UnboundedSender<TuiMessage>) {
-    std::thread::spawn(move || {
-        let file = match tempfile::Builder::new()
-            .prefix("shob-draft-")
-            .suffix(".md")
-            .tempfile()
-        {
-            Ok(file) => file,
-            Err(error) => {
-                let _ = tx.send(TuiMessage::ExternalEditorResult(Err(format!(
-                    "Could not create editor file: {error}"
-                ))));
-                return;
-            }
-        };
-        if let Err(error) = std::fs::write(file.path(), draft.as_bytes()) {
-            let _ = tx.send(TuiMessage::ExternalEditorResult(Err(format!(
-                "Could not write editor file: {error}"
-            ))));
-            return;
+#[cfg(unix)]
+fn discard_stray_terminal_input() {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(50);
+    loop {
+        let timeout = deadline.saturating_duration_since(std::time::Instant::now());
+        if timeout.is_zero() {
+            break;
         }
-        let editor = std::env::var("SHOB_EXTERNAL_EDITOR")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .or_else(|| std::env::var("VISUAL").ok())
-            .or_else(|| std::env::var("EDITOR").ok())
-            .unwrap_or_else(|| {
-                if cfg!(windows) {
-                    "notepad".to_string()
-                } else {
-                    "nano".to_string()
+        match crossterm::event::poll(timeout) {
+            Ok(true) => {
+                if crossterm::event::read().is_err() {
+                    break;
                 }
-            });
-        let status = std::process::Command::new(&editor)
-            .arg(file.path())
-            .status();
-        let result = match status {
-            Ok(status) if status.success() => std::fs::read_to_string(file.path())
-                .map_err(|error| format!("Could not read editor file: {error}")),
-            Ok(status) => Err(format!("External editor exited with {status}")),
-            Err(error) => Err(format!(
-                "Could not launch external editor `{editor}`: {error}"
-            )),
-        };
-        let _ = tx.send(TuiMessage::ExternalEditorResult(result));
-    });
+            }
+            _ => break,
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn discard_stray_terminal_input() {}
+
+pub(super) fn run_external_editor_blocking(
+    tui: &Arc<TuiAltScreen>,
+    draft: String,
+) -> Result<String, String> {
+    let file = match tempfile::Builder::new()
+        .prefix("shob-draft-")
+        .suffix(".md")
+        .tempfile()
+    {
+        Ok(file) => file,
+        Err(error) => return Err(format!("Could not create editor file: {error}")),
+    };
+    if let Err(error) = std::fs::write(file.path(), draft.as_bytes()) {
+        return Err(format!("Could not write editor file: {error}"));
+    }
+    let editor = std::env::var("SHOB_EXTERNAL_EDITOR")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| std::env::var("VISUAL").ok())
+        .or_else(|| std::env::var("EDITOR").ok())
+        .unwrap_or_else(|| {
+            if cfg!(windows) {
+                "notepad".to_string()
+            } else {
+                "nano".to_string()
+            }
+        });
+    tui.suspend();
+    let status = std::process::Command::new(&editor)
+        .arg(file.path())
+        .status();
+    tui.resume();
+    discard_stray_terminal_input();
+    tui.request_render(true);
+    match status {
+        Ok(status) if status.success() => std::fs::read_to_string(file.path())
+            .map_err(|error| format!("Could not read editor file: {error}")),
+        Ok(status) => Err(format!("External editor exited with {status}")),
+        Err(error) => Err(format!(
+            "Could not launch external editor `{editor}`: {error}"
+        )),
+    }
 }
 
 /// Apply the authoritative run result when it wins the race with the async
