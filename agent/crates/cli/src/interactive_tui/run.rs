@@ -127,7 +127,13 @@ pub(super) fn run_external_editor_blocking(
     tui.request_render(true);
     match status {
         Ok(status) if status.success() => std::fs::read_to_string(file.path())
-            .map_err(|error| format!("Could not read editor file: {error}")),
+            .map_err(|error| format!("Could not read editor file: {error}"))
+            .map(|text| {
+                text.strip_suffix("\r\n")
+                    .or_else(|| text.strip_suffix('\n'))
+                    .map(str::to_owned)
+                    .unwrap_or(text)
+            }),
         Ok(status) => Err(format!("External editor exited with {status}")),
         Err(error) => Err(format!(
             "Could not launch external editor `{editor}`: {error}"
