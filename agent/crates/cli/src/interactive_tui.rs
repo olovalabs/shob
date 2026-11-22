@@ -2495,10 +2495,8 @@ pub async fn interactive_tui(
                 &key,
                 tui::keybindings::keys::EXTERNAL_EDITOR,
             ) {
-                let result = run_external_editor_blocking(
-                    &tui_for_key,
-                    editor_for_key.get_expanded_text(),
-                );
+                let result =
+                    run_external_editor_blocking(&tui_for_key, editor_for_key.get_expanded_text());
                 let _ = tx_for_key.send(TuiMessage::ExternalEditorResult(result));
                 continue;
             }
