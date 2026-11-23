@@ -48,7 +48,7 @@ pub struct ThemeColors {
     pub thinking_text: Color,
 
     // -- Markdown syntax tokens (pi md*) --
-    /// Heading color (pi `mdHeading`, gold on dark).
+    /// Heading color (pi `mdHeading`).
     pub md_heading: Color,
     /// Inline link color (pi `mdLink`).
     pub md_link: Color,
@@ -105,14 +105,16 @@ pub struct ThemeColors {
     pub tool_diff_context: Color,
 }
 
+impl ThemeColors {
+    pub(crate) fn tool_badge(&self, label: &str, background: Color) -> String {
+        background.bg(&self
+            .tool_title
+            .fg(&crate::ansi::bold(&format!(" {label} "))))
+    }
+}
+
 impl Default for ThemeColors {
     fn default() -> Self {
-        // Defaults mirror the pi `dark.json` palette (`accent` teal, the
-        // `#f0c674` gold heading, `#b5bd68` green code blocks, and the
-        // `#282832`/`#283228`/`#3c2828` tool backgrounds). Exact pi hexes are
-        // approximated by their nearest ANSI-256 index so 8/256-color
-        // terminals reproduce the same relationships; truecolor rendering is
-        // handled per-`Color` variant at emit time.
         Self {
             text: Color::Default,
             muted: Color::Ansi256(244),   // gray (#808080-ish)
@@ -132,18 +134,18 @@ impl Default for ThemeColors {
             thinking_text: Color::Ansi256(244), // thinkingText gray
 
             // Markdown
-            md_heading: Color::Ansi256(179),  // gold (#f0c674) ≈ 179
-            md_link: Color::Ansi256(110),     // blue (#81a2be) ≈ 110
-            md_link_url: Color::Ansi256(242), // dimGray
-            md_code: Color::Rgb(138, 190, 183), // upstream accent #8abeb7
-            md_code_bg: Color::Rgb(48, 52, 59), // subtle inline chip
-            md_code_block: Color::Rgb(212, 212, 212), // neutral code text
-            md_code_block_bg: Color::Rgb(40, 44, 52), // One Dark #282c34
-            md_code_block_border: Color::Ansi256(244), // gray
-            md_quote: Color::Ansi256(244),    // gray
-            md_quote_border: Color::Ansi256(244),
-            md_hr: Color::Ansi256(244),
-            md_list_bullet: Color::Ansi256(108), // accent
+            md_heading: Color::Default,
+            md_link: Color::Default,
+            md_link_url: Color::Default,
+            md_code: Color::Default,
+            md_code_bg: Color::Rgb(48, 48, 48), // subtle inline chip
+            md_code_block: Color::Rgb(250, 250, 250),
+            md_code_block_bg: Color::Rgb(20, 20, 20),
+            md_code_block_border: Color::Default,
+            md_quote: Color::Default,
+            md_quote_border: Color::Default,
+            md_hr: Color::Default,
+            md_list_bullet: Color::Default,
 
             // Tool blocks
             // Keep status backgrounds close to the terminal surface. Status is
@@ -397,34 +399,39 @@ impl ThemeManager {
 fn theme_for_preset(preset: ThemePreset) -> Theme {
     match preset {
         ThemePreset::Dark => Theme::default(),
-        ThemePreset::Red => Theme {
-            colors: ThemeColors {
-                accent: Color::Rgb(234, 102, 111),
-                surface: Color::Rgb(102, 36, 46),
-                border: Color::Rgb(132, 66, 73),
-                border_accent: Color::Rgb(234, 102, 111),
-                border_muted: Color::Rgb(117, 83, 88),
-                selection: Color::Rgb(111, 48, 58),
-                cursor: Color::Rgb(234, 102, 111),
-                thinking_text: Color::Rgb(174, 127, 133),
-                md_heading: Color::Rgb(234, 102, 111),
-                md_code: Color::Rgb(234, 132, 139),
-                md_code_bg: Color::Rgb(48, 31, 36),
-                md_list_bullet: Color::Rgb(234, 102, 111),
-                tool_pending_bg: Color::Rgb(151, 44, 57),
-                tool_success_bg: Color::Rgb(50, 35, 39),
-                tool_error_bg: Color::Rgb(135, 33, 44),
-                tool_title: Color::Rgb(255, 237, 238),
-                tool_output: Color::Default,
-                custom_message_bg: Color::Rgb(56, 31, 38),
-                custom_message_label: Color::Rgb(234, 132, 139),
-                ..ThemeColors::default()
-            },
-            compact_transcript: true,
-            border_style: BorderStyle::Sharp,
-            corner_style: CornerStyle::Sharp,
-            ..Theme::default()
-        },
+        ThemePreset::Red => {
+            let tint = |lightness, chroma| {
+                let [r, g, b] = crate::oklab::oklch_to_rgb(lightness, chroma, 149.579);
+                Color::Rgb(r, g, b)
+            };
+            let accent = tint(0.723, 0.219);
+            let soft_accent = tint(0.74, 0.13);
+            Theme {
+                colors: ThemeColors {
+                    accent,
+                    surface: Color::Rgb(0, 0, 0),
+                    border: tint(0.43, 0.12),
+                    border_accent: accent,
+                    border_muted: tint(0.47, 0.07),
+                    selection: tint(0.40, 0.13),
+                    cursor: accent,
+                    thinking_text: tint(0.67, 0.08),
+                    md_code_bg: Color::Rgb(28, 28, 28),
+                    tool_pending_bg: accent,
+                    tool_success_bg: Color::Rgb(18, 18, 18),
+                    tool_error_bg: Color::Rgb(135, 33, 44),
+                    tool_title: tint(0.96, 0.025),
+                    tool_output: Color::Default,
+                    custom_message_bg: tint(0.27, 0.07),
+                    custom_message_label: soft_accent,
+                    ..ThemeColors::default()
+                },
+                compact_transcript: true,
+                border_style: BorderStyle::Sharp,
+                corner_style: CornerStyle::Sharp,
+                ..Theme::default()
+            }
+        }
         ThemePreset::Light => {
             let mut colors = ThemeColors::default();
             colors.text = Color::Default;
@@ -443,18 +450,9 @@ fn theme_for_preset(preset: ThemePreset) -> Theme {
             colors.selection = Color::Ansi256(189); // selectedBg (#d0d0e0)
             colors.cursor = Color::Ansi256(67);
             colors.thinking_text = Color::Ansi256(241);
-            colors.md_heading = Color::Ansi256(136); // yellow
-            colors.md_link = Color::Ansi256(67); // blue
-            colors.md_link_url = Color::Ansi256(243);
-            colors.md_code = Color::Rgb(90, 128, 128); // native light teal
-            colors.md_code_bg = Color::Rgb(232, 234, 237);
-            colors.md_code_block = Color::Rgb(31, 35, 40);
-            colors.md_code_block_bg = Color::Rgb(246, 248, 250); // GitHub light code
-            colors.md_code_block_border = Color::Ansi256(241);
-            colors.md_quote = Color::Ansi256(241);
-            colors.md_quote_border = Color::Ansi256(241);
-            colors.md_hr = Color::Ansi256(241);
-            colors.md_list_bullet = Color::Ansi256(65); // green
+            colors.md_code_bg = Color::Rgb(234, 234, 234);
+            colors.md_code_block = Color::Rgb(0, 0, 0);
+            colors.md_code_block_bg = Color::Rgb(246, 246, 246);
             colors.tool_pending_bg = Color::Ansi256(189);
             colors.tool_success_bg = Color::Ansi256(151);
             colors.tool_error_bg = Color::Ansi256(181);
@@ -479,8 +477,6 @@ fn theme_for_preset(preset: ThemePreset) -> Theme {
             for f in [
                 &mut colors.accent,
                 &mut colors.border_accent,
-                &mut colors.md_code,
-                &mut colors.md_list_bullet,
                 &mut colors.bash_mode,
             ] {
                 *f = Color::Ansi256(15);
@@ -497,16 +493,7 @@ fn theme_for_preset(preset: ThemePreset) -> Theme {
             colors.selection = Color::Ansi256(244);
             colors.cursor = Color::Ansi256(15);
             colors.thinking_text = Color::Ansi256(244);
-            colors.md_heading = Color::Ansi256(15);
-            colors.md_link = Color::Ansi256(15);
-            colors.md_link_url = Color::Ansi256(242);
             colors.md_code_bg = Color::Ansi256(237);
-            colors.md_code_block = Color::Ansi256(15);
-            colors.md_code_block_bg = Color::Ansi256(235);
-            colors.md_code_block_border = Color::Ansi256(244);
-            colors.md_quote = Color::Ansi256(244);
-            colors.md_quote_border = Color::Ansi256(244);
-            colors.md_hr = Color::Ansi256(244);
             colors.custom_message_bg = Color::Ansi256(236);
             colors.custom_message_label = Color::Ansi256(15);
             colors.custom_message_text = Color::Ansi256(244);

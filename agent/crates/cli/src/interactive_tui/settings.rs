@@ -383,7 +383,7 @@ pub(super) fn open_settings_theme_selector(
     tui: &Arc<TuiAltScreen>,
 ) {
     let mut items = vec![
-        SelectItem::new("red", "Red").with_description("Compact transcript with red accents"),
+        SelectItem::new("red", "Red").with_description("Compact transcript with green accents"),
         SelectItem::new("dark", "Dark").with_description("Dark palette"),
         SelectItem::new("light", "Light").with_description("Light background"),
         SelectItem::new("monochrome", "Monochrome").with_description("No color accents"),

@@ -1074,7 +1074,7 @@ pub async fn interactive_tui(
         // `--theme` / settings: preset name, registry name, or theme file
         // path. A file that fails to load warns and falls back to the
         // built-in default without vetoing startup (`emit_startup_warnings`
-        // style); the TUI still comes up in the red palette and `/theme`
+        // style); the TUI still comes up in the default palette and `/theme`
         // remains available.
         match crate::themes::apply_startup_spec(spec, Some(&theme_registry), &theme_manager) {
             Ok(()) => {}

@@ -91,7 +91,7 @@ fn markdown_invalidates_on_content_and_width() {
 fn markdown_invalidates_on_theme_change() {
     let _g = lock();
     apply_theme_preset(ThemePreset::Dark);
-    let md = Markdown::new("# Heading\n\nbody text", 0, 0);
+    let md = Markdown::new("# Heading\n\n`body text`", 0, 0);
     let dark = md.render(80);
     apply_theme_preset(ThemePreset::Monochrome);
     let mono = md.render(80);

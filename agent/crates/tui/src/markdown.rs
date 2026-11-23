@@ -220,10 +220,6 @@ impl Markdown {
         let mut in_code_block = false;
         let mut code_fence_char = '`';
         let mut code_language = String::new();
-        // Syntax highlighter for the current fenced block (highlight.js
-        // analogue; see `syntax_highlight`). Carries block-comment state
-        // across lines. `None` outside a code block.
-        let mut code_highlighter: Option<crate::syntax_highlight::Highlighter> = None;
         let mut mermaid_source: Vec<String> = Vec::new();
         while i < raw_lines.len() {
             let line = raw_lines[i];
@@ -249,8 +245,6 @@ impl Markdown {
                     in_code_block = true;
                     code_fence_char = fence_char;
                     code_language = lang.to_ascii_lowercase();
-                    code_highlighter =
-                        Some(crate::syntax_highlight::Highlighter::new(&code_language));
                     mermaid_source.clear();
                     // Fence language names (for example `text`, `rust`, or
                     // `bash`) are metadata, not code content. Keep ordinary
@@ -264,20 +258,12 @@ impl Markdown {
                     }
                     in_code_block = false;
                     code_language.clear();
-                    code_highlighter = None;
                     mermaid_source.clear();
                     // The closing fence is structural only; do not draw a
                     // bottom border around the code surface.
                 } else {
                     // A non-matching fence is code content.
-                    push_code_line(
-                        line,
-                        &pad,
-                        &indent,
-                        cwidth,
-                        &mut lines,
-                        code_highlighter.as_mut(),
-                    );
+                    push_code_line(line, &pad, &indent, cwidth, &mut lines);
                 }
                 i += 1;
                 continue;
@@ -293,14 +279,7 @@ impl Markdown {
                 // Code is never reflowed in the source sense — tabs are
                 // normalized and long physical lines wrap (see `push_code_line`)
                 // so a long command stays copyable instead of being ellipsized.
-                push_code_line(
-                    line,
-                    &pad,
-                    &indent,
-                    cwidth,
-                    &mut lines,
-                    code_highlighter.as_mut(),
-                );
+                push_code_line(line, &pad, &indent, cwidth, &mut lines);
                 i += 1;
                 continue;
             }
@@ -356,6 +335,14 @@ impl Markdown {
                     .md_heading
                     .fg(&bold(&underline(&self.render_inline(rest))));
                 push_wrapped(&pad, &h, cwidth, &mut lines);
+            } else if is_thematic_break(line) {
+                list_continuation_indent = None;
+                // Horizontal rule (capped like the TS reference), mdHr colored.
+                let rule_w = width.min(80).saturating_sub(self.padding_x * 2);
+                lines.push(format!(
+                    "{pad}{}",
+                    colors.md_hr.fg(&"─".repeat(rule_w.max(1)))
+                ));
             } else if let Some(item) = parse_list_item(line) {
                 let marker = match item.marker {
                     ListMarker::Bullet => colors.md_list_bullet.fg("•"),
@@ -377,14 +364,6 @@ impl Markdown {
                 let prefix = format!("  {}", format!("{border} ").repeat(depth));
                 let body = colors.md_quote.fg(&italic(&self.render_inline(body)));
                 push_wrapped_with_prefix(&pad, &prefix, &body, cwidth, &mut lines);
-            } else if line.trim().starts_with("---") || line.trim().starts_with("***") {
-                list_continuation_indent = None;
-                // Horizontal rule (capped like the TS reference), mdHr colored.
-                let rule_w = width.min(80).saturating_sub(self.padding_x * 2);
-                lines.push(format!(
-                    "{pad}{}",
-                    colors.md_hr.fg(&"─".repeat(rule_w.max(1)))
-                ));
             } else if line.trim().is_empty() {
                 list_continuation_indent = None;
                 // Empty line — emit a (padded) blank so spacing is preserved.
@@ -597,6 +576,16 @@ struct ListItem<'a> {
     body: &'a str,
 }
 
+fn is_thematic_break(line: &str) -> bool {
+    let mut markers = line.bytes().filter(|byte| !matches!(byte, b' ' | b'\t'));
+    let Some(marker @ (b'-' | b'*' | b'_')) = markers.next() else {
+        return false;
+    };
+    markers.next() == Some(marker)
+        && markers.next() == Some(marker)
+        && markers.all(|byte| byte == marker)
+}
+
 /// Parse a Markdown list item, including indented/nested lists. The parser is
 /// deliberately strict about the marker's following whitespace so ordinary
 /// numeric text without a list marker is not rendered as a list.
@@ -687,26 +676,14 @@ fn fence_info(line: &str) -> Option<(char, String)> {
 /// command is gone. Wrapping keeps the whole line on screen and in the
 /// clipboard; the code surface is re-applied per row so the panel band stays
 /// continuous and every rendered row still fits the width.
-fn push_code_line(
-    line: &str,
-    pad: &str,
-    indent: &str,
-    cwidth: usize,
-    out: &mut Vec<String>,
-    highlighter: Option<&mut crate::syntax_highlight::Highlighter>,
-) {
+fn push_code_line(line: &str, pad: &str, indent: &str, cwidth: usize, out: &mut Vec<String>) {
     let colors = theme().colors;
     // `cwidth` excludes Markdown padding. The code surface starts after the
     // configured indent and fills the remaining width, including blank rows.
     let panel_width = cwidth.saturating_sub(visible_width(indent)).max(1);
     let body_width = panel_width.saturating_sub(2).max(1);
     let expanded = line.replace('\t', "    ");
-    // Highlight the whole logical line first (the highlighter carries per-line
-    // state), then wrap the styled text so a wrapped row keeps its colors.
-    let styled = match highlighter {
-        Some(h) => h.highlight(&expanded, &colors),
-        None => colors.md_code_block.fg(&expanded),
-    };
+    let styled = colors.md_code_block.fg(&expanded);
     for chunk in wrap_text_with_ansi(&styled, body_width) {
         let body = format!(" {chunk}");
         let body =
@@ -1124,7 +1101,7 @@ mod tests {
         assert!(rendered.contains("\x1b[1m"), "nested strong style missing");
         assert!(rendered.contains("\x1b[3m"), "nested emphasis missing");
         assert!(
-            rendered.contains("\x1b[48;2;48;52;59m"),
+            rendered.contains("\x1b[48;2;48;48;48m"),
             "multi-backtick code span should use the code chip"
         );
     }
@@ -1142,9 +1119,20 @@ mod tests {
         let lines = md.render(80);
         assert!(!lines[0].is_empty());
         assert!(
-            lines[0].contains("\x1b[48;2;48;52;59m"),
+            lines[0].contains("\x1b[48;2;48;48;48m"),
             "inline code should use the theme chip background"
         );
+    }
+
+    #[test]
+    fn thematic_breaks_do_not_swallow_emphasized_text() {
+        let md = Markdown::new("***Important***\n* * *\n___\n--- keep this text", 0, 0);
+        let rows = md.render(40);
+        assert_eq!(crate::ansi::strip_ansi(&rows[0]), "Important");
+        for row in &rows[1..3] {
+            assert_eq!(crate::ansi::strip_ansi(row), "─".repeat(40));
+        }
+        assert_eq!(crate::ansi::strip_ansi(&rows[3]), "--- keep this text");
     }
 
     #[test]
@@ -1177,7 +1165,7 @@ mod tests {
             "code block must not draw an outer frame: {plain}"
         );
         assert!(
-            joined.contains("\x1b[48;2;40;44;52m"),
+            joined.contains("\x1b[48;2;20;20;20m"),
             "code panel background missing: {joined:?}"
         );
         assert!(

@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use super::component::{Component, RenderedDocument};
 use crate::ansi::{bold, strip_ansi};
-use crate::theme::{theme, theme_revision, Theme, ThemeColors};
+use crate::theme::{theme, theme_revision, Theme};
 use crate::tool_panel::ToolPanel;
 use crate::utils::{apply_background_to_line, truncate_to_width, wrap_text_with_ansi};
 
@@ -274,11 +274,12 @@ impl ToolExecutionComponent {
             } else {
                 "Ready"
             };
-            let mut rows = vec![truncate_to_width(
-                &colors.accent.fg(&bold(&format!(" Plan · {status}"))),
-                width,
-                "…",
-            )];
+            let heading = if theme.compact_transcript {
+                format!("{}  {status}", colors.tool_badge("PLAN", colors.accent))
+            } else {
+                colors.accent.fg(&bold(&format!(" Plan · {status}")))
+            };
+            let mut rows = vec![truncate_to_width(&heading, width, "…")];
             if plan.trim().is_empty() {
                 let hint = if *active {
                     "Inspect the repository, then complete the plan."
@@ -325,12 +326,13 @@ impl ToolExecutionComponent {
                 .iter()
                 .filter(|(_, status)| status == "completed")
                 .count();
-            let heading = format!(" Tasks  {done}/{} completed", todos.len());
-            let mut rows = vec![truncate_to_width(
-                &colors.tool_title.fg(&bold(&heading)),
-                width,
-                "…",
-            )];
+            let progress = format!("{done}/{} completed", todos.len());
+            let heading = if theme.compact_transcript {
+                format!("{}  {progress}", colors.tool_badge("TASKS", colors.accent))
+            } else {
+                colors.tool_title.fg(&bold(&format!(" Tasks  {progress}")))
+            };
+            let mut rows = vec![truncate_to_width(&heading, width, "…")];
             if todos.is_empty() {
                 rows.push(colors.muted.fg("   No tasks"));
             }
@@ -384,7 +386,7 @@ impl ToolExecutionComponent {
         // result streaming + Ctrl+O expand plumbing.
         if let Some(skill) = skill_name.as_deref() {
             let content = result.as_deref().unwrap_or("");
-            let mut lines = render_skill(colors, skill, content, *expanded, width);
+            let mut lines = render_skill(theme, skill, content, *expanded, width);
             // Trailing spacer (one convention for every panel). The skill box
             // used to skip the top spacer entirely — its render path
             // early-returned past the push — so it had no gap on either side.
@@ -454,13 +456,12 @@ impl ToolExecutionComponent {
             && *status == ToolStatus::Completed
             && name.as_str() == "read";
         let head_parts = if theme.compact_transcript {
-            let badge = match *status {
-                ToolStatus::Completed => colors.surface,
-                _ => bg,
+            let badge = if *status == ToolStatus::Failed {
+                bg
+            } else {
+                colors.accent
             };
-            let mut header = badge.bg(&colors
-                .tool_title
-                .fg(&bold(&format!(" {} ", label.to_uppercase()))));
+            let mut header = colors.tool_badge(&label.to_uppercase(), badge);
             if !summary.is_empty() {
                 header.push_str(&format!("  {}", colors.tool_output.fg(&summary)));
             }
@@ -675,14 +676,19 @@ impl Component for ToolExecutionComponent {
 /// the bold skill name, then the full skill markdown content (the `read`
 /// result) rendered with the standard markdown component.
 fn render_skill(
-    colors: &ThemeColors,
+    theme: &Theme,
     name: &str,
     content: &str,
     expanded: bool,
     width: usize,
 ) -> Vec<String> {
+    let colors = &theme.colors;
     let bg = colors.custom_message_bg;
-    let label = crate::ansi::bold("[skill]");
+    let label = if theme.compact_transcript {
+        colors.tool_badge("SKILL", colors.accent)
+    } else {
+        colors.custom_message_label.fg(&bold("[skill]"))
+    };
     // Upstream's `Box(1, 1, bg)` — one column of horizontal padding on each
     // side, one blank background row top and bottom.
     let pad = " ";
@@ -695,7 +701,7 @@ fn render_skill(
         // Single collapsed line: `[skill] <name> (Ctrl+O to expand)`.
         let line = format!(
             "{pad}{} {} {}",
-            colors.custom_message_label.fg(&label),
+            label,
             colors.custom_message_text.fg(name),
             colors.dim.fg("(Ctrl+O to expand)"),
         );
@@ -709,7 +715,7 @@ fn render_skill(
     // `**${name}**\n\n${content}` as one Markdown child), so the body keeps
     // its normal markdown colors on the custom-message background.
     out.push(apply_background_to_line(
-        &format!("{pad}{}", colors.custom_message_label.fg(&label)),
+        &format!("{pad}{label}"),
         width,
         |s| bg.bg(s),
     ));
@@ -1644,7 +1650,9 @@ mod tests {
         let tool = ToolExecutionComponent::new("read", r#"{"path":"Cargo.toml"}"#);
         tool.set_result("first line\nsecond line", false);
 
-        let collapsed = strip_ansi(&tool.render_panel(80, &theme).join("\n"));
+        let rows = tool.render_panel(80, &theme).join("\n");
+        assert!(rows.contains(&theme.colors.accent.to_bg()));
+        let collapsed = strip_ansi(&rows);
         assert!(collapsed.contains("READ"));
         assert!(collapsed.contains("2 lines"));
         assert!(!collapsed.contains("first line"));

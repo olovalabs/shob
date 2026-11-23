@@ -307,19 +307,15 @@ impl BashExecutionComponent {
         };
         let command = self.command.lock().unwrap().clone();
         let header = if theme.compact_transcript {
-            let badge = if status == BashStatus::Complete {
-                colors.surface
-            } else {
+            let badge = if matches!(status, BashStatus::Error | BashStatus::Cancelled) {
                 bg
-            };
-            let label = if excluded {
-                " SHELL (LOCAL) "
             } else {
-                " SHELL "
+                colors.accent
             };
+            let label = if excluded { "SHELL (LOCAL)" } else { "SHELL" };
             format!(
                 "{}  {}",
-                badge.bg(&colors.tool_title.fg(&bold(label))),
+                colors.tool_badge(label, badge),
                 colors.tool_output.fg(&command)
             )
         } else {
