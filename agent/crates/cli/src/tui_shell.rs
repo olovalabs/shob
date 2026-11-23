@@ -46,6 +46,7 @@ pub async fn run_driver_tui<D: SessionDriver>(driver: &D, addr: &str) -> Result<
     // Retained transcript view: the same pi-tui components the local TUI uses,
     // updated in place from the driver's normalized event stream.
     let view = TranscriptView::new(transcript_container.clone());
+    view.set_hide_thinking(true);
 
     let keybindings = crate::interactive_tui::configured_keybindings();
     let editor = Arc::new(Editor::new(
@@ -214,9 +215,15 @@ async fn run_loop<D: SessionDriver>(
                             } else if !had_dialog {
                                 break;
                             }
-                        } else if !dialogs.handle_key(key)
-                            && !crate::transcript_navigation::handle_key(tui, keybindings, &key) {
-                            editor.handle_key(key);
+                        } else if !dialogs.handle_key(key) {
+                            if keybindings.matches(&key, tui::keybindings::keys::TOOLS_EXPAND) {
+                                let expanded = view.toggle_expanded();
+                                view.set_hide_thinking(!expanded);
+                            } else if keybindings.matches(&key, tui::keybindings::keys::THINKING_TOGGLE) {
+                                view.toggle_hide_thinking();
+                            } else if !crate::transcript_navigation::handle_key(tui, keybindings, &key) {
+                                editor.handle_key(key);
+                            }
                         }
                         tui.request_render(false);
                     }

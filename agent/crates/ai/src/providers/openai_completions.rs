@@ -1080,6 +1080,7 @@ impl StreamState {
                     kind: ThinkingContentType,
                     thinking: String::new(),
                     thinking_signature: None,
+                    duration_ms: None,
                     redacted: false,
                 }));
                 self.thinking_index = Some(index);

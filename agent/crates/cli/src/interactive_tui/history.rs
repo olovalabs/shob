@@ -260,7 +260,7 @@ fn render_page(state: &TuiState, entries: &[Entry]) -> Arc<Container> {
         Some(state.extension_session.clone()),
         state.images_visible(),
     );
-    state.apply_history_tool_expansion(&chat);
+    state.apply_history_expansion(&chat);
     chat
 }
 

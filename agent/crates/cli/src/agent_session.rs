@@ -531,6 +531,7 @@ mod tests {
                 kind: ai::types::ThinkingContentType,
                 thinking: "hidden".into(),
                 thinking_signature: None,
+                duration_ms: None,
                 redacted: false,
             }),
             Content::Text(ai::types::TextContent {

@@ -21,7 +21,6 @@ use super::image::{Image, ImageOptions};
 use super::markdown::Markdown;
 use super::spacer::Spacer;
 use super::text::Text;
-use crate::ansi::italic;
 use crate::theme::theme;
 
 /// A single visible block of an assistant message, in document order. This is
@@ -34,6 +33,8 @@ pub enum AssistantBlock {
     Text(String),
     /// Reasoning / thinking text (rendered as dim italic markdown).
     Thinking(String),
+    /// Reasoning with measured elapsed time in milliseconds.
+    TimedThinking(String, u64),
     /// Inline image bytes decoded from the provider's base64 image block.
     Image(Vec<u8>),
 }
@@ -53,7 +54,7 @@ impl Default for AssistantMessageOptions {
     fn default() -> Self {
         Self {
             hide_thinking: false,
-            hidden_thinking_label: "Thinking...".to_string(),
+            hidden_thinking_label: "Thought".to_string(),
             output_pad: 1,
         }
     }
@@ -192,7 +193,7 @@ impl AssistantMessageComponent {
         let opts = self.options.lock().unwrap().clone();
         let has_visible = blocks.iter().any(|b| {
             matches!(b, AssistantBlock::Text(t) if !t.trim().is_empty())
-                || matches!(b, AssistantBlock::Thinking(t) if !t.trim().is_empty())
+                || matches!(b, AssistantBlock::Thinking(t) | AssistantBlock::TimedThinking(t, _) if !t.trim().is_empty())
                 || matches!(b, AssistantBlock::Image(data) if !data.is_empty())
         });
 
@@ -235,34 +236,54 @@ impl AssistantMessageComponent {
                 AssistantBlock::Image(_) => {
                     i += 1;
                 }
-                AssistantBlock::Thinking(_) => {
+                AssistantBlock::Thinking(_) | AssistantBlock::TimedThinking(_, _) => {
                     // Coalesce a run of consecutive thinking blocks into one
                     // section, exactly like the TS inner loop.
-                    let mut joined: Vec<String> = Vec::new();
+                    let mut joined = Vec::new();
+                    let mut has_reasoning = false;
+                    let mut duration_ms: Option<u64> = None;
                     while i < blocks.len() {
-                        match &blocks[i] {
-                            AssistantBlock::Thinking(t) if !t.trim().is_empty() => {
-                                joined.push(t.trim().to_string());
-                                i += 1;
-                            }
-                            AssistantBlock::Thinking(_) => {
-                                i += 1; // whitespace-only thinking, skip
-                            }
+                        let (text, elapsed_ms) = match &blocks[i] {
+                            AssistantBlock::Thinking(text) => (text, None),
+                            AssistantBlock::TimedThinking(text, ms) => (text, Some(*ms)),
                             _ => break,
+                        };
+                        let text = text.trim();
+                        if !text.is_empty() {
+                            has_reasoning = true;
+                            if let Some(ms) = elapsed_ms {
+                                duration_ms =
+                                    Some(duration_ms.unwrap_or_default().saturating_add(ms));
+                            }
+                            if !opts.hide_thinking {
+                                joined.push(text);
+                            }
                         }
+                        i += 1;
                     }
-                    if joined.is_empty() {
+                    if !has_reasoning {
                         continue;
                     }
 
                     if opts.hide_thinking {
                         let theme = theme();
-                        let label = theme.colors.thinking_text.fg(&opts.hidden_thinking_label);
-                        let label = if theme.compact_transcript {
-                            format!("{} {label}", theme.colors.accent.fg("▰"))
+                        let label = if let Some(ms) = duration_ms {
+                            let seconds = (ms.saturating_add(500) / 1000).max(1);
+                            let unit = if seconds == 1 { "second" } else { "seconds" };
+                            format!("Thought for {seconds} {unit}")
+                        } else if opts.hidden_thinking_label == "Thought"
+                            && *self.is_streaming.lock().unwrap()
+                        {
+                            "Thinking…".to_string()
                         } else {
-                            italic(&label)
+                            opts.hidden_thinking_label.clone()
                         };
+                        let label = format!(
+                            "{} {} {}",
+                            theme.colors.accent.fg("▰"),
+                            theme.colors.thinking_text.fg(&label),
+                            theme.colors.muted.fg("[Ctrl+O to expand]"),
+                        );
                         self.content_container.add_child(Arc::new(Text::new(
                             label,
                             opts.output_pad,
@@ -293,7 +314,7 @@ impl AssistantMessageComponent {
                     // `hasVisibleContentAfter` → Spacer(1)).
                     let has_after = blocks[i..].iter().any(|b| {
                         matches!(b, AssistantBlock::Text(t) if !t.trim().is_empty())
-                            || matches!(b, AssistantBlock::Thinking(t) if !t.trim().is_empty())
+                            || matches!(b, AssistantBlock::Thinking(t) | AssistantBlock::TimedThinking(t, _) if !t.trim().is_empty())
                             || matches!(b, AssistantBlock::Image(data) if !data.is_empty())
                     });
                     if has_after {
@@ -553,15 +574,19 @@ mod tests {
     fn test_hide_thinking_shows_label_only() {
         let msg = AssistantMessageComponent::new(AssistantMessageOptions {
             hide_thinking: true,
-            hidden_thinking_label: "Thinking...".to_string(),
+            hidden_thinking_label: "Thought".to_string(),
             ..Default::default()
         });
         msg.update_blocks(&[
-            AssistantBlock::Thinking("secret reasoning".to_string()),
+            AssistantBlock::TimedThinking("secret reasoning".to_string(), 1_200),
             AssistantBlock::Text("Public answer.".to_string()),
         ]);
         let joined = strip_ansi(&msg.render(80).join("\n"));
-        assert!(joined.contains("Thinking..."), "label missing: {joined}");
+        assert!(
+            joined.contains("Thought for 1 second"),
+            "label missing: {joined}"
+        );
+        assert!(joined.contains("[Ctrl+O to expand]"));
         assert!(
             !joined.contains("secret reasoning"),
             "hidden thinking leaked: {joined}"
@@ -602,7 +627,7 @@ mod tests {
             !after.contains("internal"),
             "not rebuilt after toggle: {after}"
         );
-        assert!(after.contains("Thinking..."));
+        assert!(after.contains("Thought"));
     }
 
     #[test]

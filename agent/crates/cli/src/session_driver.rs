@@ -173,7 +173,10 @@ pub fn assistant_blocks(msg: &AssistantMessage) -> Vec<AssistantBlock> {
         .iter()
         .filter_map(|c| match c {
             Content::Text(t) => Some(AssistantBlock::Text(t.text.clone())),
-            Content::Thinking(t) => Some(AssistantBlock::Thinking(t.thinking.clone())),
+            Content::Thinking(t) => Some(match t.duration_ms {
+                Some(ms) => AssistantBlock::TimedThinking(t.thinking.clone(), ms),
+                None => AssistantBlock::Thinking(t.thinking.clone()),
+            }),
             Content::Image(image) => base64::engine::general_purpose::STANDARD
                 .decode(&*image.data)
                 .ok()

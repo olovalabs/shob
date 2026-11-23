@@ -913,7 +913,7 @@ fn resolve_tui_startup_settings(
     let hide_thinking =
         preferred_project_setting(project_settings, |settings| settings.hide_thinking_block)
             .or(global.hide_thinking_block)
-            .unwrap_or(false);
+            .unwrap_or(true);
     let quiet_startup =
         preferred_project_setting(project_settings, |settings| settings.quiet_startup)
             .or(global.quiet_startup)
@@ -1231,7 +1231,7 @@ pub async fn interactive_tui(
     if let Some(m) = model_catalog.iter().find(|m| m.id == lane_model_id) {
         footer.set_context_window(m.context_window as i64);
     }
-    footer.set_hints("Enter: Send | Shift+Enter: New line | Ctrl+C: Clear/Exit | Esc: Abort | Ctrl+L: Model | Ctrl+P: Cycle | Ctrl+O: Expand/collapse tools | Ctrl+T: Show/hide thinking | /help");
+    footer.set_hints("Enter: Send | Shift+Enter: New line | Ctrl+C: Clear/Exit | Esc: Abort | Ctrl+L: Model | Ctrl+P: Cycle | Ctrl+O: Expand/collapse output | Ctrl+T: Show/hide thinking | /help");
     // A restored session may already carry a name (`/name` in an earlier run, or
     // an extension that names sessions). Line 1 reserves a slot for it, so a
     // resume that left it blank showed less than the session actually knew.
@@ -2512,8 +2512,7 @@ pub async fn interactive_tui(
                 continue;
             }
 
-            // 2d. Ctrl+O: toggle all tool output panels between compact and
-            // expanded rendering (upstream's global output toggle).
+            // 2d. Ctrl+O: toggle reasoning and tool output together.
             if keybinding_matches(
                 &keybindings_for_key,
                 &key,
@@ -2525,6 +2524,9 @@ pub async fn interactive_tui(
                 tokio::spawn(async move {
                     let _ = session
                         .set_value("display.tool_outputs_expanded", serde_json::json!(expanded))
+                        .await;
+                    let _ = session
+                        .set_value("display.hide_thinking", serde_json::json!(!expanded))
                         .await;
                 });
                 tui_for_key.request_render(false);

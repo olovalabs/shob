@@ -1370,6 +1370,7 @@ mod tests {
             kind: crate::types::ThinkingContentType,
             thinking: String::new(),
             thinking_signature: Some("sig-123".into()),
+            duration_ms: None,
             redacted: false,
         }));
         let partial = Arc::new(partial);

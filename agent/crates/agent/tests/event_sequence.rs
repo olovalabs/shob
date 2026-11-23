@@ -243,8 +243,6 @@ async fn emits_exact_sequence_when_should_stop_after_turn() {
 
 #[tokio::test]
 async fn emits_message_update_events_on_streaming_deltas() {
-    // A faux-like stream emitting a Start + TextStart + TextDelta + TextEnd +
-    // Done should produce message_update events between the start and end.
     use ai::event_stream::create_assistant_message_event_stream;
     use ai::types::{AssistantMessage, AssistantMessageEvent, DoneReason, StopReason};
 
@@ -260,6 +258,7 @@ async fn emits_message_update_events_on_streaming_deltas() {
                 0,
             );
             partial.content.push(ai::types::Content::text(""));
+            partial.content.push(ai::types::Content::thinking(""));
             let p = std::sync::Arc::new(partial.clone());
             prod.push(AssistantMessageEvent::Start { partial: p.clone() })
                 .await;
@@ -286,12 +285,26 @@ async fn emits_message_update_events_on_streaming_deltas() {
                 partial: p.clone(),
             })
             .await;
+            prod.push(AssistantMessageEvent::ThinkingStart {
+                content_index: 1,
+                partial: p.clone(),
+            })
+            .await;
+            prod.push(AssistantMessageEvent::ThinkingEnd {
+                content_index: 1,
+                content: "reasoning".into(),
+                partial: p.clone(),
+            })
+            .await;
             let mut final_msg = (*p).clone();
             final_msg.stop_reason = StopReason::Stop;
             final_msg.content.clear();
             final_msg
                 .content
                 .push(ai::types::Content::text("Hi there!"));
+            final_msg
+                .content
+                .push(ai::types::Content::thinking("reasoning"));
             prod.push(AssistantMessageEvent::Done {
                 reason: DoneReason::Stop,
                 message: final_msg,
@@ -301,7 +314,7 @@ async fn emits_message_update_events_on_streaming_deltas() {
         stream
     });
 
-    let (events, _new_messages) = run_and_collect(
+    let (events, new_messages) = run_and_collect(
         vec![user_message("Hello")],
         AgentContext::default(),
         base_config(),
@@ -314,9 +327,14 @@ async fn emits_message_update_events_on_streaming_deltas() {
         .filter(|e| matches!(e, AgentEvent::MessageUpdate { .. }))
         .count();
     assert!(
-        update_count >= 4,
-        "expected at least 4 message_update events (text_start + 2 deltas + text_end), got {update_count}"
+        update_count >= 6,
+        "expected updates for text and reasoning, got {update_count}"
     );
+    assert!(new_messages.iter().any(|message| {
+        matches!(message, agent::AgentMessage::Assistant(message)
+            if matches!(message.content.get(1), Some(ai::Content::Thinking(block))
+                if block.duration_ms.is_some()))
+    }));
 }
 
 /// `MessageUpdate` carries the streaming partial as a *shared* snapshot, so the

@@ -384,6 +384,7 @@ impl MapperState {
                     } else {
                         Some(signature)
                     },
+                    duration_ms: None,
                     redacted: false,
                 });
                 self.output.content.push(content);
@@ -413,6 +414,7 @@ impl MapperState {
                     // `redacted_thinking` on the next turn.
                     thinking: "[Reasoning redacted]".to_string(),
                     thinking_signature: Some(data),
+                    duration_ms: None,
                     redacted: true,
                 });
                 self.output.content.push(content);

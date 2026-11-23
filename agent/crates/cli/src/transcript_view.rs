@@ -207,8 +207,8 @@ impl TranscriptView {
             }
             UiEvent::AssistantEnd { blocks } => {
                 if let Some(comp) = self.current_assistant.lock().unwrap().take() {
-                    comp.update_blocks(blocks);
                     comp.set_streaming(false);
+                    comp.update_blocks(blocks);
                 }
             }
             UiEvent::ToolStart { id, name, args } => self.tool_start(id, name, args, width),
@@ -234,6 +234,9 @@ impl TranscriptView {
         for child in self.chat.get_children() {
             if let Some(component) = child.as_any().downcast_ref::<ToolExecutionComponent>() {
                 component.set_expanded(expanded);
+            } else if let Some(component) = child.as_any().downcast_ref::<BashExecutionComponent>()
+            {
+                component.set_expanded(expanded);
             }
         }
         for comp in self.tool_components.lock().unwrap().values() {
@@ -256,11 +259,13 @@ impl TranscriptView {
         *self.expanded.lock().unwrap()
     }
 
-    /// Hide/show thinking blocks on the in-flight assistant message.
+    /// Hide/show thinking blocks in the transcript.
     pub fn set_hide_thinking(&self, hide: bool) {
         *self.hide_thinking.lock().unwrap() = hide;
-        if let Some(comp) = self.current_assistant.lock().unwrap().as_ref() {
-            comp.set_hide_thinking(hide);
+        for child in self.chat.get_children() {
+            if let Some(comp) = child.as_any().downcast_ref::<AssistantMessageComponent>() {
+                comp.set_hide_thinking(hide);
+            }
         }
     }
 
@@ -295,8 +300,8 @@ impl TranscriptView {
     /// Finalize the assistant panel with an authoritative final block list.
     pub fn finalize_assistant_blocks(&self, blocks: &[AssistantBlock]) {
         if let Some(comp) = self.current_assistant.lock().unwrap().take() {
-            comp.update_blocks(blocks);
             comp.set_streaming(false);
+            comp.update_blocks(blocks);
         }
     }
 
@@ -719,7 +724,10 @@ pub fn assistant_blocks_from_value(message: &Value) -> Vec<AssistantBlock> {
             }
             Some("thinking") => {
                 if let Some(text) = block.get("thinking").and_then(Value::as_str) {
-                    blocks.push(AssistantBlock::Thinking(text.to_string()));
+                    blocks.push(match block.get("durationMs").and_then(Value::as_u64) {
+                        Some(ms) => AssistantBlock::TimedThinking(text.to_string(), ms),
+                        None => AssistantBlock::Thinking(text.to_string()),
+                    });
                 }
             }
             Some("image") => {
@@ -1168,7 +1176,7 @@ mod tests {
     fn assistant_blocks_follow_content_order() {
         let message = json!({
             "content": [
-                {"type": "thinking", "thinking": "why"},
+                {"type": "thinking", "thinking": "why", "durationMs": 1200},
                 {"type": "text", "text": "hello"},
                 {"type": "toolCall", "id": "c1", "name": "read", "arguments": {}},
             ]
@@ -1176,7 +1184,7 @@ mod tests {
         assert_eq!(
             assistant_blocks_from_value(&message),
             vec![
-                AssistantBlock::Thinking("why".into()),
+                AssistantBlock::TimedThinking("why".into(), 1200),
                 AssistantBlock::Text("hello".into()),
             ]
         );

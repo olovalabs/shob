@@ -222,6 +222,7 @@ mod tests {
             kind: Default::default(),
             thinking: "reason".into(),
             thinking_signature: Some("sig".into()),
+            duration_ms: None,
             redacted: false,
         })];
         assert_eq!(

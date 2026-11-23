@@ -18,6 +18,7 @@ fn blocks() -> Vec<Content> {
             kind: Default::default(),
             thinking: "synthetic thinking".into(),
             thinking_signature: Some("thinking-signature".into()),
+            duration_ms: Some(1200),
             redacted: true,
         }),
         Content::Image(ImageContent {

@@ -1984,9 +1984,8 @@ impl TuiState {
 
     pub(super) fn set_hide_thinking(&self, hide: bool) {
         *self.hide_thinking.lock().unwrap() = hide;
-        if let Some(comp) = self.current_assistant.lock().unwrap().as_ref() {
-            comp.set_hide_thinking(hide);
-        }
+        self.apply_history_expansion(&self.chat_container);
+        self.apply_history_expansion(&self.transcript_container());
     }
 
     pub(super) fn hide_thinking(&self) -> bool {
@@ -2002,14 +2001,18 @@ impl TuiState {
     pub(super) fn toggle_tool_outputs(&self) -> bool {
         let next = !*self.tool_outputs_expanded.lock().unwrap();
         self.transcript_view().set_expanded(next);
-        self.apply_history_tool_expansion(&self.chat_container);
+        self.set_hide_thinking(!next);
         next
     }
 
-    pub(super) fn apply_history_tool_expansion(&self, root: &Container) {
+    pub(super) fn apply_history_expansion(&self, root: &Container) {
         let expanded = *self.tool_outputs_expanded.lock().unwrap();
+        let hide_thinking = self.hide_thinking();
         let mut pending = root.get_children();
         while let Some(child) = pending.pop() {
+            if let Some(assistant) = child.as_any().downcast_ref::<AssistantMessageComponent>() {
+                assistant.set_hide_thinking(hide_thinking);
+            }
             if let Some(container) = child.as_any().downcast_ref::<Container>() {
                 pending.extend(container.get_children());
             }

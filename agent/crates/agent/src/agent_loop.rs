@@ -35,7 +35,7 @@ use ai::types::{
 };
 use ai::validate_tool_arguments;
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
@@ -728,6 +728,8 @@ async fn stream_assistant_response(
         diagnostics.stream_started = Some(Instant::now());
     }
 
+    let mut thinking_started = HashMap::new();
+    let mut thinking_durations = HashMap::new();
     let mut added_partial = false;
     let mut first_poll = true;
 
@@ -749,6 +751,20 @@ async fn stream_assistant_response(
                 }
                 first_poll = false;
             }
+        }
+        match &event {
+            AssistantMessageEvent::ThinkingStart { content_index, .. }
+            | AssistantMessageEvent::ThinkingDelta { content_index, .. } => {
+                thinking_started
+                    .entry(*content_index)
+                    .or_insert_with(Instant::now);
+            }
+            AssistantMessageEvent::ThinkingEnd { content_index, .. } => {
+                if let Some(started) = thinking_started.remove(content_index) {
+                    thinking_durations.insert(*content_index, started.elapsed().as_millis() as u64);
+                }
+            }
+            _ => {}
         }
         match &event {
             AssistantMessageEvent::Start { partial } => {
@@ -797,11 +813,12 @@ async fn stream_assistant_response(
                 }
             }
             AssistantMessageEvent::Done { .. } | AssistantMessageEvent::Error { .. } => {
-                let final_message = response.result().await.map_err(|_| {
+                let mut final_message = response.result().await.map_err(|_| {
                     AgentError::Provider(
                         "assistant-message event stream ended without a terminal event".into(),
                     )
                 })?;
+                apply_thinking_durations(&mut final_message, thinking_durations);
                 let am = AgentMessage::Assistant(Box::new(final_message.clone()));
                 if added_partial {
                     if let Some(last) = context.messages.last_mut() {
@@ -841,9 +858,10 @@ async fn stream_assistant_response(
 
     // Stream ended without a terminal event — finalize from result() (TS has the
     // same fallback).
-    let final_message = response.result().await.map_err(|_| {
+    let mut final_message = response.result().await.map_err(|_| {
         AgentError::Provider("assistant-message event stream ended without a terminal event".into())
     })?;
+    apply_thinking_durations(&mut final_message, thinking_durations);
     let am = AgentMessage::Assistant(Box::new(final_message.clone()));
     if added_partial {
         if let Some(last) = context.messages.last_mut() {
@@ -871,6 +889,14 @@ async fn stream_assistant_response(
         )
         .await;
     Ok(final_message)
+}
+
+fn apply_thinking_durations(message: &mut AssistantMessage, durations: HashMap<usize, u64>) {
+    for (index, elapsed_ms) in durations {
+        if let Some(Content::Thinking(block)) = message.content.get_mut(index) {
+            block.duration_ms = Some(elapsed_ms);
+        }
+    }
 }
 
 // ----------------------------------------------------------------------------

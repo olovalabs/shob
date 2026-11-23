@@ -99,6 +99,9 @@ pub struct ThinkingContent {
     pub thinking: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking_signature: Option<String>,
+    /// Time between the provider's reasoning start and end events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
     /// When true, safety filters redacted the thinking; the opaque payload is in
     /// `thinking_signature`.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -261,6 +264,7 @@ impl Content {
             kind: ThinkingContentType,
             thinking: s.into(),
             thinking_signature: None,
+            duration_ms: None,
             redacted: false,
         })
     }

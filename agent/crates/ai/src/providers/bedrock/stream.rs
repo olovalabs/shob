@@ -88,6 +88,7 @@ impl State {
                             kind: Default::default(),
                             thinking: String::new(),
                             thinking_signature: None,
+                            duration_ms: None,
                             redacted: false,
                         })
                     } else {

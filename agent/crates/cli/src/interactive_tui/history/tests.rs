@@ -497,16 +497,29 @@ async fn capability_header_survives_restore_and_page_replacement_once() {
     let nested = Arc::new(Container::new());
     let tool = Arc::new(ToolExecutionComponent::new("read", "history-tool"));
     nested.add_child(tool.clone());
+    let reasoning = Arc::new(AssistantMessageComponent::new(AssistantMessageOptions {
+        hide_thinking: true,
+        ..Default::default()
+    }));
+    reasoning.update_blocks(&[AssistantBlock::TimedThinking(
+        "reasoning-detail".into(),
+        1_050,
+    )]);
+    nested.add_child(reasoning.clone());
     state.chat_container.add_child(nested.clone());
     assert!(state.toggle_tool_outputs());
     assert!(
         tool.is_expanded(),
         "toggles must reach nested historical components"
     );
+    assert!(strip_ansi(&reasoning.render(80).join("\n")).contains("reasoning-detail"));
     assert!(!state.toggle_tool_outputs());
     assert!(!tool.is_expanded());
+    let collapsed = strip_ansi(&reasoning.render(80).join("\n"));
+    assert!(collapsed.contains("Thought for 1 second"));
+    assert!(!collapsed.contains("reasoning-detail"));
     *state.tool_outputs_expanded.lock().unwrap() = true;
-    state.apply_history_tool_expansion(&nested);
+    state.apply_history_expansion(&nested);
     assert!(
         tool.is_expanded(),
         "new pages must inherit the current preference"

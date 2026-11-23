@@ -424,7 +424,7 @@ pub(super) fn add_hotkeys_message(container: &Arc<Container>) {
         ("Esc", "Abort a running prompt"),
         ("Ctrl+L", "Open model selector"),
         ("Ctrl+P", "Cycle to the next model (live)"),
-        ("Ctrl+O", "Expand/collapse all tool output"),
+        ("Ctrl+O", "Expand/collapse reasoning and tool output"),
         ("Ctrl+T", "Show/hide reasoning blocks"),
         ("PageUp/Down", "Scroll transcript by one page"),
         ("Home / End", "Jump to transcript start / latest output"),

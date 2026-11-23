@@ -4172,6 +4172,7 @@ mod tests {
             thinking_signature: Some(
                 json!({"type":"reasoning","id":"rs_old","encrypted_content":"opaque"}).to_string(),
             ),
+            duration_ms: None,
             redacted: false,
         })];
         let body = build_request(
@@ -4193,6 +4194,7 @@ mod tests {
             thinking_signature: Some(
                 json!({"type":"reasoning","id":"rs_old","encrypted_content":"opaque"}).to_string(),
             ),
+            duration_ms: None,
             redacted: false,
         })];
         let body = build_request(

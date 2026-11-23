@@ -555,9 +555,10 @@ pub(super) fn render_history_entries(
                     add_user_images(chat, u, show_images);
                 }
                 AgentMessage::Assistant(a) => {
-                    let comp = Arc::new(AssistantMessageComponent::new(
-                        AssistantMessageOptions::default(),
-                    ));
+                    let comp = Arc::new(AssistantMessageComponent::new(AssistantMessageOptions {
+                        hide_thinking: true,
+                        ..Default::default()
+                    }));
                     comp.set_show_images(show_images);
                     comp.set_trailing_spacing(1);
                     if let Some(t) = &transformer {

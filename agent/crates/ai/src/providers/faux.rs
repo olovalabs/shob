@@ -77,6 +77,7 @@ pub fn faux_thinking<S: Into<String>>(s: S) -> Content {
         kind: crate::types::ThinkingContentType,
         thinking: s.into(),
         thinking_signature: None,
+        duration_ms: None,
         redacted: false,
     })
 }

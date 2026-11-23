@@ -1859,6 +1859,7 @@ fn test_agent_event_mapping_creates_assistant_and_tool() {
                 kind: ThinkingContentType,
                 thinking: "Reasoning about the reply.".into(),
                 thinking_signature: None,
+                duration_ms: None,
                 redacted: false,
             }),
             Content::Text(TextContent {
