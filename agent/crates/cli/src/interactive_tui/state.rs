@@ -21,6 +21,7 @@ pub(super) enum ProviderFormStep {
     #[default]
     Id,
     Api,
+    Name,
     BaseUrl,
     ApiKey,
     ModelId,
@@ -37,6 +38,10 @@ pub(super) struct ProviderFormState {
     pub(super) api_key: String,
     pub(super) model_id: String,
     pub(super) model_name: String,
+    pub(super) compatible: bool,
+    pub(super) name: String,
+    pub(super) models: Vec<String>,
+    pub(super) completion_tx: Option<tokio::sync::mpsc::UnboundedSender<TuiMessage>>,
 }
 
 /// Which selector overlay (if any) is currently swapped into the editor slot.

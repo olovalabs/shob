@@ -717,6 +717,16 @@ enum TuiMessage {
     UserInput(String, Vec<ai::types::ImageContent>),
     /// Provider changes are serialized with prompts, after the current run.
     SwitchProvider(String),
+    ProviderLoginComplete(String),
+    NativeLoginEvent {
+        flow_id: u64,
+        event: crate::native_auth::Event,
+    },
+    NativeLoginFinished {
+        flow_id: u64,
+        provider: String,
+        result: Result<(), String>,
+    },
     OpenProviderSelector,
     OpenTree,
     NavigateTree(String),
@@ -1040,7 +1050,8 @@ pub async fn interactive_tui(
     // components keep styled text, so doing this after the welcome banner left
     // the first screen in the dark palette until it was rebuilt.
     let theme_manager = Arc::new(ThemeManager::new());
-    tui::apply_theme_preset(tui::ThemePreset::Dark);
+    theme_manager.apply_preset(tui::ThemePreset::Red);
+    tui::apply_theme_preset(tui::ThemePreset::Red);
     // Build the discovery registry before resolving the saved spec: selector
     // and settings persist a registry name (e.g. "ocean"), which only
     // resolves to its file when the registry is already in scope.
@@ -1063,7 +1074,7 @@ pub async fn interactive_tui(
         // `--theme` / settings: preset name, registry name, or theme file
         // path. A file that fails to load warns and falls back to the
         // built-in default without vetoing startup (`emit_startup_warnings`
-        // style); the TUI still comes up in the dark palette and `/theme`
+        // style); the TUI still comes up in the red palette and `/theme`
         // remains available.
         match crate::themes::apply_startup_spec(spec, Some(&theme_registry), &theme_manager) {
             Ok(()) => {}
@@ -3150,12 +3161,101 @@ pub async fn interactive_tui(
                     .read()
                     .unwrap_or_else(|error| error.into_inner())
                     .clone();
+                let provider_id = crate::provider::catalog_with_manifests(&manifests)
+                    .ok()
+                    .and_then(|catalog| canonicalize_provider_input(&input, &catalog).ok());
+                if let Some(provider_id) =
+                    provider_id.filter(|id| !available.iter().any(|model| model.provider == *id))
+                {
+                    let config = crate::config::load_models_config().unwrap_or_default();
+                    let auth = crate::config::read_auth().unwrap_or_default();
+                    let credential =
+                        crate::credentials::status(&provider_id, &config, &auth, &manifests);
+                    if matches!(
+                        credential.source,
+                        crate::credentials::CredentialSource::Missing
+                    ) {
+                        begin_provider_login(
+                            &state,
+                            &editor_container,
+                            &editor,
+                            &tui,
+                            &ctx.tx,
+                            &ctx.reload_context.extension_session,
+                            &provider_id,
+                        );
+                        continue;
+                    }
+                }
                 match switch_provider(&input, &manifests, &available, &lane).await {
                     Ok((model, note)) => {
                         state.set_current_model(&model);
                         add_note_message(&state.notice_container(), &note);
                     }
                     Err(error) => add_error_message(&state.notice_container(), &error),
+                }
+                tui.request_render(false);
+            }
+            Some(TuiMessage::NativeLoginEvent { flow_id, event }) => {
+                if state
+                    .provider_auth_flow_id
+                    .load(std::sync::atomic::Ordering::Acquire)
+                    == flow_id
+                {
+                    let message = match event {
+                        crate::native_auth::Event::BrowserUrl(url) => {
+                            format!("Open this URL to sign in: {url}")
+                        }
+                        crate::native_auth::Event::Output(message) => message,
+                    };
+                    add_note_message(&state.notice_container(), &message);
+                    tui.request_render(false);
+                }
+            }
+            Some(TuiMessage::NativeLoginFinished {
+                flow_id,
+                provider,
+                result,
+            }) => {
+                if claim_provider_flow(&state, flow_id) {
+                    restore_provider_editor(&state, &editor_container, &editor, &tui);
+                    match result {
+                        Ok(()) => {
+                            let _ = ctx.tx.send(TuiMessage::ProviderLoginComplete(provider));
+                        }
+                        Err(error) => add_error_message(
+                            &state.notice_container(),
+                            &format!("Could not sign in to {provider}: {error}"),
+                        ),
+                    }
+                    tui.request_render(false);
+                }
+            }
+            Some(TuiMessage::ProviderLoginComplete(provider)) => {
+                match crate::session::reload_model_catalog_only(harness, &ctx.reload_context).await
+                {
+                    Ok(_) => {
+                        let manifests =
+                            current_provider_manifests(&ctx.reload_context.extension_session);
+                        let available = ctx
+                            .model_catalog
+                            .read()
+                            .unwrap_or_else(|error| error.into_inner())
+                            .clone();
+                        match switch_provider(&provider, &manifests, &available, &lane).await {
+                            Ok((model, note)) => {
+                                state.set_current_model(&model);
+                                add_note_message(&state.notice_container(), &note);
+                            }
+                            Err(error) => add_error_message(&state.notice_container(), &error),
+                        }
+                    }
+                    Err(error) => add_error_message(
+                        &state.notice_container(),
+                        &format!(
+                            "Credentials saved, but providers could not be refreshed: {error}"
+                        ),
+                    ),
                 }
                 tui.request_render(false);
             }

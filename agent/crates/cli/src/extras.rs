@@ -46,8 +46,8 @@ pub fn maybe_first_time_setup(chat: &Arc<Container>) -> bool {
     let welcome = format!("Welcome to {}!", crate::COMMAND);
     lines.push(format!(" {}", accent.fg(&bold(&welcome))));
     lines.push(format!(
-        " {} Pick a theme with /theme (dark/light/monochrome).",
-        muted.fg("Pick a theme with /theme (dark/light/monochrome).")
+        " {} Pick a theme with /theme (red/dark/light/monochrome).",
+        muted.fg("Pick a theme with /theme (red/dark/light/monochrome).")
     ));
     lines.push(format!(
         " {} Type /help for commands.",

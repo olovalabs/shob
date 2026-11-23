@@ -288,6 +288,11 @@ impl BashExecutionComponent {
         let Some(panel) = ToolPanel::new(width, theme.spacing, bg) else {
             return Vec::new();
         };
+        let panel = if theme.compact_transcript {
+            panel.without_fill()
+        } else {
+            panel
+        };
         let content_width = panel.content_width;
         let panel_line = |content: &str| panel.line(content);
         let blank = panel.blank();
@@ -301,8 +306,27 @@ impl BashExecutionComponent {
             colors.bash_mode
         };
         let command = self.command.lock().unwrap().clone();
-        for part in wrap_text_with_ansi(&format!("$ {command}"), content_width) {
-            lines.push(panel_line(&color_key.fg(&bold(&part))));
+        let header = if theme.compact_transcript {
+            let badge = if status == BashStatus::Complete {
+                colors.surface
+            } else {
+                bg
+            };
+            let label = if excluded {
+                " SHELL (LOCAL) "
+            } else {
+                " SHELL "
+            };
+            format!(
+                "{}  {}",
+                badge.bg(&colors.tool_title.fg(&bold(label))),
+                colors.tool_output.fg(&command)
+            )
+        } else {
+            color_key.fg(&bold(&format!("$ {command}")))
+        };
+        for part in wrap_text_with_ansi(&header, content_width) {
+            lines.push(panel_line(&part));
         }
 
         let (display_lines, hidden) = {

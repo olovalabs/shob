@@ -7,6 +7,7 @@ pub(crate) struct ToolPanel {
     width: usize,
     padding: String,
     background: Color,
+    fill: bool,
     pub(crate) content_width: usize,
     pub(crate) padding_y: usize,
 }
@@ -22,17 +23,27 @@ impl ToolPanel {
             width,
             padding: " ".repeat(padding_x),
             background,
+            fill: true,
             content_width: width - padding_x * 2,
             padding_y: spacing.tool_panel_padding_y,
         })
     }
 
+    pub(crate) fn without_fill(mut self) -> Self {
+        self.fill = false;
+        self.padding_y = 0;
+        self
+    }
+
     pub(crate) fn line(&self, content: &str) -> String {
         // In particular, a two-column glyph cannot fit in a one-column panel.
         let content = truncate_to_width(content, self.content_width, "");
-        apply_background_to_line(&format!("{}{content}", self.padding), self.width, |s| {
-            self.background.bg(s)
-        })
+        let line = format!("{}{content}", self.padding);
+        if self.fill {
+            apply_background_to_line(&line, self.width, |s| self.background.bg(s))
+        } else {
+            line
+        }
     }
 
     pub(crate) fn blank(&self) -> String {

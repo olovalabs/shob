@@ -393,11 +393,11 @@ impl ToolExecutionComponent {
         }
 
         // Status indicator — a colored glyph (no emoji), pi style.
-        let (status_icon, status_color) = match *status {
-            ToolStatus::Pending => ("●", colors.muted),
-            ToolStatus::Running => ("●", colors.accent),
-            ToolStatus::Completed => ("✓", colors.success),
-            ToolStatus::Failed => ("✗", colors.error),
+        let (status_icon, status_color, status_label) = match *status {
+            ToolStatus::Pending => ("●", colors.muted, "Queued"),
+            ToolStatus::Running => ("●", colors.accent, "Running"),
+            ToolStatus::Completed => ("✓", colors.success, ""),
+            ToolStatus::Failed => ("✗", colors.error, "Failed"),
         };
 
         // Background tint for the header row reflects status (pi tool*Bg).
@@ -407,6 +407,11 @@ impl ToolExecutionComponent {
             ToolStatus::Completed => colors.tool_success_bg,
         };
         let panel = ToolPanel::new(width, theme.spacing, bg).expect("nonzero panel width");
+        let panel = if theme.compact_transcript {
+            panel.without_fill()
+        } else {
+            panel
+        };
         let content_width = panel.content_width;
         lines.extend(std::iter::repeat(panel.blank()).take(panel.padding_y));
 
@@ -444,38 +449,49 @@ impl ToolExecutionComponent {
         } else {
             String::new()
         };
-        let head_parts = if summary.is_empty() && elapsed_str.is_empty() {
-            format!(
-                "{} {} {}",
-                status_color.fg(status_icon),
-                colors.tool_title.fg(&bold(&label)),
-                colors.muted.fg(chevron),
-            )
-        } else if summary.is_empty() {
-            format!(
-                "{} {} {} {}",
-                status_color.fg(status_icon),
-                colors.tool_title.fg(&bold(&label)),
-                colors.muted.fg(&elapsed_str),
-                colors.muted.fg(chevron),
-            )
-        } else if elapsed_str.is_empty() {
-            format!(
-                "{} {} {} {}",
-                status_color.fg(status_icon),
-                colors.tool_title.fg(&bold(&label)),
-                colors.tool_output.fg(&summary),
-                colors.muted.fg(chevron),
-            )
+        let compact_read = theme.compact_transcript
+            && !*result_markdown
+            && *status == ToolStatus::Completed
+            && name.as_str() == "read";
+        let head_parts = if theme.compact_transcript {
+            let badge = match *status {
+                ToolStatus::Completed => colors.surface,
+                _ => bg,
+            };
+            let mut header = badge.bg(&colors
+                .tool_title
+                .fg(&bold(&format!(" {} ", label.to_uppercase()))));
+            if !summary.is_empty() {
+                header.push_str(&format!("  {}", colors.tool_output.fg(&summary)));
+            }
+            if let Some(output) = result.as_deref().filter(|_| compact_read && !*expanded) {
+                let count = output.lines().count();
+                let unit = if count == 1 { "line" } else { "lines" };
+                header.push_str(&format!(
+                    "  {}",
+                    colors.muted.fg(&format!("{count} {unit}"))
+                ));
+                header.push_str(&format!("  {}", colors.dim.fg("· Ctrl+O")));
+            } else if *status != ToolStatus::Completed {
+                header.push_str(&format!("  {}", status_color.fg(status_label)));
+                if !elapsed_str.is_empty() {
+                    header.push_str(&format!(" {}", colors.muted.fg(&elapsed_str)));
+                }
+            }
+            header
         } else {
-            format!(
-                "{} {} {} {} {}",
+            let mut parts = vec![
                 status_color.fg(status_icon),
                 colors.tool_title.fg(&bold(&label)),
-                colors.tool_output.fg(&summary),
-                colors.muted.fg(&elapsed_str),
-                colors.muted.fg(chevron),
-            )
+            ];
+            if !summary.is_empty() {
+                parts.push(colors.tool_output.fg(&summary));
+            }
+            if !elapsed_str.is_empty() {
+                parts.push(colors.muted.fg(&elapsed_str));
+            }
+            parts.push(colors.muted.fg(chevron));
+            parts.join(" ")
         };
         // Do not sacrifice a long tool name/path summary for the running
         // indicator. Tool calls often carry generated paths or extension
@@ -501,7 +517,12 @@ impl ToolExecutionComponent {
         // Show result if available (always — a failure's error text is the
         // payload, not a detail to hide behind expand). Long logical lines wrap
         // inside the panel instead of overflowing into the next terminal row.
-        if let Some(ref r) = *result {
+        let preview_lines = if theme.compact_transcript {
+            3
+        } else {
+            OUTPUT_PREVIEW_LINES
+        };
+        if let Some(r) = result.as_ref().filter(|_| !compact_read || *expanded) {
             // The gutter belongs to the content, not the panel's outer inset.
             // Drop it only when it would leave no room for output text.
             let gutter = !*result_markdown && content_width > 2;
@@ -521,7 +542,7 @@ impl ToolExecutionComponent {
             let shown = if *expanded {
                 visual_lines.len()
             } else {
-                visual_lines.len().min(OUTPUT_PREVIEW_LINES)
+                visual_lines.len().min(preview_lines)
             };
             for part in visual_lines.iter().take(shown) {
                 let result_line = if gutter {
@@ -536,13 +557,16 @@ impl ToolExecutionComponent {
             }
             let hidden = visual_lines.len().saturating_sub(shown);
             if hidden > 0 {
-                let hint = colors
-                    .muted
-                    .fg(&format!("… {hidden} more lines (Ctrl+O to expand)"));
+                let hint = if theme.compact_transcript {
+                    format!("└ +{hidden} more rows · Ctrl+O")
+                } else {
+                    format!("… {hidden} more lines (Ctrl+O to expand)")
+                };
+                let hint = colors.muted.fg(&hint);
                 for part in wrap_text_with_ansi(&hint, content_width) {
                     lines.push(panel.line(&part));
                 }
-            } else if *expanded && visual_lines.len() > OUTPUT_PREVIEW_LINES {
+            } else if *expanded && (compact_read || visual_lines.len() > preview_lines) {
                 let hint = colors.muted.fg("Ctrl+O to collapse");
                 for part in wrap_text_with_ansi(&hint, content_width) {
                     lines.push(panel.line(&part));
@@ -1609,6 +1633,26 @@ mod tests {
             assert_eq!(crate::utils::visible_width(line), 16);
             assert!(plain.starts_with("  ") && plain.ends_with("  "));
         }
+    }
+
+    #[test]
+    fn compact_read_can_expand_to_reveal_its_output() {
+        let theme = Theme {
+            compact_transcript: true,
+            ..Theme::default()
+        };
+        let tool = ToolExecutionComponent::new("read", r#"{"path":"Cargo.toml"}"#);
+        tool.set_result("first line\nsecond line", false);
+
+        let collapsed = strip_ansi(&tool.render_panel(80, &theme).join("\n"));
+        assert!(collapsed.contains("READ"));
+        assert!(collapsed.contains("2 lines"));
+        assert!(!collapsed.contains("first line"));
+
+        tool.set_expanded(true);
+        let expanded = strip_ansi(&tool.render_panel(80, &theme).join("\n"));
+        assert!(expanded.contains("first line"));
+        assert!(expanded.contains("second line"));
     }
 
     #[test]

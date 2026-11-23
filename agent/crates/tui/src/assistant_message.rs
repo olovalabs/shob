@@ -256,9 +256,15 @@ impl AssistantMessageComponent {
                     }
 
                     if opts.hide_thinking {
-                        // One static dim label per thinking run (TS path).
+                        let theme = theme();
+                        let label = theme.colors.thinking_text.fg(&opts.hidden_thinking_label);
+                        let label = if theme.compact_transcript {
+                            format!("{} {label}", theme.colors.accent.fg("▰"))
+                        } else {
+                            italic(&label)
+                        };
                         self.content_container.add_child(Arc::new(Text::new(
-                            italic(&theme().colors.thinking_text.fg(&opts.hidden_thinking_label)),
+                            label,
                             opts.output_pad,
                             0,
                         )));

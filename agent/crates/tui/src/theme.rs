@@ -246,6 +246,8 @@ pub struct Theme {
     pub colors: ThemeColors,
     /// Component spacing shared by bash and generic tool execution panels.
     pub spacing: ThemeSpacing,
+    /// Use compact prompt and tool rows in the transcript.
+    pub compact_transcript: bool,
     /// Border style.
     pub border_style: BorderStyle,
     /// Corner style.
@@ -257,6 +259,7 @@ impl Default for Theme {
         Self {
             colors: ThemeColors::default(),
             spacing: ThemeSpacing::default(),
+            compact_transcript: false,
             border_style: BorderStyle::Rounded,
             corner_style: CornerStyle::Rounded,
         }
@@ -394,6 +397,34 @@ impl ThemeManager {
 fn theme_for_preset(preset: ThemePreset) -> Theme {
     match preset {
         ThemePreset::Dark => Theme::default(),
+        ThemePreset::Red => Theme {
+            colors: ThemeColors {
+                accent: Color::Rgb(234, 102, 111),
+                surface: Color::Rgb(102, 36, 46),
+                border: Color::Rgb(132, 66, 73),
+                border_accent: Color::Rgb(234, 102, 111),
+                border_muted: Color::Rgb(117, 83, 88),
+                selection: Color::Rgb(111, 48, 58),
+                cursor: Color::Rgb(234, 102, 111),
+                thinking_text: Color::Rgb(174, 127, 133),
+                md_heading: Color::Rgb(234, 102, 111),
+                md_code: Color::Rgb(234, 132, 139),
+                md_code_bg: Color::Rgb(48, 31, 36),
+                md_list_bullet: Color::Rgb(234, 102, 111),
+                tool_pending_bg: Color::Rgb(151, 44, 57),
+                tool_success_bg: Color::Rgb(50, 35, 39),
+                tool_error_bg: Color::Rgb(135, 33, 44),
+                tool_title: Color::Rgb(255, 237, 238),
+                tool_output: Color::Default,
+                custom_message_bg: Color::Rgb(56, 31, 38),
+                custom_message_label: Color::Rgb(234, 132, 139),
+                ..ThemeColors::default()
+            },
+            compact_transcript: true,
+            border_style: BorderStyle::Sharp,
+            corner_style: CornerStyle::Sharp,
+            ..Theme::default()
+        },
         ThemePreset::Light => {
             let mut colors = ThemeColors::default();
             colors.text = Color::Default;
@@ -501,6 +532,7 @@ impl Default for ThemeManager {
 /// Theme presets.
 #[derive(Debug, Clone, Copy)]
 pub enum ThemePreset {
+    Red,
     Dark,
     Light,
     Monochrome,

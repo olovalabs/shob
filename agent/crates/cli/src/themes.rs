@@ -1,7 +1,7 @@
 //! Theme spec resolution and loading.
 //!
 //! A *theme spec* is the value of `--theme` / `settings.json.theme`: either a
-//! built-in preset name (`dark` / `light` / `monochrome`) or a path to a pi
+//! built-in preset name (`red` / `dark` / `light` / `monochrome`) or a path to a pi
 //! theme JSON file (`ThemeJson`, see `tui::theme_json`). File specs expand
 //! `~` and load lazily at the point of application so parse errors surface as
 //! warnings plus a fallback to the built-in default, never a startup veto —
@@ -36,6 +36,7 @@ pub fn resolve_spec(value: &str) -> ThemeSpec {
 /// registry names.
 pub fn resolve_spec_in(value: &str, registry: Option<&ThemeRegistry>) -> ThemeSpec {
     match value {
+        "red" => ThemeSpec::Preset(ThemePreset::Red),
         "dark" => ThemeSpec::Preset(ThemePreset::Dark),
         "light" => ThemeSpec::Preset(ThemePreset::Light),
         "monochrome" => ThemeSpec::Preset(ThemePreset::Monochrome),
@@ -117,7 +118,7 @@ pub fn apply_startup_spec(
 /// Returns `None` when the name matches neither a preset nor the registry.
 pub fn resolve_command_theme(arg: &str, registry: Option<&ThemeRegistry>) -> Option<String> {
     let folded = arg.to_ascii_lowercase();
-    let is_preset = matches!(folded.as_str(), "light" | "monochrome" | "dark");
+    let is_preset = matches!(resolve_spec(&folded), ThemeSpec::Preset(_));
     if is_preset {
         return Some(folded);
     }
@@ -320,9 +321,6 @@ pub fn reconcile_after_reload(
     session_manager: &ThemeManager,
 ) -> Option<String> {
     let active_spec = active_spec?;
-    if active_spec == "dark" || active_spec == "light" || active_spec == "monochrome" {
-        return None;
-    }
     let still_resolvable = match resolve_spec_in(active_spec, Some(registry)) {
         ThemeSpec::File(path) => path.is_file(),
         ThemeSpec::Preset(_) => true,
@@ -330,10 +328,10 @@ pub fn reconcile_after_reload(
     if still_resolvable {
         return None;
     }
-    session_manager.apply_preset(ThemePreset::Dark);
-    tui::theme::apply_theme_preset(ThemePreset::Dark);
+    session_manager.apply_preset(ThemePreset::Red);
+    tui::theme::apply_theme_preset(ThemePreset::Red);
     Some(format!(
-        "Theme \"{active_spec}\" is no longer available; reverted to the default dark theme."
+        "Theme \"{active_spec}\" is no longer available; reverted to the default Red theme."
     ))
 }
 
@@ -351,6 +349,7 @@ pub fn apply_and_persist(
     let spec = resolve_spec_in(spec_value, registry);
     let label = match &spec {
         ThemeSpec::Preset(preset) => match preset {
+            ThemePreset::Red => "Red".to_string(),
             ThemePreset::Dark => "Dark".to_string(),
             ThemePreset::Light => "Light".to_string(),
             ThemePreset::Monochrome => "Monochrome".to_string(),
@@ -441,10 +440,7 @@ mod tests {
         let notice = reconcile_after_reload(Some("gone-theme"), &registry, &manager);
         assert!(notice.is_some());
         assert!(notice.unwrap().contains("gone-theme"));
-        assert!(matches!(
-            manager.get().colors.accent,
-            tui::theme::Color::Ansi256(108)
-        ));
+        assert!(manager.get().compact_transcript);
     }
 
     #[test]
@@ -628,6 +624,10 @@ mod tests {
 
     #[test]
     fn preset_names_classify_to_presets() {
+        assert!(matches!(
+            resolve_spec("red"),
+            ThemeSpec::Preset(ThemePreset::Red)
+        ));
         assert!(matches!(
             resolve_spec("dark"),
             ThemeSpec::Preset(ThemePreset::Dark)

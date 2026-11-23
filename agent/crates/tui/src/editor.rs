@@ -1848,12 +1848,13 @@ impl Component for Editor {
         // (mirrors editor.ts:494,530,587). The global `theme()` is read-only
         // after OnceLock init; `Color::fg` wraps the `─` run in the escape.
         // An explicit `border_color` (bash mode) wins over the theme default.
+        let theme = crate::theme::theme();
         let border_color = self
             .border_color
             .lock()
             .ok()
             .and_then(|guard| *guard)
-            .unwrap_or(crate::theme::theme().colors.border);
+            .unwrap_or(theme.colors.border);
         // Check if we have a working state to display in the top border.
         //
         // The frame is derived from elapsed wall-clock time (one step per
@@ -1868,11 +1869,9 @@ impl Component for Editor {
             // The frame set and cadence are shared with `Loader` so the two
             // never drift.
             let frames = crate::loader::SPINNER_FRAMES;
-            let spinner_char =
-                frames[crate::loader::Loader::frame_at(working.started_at.elapsed(), frames.len())];
-            let colors = crate::theme::theme().colors;
-
             let elapsed = working.started_at.elapsed();
+            let spinner_char = frames[crate::loader::Loader::frame_at(elapsed, frames.len())];
+            let colors = &theme.colors;
             let elapsed_str = if elapsed.as_secs() >= 60 {
                 format!("{}m{}s", elapsed.as_secs() / 60, elapsed.as_secs() % 60)
             } else {
@@ -1882,7 +1881,22 @@ impl Component for Editor {
             let plain = format!(" {} {} {} ", spinner_char, working.message, elapsed_str);
             let indicator_width = crate::ansi::visible_width(&plain);
 
-            if width > indicator_width {
+            if theme.compact_transcript && width > indicator_width {
+                let badge = colors.surface.bg(&colors
+                    .tool_title
+                    .fg(&format!(" {spinner_char} {} ", working.message)));
+                let mut row = format!(" {badge} {}", colors.muted.fg(&elapsed_str));
+                let hint = "  ·  Esc to stop";
+                if width >= crate::ansi::visible_width(&row) + crate::ansi::visible_width(hint) {
+                    row.push_str(&colors.muted.fg(hint));
+                }
+                let remaining = width.saturating_sub(crate::ansi::visible_width(&row));
+                if remaining > 1 {
+                    row.push(' ');
+                    row.push_str(&border_color.fg(&"─".repeat(remaining - 1)));
+                }
+                row
+            } else if width > indicator_width {
                 let colored = format!(
                     " {} {} {} ",
                     colors.accent.fg(&spinner_char.to_string()),

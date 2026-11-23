@@ -215,6 +215,15 @@ pub(super) fn add_update_panel(
     color: tui::Color,
 ) {
     container.add_child(Arc::new(Spacer::new(1)));
+    let theme = current_theme();
+    if theme.compact_transcript {
+        container.add_child(Arc::new(Text::new(
+            format!("{} {}  {body}", color.fg("▪"), color.fg(&tui_bold(title))),
+            1,
+            0,
+        )));
+        return;
+    }
     container.add_child(Arc::new(DynamicBorder::with_color(color)));
     container.add_child(Arc::new(Text::new(
         format!("{}\n{body}", color.fg(&tui_bold(title))),
@@ -433,11 +442,7 @@ pub(super) fn add_hotkeys_message(container: &Arc<Container>) {
     container.add_child(Arc::new(Spacer::new(1)));
 }
 
-/// Add a user message echo to the chat container — a bordered `UserMessageComponent`
-/// (surface-colored box with OSC133 prompt-boundary markers) replacing the old
-/// plain `> text` echo. A trailing Spacer(1) separates it from the next
-// transcript entry (every entry contributes one trailing spacer so
-// consecutive turns are separated by exactly one blank line).
+/// Add a prompt echo and its trailing transcript spacer.
 pub(super) fn add_user_message(container: &Arc<Container>, text: &str) {
     container.add_child(Arc::new(UserMessageComponent::new(text.to_string())));
     container.add_child(Arc::new(Spacer::new(1)));

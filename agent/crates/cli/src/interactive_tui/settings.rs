@@ -383,7 +383,8 @@ pub(super) fn open_settings_theme_selector(
     tui: &Arc<TuiAltScreen>,
 ) {
     let mut items = vec![
-        SelectItem::new("dark", "Dark").with_description("Default dark theme"),
+        SelectItem::new("red", "Red").with_description("Compact transcript with red accents"),
+        SelectItem::new("dark", "Dark").with_description("Dark palette"),
         SelectItem::new("light", "Light").with_description("Light background"),
         SelectItem::new("monochrome", "Monochrome").with_description("No color accents"),
     ];
@@ -629,7 +630,11 @@ pub(super) fn provider_selector_items(
     providers
         .into_iter()
         .map(|(id, count)| {
-            let label = provider_display_name(&id);
+            let label = models_cfg
+                .providers
+                .get(&id)
+                .and_then(|provider| provider.name.clone())
+                .unwrap_or_else(|| provider_display_name(&id));
             let marker = if current_provider.is_some_and(|current| id.eq_ignore_ascii_case(current))
             {
                 " (current)"
@@ -698,9 +703,11 @@ pub(super) fn login_provider_items_with_oauth(
             let oauth = oauth_providers.iter().find(|oauth| oauth.id == id);
             let configured = models_cfg.providers.get(&id);
             let requires_auth = oauth.is_some()
+                || crate::native_auth::supports(&id)
                 || manifest.map_or_else(
                     || {
-                        crate::credentials::builtin_api_key_env(&id).is_some()
+                        runtime::catalog::builtin_provider(&id)
+                            .is_some_and(|provider| provider.requires_auth)
                             || configured.is_some_and(|provider| {
                                 provider.api_key.is_some() || provider.auth_header.is_some()
                             })
@@ -714,8 +721,12 @@ pub(super) fn login_provider_items_with_oauth(
             let source = credential.source;
             let env = manifest
                 .and_then(|manifest| manifest.api_key_env.as_deref())
+                .or_else(|| {
+                    runtime::catalog::builtin_provider(&id)
+                        .and_then(|provider| provider.env_vars.first().map(String::as_str))
+                })
                 .or_else(|| crate::credentials::builtin_api_key_env(&id));
-            let description = if oauth.is_some() {
+            let description = if oauth.is_some() || crate::native_auth::supports(&id) {
                 match source {
                     crate::credentials::CredentialSource::Missing => {
                         "未配置 · OAuth 登录".to_string()
@@ -742,12 +753,19 @@ pub(super) fn login_provider_items_with_oauth(
                 }
             };
             Some(
-                SelectItem::new(&id, &provider_display_name(&id))
-                    .with_description(&description)
-                    .with_search_text(&format!(
-                        "{} {id} {description} login oauth",
-                        provider_display_name(&id)
-                    )),
+                SelectItem::new(
+                    &id,
+                    &models_cfg
+                        .providers
+                        .get(&id)
+                        .and_then(|provider| provider.name.clone())
+                        .unwrap_or_else(|| provider_display_name(&id)),
+                )
+                .with_description(&description)
+                .with_search_text(&format!(
+                    "{} {id} {description} login oauth",
+                    provider_display_name(&id)
+                )),
             )
         })
         .collect()
@@ -776,14 +794,121 @@ pub(super) fn begin_provider_login(
     extension_session: &crate::session::ExtensionSessionCell,
     provider_id: &str,
 ) {
-    if current_oauth_providers(extension_session)
+    let extension_oauth = current_oauth_providers(extension_session)
         .iter()
-        .any(|provider| provider.id.eq_ignore_ascii_case(provider_id))
-    {
+        .any(|provider| provider.id.eq_ignore_ascii_case(provider_id));
+    if provider_id == "google-antigravity" && !extension_oauth {
+        add_error_message(
+            &state.notice_container(),
+            "Google Antigravity sign-in is currently available in the desktop app only.",
+        );
+        tui.request_render(false);
+        return;
+    }
+    let native_oauth = crate::native_auth::supports(provider_id);
+    let methods = crate::native_auth::auth_methods(provider_id);
+    if (extension_oauth || native_oauth) && methods.api_key {
+        let list = Arc::new(SelectList::new(
+            vec![
+                SelectItem::new("api_key", "API key"),
+                SelectItem::new("oauth", "Sign in with OAuth"),
+            ],
+            2,
+        ));
+        let (s, ec, ed, ui, tx, provider) = (
+            state.clone(),
+            editor_container.clone(),
+            editor.clone(),
+            tui.clone(),
+            tx.clone(),
+            provider_id.to_owned(),
+        );
+        list.on_select(Arc::new(move |item| {
+            close_selector(&s, &ec, &ed, &ui);
+            if item.value == "api_key" {
+                begin_api_key_login(&s, &ec, &ed, &ui, &tx, &provider);
+            } else if extension_oauth {
+                begin_provider_oauth_login(&s, &ec, &ed, &ui, &tx, &provider);
+            } else {
+                begin_native_provider_login(&s, &ec, &ed, &ui, &tx, &provider);
+            }
+        }));
+        let (s, ec, ed, ui) = (
+            state.clone(),
+            editor_container.clone(),
+            editor.clone(),
+            tui.clone(),
+        );
+        list.on_cancel(Arc::new(move || close_selector(&s, &ec, &ed, &ui)));
+        open_searchable_selector(
+            state,
+            editor_container,
+            editor,
+            tui,
+            Some("Choose sign-in method"),
+            None,
+            list,
+            SelectorKind::Provider,
+        );
+    } else if extension_oauth {
         begin_provider_oauth_login(state, editor_container, editor, tui, tx, provider_id);
+    } else if native_oauth {
+        begin_native_provider_login(state, editor_container, editor, tui, tx, provider_id);
     } else {
         begin_api_key_login(state, editor_container, editor, tui, tx, provider_id);
     }
+}
+
+fn begin_native_provider_login(
+    state: &Arc<TuiState>,
+    editor_container: &Arc<Container>,
+    editor: &Arc<Editor>,
+    tui: &Arc<TuiAltScreen>,
+    tx: &mpsc::UnboundedSender<TuiMessage>,
+    provider_id: &str,
+) {
+    let (flow_id, _) = state.begin_provider_auth();
+    let (input_tx, input_rx) = std::sync::mpsc::channel::<String>();
+    let input = Arc::new(Input::with_placeholder("Enter response if prompted"));
+    input.set_masked(true);
+    input.set_focused(true);
+    input.on_submit(Arc::new(move |value| {
+        let _ = input_tx.send(value.to_owned());
+    }));
+    let (s, ec, ed, ui) = (
+        state.clone(),
+        editor_container.clone(),
+        editor.clone(),
+        tui.clone(),
+    );
+    input.on_escape(Arc::new(move || {
+        finish_provider_login(&s, &ec, &ed, &ui);
+    }));
+    let frame = provider_form_frame(
+        "Provider authentication",
+        &format!("Signing in to {provider_id}"),
+        input.clone(),
+        "Follow the instructions above · Esc cancels",
+    );
+    editor.set_focused(false);
+    editor_container.clear();
+    editor_container.add_child(frame);
+    *state.active_provider_input.lock().unwrap() = Some(input.clone());
+    tui.set_focus(Some(input));
+    tui.request_render(false);
+    let provider = provider_id.to_owned();
+    let tx = tx.clone();
+    std::thread::spawn(move || {
+        let emit = |event| {
+            let _ = tx.send(TuiMessage::NativeLoginEvent { flow_id, event });
+        };
+        let result = crate::native_auth::login(&provider, &emit, &input_rx, false);
+        let _ = tx.send(TuiMessage::NativeLoginFinished {
+            flow_id,
+            provider,
+            result,
+        });
+    });
 }
 
 fn begin_api_key_login(
@@ -840,7 +965,7 @@ fn begin_api_key_login(
                     &state_submit.notice_container(),
                     &format!("Saved credentials for {provider_submit}; reloading providers…"),
                 );
-                let _ = tx_submit.send(TuiMessage::ReloadExtensions);
+                let _ = tx_submit.send(TuiMessage::ProviderLoginComplete(provider_submit.clone()));
                 finish_provider_login(&state_submit, &ec_submit, &editor_submit, &tui_submit);
             }
             Err(error) => add_error_message(
@@ -1029,7 +1154,7 @@ pub(super) fn handle_provider_oauth_result(
                                 "OAuth credentials saved for {provider}; reloading providers…"
                             ),
                         );
-                        let _ = tx.send(TuiMessage::ReloadExtensions);
+                        let _ = tx.send(TuiMessage::ProviderLoginComplete(provider.to_string()));
                     }
                     Err(error) => {
                         restore_provider_editor(state, editor_container, editor, tui);
@@ -1238,7 +1363,7 @@ fn provider_flow_still_shown(
 /// Claim `flow_id` before a result ends it. Esc's
 /// [`finish_provider_login`] swaps the same id to zero, so exactly one of a
 /// cancel and a completion wins.
-fn claim_provider_flow(state: &TuiState, flow_id: u64) -> bool {
+pub(super) fn claim_provider_flow(state: &TuiState, flow_id: u64) -> bool {
     #[cfg(test)]
     if let Some(hook) = BEFORE_PROVIDER_FLOW_CLAIM.with(std::cell::Cell::take) {
         hook();
@@ -1260,7 +1385,7 @@ pub(super) fn finish_provider_login(
 }
 
 /// Put the editor back in the input slot, without touching any flow.
-fn restore_provider_editor(
+pub(super) fn restore_provider_editor(
     state: &TuiState,
     editor_container: &Arc<Container>,
     editor: &Arc<Editor>,
@@ -1456,6 +1581,22 @@ pub(super) fn begin_provider_form(
     show_provider_form_step(state, editor_container, editor, tui);
 }
 
+pub(super) fn begin_openai_compatible_form(
+    state: &Arc<TuiState>,
+    editor_container: &Arc<Container>,
+    editor: &Arc<Editor>,
+    tui: &Arc<TuiAltScreen>,
+    tx: &mpsc::UnboundedSender<TuiMessage>,
+) {
+    *state.provider_form.lock().unwrap() = Some(ProviderFormState {
+        compatible: true,
+        api: "openai-completions".into(),
+        completion_tx: Some(tx.clone()),
+        ..Default::default()
+    });
+    show_provider_form_step(state, editor_container, editor, tui);
+}
+
 /// Render the current form step in the editor slot. Choice-style steps (the
 /// protocol step) render a select list; every other step renders a titled,
 /// bordered single-line input.
@@ -1486,16 +1627,50 @@ fn show_provider_text_input(
     tui: &Arc<TuiAltScreen>,
     form: &ProviderFormState,
 ) {
-    let (step_label, question, placeholder) = provider_step_prompt(&form.step);
+    let (step_label, question, placeholder) = if form.compatible {
+        match form.step {
+            ProviderFormStep::Id => (
+                "OpenAI-compatible API · 1/5",
+                "Provider ID (letters, numbers, - or _)",
+                "my-provider",
+            ),
+            ProviderFormStep::Name => (
+                "OpenAI-compatible API · 2/5",
+                "Provider name",
+                "My Provider",
+            ),
+            ProviderFormStep::BaseUrl => (
+                "OpenAI-compatible API · 3/5",
+                "Base URL",
+                "https://api.example.com/v1",
+            ),
+            ProviderFormStep::ApiKey => ("OpenAI-compatible API · 4/5", "API key", "Paste API key"),
+            ProviderFormStep::ModelId => (
+                "OpenAI-compatible API · 5/5",
+                "Enter one model ID at a time; empty Enter finishes",
+                "model-id",
+            ),
+            _ => provider_step_prompt(&form.step),
+        }
+    } else {
+        provider_step_prompt(&form.step)
+    };
 
     let input = Arc::new(Input::with_placeholder(placeholder));
     input.set_focused(true);
+    if form.step == ProviderFormStep::ApiKey {
+        input.set_masked(true);
+    }
 
     let frame = provider_form_frame(
         step_label,
         question,
         input.clone(),
-        "Enter next · Esc cancels (empty Enter also cancels)",
+        if form.compatible {
+            "Enter next · Esc cancels"
+        } else {
+            "Enter next · Esc cancels (empty Enter also cancels)"
+        },
     );
     editor_container.clear();
     editor_container.add_child(frame);
@@ -1602,6 +1777,7 @@ fn provider_step_prompt(step: &ProviderFormStep) -> (&'static str, &'static str,
             "Provider id — a short unique name, e.g. openrouter.",
             "openrouter",
         ),
+        ProviderFormStep::Name => ("Add provider", "Provider name", "My Provider"),
         ProviderFormStep::Api => (
             "Add provider · step 2/6",
             "Protocol — choose one below.",
@@ -1644,15 +1820,46 @@ fn handle_provider_form_input(
     };
     let text = text.trim();
 
-    // Empty submission cancels the form at any step.
     if text.is_empty() {
-        cancel_provider_form(state, editor_container, editor, tui);
+        if form.compatible {
+            if form.step == ProviderFormStep::ModelId && !form.models.is_empty() {
+                match save_openai_compatible_form(&form) {
+                    Ok(()) => {
+                        add_note_message(
+                            &state.notice_container(),
+                            &format!("Added provider {}; refreshing models…", form.name),
+                        );
+                        if let Some(tx) = &form.completion_tx {
+                            let _ = tx.send(TuiMessage::ProviderLoginComplete(form.id.clone()));
+                        }
+                        finish_provider_form(state, editor_container, editor, tui);
+                        return;
+                    }
+                    Err(error) => add_error_message(&state.notice_container(), &error),
+                }
+            } else {
+                add_error_message(
+                    &state.notice_container(),
+                    "Enter a value; at least one model is required.",
+                );
+            }
+            *state.provider_form.lock().unwrap() = Some(form);
+            show_provider_form_step(state, editor_container, editor, tui);
+        } else {
+            cancel_provider_form(state, editor_container, editor, tui);
+        }
         return;
     }
 
     match form.step {
         ProviderFormStep::Id => {
-            if provider_id_exists(text) {
+            if provider_id_exists(text)
+                || (form.compatible
+                    && (runtime::catalog::builtin_provider(text).is_some()
+                        || crate::config::read_auth()
+                            .unwrap_or_default()
+                            .contains_key(text)))
+            {
                 add_error_message(
                     &state.notice_container(),
                     &format!("Provider \"{text}\" already exists. Choose another id."),
@@ -1661,8 +1868,26 @@ fn handle_provider_form_input(
                 show_provider_form_step(state, editor_container, editor, tui);
                 return;
             }
+            if form.compatible
+                && (text.len() > 128
+                    || !text
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_')))
+            {
+                add_error_message(
+                    &state.notice_container(),
+                    "Use 1–128 letters, numbers, hyphens, or underscores for the provider ID.",
+                );
+                *state.provider_form.lock().unwrap() = Some(form);
+                show_provider_form_step(state, editor_container, editor, tui);
+                return;
+            }
             form.id = text.to_string();
-            form.step = ProviderFormStep::Api;
+            form.step = if form.compatible {
+                ProviderFormStep::Name
+            } else {
+                ProviderFormStep::Api
+            };
         }
         ProviderFormStep::Api => {
             // The protocol step is rendered as a select list, so a text
@@ -1672,8 +1897,21 @@ fn handle_provider_form_input(
             show_provider_form_step(state, editor_container, editor, tui);
             return;
         }
+        ProviderFormStep::Name => {
+            if text.len() > 256 {
+                add_error_message(
+                    &state.notice_container(),
+                    "Provider name must be at most 256 characters.",
+                );
+                *state.provider_form.lock().unwrap() = Some(form);
+                show_provider_form_step(state, editor_container, editor, tui);
+                return;
+            }
+            form.name = text.to_string();
+            form.step = ProviderFormStep::BaseUrl;
+        }
         ProviderFormStep::BaseUrl => {
-            if !is_valid_provider_url(text) {
+            if !is_valid_provider_url(text) || (form.compatible && !valid_openai_endpoint(text)) {
                 add_error_message(
                     &state.notice_container(),
                     &format!("Invalid URL \"{text}\". It must start with http:// or https://."),
@@ -1686,12 +1924,44 @@ fn handle_provider_form_input(
             form.step = ProviderFormStep::ApiKey;
         }
         ProviderFormStep::ApiKey => {
+            if form.compatible && (text.len() > 4096 || text.contains(['\r', '\n', '\0'])) {
+                add_error_message(
+                    &state.notice_container(),
+                    "API key must be a single line of at most 4096 characters.",
+                );
+                *state.provider_form.lock().unwrap() = Some(form);
+                show_provider_form_step(state, editor_container, editor, tui);
+                return;
+            }
             form.api_key = text.to_string();
             form.step = ProviderFormStep::ModelId;
         }
         ProviderFormStep::ModelId => {
-            form.model_id = text.to_string();
-            form.step = ProviderFormStep::ModelName;
+            if form.compatible {
+                if text.len() > 256
+                    || text.chars().any(char::is_whitespace)
+                    || form.models.len() >= 128
+                {
+                    add_error_message(
+                        &state.notice_container(),
+                        "Enter a model ID without spaces (up to 256 characters and 128 models).",
+                    );
+                } else if !form.models.iter().any(|model| model == text) {
+                    form.models.push(text.to_string());
+                    add_note_message(
+                        &state.notice_container(),
+                        &format!("Added model {text}; enter another or press Enter to finish."),
+                    );
+                } else {
+                    add_error_message(
+                        &state.notice_container(),
+                        "That model is already in the list.",
+                    );
+                }
+            } else {
+                form.model_id = text.to_string();
+                form.step = ProviderFormStep::ModelName;
+            }
         }
         ProviderFormStep::ModelName => {
             form.model_name = text.to_string();
@@ -1717,9 +1987,6 @@ fn finish_provider_form(
     *state.provider_form.lock().unwrap() = None;
     *state.active_provider_input.lock().unwrap() = None;
     *state.active_provider_select.lock().unwrap() = None;
-    // The form never shares the chat editor, so clear it on exit: any draft or
-    // stray paste must not resurface as if the user typed it.
-    editor.clear();
     editor_container.clear();
     editor_container.add_child(editor.clone());
     editor.set_focused(true);
@@ -1772,6 +2039,64 @@ pub(super) fn remove_provider(input: &str) -> Result<String, String> {
         let _ = crate::settings::save_settings(&settings);
     }
     Ok(format!("Removed models.json configuration for provider \"{id}\" — restart {command} to apply. Installed provider packages remain available; use {command} package unlink to remove a package.", command = crate::COMMAND))
+}
+
+fn valid_openai_endpoint(endpoint: &str) -> bool {
+    endpoint.len() <= 4096
+        && reqwest::Url::parse(endpoint).is_ok_and(|url| {
+            matches!(url.scheme(), "http" | "https")
+                && url.host_str().is_some()
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.query().is_none()
+                && url.fragment().is_none()
+        })
+}
+
+fn save_openai_compatible_form(form: &ProviderFormState) -> Result<(), String> {
+    if !valid_openai_endpoint(&form.base_url) {
+        return Err(
+            "Use an HTTP or HTTPS base URL without credentials, a query, or a fragment.".into(),
+        );
+    }
+    if form.name.trim().is_empty()
+        || form.name.len() > 256
+        || form.api_key.trim().is_empty()
+        || form.api_key.len() > 4096
+        || form.api_key.contains(['\r', '\n', '\0'])
+        || form.models.is_empty()
+    {
+        return Err("Enter a valid provider name, API key, and at least one model.".into());
+    }
+    let mut config = crate::config::load_models_config().map_err(|error| error.to_string())?;
+    let auth = crate::config::read_auth().map_err(|error| error.to_string())?;
+    if runtime::catalog::builtin_provider(&form.id).is_some()
+        || form.id == "google-antigravity"
+        || config.providers.contains_key(&form.id)
+        || auth.contains_key(&form.id)
+    {
+        return Err("Provider ID already exists. Choose a unique ID.".into());
+    }
+    let provider = serde_json::from_value(serde_json::json!({
+        "name": form.name.trim(), "baseUrl": form.base_url.trim_end_matches('/'),
+        "api": "openai-completions", "authHeader": true,
+        "models": form.models.iter().map(|id| serde_json::json!({"id": id})).collect::<Vec<_>>()
+    }))
+    .map_err(|error| format!("Invalid provider configuration: {error}"))?;
+    crate::config::upsert_credential(
+        &form.id,
+        crate::config::Credential::ApiKey {
+            key: Some(form.api_key.clone()),
+            env: None,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    config.providers.insert(form.id.clone(), provider);
+    if let Err(error) = crate::config::save_models_config(&config) {
+        let _ = crate::config::delete_credential(&form.id);
+        return Err(error.to_string());
+    }
+    Ok(())
 }
 
 /// Write the completed form into `models.json` as a new provider with one

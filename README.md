@@ -125,7 +125,7 @@ cd shob
 cargo run
 ```
 
-`cargo run` opens the desktop app. To try the agent TUI from source, run `cargo run -- tui`.
+`cargo run` opens the desktop app. To try the agent TUI from source, run `cargo run -- tui`. It defaults to the compact Red theme. Use `/theme` to switch palettes.
 
 For an optimized release build:
 

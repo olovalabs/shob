@@ -1,13 +1,4 @@
-//! User message component — port of `user-message.ts`.
-//!
-//! Renders the user's submitted text as markdown inside a padded [`Box`] with
-//! a subtle background, wrapped in [OSC 133] prompt zone markers so capable
-//! terminals can detect user/assistant boundaries. Where OSC 133 is
-//! unsupported the sequences are harmless no-ops.
-//!
-//! Replaces the plain `> text` echo in the transcript.
-//!
-//! [OSC 133]: https://terminalguide.namepad.de/seq/osc-133/
+//! Themed prompt echo with OSC 133 prompt boundaries.
 
 use std::any::Any;
 use std::sync::{Arc, Mutex};
@@ -16,6 +7,7 @@ use super::component::{Component, RenderedDocument};
 use crate::box_component::Box;
 use crate::markdown::Markdown;
 use crate::theme::{theme, theme_revision};
+use crate::utils::truncate_to_width;
 
 const OSC133_ZONE_START: &str = "\x1b]133;A\x07";
 const OSC133_ZONE_END: &str = "\x1b]133;B\x07";
@@ -25,29 +17,33 @@ const OSC133_ZONE_FINAL: &str = "\x1b]133;C\x07";
 pub struct UserMessageComponent {
     text: String,
     output_pad: usize,
-    /// Prebuilt inner box (background `Box` + `Markdown`).
-    ///
-    /// Upstream builds this **once** in the constructor (`user-message.ts`
-    /// `rebuild()`); shob used to rebuild the `Box` + `Markdown` on every
-    /// `render`, so the inner caches could never hit and each frame re-parsed
-    /// every user message. Rebuild only on `invalidate` / `with_pad` / a theme
-    /// change (the background colour is baked into the box).
     inner: Mutex<UserMessageState>,
 }
 
 struct UserMessageState {
-    bubble: Box,
+    content: PromptContent,
     built_revision: u64,
     cache: Option<(usize, Arc<Vec<String>>)>,
 }
 
-fn build_box(text: &str, output_pad: usize) -> Box {
-    let bg = theme().colors.surface;
+enum PromptContent {
+    Box(Box),
+    Compact(Markdown),
+}
+
+fn build_prompt(text: &str, output_pad: usize) -> PromptContent {
+    let theme = theme();
+    if theme.compact_transcript {
+        return PromptContent::Compact(
+            Markdown::new(text.to_owned(), 0, 0).with_base_style(theme.colors.tool_title.to_fg()),
+        );
+    }
+    let bg = theme.colors.surface;
     let content_box = Box::new(output_pad, 1);
     content_box.set_bg_fn(Some(std::sync::Arc::new(move |s: &str| bg.bg(s))));
     let md = Markdown::new(text.to_string(), 0, 0);
     content_box.add_child(std::sync::Arc::new(md));
-    content_box
+    PromptContent::Box(content_box)
 }
 
 impl UserMessageComponent {
@@ -57,12 +53,12 @@ impl UserMessageComponent {
     /// box (mirrors the TS `outputPad`, default 1).
     pub fn new(text: impl Into<String>) -> Self {
         let text = text.into();
-        let inner = build_box(&text, 1);
+        let inner = build_prompt(&text, 1);
         Self {
             text,
             output_pad: 1,
             inner: Mutex::new(UserMessageState {
-                bubble: inner,
+                content: inner,
                 built_revision: theme_revision(),
                 cache: None,
             }),
@@ -71,12 +67,12 @@ impl UserMessageComponent {
 
     /// Override the inner padding.
     pub fn with_pad(self, pad: usize) -> Self {
-        let inner = build_box(&self.text, pad);
+        let inner = build_prompt(&self.text, pad);
         Self {
             text: self.text,
             output_pad: pad,
             inner: Mutex::new(UserMessageState {
-                bubble: inner,
+                content: inner,
                 built_revision: theme_revision(),
                 cache: None,
             }),
@@ -91,7 +87,7 @@ impl UserMessageComponent {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let revision = theme_revision();
         if inner.built_revision != revision {
-            inner.bubble = build_box(&self.text, self.output_pad);
+            inner.content = build_prompt(&self.text, self.output_pad);
             inner.built_revision = revision;
             inner.cache = None;
         }
@@ -101,19 +97,52 @@ impl UserMessageComponent {
             }
         }
 
-        let mut lines = inner.bubble.render(width);
+        let mut lines = match &inner.content {
+            PromptContent::Box(bubble) => bubble.render(width),
+            PromptContent::Compact(markdown) if width > 0 => {
+                let colors = theme().colors;
+                let inset = self.output_pad.min(width.saturating_sub(4));
+                let pad = " ".repeat(inset);
+                let prefix_width = if width - inset > 3 { 2 } else { 0 };
+                let body_width = width - inset - prefix_width;
+                markdown
+                    .render(body_width)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, line)| {
+                        let prefix = match (prefix_width, index) {
+                            (0, _) => "",
+                            (_, 0) => "› ",
+                            _ => "  ",
+                        };
+                        let block = format!("{prefix}{line} ");
+                        format!(
+                            "{pad}{}",
+                            colors.surface.bg(&colors.tool_title.fg(&truncate_to_width(
+                                &block,
+                                width - inset,
+                                "",
+                            )))
+                        )
+                    })
+                    .collect()
+            }
+            PromptContent::Compact(_) => Vec::new(),
+        };
         if lines.is_empty() {
             let lines = Arc::new(lines);
             inner.cache = Some((width, Arc::clone(&lines)));
             return lines;
         }
-        // Prepend zone-start to the first line, append zone-end+final to the
-        // last line. These are zero-width escapes so visible layout is unchanged.
-        let first = lines.first_mut().unwrap();
-        first.insert_str(0, OSC133_ZONE_START);
+        lines[0].insert_str(0, OSC133_ZONE_START);
         let last = lines.last_mut().unwrap();
-        last.insert_str(0, OSC133_ZONE_END);
-        last.insert_str(OSC133_ZONE_END.len(), OSC133_ZONE_FINAL);
+        if matches!(inner.content, PromptContent::Compact(_)) {
+            last.push_str(OSC133_ZONE_END);
+            last.push_str(OSC133_ZONE_FINAL);
+        } else {
+            last.insert_str(0, OSC133_ZONE_END);
+            last.insert_str(OSC133_ZONE_END.len(), OSC133_ZONE_FINAL);
+        }
         let lines = Arc::new(lines);
         inner.cache = Some((width, Arc::clone(&lines)));
         lines
@@ -132,7 +161,7 @@ impl Component for UserMessageComponent {
     fn invalidate(&self) {
         // Clear decorated rows atomically with rebuilding the themed bubble.
         if let Ok(mut inner) = self.inner.lock() {
-            inner.bubble = build_box(&self.text, self.output_pad);
+            inner.content = build_prompt(&self.text, self.output_pad);
             inner.built_revision = theme_revision();
             inner.cache = None;
         }

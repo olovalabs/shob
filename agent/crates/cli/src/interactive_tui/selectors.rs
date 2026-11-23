@@ -534,7 +534,8 @@ pub(super) fn open_theme_selector(
     tui: &Arc<TuiAltScreen>,
 ) {
     let mut items = vec![
-        SelectItem::new("dark", "Dark").with_description("Default dark theme"),
+        SelectItem::new("red", "Red").with_description("Compact transcript with red accents"),
+        SelectItem::new("dark", "Dark").with_description("Dark palette"),
         SelectItem::new("light", "Light").with_description("Light background"),
         SelectItem::new("monochrome", "Monochrome").with_description("No color accents"),
     ];
@@ -600,6 +601,7 @@ pub(super) fn open_theme_selector(
 
 /// Sentinel value for the "Add new provider" row in the `/provider` picker.
 const ADD_PROVIDER_VALUE: &str = "__add_provider__";
+const ADD_OPENAI_COMPATIBLE_VALUE: &str = "__add_openai_compatible__";
 /// Sentinel value for the "Remove provider" row in the `/provider` picker.
 const REMOVE_PROVIDER_VALUE: &str = "__remove_provider__";
 
@@ -627,6 +629,11 @@ pub(super) fn open_provider_selector(
     }
     // The trailing actions turn the picker into a small management surface.
     items.push(
+        SelectItem::new(ADD_OPENAI_COMPATIBLE_VALUE, "＋ OpenAI-compatible API")
+            .with_description("Add your own endpoint, API key, and models")
+            .with_search_text("add custom openai compatible api"),
+    );
+    items.push(
         SelectItem::new(ADD_PROVIDER_VALUE, "＋ Add new provider")
             .with_description("Interactive form → writes ~/.shob/agent/models.json")
             .with_search_text("add new provider"),
@@ -644,6 +651,11 @@ pub(super) fn open_provider_selector(
     let tui_sel = tui.clone();
     let tx_sel = tx.clone();
     list.on_select(Arc::new(move |item| {
+        if item.value == ADD_OPENAI_COMPATIBLE_VALUE {
+            close_selector(&state_sel, &ec_sel, &editor_sel, &tui_sel);
+            begin_openai_compatible_form(&state_sel, &ec_sel, &editor_sel, &tui_sel, &tx_sel);
+            return;
+        }
         if item.value == ADD_PROVIDER_VALUE {
             close_selector(&state_sel, &ec_sel, &editor_sel, &tui_sel);
             begin_provider_form(&state_sel, &ec_sel, &editor_sel, &tui_sel);

@@ -349,7 +349,7 @@ impl SlashCommand for ThemeCommand {
                 add_error_message(
                     &ctx.state.notice_container(),
                     &format!(
-                        "Unknown theme \"{arg}\". Valid: dark, light, monochrome, or a discovered theme."
+                        "Unknown theme \"{arg}\". Valid: red, dark, light, monochrome, or a discovered theme."
                     ),
                 );
                 ctx.tui.request_render(false);

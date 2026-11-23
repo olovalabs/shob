@@ -2238,6 +2238,46 @@ fn provider_login_callbacks_release_the_input_slot_before_submit_and_escape() {
 }
 
 #[test]
+fn provider_login_offers_native_oauth_and_api_key_methods() {
+    with_isolated_config_dir(|| {
+        let state = test_tui_state();
+        let container = Arc::new(Container::new());
+        let editor = state.editor.clone();
+        container.add_child(editor.clone());
+        let tui = Arc::new(TuiAltScreen::new(
+            Box::new(ProcessTerminal::new()),
+            true,
+            None,
+        ));
+        let (tx, _rx) = mpsc::unbounded_channel();
+        begin_provider_login(
+            &state,
+            &container,
+            &editor,
+            &tui,
+            &tx,
+            &state.extension_session,
+            "anthropic",
+        );
+        assert!(state.active_selector.lock().unwrap().is_some());
+        assert!(state.active_provider_input.lock().unwrap().is_none());
+        close_selector(&state, &container, &editor, &tui);
+        begin_provider_login(
+            &state,
+            &container,
+            &editor,
+            &tui,
+            &tx,
+            &state.extension_session,
+            "opencode-go",
+        );
+        assert!(state.active_provider_input.lock().unwrap().is_some());
+        assert!(state.active_selector.lock().unwrap().is_none());
+        finish_provider_login(&state, &container, &editor, &tui);
+    });
+}
+
+#[test]
 fn provider_login_saves_deepseek_key_and_restores_editor() {
     with_isolated_config_dir(|| {
         let state = test_tui_state();
@@ -2271,7 +2311,9 @@ fn provider_login_saves_deepseek_key_and_restores_editor() {
             Some(crate::config::Credential::ApiKey { key: Some(key), .. })
                 if key == "fixture-deepseek-key"
         ));
-        assert!(matches!(rx.try_recv(), Ok(TuiMessage::ReloadExtensions)));
+        assert!(
+            matches!(rx.try_recv(), Ok(TuiMessage::ProviderLoginComplete(id)) if id == "deepseek")
+        );
         assert!(state.active_provider_input.lock().unwrap().is_none());
         assert!(editor.is_focused());
         assert_eq!(editor_container.child_count(), 1);
@@ -2855,6 +2897,64 @@ fn escape_between_the_flow_check_and_the_write_keeps_the_store_unchanged() {
 }
 
 #[test]
+fn openai_compatible_form_saves_multiple_models_and_credential() {
+    with_isolated_config_dir(|| {
+        let state = test_tui_state();
+        let container = Arc::new(Container::new());
+        let editor = state.editor.clone();
+        container.add_child(editor.clone());
+        let tui = Arc::new(TuiAltScreen::new(
+            Box::new(ProcessTerminal::new()),
+            true,
+            None,
+        ));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        begin_openai_compatible_form(&state, &container, &editor, &tui, &tx);
+        for value in [
+            "bad id",
+            "my-server",
+            "My Server",
+            "https://user:pass@example.test/v1",
+            "https://example.test/v1",
+            "fixture-secret",
+            "model-one",
+            "model-one",
+            "model-two",
+            "",
+        ] {
+            let input = state.active_provider_input.lock().unwrap().clone().unwrap();
+            input.handle_paste(value);
+            input.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        }
+        let config = crate::config::load_models_config().unwrap();
+        let provider = &config.providers["my-server"];
+        assert_eq!(provider.name.as_deref(), Some("My Server"));
+        assert_eq!(provider.api.as_deref(), Some("openai-completions"));
+        assert_eq!(
+            provider.base_url.as_deref(),
+            Some("https://example.test/v1")
+        );
+        assert_eq!(provider.auth_header, Some(true));
+        assert_eq!(provider.api_key, None);
+        assert_eq!(
+            provider
+                .models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            ["model-one", "model-two"]
+        );
+        assert!(
+            matches!(crate::config::read_auth().unwrap().get("my-server"), Some(crate::config::Credential::ApiKey { key: Some(key), .. }) if key == "fixture-secret")
+        );
+        assert!(
+            matches!(rx.try_recv(), Ok(TuiMessage::ProviderLoginComplete(id)) if id == "my-server")
+        );
+        assert!(state.provider_form.lock().unwrap().is_none());
+    });
+}
+
+#[test]
 fn provider_form_saves_provider_to_models_json() {
     with_isolated_config_dir(|| {
         let form = ProviderFormState {
@@ -2865,6 +2965,7 @@ fn provider_form_saves_provider_to_models_json() {
             api_key: "$OPENROUTER_API_KEY".into(),
             model_id: "claude-sonnet".into(),
             model_name: "Claude Sonnet".into(),
+            ..Default::default()
         };
         let note = save_provider_from_form(&form).unwrap();
         assert!(note.contains("openrouter"), "{note}");
@@ -2906,6 +3007,7 @@ fn remove_provider_deletes_from_models_json() {
             api_key: "$OPENROUTER_API_KEY".into(),
             model_id: "claude-sonnet".into(),
             model_name: String::new(),
+            ..Default::default()
         };
         save_provider_from_form(&form).unwrap();
         assert!(provider_id_exists("openrouter"));
@@ -2956,6 +3058,19 @@ fn switch_provider_for_test(
             harness.close().await.unwrap();
             result.map(|(_, note)| note)
         })
+}
+
+#[test]
+fn login_provider_items_include_frozen_catalog_providers() {
+    with_isolated_config_dir(|| {
+        let items = login_provider_items(&[]);
+        for provider in ["abliteration", "opencode-go"] {
+            assert!(
+                items.iter().any(|item| item.value == provider),
+                "missing {provider}"
+            );
+        }
+    });
 }
 
 #[test]
