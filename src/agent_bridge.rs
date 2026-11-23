@@ -716,6 +716,27 @@ fn workspace_edit(name: &str, args: &serde_json::Value, cwd: &Path) -> bool {
     target.starts_with(root) && target.is_file()
 }
 
+fn approval_detail(args: &serde_json::Value) -> Option<String> {
+    if let Some(command) = args.get("command").and_then(serde_json::Value::as_str) {
+        return Some(command.to_owned());
+    }
+    if let Some(path) = args.get("path").and_then(serde_json::Value::as_str) {
+        return Some(path.to_owned());
+    }
+    let summary = args
+        .as_object()?
+        .iter()
+        .filter_map(|(key, value)| match value {
+            serde_json::Value::String(text) => Some(format!("{key}: {text}")),
+            serde_json::Value::Number(number) => Some(format!("{key}: {number}")),
+            serde_json::Value::Bool(flag) => Some(format!("{key}: {flag}")),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    (!summary.is_empty()).then_some(summary)
+}
+
 fn composer_tool_hook(
     sender: smol::channel::Sender<Request>,
     permission: Arc<AtomicU8>,
@@ -773,7 +794,7 @@ fn composer_tool_hook(
             } else {
                 agent_interaction::request(
                     format!("Allow {name}?"),
-                    Some(serde_json::to_string_pretty(&args).unwrap_or_default()),
+                    approval_detail(&args),
                     Vec::new(),
                     true,
                 )
@@ -995,6 +1016,24 @@ fn decode_event(record: &Value) -> Vec<AgentEvent> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn approval_detail_shows_summary_instead_of_json() {
+        let bash = serde_json::json!({"command": "pwd"});
+        assert_eq!(super::approval_detail(&bash).as_deref(), Some("pwd"));
+        let read = serde_json::json!({"path": "src/main.rs"});
+        assert_eq!(
+            super::approval_detail(&read).as_deref(),
+            Some("src/main.rs")
+        );
+        for args in [
+            serde_json::json!({"command": "pwd"}),
+            serde_json::json!({"path": "src/main.rs"}),
+            serde_json::json!({"pattern": "todo", "path": "src"}),
+        ] {
+            let detail = super::approval_detail(&args).unwrap();
+            assert!(!detail.contains('{') && !detail.contains('"'), "{detail}");
+        }
+    }
     #[test]
     fn automatic_approval_only_covers_existing_workspace_files() {
         let base = std::env::temp_dir().join(format!("shob-permissions-{}", std::process::id()));
