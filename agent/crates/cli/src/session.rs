@@ -2029,7 +2029,7 @@ pub async fn reload_model_catalog_only(
         project_trusted,
         &extension_session,
     )
-    .map_err(|error| format!("重读模型清单失败：{error}"))?;
+    .map_err(|error| format!("Failed to reload the model catalog: {error}"))?;
 
     let catalog = crate::provider::authenticated_catalog(&resolved);
 
@@ -2044,7 +2044,7 @@ pub async fn reload_model_catalog_only(
     harness
         .set_models(providers)
         .await
-        .map_err(|error| format!("换模型运行时失败：{error}"))?;
+        .map_err(|error| format!("Failed to switch the model runtime: {error}"))?;
 
     // Publish the catalog to every reader: the action host (what `set_model`
     // resolves against) and the reload context (what the TUI renders).
@@ -2076,12 +2076,12 @@ pub async fn reload_model_catalog_only(
         .lane("main")
         .set_model(lane_model)
         .await
-        .map_err(|error| format!("设置当前模型失败：{error}"))?;
+        .map_err(|error| format!("Failed to set the current model: {error}"))?;
 
     tracing::info!(
         models = catalog.len(),
         provider = %resolved.model.provider,
-        "模型清单已重读（未重载扩展）"
+        "Model catalog reloaded"
     );
     Ok(catalog.len())
 }

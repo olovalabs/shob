@@ -28,7 +28,7 @@ use crate::visual_truncate::truncate_to_visual_lines;
 const PREVIEW_LINES: usize = 20;
 
 /// After this long without a result, a running bash panel shows the
-/// "Esc / Ctrl+C 中止" hint so users can cancel long commands before their deadline.
+/// "Esc or Ctrl+C to stop" hint so users can cancel long commands before their deadline.
 const LONG_RUNNING_HINT_AFTER: Duration = Duration::from_secs(60);
 
 /// Bash execution status.
@@ -360,7 +360,7 @@ impl BashExecutionComponent {
             // scrollback. Keep regular-mode transcript panels clock-independent;
             // the live dock owns animation/time and completion keeps total time.
             let status_text = if main_screen {
-                "running (Esc / Ctrl+C 中止)".to_string()
+                "running (Esc or Ctrl+C to stop)".to_string()
             } else {
                 crate::tool_execution::format_elapsed(elapsed)
             };
@@ -371,7 +371,7 @@ impl BashExecutionComponent {
             );
             lines.push(panel_line(&truncate_to_width(&row, content_width, "…")));
             if !main_screen && elapsed > LONG_RUNNING_HINT_AFTER {
-                let hint = format!("{} Esc / Ctrl+C 中止", colors.muted.fg("⏸"));
+                let hint = format!("{} Esc or Ctrl+C to stop", colors.muted.fg("⏸"));
                 for part in wrap_text_with_ansi(&hint, content_width) {
                     lines.push(panel_line(&part));
                 }
@@ -522,7 +522,7 @@ mod tests {
         let later = panel.shared_lines(80);
         let text = strip_ansi(&later.join("\n"));
         assert!(text.contains("1m5s"));
-        assert!(text.contains("Esc / Ctrl+C"));
+        assert!(text.contains("Esc or Ctrl+C to stop"));
         assert!(!Arc::ptr_eq(&updated, &later));
         assert!(panel.cache.lock().unwrap().is_none());
     }

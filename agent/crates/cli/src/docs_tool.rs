@@ -30,13 +30,13 @@ struct DocPage {
 static DOCS: &[DocPage] = &[
     DocPage {
         topic: "authoring",
-        description: "Rust cdylib 扩展开发最佳实践：统一 C ABI 入口、工具生命周期、事件处理器、资源发现、shob dev 开发、shob-extcore 复用边界与发布检查清单",
+        description: "Build Rust extensions with the C ABI, tool lifecycle, event handlers, resource discovery, and release checklist",
         content: include_str!("../embedded-docs/extension-authoring.md"),
         aliases: &["package-authoring", "extension-authoring", "create-package", "create-extension"],
     },
     DocPage {
         topic: "guide",
-        description: "完整使用手册：安装、模型、CLI、.shob 资源、Rust 扩展、SDK、排错和发布",
+        description: "User guide for installation, models, CLI commands, resources, extensions, the SDK, and troubleshooting",
         content: include_str!("../embedded-docs/user-guide.md"),
         aliases: &["manual", "user-guide", "cli", "quickstart", "package", "packages", "extension", "extensions"],
     },
@@ -48,7 +48,7 @@ static DOCS: &[DocPage] = &[
     },
     DocPage {
         topic: "agent",
-        description: "用 shob SDK 创建自己的 Agent 项目的默认结构与规范：目录布局、内嵌 Agent、cdylib 适配、工具单一登记点、prompts/skills、配置与开发循环",
+        description: "Create an agent with the Shob SDK, including project layout, embedding, tool registration, prompts, and skills",
         content: include_str!("../embedded-docs/agent-project.md"),
         aliases: &[
             "agent-project",
@@ -66,7 +66,7 @@ static DOCS: &[DocPage] = &[
     },
     DocPage {
         topic: "debugging",
-        description: "Rust cdylib 扩展编写（统一 C ABI、工具生命周期、事件处理器）与 agent/扩展调试（事件日志、shob dev-local、常见失败定位）",
+        description: "Debug Rust extensions and agents using event logs, shob dev-local, and common failure checks",
         content: include_str!("../embedded-docs/rust-debugging.md"),
         aliases: &["rust", "rust-debug", "extension-debug", "troubleshoot", "debug"],
     },
@@ -310,7 +310,7 @@ mod tests {
         assert!(output.contains("authoring"));
         assert!(output.contains("- agent:"));
         assert!(output.contains("debugging"));
-        assert!(output.contains("统一 C ABI"));
+        assert!(output.contains("C ABI"));
         assert!(!output.contains("ABI v3/v2"));
         assert!(!output.contains("- extensions:"));
         assert!(!output.contains("- compatibility:"));

@@ -644,10 +644,10 @@ pub(super) fn provider_selector_items(
             let manifest = manifests.iter().find(|manifest| manifest.id == id);
             let (origin, protocol) = provider_origin_protocol(&id, &models_cfg, manifest);
             let key_status = match auth_states.get(&id).map(|state| &state.source) {
-                Some(crate::credentials::CredentialSource::Anonymous) => "无需 key",
-                Some(crate::credentials::CredentialSource::Headers) => "已配置认证头",
-                Some(crate::credentials::CredentialSource::Missing) | None => "未配置 key",
-                _ => "已配置 key",
+                Some(crate::credentials::CredentialSource::Anonymous) => "No API key required",
+                Some(crate::credentials::CredentialSource::Headers) => "Auth headers configured",
+                Some(crate::credentials::CredentialSource::Missing) | None => "API key missing",
+                _ => "API key configured",
             };
             let description =
                 format!("{count} model(s) · {origin} · {protocol} · {key_status}{marker}");
@@ -729,23 +729,23 @@ pub(super) fn login_provider_items_with_oauth(
             let description = if oauth.is_some() || crate::native_auth::supports(&id) {
                 match source {
                     crate::credentials::CredentialSource::Missing => {
-                        "未配置 · OAuth 登录".to_string()
+                        "Not configured · Sign in with OAuth".to_string()
                     }
                     crate::credentials::CredentialSource::StoredOauth => {
-                        "已配置 · OAuth".to_string()
+                        "Configured · OAuth".to_string()
                     }
                     crate::credentials::CredentialSource::Environment(name) => {
-                        format!("环境变量 {name} · 可重新登录")
+                        format!("Environment variable {name} · Sign in again")
                     }
-                    _ => "已配置 · API key / OAuth".to_string(),
+                    _ => "Configured · API key or OAuth".to_string(),
                 }
             } else {
                 let status = match source {
-                    crate::credentials::CredentialSource::Missing => "未配置".to_string(),
+                    crate::credentials::CredentialSource::Missing => "Not configured".to_string(),
                     crate::credentials::CredentialSource::Environment(name) => {
-                        format!("环境变量 {name} · 可重新登录")
+                        format!("Environment variable {name} · Sign in again")
                     }
-                    _ => "已配置".to_string(),
+                    _ => "Configured".to_string(),
                 };
                 match env {
                     Some(env) => format!("{status} · API key / {env}"),
@@ -1448,27 +1448,27 @@ fn provider_origin_protocol(
             .and_then(|provider| provider.api.as_deref())
             .or_else(|| manifest.models.first().map(|model| model.api.as_str()));
         let protocol = match api {
-            Some("anthropic-messages") => "Anthropic 兼容",
-            Some("openai-completions" | "openai-responses") => "OpenAI 兼容",
-            _ => "自定义协议",
+            Some("anthropic-messages") => "Anthropic compatible",
+            Some("openai-completions" | "openai-responses") => "OpenAI compatible",
+            _ => "Custom protocol",
         };
         return ("package", protocol);
     }
     match id.to_ascii_lowercase().as_str() {
-        "anthropic" => ("内置", "Anthropic"),
-        "openai" => ("内置", "OpenAI"),
+        "anthropic" => ("Built-in", "Anthropic"),
+        "openai" => ("Built-in", "OpenAI"),
         _ => {
             let protocol = cfg
                 .providers
                 .get(id)
                 .and_then(|p| p.api.as_deref())
                 .map(|api| match api {
-                    "anthropic-messages" => "Anthropic 兼容",
-                    "openai-completions" | "openai-responses" => "OpenAI 兼容",
-                    _ => "自定义协议",
+                    "anthropic-messages" => "Anthropic compatible",
+                    "openai-completions" | "openai-responses" => "OpenAI compatible",
+                    _ => "Custom protocol",
                 })
-                .unwrap_or("自定义协议");
-            ("自定义", protocol)
+                .unwrap_or("Custom protocol");
+            ("Custom", protocol)
         }
     }
 }
@@ -1704,11 +1704,11 @@ fn show_provider_api_selector(
 ) {
     let items = vec![
         SelectItem::new("openai-completions", "OpenAI Completions")
-            .with_description("OpenAI Chat Completions 兼容接口"),
+            .with_description("OpenAI Chat Completions compatible API"),
         SelectItem::new("anthropic-messages", "Anthropic Messages")
-            .with_description("Anthropic Messages 兼容接口"),
+            .with_description("Anthropic Messages compatible API"),
         SelectItem::new("openai-responses", "OpenAI Responses")
-            .with_description("OpenAI Responses 接口"),
+            .with_description("OpenAI Responses API"),
     ];
     let list = Arc::new(SelectList::new(items, 3));
 

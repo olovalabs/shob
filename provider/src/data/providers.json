@@ -17490,7 +17490,7 @@
   },
   {
     "id": "zhipu-coding-plan",
-    "name": "Zhipu Coding Plan (\u667a\u8c31)",
+    "name": "Zhipu Coding Plan",
     "env_vars": [
       "ZHIPU_API_KEY"
     ],

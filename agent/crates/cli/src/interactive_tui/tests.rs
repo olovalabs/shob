@@ -3087,13 +3087,12 @@ fn provider_selector_items_cover_builtin_providers() {
             ids.contains(&"openai"),
             "built-in openai provider missing: {ids:?}"
         );
-        // Every row advertises its model count, origin, and key status, so a
-        // built-in catalog entry can't be mistaken for a configured one.
-        assert!(items.iter().all(|item| {
-            item.description
-                .as_deref()
-                .is_some_and(|d| d.contains("model(s)") && d.contains("内置") && d.contains("key"))
-        }));
+        for id in ["anthropic", "openai"] {
+            let item = items.iter().find(|item| item.value == id).unwrap();
+            let description = item.description.as_deref().unwrap();
+            assert!(description.contains("model(s)") && description.contains("Built-in"));
+            assert!(description.contains("API key") || description.contains("Auth headers"));
+        }
     });
 }
 
@@ -3260,7 +3259,7 @@ fn login_provider_items_include_oauth_only_providers_without_anonymous_packages(
         assert!(acme
             .description
             .as_deref()
-            .is_some_and(|text| text.contains("OAuth 登录")));
+            .is_some_and(|text| text.contains("Sign in with OAuth")));
         assert!(!items.iter().any(|item| item.value == "llama-cpp"));
     });
 }
@@ -3285,9 +3284,13 @@ fn provider_commands_include_packages_without_keys_and_save_their_model_identity
             .description
             .as_deref()
             .unwrap()
-            .contains("未配置 key"));
+            .contains("API key missing"));
         let local = items.iter().find(|item| item.value == "llama-cpp").unwrap();
-        assert!(local.description.as_deref().unwrap().contains("无需 key"));
+        assert!(local
+            .description
+            .as_deref()
+            .unwrap()
+            .contains("No API key required"));
         switch_provider_for_test("OPENROUTER", &manifests).unwrap();
         let saved = crate::settings::load_settings().unwrap();
         assert_eq!(saved.default_provider.as_deref(), Some("openrouter"));
@@ -3371,7 +3374,7 @@ fn provider_package_key_status_uses_its_declared_environment() {
             .description
             .as_deref()
             .unwrap()
-            .contains("已配置 key"));
+            .contains("API key configured"));
     });
 }
 

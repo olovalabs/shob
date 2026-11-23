@@ -91,12 +91,12 @@ fn pet_lines(state: &PetState, width: usize, height: usize, frame: u64) -> Vec<S
     let colors = current_theme().colors;
     let name = plain(&state.name).chars().take(24).collect::<String>();
     let (eyes, label) = match state.mood.as_str() {
-        "listen" => ("o.o", "认真听你说话"),
-        "think" => ("-.-", "让我想一想"),
-        "speak" => (if frame % 2 == 0 { "o.o" } else { "oOo" }, "正在回答你"),
-        "happy" => ("^.^", "完成啦！"),
-        "error" => (";.;", "遇到一点小问题"),
-        _ => ("-.-", "安静陪着你"),
+        "listen" => ("o.o", "Listening"),
+        "think" => ("-.-", "Thinking"),
+        "speak" => (if frame % 2 == 0 { "o.o" } else { "oOo" }, "Replying"),
+        "happy" => ("^.^", "Done!"),
+        "error" => (";.;", "Something went wrong"),
+        _ => ("-.-", "Keeping you company"),
     };
     let eyes = if state.mood == "listen" && frame % 25 == 24 {
         "-.-"
@@ -120,9 +120,9 @@ fn pet_lines(state: &PetState, width: usize, height: usize, frame: u64) -> Vec<S
         ]
     };
     let voice = if state.auto {
-        "● 连续对话"
+        "● Voice active"
     } else {
-        "○ 语音暂停"
+        "○ Voice paused"
     };
     let mut lines = vec![
         fit(
@@ -155,7 +155,7 @@ fn pet_lines(state: &PetState, width: usize, height: usize, frame: u64) -> Vec<S
         lines.push(String::new());
     }
     let speaker = if state.speaker == "user" {
-        "你"
+        "You"
     } else {
         &name
     };
@@ -176,9 +176,9 @@ fn pet_lines(state: &PetState, width: usize, height: usize, frame: u64) -> Vec<S
     if height > lines.len() + 1 {
         let hint = if state.hint.is_empty() {
             if state.auto {
-                "说完停一下，我就会回答。"
+                "Pause after speaking for a reply."
             } else {
-                "/pet auto 恢复语音"
+                "/pet auto Resume voice"
             }
         } else {
             &state.hint
@@ -186,7 +186,9 @@ fn pet_lines(state: &PetState, width: usize, height: usize, frame: u64) -> Vec<S
         lines.push(fit(&colors.muted.fg(&plain(hint)), width));
     }
     lines.push(fit(
-        &colors.muted.fg("/pet quiet 安静陪伴 · /pet off 返回聊天"),
+        &colors
+            .muted
+            .fg("/pet quiet Pause voice · /pet off Return to chat"),
         width,
     ));
     lines.truncate(height);
@@ -290,7 +292,7 @@ mod tests {
         let doc = PetDocument::new(transcript, mailbox.clone());
         assert!(doc.render(80).join("\n").contains("original chat"));
         mailbox.set(PET_KEY, &snapshot("listen"));
-        assert!(doc.render(80).join("\n").contains("认真听你说话"));
+        assert!(doc.render(80).join("\n").contains("Listening"));
         assert!(!doc.render(80).join("\n").contains("original chat"));
         for bad in ["broken", r#"{"version":2}"#, ""] {
             mailbox.set(PET_KEY, bad);
