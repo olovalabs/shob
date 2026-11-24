@@ -125,6 +125,20 @@ pub struct SlashCommand {
 pub struct FilePathAutocompleteProvider {
     root_path: Option<PathBuf>,
     max_results: usize,
+    /// The most recently read directory, validated by mtime on every query so
+    /// files created or deleted after a keystroke invalidate it. A single
+    /// entry (not a map): autocomplete re-queries one directory at a time.
+    cache: Mutex<Option<CachedDir>>,
+}
+
+/// Names cached per directory; larger directories skip the cache and scan
+/// directly, keeping memory bounded for pathological trees.
+const DIR_CACHE_MAX_ENTRIES: usize = 4096;
+
+struct CachedDir {
+    dir: PathBuf,
+    mtime: Option<std::time::SystemTime>,
+    entries: Arc<Vec<(Box<str>, bool)>>,
 }
 
 impl FilePathAutocompleteProvider {
@@ -133,6 +147,7 @@ impl FilePathAutocompleteProvider {
         Self {
             root_path: None,
             max_results: 50,
+            cache: Mutex::new(None),
         }
     }
 
@@ -141,6 +156,7 @@ impl FilePathAutocompleteProvider {
         Self {
             root_path: Some(root),
             max_results: 50,
+            cache: Mutex::new(None),
         }
     }
 
@@ -196,7 +212,10 @@ impl FilePathAutocompleteProvider {
         Some((token.to_string(), start))
     }
 
-    /// Get completions for a path prefix.
+    /// Get completions for a path prefix. Synchronous on purpose: the TUI
+    /// calls this per keystroke, and against the mtime-validated name cache a
+    /// scan of a warm directory is a filtered pass over in-memory names with
+    /// no syscalls and no per-entry allocations.
     fn get_path_completions(&self, prefix: &str) -> Vec<AutocompleteItem> {
         let mut items = Vec::new();
 
@@ -221,32 +240,88 @@ impl FilePathAutocompleteProvider {
             )
         };
 
-        // Read directory
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for entry in entries.take(self.max_results) {
-                if let Ok(entry) = entry {
-                    let name = entry.file_name().to_string_lossy().to_string();
-
-                    // Filter by prefix
-                    if !partial.is_empty()
-                        && !name.to_lowercase().starts_with(&partial.to_lowercase())
-                    {
-                        continue;
-                    }
-
-                    let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                    let text = if is_dir { format!("{}/", name) } else { name };
-
-                    items.push(
-                        AutocompleteItem::new(&text)
-                            .as_directory()
-                            .with_insert_space(!is_dir),
-                    );
-                }
+        let entries = self.cached_entries(&dir);
+        for (name, is_dir) in entries.iter().map(|(name, is_dir)| (name, is_dir)) {
+            let matches = if partial.is_empty() {
+                true
+            } else if name.is_ascii() && partial.is_ascii() {
+                // Allocation-free ASCII prefix compare, case-insensitive.
+                name.len() >= partial.len()
+                    && name.as_bytes()[..partial.len()].eq_ignore_ascii_case(partial.as_bytes())
+            } else {
+                // Rare non-ASCII path; the casefolded compare needs the same
+                // lowercase form the old code compared.
+                let lowered = name.to_lowercase();
+                lowered.starts_with(&partial.to_lowercase())
+            };
+            if !matches {
+                continue;
+            }
+            let text = if *is_dir {
+                format!("{name}/")
+            } else {
+                (*name).to_string()
+            };
+            items.push(
+                AutocompleteItem::new(&text)
+                    .as_directory()
+                    .with_insert_space(!*is_dir),
+            );
+            if items.len() >= self.max_results {
+                break;
             }
         }
 
         items
+    }
+
+    /// Directory names for filtering, from the single-entry cache when the
+    /// directory is small enough and unchanged, otherwise from a fresh
+    /// readdir. File type comes from readdir itself (no per-entry stat). A hit
+    /// returns an Arc bump: no per-entry allocation on the keystroke path.
+    fn cached_entries(&self, dir: &Path) -> Arc<Vec<(Box<str>, bool)>> {
+        let hit = self.cache.lock().ok().and_then(|slot| {
+            slot.as_ref()
+                .filter(|cached| cached.dir == dir && Self::dir_mtime(dir) == cached.mtime)
+                .map(|cached| Arc::clone(&cached.entries))
+        });
+        if let Some(entries) = hit {
+            return entries;
+        }
+        let mut entries = Vec::new();
+        let mut oversized = false;
+        if let Ok(read) = std::fs::read_dir(dir) {
+            for entry in read.flatten() {
+                let Ok(name) = entry.file_name().into_string() else {
+                    continue;
+                };
+                let Ok(file_type) = entry.file_type() else {
+                    continue;
+                };
+                entries.push((name.into_boxed_str(), file_type.is_dir()));
+                if entries.len() > DIR_CACHE_MAX_ENTRIES {
+                    oversized = true;
+                    break;
+                }
+            }
+        }
+        let entries = Arc::new(entries);
+        if !oversized {
+            if let Ok(mut slot) = self.cache.lock() {
+                *slot = Some(CachedDir {
+                    dir: dir.to_path_buf(),
+                    mtime: Self::dir_mtime(dir),
+                    entries: Arc::clone(&entries),
+                });
+            }
+        }
+        entries
+    }
+
+    fn dir_mtime(dir: &Path) -> Option<std::time::SystemTime> {
+        std::fs::metadata(dir)
+            .ok()
+            .and_then(|meta| meta.modified().ok())
     }
 }
 
