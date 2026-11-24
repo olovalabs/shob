@@ -103,7 +103,9 @@ Official builds check for stable Shob updates at launch. From your shell, run `s
 
 If your current release predates the updater, install the first release that includes it using your usual installation method.
 
-With `shob` on your `PATH`, run `shob` from any project folder to start the coding-agent TUI in your current terminal. If you haven't configured credentials, run `shob auth login --provider <id>` first. Run `shob gui` to open the desktop workspace, or `shob --help` for CLI options. Both modes ship in the same executable; no separate agent CLI is needed.
+With `shob` on your `PATH`, run `shob` from any project folder to start the coding-agent TUI in your current terminal. If no provider is connected, use `/login` inside the TUI. For scripts, configure credentials with `shob auth login --provider <id>`. Run `shob gui` to open the desktop workspace, or `shob --help` for CLI options. Both modes ship in the same executable.
+
+Press `Ctrl+V` or `Alt+V` in the TUI to attach a copied image. Each image gets an inline label such as `[Image 1]`. Reference those numbers in your instructions or delete a label to omit its image. Use `Alt+V` if your terminal intercepts `Ctrl+V`.
 
 ### Prerequisites
 

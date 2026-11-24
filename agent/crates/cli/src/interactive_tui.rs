@@ -78,6 +78,7 @@ use agent::{AgentEvent, AgentMessage};
 use ai::types::{AssistantMessage, Content, UserMessage};
 use harness::agent_harness::{AgentHarness, AgentLane, HarnessRunOutcome};
 use harness::session::types::{BranchBounds, Entry, EntryOrder, EntryQuery};
+use tui::editor::image_references;
 use tui::scroll_view::{OverscrollMode, ScrollbarMode};
 #[cfg(test)]
 use tui::strip_ansi;
@@ -1013,10 +1014,15 @@ pub async fn interactive_tui(
         .as_ref()
         .map(|model| model.id.clone())
         .unwrap_or_default();
-    let model_name = lane_model
-        .as_ref()
-        .map(|model| format!("({}) {}", model.provider, short_model_name(&model.id)))
-        .unwrap_or_else(|| short_model_name(&lane_model_id));
+    let disconnected = lane_model_id == crate::session::DISCONNECTED_MODEL_ID;
+    let model_name = lane_model.as_ref().map(model_label).unwrap_or_default();
+    let saved_theme = (disconnected && !no_themes && theme.is_none())
+        .then(|| {
+            preferred_project_setting(&project_settings, |settings| settings.theme.clone())
+                .or_else(|| saved_settings.theme.clone())
+        })
+        .flatten();
+    let theme = theme.or(saved_theme.as_deref());
 
     // Snapshot startup capabilities for the welcome screen. Both accessors
     // return defensive clones, so rendering this summary does not retain a
@@ -1124,6 +1130,9 @@ pub async fn interactive_tui(
     // this, and a stray write would corrupt the layout (issue #115).
     for notice in &reload_context.startup_notices {
         add_note_message(&history_page.header, notice);
+    }
+    if disconnected {
+        add_note_message(&history_page.header, NO_PROVIDER_NOTICE);
     }
 
     // First-launch gate: if `~/.shob/.setup_done` is absent, show the welcome
@@ -1318,7 +1327,7 @@ pub async fn interactive_tui(
         autocomplete_max_visible,
         autocomplete_selection: std::sync::Mutex::new(0),
         autocomplete_selection_stamped_for: std::sync::Mutex::new(None),
-        pending_images: std::sync::Mutex::new(Vec::new()),
+        pending_images: Default::default(),
         theme_manager,
         theme_registry: std::sync::RwLock::new(theme_registry),
         active_theme_spec: std::sync::Mutex::new(active_theme_spec),
@@ -1520,7 +1529,7 @@ pub async fn interactive_tui(
     let registry_for_cb = registry.clone();
     editor.on_submit(Arc::new(move |text: &str| {
         let text = text.trim();
-        if text.is_empty() && ctx_for_cb.state.pending_images.lock().unwrap().is_empty() {
+        if text.is_empty() {
             return;
         }
 
@@ -1545,10 +1554,15 @@ pub async fn interactive_tui(
             return;
         }
 
+        if !ctx_for_cb.state.require_provider() {
+            return;
+        }
+
         let run_status = *ctx_for_cb.state.status.lock().unwrap();
         if run_status != RunStatus::Idle {
             let images = ctx_for_cb.state.take_pending_images();
-            let message = user_message_with_images(text, images.clone());
+            let message = draft_message_with_images(text, images);
+            let images = message_images(&message);
             let lane = ctx_for_cb.lane.clone();
             let chat = ctx_for_cb.state.notice_container();
             let tui = ctx_for_cb.tui.clone();
@@ -1564,7 +1578,7 @@ pub async fn interactive_tui(
                 // next run. This matches the TS design and avoids the race
                 // between `activeRun` clearing and the status check.
                 if let Err(error) = lane.steer(message).await {
-                    state.restore_pending_images(images);
+                    state.queue_images(images);
                     add_error_message(&chat, &format!("Could not queue message: {error}"));
                     tui.render_now(false);
                     return;
@@ -2080,18 +2094,9 @@ pub async fn interactive_tui(
                         tui_for_key.request_render_reusing_scroll_content();
                         continue;
                     }
-                    if let Some(images) = images_from_pasted_paths(&text) {
-                        for image in images {
-                            state_for_key.queue_image(image);
-                        }
-                        add_note_message(
-                            &state_for_key.notice_container(),
-                            "Dropped images attached to the next prompt.",
-                        );
-                        tui_for_key.request_render(false);
-                        continue;
+                    if !attach_pasted_images(&state_for_key, &text) {
+                        editor_for_key.handle_paste(&text);
                     }
-                    editor_for_key.handle_paste(&text);
                     refresh_autocomplete(&state_for_key, &editor_for_key);
                     tui_for_key.request_render_reusing_scroll_content();
                 }
@@ -2658,28 +2663,24 @@ pub async fn interactive_tui(
                     windows_paste_run.end_paste_session();
                 }
                 if let Some(paths) = read_clipboard_file_paths() {
-                    let text = paths.join("\n");
-                    if let Some(images) = images_from_pasted_paths(&text) {
-                        for image in images {
-                            state_for_key.queue_image(image);
-                        }
-                        add_note_message(
-                            &state_for_key.notice_container(),
-                            "Clipboard images attached to the next prompt.",
-                        );
+                    if let Some(images) = images_from_paths(&paths) {
+                        state_for_key.queue_images(images);
                     } else {
+                        let text = paths
+                            .iter()
+                            .map(|path| path.to_string_lossy())
+                            .collect::<Vec<_>>()
+                            .join("\n");
                         editor_for_key.handle_paste(&text);
                     }
-                    tui_for_key.request_render(false);
+                    refresh_autocomplete(&state_for_key, &editor_for_key);
+                    tui_for_key.request_render_reusing_scroll_content();
                     continue;
                 }
                 if let Ok(Some(image)) = read_clipboard_image() {
                     state_for_key.queue_image(image);
-                    add_note_message(
-                        &state_for_key.notice_container(),
-                        "Clipboard image attached to the next prompt.",
-                    );
-                    tui_for_key.request_render(false);
+                    refresh_autocomplete(&state_for_key, &editor_for_key);
+                    tui_for_key.request_render_reusing_scroll_content();
                     continue;
                 }
                 // Local Ctrl+V can paste clipboard text as Pi does. Under SSH,
@@ -2872,7 +2873,10 @@ pub async fn interactive_tui(
                 tui::keybindings::keys::MESSAGE_FOLLOW_UP,
             ) {
                 let prompt = editor_for_key.get_expanded_text().trim().to_string();
-                if prompt.is_empty() && state_for_key.pending_images.lock().unwrap().is_empty() {
+                if prompt.is_empty() {
+                    continue;
+                }
+                if !state_for_key.require_provider() {
                     continue;
                 }
                 editor_for_key.clear();
@@ -2894,14 +2898,15 @@ pub async fn interactive_tui(
                     // `AgentEvent::MessageStart` once they are consumed; while
                     // they wait, the pending-messages display shows them.
                     let images = state_for_key.take_pending_images();
-                    let message = user_message_with_images(&prompt, images.clone());
+                    let message = draft_message_with_images(&prompt, images);
+                    let images = message_images(&message);
                     let lane = lane_for_key.clone();
                     let chat = state_for_key.notice_container();
                     let tui = tui_for_key.clone();
                     let state = state_for_key.clone();
                     tokio::spawn(async move {
                         if let Err(error) = lane.follow_up(message).await {
-                            state.restore_pending_images(images);
+                            state.queue_images(images);
                             add_error_message(&chat, &format!("Could not queue message: {error}"));
                             tui.request_render(false);
                             return;
@@ -3061,6 +3066,15 @@ pub async fn interactive_tui(
                     tui_for_key.request_render_reusing_scroll_content();
                     continue;
                 }
+                if state_for_key.current_model_id() == crate::session::DISCONNECTED_MODEL_ID {
+                    let draft = editor_for_key.get_text();
+                    if !draft.trim_start().starts_with(['/', '!'])
+                        && image_references(&draft).next().is_some()
+                    {
+                        state_for_key.require_provider();
+                        continue;
+                    }
+                }
             }
 
             // 6. Otherwise forward to the editor + refresh autocomplete. The
@@ -3102,20 +3116,18 @@ pub async fn interactive_tui(
     // want next. Driven here rather than inside the harness so the run's output
     // goes through the same streaming/render path as any other run, and so
     // startup is never blocked by a run the user cannot see.
-    if prompts.is_empty() && lane.has_pending_resume().await {
-        run_prompt_streaming(
-            &lane,
-            "",
-            true,
-            &tui,
-            &state,
-            drain_handle.is_some(),
-            Vec::new(),
-        )
-        .await;
+    let mut images = initial_images;
+    if disconnected {
+        if !prompts.is_empty() {
+            editor.set_text(&prompts.join("\n"));
+            prompts.clear();
+        }
+        state.queue_images(std::mem::take(&mut images));
+        tui.request_render(false);
+    } else if prompts.is_empty() && lane.has_pending_resume().await {
+        run_prompt_streaming(&lane, None, &tui, &state, drain_handle.is_some()).await;
     }
 
-    let mut images = initial_images;
     for prompt in prompts {
         if !*running.lock().unwrap() {
             break;
@@ -3128,12 +3140,13 @@ pub async fn interactive_tui(
         tui.request_render(false);
         run_prompt_streaming(
             &lane,
-            &prompt,
-            false,
+            Some(user_message_with_images(
+                &prompt,
+                std::mem::take(&mut images),
+            )),
             &tui,
             &state,
             drain_handle.is_some(),
-            std::mem::take(&mut images),
         )
         .await;
     }
@@ -3234,7 +3247,12 @@ pub async fn interactive_tui(
                 }
             }
             Some(TuiMessage::ProviderLoginComplete(provider)) => {
-                match crate::session::reload_model_catalog_only(harness, &ctx.reload_context).await
+                match crate::session::reload_model_catalog_only(
+                    harness,
+                    &ctx.reload_context,
+                    Some(&provider),
+                )
+                .await
                 {
                     Ok(_) => {
                         let manifests =
@@ -3262,35 +3280,12 @@ pub async fn interactive_tui(
                 tui.request_render(false);
             }
             Some(TuiMessage::UserInput(prompt, prompt_images)) => {
-                // Clear the editor so the next prompt starts fresh (the submit
-                // handler runs on the blocking key thread and can't mutate the
-                // editor state safely there; clearing here, on the async loop,
-                // keeps it on one thread). Marked programmatic: this is the host
-                // tidying up after a submit, not the user typing — reporting it
-                // as a user edit made a hands-free voice session switch itself
-                // off the moment it was started.
-                state.clear_editor_programmatically();
-                add_image_previews(
-                    &state.history_page.active,
-                    &prompt_images,
-                    state.images_visible(),
-                );
-                if !prompt_images.is_empty() {
-                    add_note_message(
-                        &state.notice_container(),
-                        &format!("Attached {} image(s) to this prompt.", prompt_images.len()),
-                    );
+                let message = draft_message_with_images(&prompt, prompt_images);
+                if let AgentMessage::User(user) = &message {
+                    add_user_images(&state.history_page.active, user, state.images_visible());
                 }
-                run_prompt_streaming(
-                    &lane,
-                    &prompt,
-                    false,
-                    &tui,
-                    &state,
-                    drain_handle.is_some(),
-                    prompt_images,
-                )
-                .await;
+                run_prompt_streaming(&lane, Some(message), &tui, &state, drain_handle.is_some())
+                    .await;
             }
             Some(TuiMessage::ExternalEditorResult(result)) => {
                 match result {
@@ -3700,7 +3695,13 @@ pub async fn interactive_tui(
                 // plugin events (unlike `ReloadExtensions` above, which swaps
                 // the extension session and blinds the in-flight run).
                 let reload_ctx = ctx.reload_context.clone();
-                let result = crate::session::reload_model_catalog_only(harness, &reload_ctx).await;
+                let result =
+                    crate::session::reload_model_catalog_only(harness, &reload_ctx, None).await;
+                if result.is_ok() {
+                    if let Ok(model) = lane.get_model().await {
+                        state.set_current_model(&model);
+                    }
+                }
                 // The caller is blocked on this reply — always answer, even on
                 // failure, or the plugin's action call hangs forever.
                 let _ = request.reply.send(result);
@@ -3722,6 +3723,9 @@ pub async fn interactive_tui(
                 let outcome =
                     crate::session::reload_extension_resources(harness, &reload_ctx).await;
                 if !outcome.had_errors {
+                    if let Ok(model) = lane.get_model().await {
+                        state.set_current_model(&model);
+                    }
                     if let Ok(resources) = harness.get_resources().await {
                         let global = crate::settings::load_settings().unwrap_or_default();
                         let project = if outcome.project_trusted.unwrap_or(project_trusted) {
@@ -3895,6 +3899,16 @@ pub async fn interactive_tui(
 /// Check if the terminal supports TUI mode.
 pub fn is_tui_supported() -> bool {
     std::io::stdout().is_terminal()
+}
+
+const NO_PROVIDER_NOTICE: &str = "No provider connected. Use /login to connect a provider.";
+
+fn model_label(model: &ai::Model) -> String {
+    if model.id == crate::session::DISCONNECTED_MODEL_ID {
+        "No provider connected".to_owned()
+    } else {
+        format!("({}) {}", model.provider, short_model_name(&model.id))
+    }
 }
 
 // Keep the `Color` import used (theme accent rendering in autocomplete).

@@ -287,7 +287,7 @@ pub(super) struct TuiState {
     /// the new prefix starts un-navigated.
     pub(super) autocomplete_selection_stamped_for: std::sync::Mutex<Option<String>>,
     /// Images queued from clipboard paste and attached to the next prompt.
-    pub(super) pending_images: std::sync::Mutex<Vec<ai::types::ImageContent>>,
+    pub(super) pending_images: Mutex<Vec<ai::types::ImageContent>>,
     /// The owned theme manager — `/theme` applies presets here. The global
     /// `theme()` is read-only after OnceLock init, so per-instance state is the
     /// only way to apply a preset at runtime.
@@ -1326,7 +1326,7 @@ pub(super) fn submit_draft(
     tx: &mpsc::UnboundedSender<TuiMessage>,
     text: &str,
 ) {
-    if text.trim().is_empty() || !state.try_start_working() {
+    if text.trim().is_empty() || !state.require_provider() || !state.try_start_working() {
         return;
     }
     add_user_message(&state.chat_container, text);
@@ -2030,15 +2030,22 @@ impl TuiState {
         self.current_model_id.lock().unwrap().clone()
     }
 
+    pub(super) fn require_provider(&self) -> bool {
+        if self.current_model_id() != crate::session::DISCONNECTED_MODEL_ID {
+            return true;
+        }
+        add_note_message(&self.notice_container(), NO_PROVIDER_NOTICE);
+        if let Some(tui) = &self.tui {
+            tui.request_render(false);
+        }
+        false
+    }
+
     /// Update the tracked model id + footer label after a switch (live or
     /// cycle). Called from the `/model` on_select and the Ctrl+P handler.
     pub(super) fn set_current_model(&self, model: &ai::Model) {
         *self.current_model_id.lock().unwrap() = model.id.clone();
-        self.footer.set_model(&format!(
-            "({}) {}",
-            model.provider,
-            short_model_name(&model.id)
-        ));
+        self.footer.set_model(&model_label(model));
         // A model switch changes the context window, so the `%/{window}` badge
         // must rescale against the same last-reported token count.
         self.footer.set_context_window(model.context_window as i64);
@@ -2110,17 +2117,37 @@ impl TuiState {
     }
 
     pub(super) fn queue_image(&self, image: ai::types::ImageContent) {
-        self.pending_images.lock().unwrap().push(image);
+        self.queue_images([image]);
+    }
+
+    pub(super) fn queue_images(&self, images: impl IntoIterator<Item = ai::types::ImageContent>) {
+        let mut markers = {
+            let mut pending = self.pending_images.lock().unwrap();
+            let start = pending.len();
+            pending.extend(images);
+            (start + 1..=pending.len())
+                .map(|id| format!("[Image {id}] "))
+                .collect::<String>()
+        };
+        if !markers.is_empty() {
+            let (row, col) = self.editor.cursor_position();
+            if self
+                .editor
+                .get_text()
+                .split('\n')
+                .nth(row)
+                .and_then(|line| line.get(..col))
+                .and_then(|prefix| prefix.chars().next_back())
+                .is_some_and(|ch| !ch.is_whitespace())
+            {
+                markers.insert(0, ' ');
+            }
+            self.editor.insert(&markers);
+        }
     }
 
     pub(super) fn take_pending_images(&self) -> Vec<ai::types::ImageContent> {
         std::mem::take(&mut *self.pending_images.lock().unwrap())
-    }
-
-    pub(super) fn restore_pending_images(&self, mut images: Vec<ai::types::ImageContent>) {
-        let mut pending = self.pending_images.lock().unwrap();
-        images.append(&mut *pending);
-        *pending = images;
     }
 
     pub(super) fn set_show_images(&self, show: bool) {

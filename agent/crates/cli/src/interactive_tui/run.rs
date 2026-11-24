@@ -190,17 +190,17 @@ pub(super) fn tui_session_storage_notice(error: &harness::result::HarnessError) 
 
 pub(super) async fn run_prompt_streaming(
     lane: &Arc<dyn AgentLane>,
-    prompt: &str,
-    resume: bool,
+    message: Option<AgentMessage>,
     tui: &Arc<TuiAltScreen>,
     state: &Arc<TuiState>,
     streaming: bool,
-    images: Vec<ai::types::ImageContent>,
 ) {
     state.set_status(RunStatus::Working);
     tui.request_render(false);
 
-    let outcome = if resume {
+    let outcome = if let Some(message) = message {
+        lane.prompt_message(message).await
+    } else {
         // Continuing an interrupted run: no new user turn, just the provider call
         // the interrupted run never reached. upstream behaves the same way.
         match lane.resume_pending().await {
@@ -214,8 +214,6 @@ pub(super) async fn run_prompt_streaming(
             }
             Err(error) => Err(error),
         }
-    } else {
-        lane.prompt_text(prompt, images).await
     };
 
     if streaming {
@@ -589,102 +587,39 @@ pub(super) fn read_clipboard_image() -> Result<Option<ai::types::ImageContent>, 
     }))
 }
 
-/// Finder copied files arrive as aliases, rather than clipboard bitmaps.
-#[cfg(all(target_os = "macos", feature = "clipboard"))]
-pub(super) fn read_clipboard_file_paths() -> Option<Vec<String>> {
-    let script = "try\nset items to the clipboard as alias list\nset paths to {}\nrepeat with itemPath in items\nset end of paths to POSIX path of itemPath\nend repeat\nset AppleScript's text item delimiters to linefeed\nreturn paths as text\non error\nreturn \"\"\nend try";
-    let output = std::process::Command::new("osascript")
-        .args(["-e", script])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8(output.stdout).ok()?;
-    let paths: Vec<String> = text
-        .lines()
-        .filter(|line| !line.is_empty())
-        .map(str::to_owned)
-        .collect();
-    if paths.is_empty() {
-        None
-    } else {
-        Some(paths)
-    }
+#[cfg(all(feature = "clipboard", not(target_os = "android")))]
+pub(super) fn read_clipboard_file_paths() -> Option<Vec<std::path::PathBuf>> {
+    with_shared_clipboard(|clipboard| clipboard.get().file_list().ok())
+        .flatten()
+        .filter(|paths| !paths.is_empty())
 }
 
-/// Explorer's copied files use CF_HDROP rather than a bitmap or plain text.
-#[cfg(all(windows, feature = "clipboard"))]
-pub(super) fn read_clipboard_file_paths() -> Option<Vec<String>> {
-    use windows_sys::Win32::System::DataExchange::{
-        CloseClipboard, GetClipboardData, OpenClipboard,
-    };
-    use windows_sys::Win32::UI::Shell::DragQueryFileW;
-    const CF_HDROP: u32 = 15;
-
-    struct ClipboardRead;
-    impl Drop for ClipboardRead {
-        fn drop(&mut self) {
-            // SAFETY: this guard exists only after OpenClipboard succeeds.
-            unsafe {
-                CloseClipboard();
-            }
-        }
-    }
-
-    // SAFETY: null HWND is supported; the clipboard is opened only for reading.
-    if unsafe { OpenClipboard(std::ptr::null_mut()) } == 0 {
-        return None;
-    }
-    let _guard = ClipboardRead;
-    // SAFETY: the clipboard remains open while its borrowed HDROP is queried.
-    let drop = unsafe { GetClipboardData(CF_HDROP) };
-    if drop.is_null() {
-        return None;
-    }
-    let count = unsafe { DragQueryFileW(drop, u32::MAX, std::ptr::null_mut(), 0) };
-    let mut paths = Vec::new();
-    for index in 0..count {
-        // SAFETY: query the length first, then provide that many UTF-16 units
-        // plus the terminator. No DragFinish: the handle belongs to the clipboard.
-        let length = unsafe { DragQueryFileW(drop, index, std::ptr::null_mut(), 0) };
-        if length == 0 {
-            continue;
-        }
-        let mut buffer = vec![0u16; length as usize + 1];
-        let copied =
-            unsafe { DragQueryFileW(drop, index, buffer.as_mut_ptr(), buffer.len() as u32) };
-        if copied == 0 {
-            continue;
-        }
-        let path = String::from_utf16(&buffer[..copied as usize]).ok()?;
-        paths.push(path);
-    }
-    if paths.is_empty() {
-        None
-    } else {
-        Some(paths)
-    }
-}
-
-#[cfg(not(all(any(target_os = "macos", windows), feature = "clipboard")))]
-pub(super) fn read_clipboard_file_paths() -> Option<Vec<String>> {
+#[cfg(any(not(feature = "clipboard"), target_os = "android"))]
+pub(super) fn read_clipboard_file_paths() -> Option<Vec<std::path::PathBuf>> {
     None
 }
 
-pub(super) fn attach_pasted_images(state: &Arc<TuiState>, text: &str) -> bool {
+pub(super) fn attach_pasted_images(state: &TuiState, text: &str) -> bool {
     let Some(images) = images_from_pasted_paths(text) else {
         return false;
     };
-    let count = images.len();
-    for image in images {
-        state.queue_image(image);
-    }
-    add_note_message(
-        &state.notice_container(),
-        &format!("Attached {count} image(s) to the next prompt."),
-    );
+    state.queue_images(images);
     true
+}
+
+pub(super) fn images_from_paths(
+    paths: &[impl AsRef<std::path::Path>],
+) -> Option<Vec<ai::types::ImageContent>> {
+    paths
+        .iter()
+        .map(|path| {
+            let path = path.as_ref();
+            if !path.is_file() {
+                return None;
+            }
+            crate::app::image_content_from_path(path).ok().flatten()
+        })
+        .collect()
 }
 
 /// Consume a paste as attachments only when every path is an actual image.
@@ -739,14 +674,7 @@ pub(super) fn images_from_pasted_paths(text: &str) -> Option<Vec<ai::types::Imag
     if paths.is_empty() {
         return None;
     }
-    paths
-        .iter()
-        .map(|path| {
-            crate::app::image_content_from_path(std::path::Path::new(path))
-                .ok()
-                .flatten()
-        })
-        .collect()
+    images_from_paths(&paths)
 }
 
 pub(super) fn user_message_with_images(
@@ -768,6 +696,86 @@ pub(super) fn user_message_with_images(
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or_default();
     AgentMessage::User(UserMessage::new(content, timestamp))
+}
+
+pub(super) fn renumber_image_references(text: &str, positions: &[usize], offset: usize) -> String {
+    if positions.is_empty() {
+        return text.to_owned();
+    }
+    let mut ids = HashMap::new();
+    let mut labeled = vec![false; positions.len()];
+    for (_, end, id) in image_references(text) {
+        let index = positions.partition_point(|position| *position < end);
+        if positions.get(index) == Some(&end) {
+            ids.insert(id, offset + index + 1);
+            labeled[index] = true;
+        }
+    }
+    let mut result = String::new();
+    let mut cursor = 0;
+    for (start, end, id) in image_references(text) {
+        if let Some(id) = ids.get(&id) {
+            result.push_str(&text[cursor..start]);
+            result.push_str(&format!("[Image {id}]"));
+            cursor = end;
+        }
+    }
+    result.push_str(&text[cursor..]);
+    for (index, labeled) in labeled.into_iter().enumerate() {
+        if labeled {
+            continue;
+        }
+        if !result.is_empty() && !result.ends_with(char::is_whitespace) {
+            result.push(' ');
+        }
+        let id = offset + index + 1;
+        result.push_str(&format!("[Image {id}]"));
+    }
+    result
+}
+
+pub(super) fn draft_message_with_images(
+    text: &str,
+    images: Vec<ai::types::ImageContent>,
+) -> AgentMessage {
+    if images.is_empty() {
+        return user_message_with_images(text, images);
+    }
+    let mut images: Vec<_> = images.into_iter().map(Some).collect();
+    let mut blocks = Vec::new();
+    let mut cursor = 0;
+    for (_, end, id) in image_references(text) {
+        if let Some(image) = images.get_mut(id - 1).and_then(Option::take) {
+            blocks.push(ai::types::Content::text(&text[cursor..end]));
+            blocks.push(ai::types::Content::Image(image));
+            cursor = end;
+        }
+    }
+    if blocks.is_empty() {
+        return user_message_with_images(text, Vec::new());
+    }
+    if cursor < text.len() {
+        blocks.push(ai::types::Content::text(&text[cursor..]));
+    }
+    AgentMessage::User(UserMessage::new(
+        ai::types::UserContent::Blocks(blocks),
+        now_ms(),
+    ))
+}
+
+pub(super) fn message_images(message: &AgentMessage) -> Vec<ai::types::ImageContent> {
+    if let AgentMessage::User(user) = message {
+        if let ai::types::UserContent::Blocks(blocks) = &user.content {
+            return blocks
+                .iter()
+                .filter_map(|block| match block {
+                    ai::types::Content::Image(image) => Some(image.clone()),
+                    _ => None,
+                })
+                .collect();
+        }
+    }
+    Vec::new()
 }
 
 pub(super) fn add_image_previews(

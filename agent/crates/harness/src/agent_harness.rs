@@ -274,6 +274,8 @@ pub struct QueuedMessageView {
     pub text: String,
     /// Image attachments of this specific message.
     pub images: Vec<ai::types::ImageContent>,
+    /// Byte offset in `text` immediately before each image block.
+    pub image_text_offsets: Vec<usize>,
 }
 
 impl QueuedMessageView {
@@ -284,23 +286,30 @@ impl QueuedMessageView {
 
     /// Convert back to an [`AgentMessage`], preserving text **and** images.
     ///
-    /// A message with images becomes `UserContent::Blocks` (text block first,
-    /// then the images); a text-only message stays `UserContent::Text` so it
-    /// round-trips with what the user typed.
+    /// Image blocks retain their offsets within the projected message text.
     pub fn into_message(self) -> AgentMessage {
-        use ai::types::{Content, TextContent, TextContentType, UserContent};
+        use ai::types::{Content, UserContent};
         let content = if self.images.is_empty() {
             UserContent::Text(self.text)
         } else {
             let mut blocks: Vec<Content> = Vec::with_capacity(self.images.len() + 1);
-            if !self.text.is_empty() {
-                blocks.push(Content::Text(TextContent {
-                    kind: TextContentType,
-                    text: self.text,
-                    text_signature: None,
-                }));
+            let mut cursor = 0;
+            for (index, image) in self.images.into_iter().enumerate() {
+                let offset = self
+                    .image_text_offsets
+                    .get(index)
+                    .copied()
+                    .filter(|offset| *offset >= cursor && self.text.is_char_boundary(*offset))
+                    .unwrap_or(self.text.len());
+                if offset > cursor {
+                    blocks.push(Content::text(&self.text[cursor..offset]));
+                    cursor = offset;
+                }
+                blocks.push(Content::Image(image));
             }
-            blocks.extend(self.images.into_iter().map(Content::Image));
+            if cursor < self.text.len() {
+                blocks.push(Content::text(&self.text[cursor..]));
+            }
             UserContent::Blocks(blocks)
         };
         AgentMessage::User(ai::types::UserMessage::new(content, 0))
@@ -333,18 +342,35 @@ fn queued_message_text(message: &AgentMessage) -> String {
 /// `images: Vec<ImageContent>`: two queued messages can each carry a different
 /// picture, and a flat image list cannot express which is which.
 fn queued_message_view(message: &AgentMessage) -> QueuedMessageView {
+    let mut text = String::new();
     let mut images = Vec::new();
+    let mut image_text_offsets = Vec::new();
+    let mut interleaved = false;
     if let AgentMessage::User(user) = message {
         if let ai::types::UserContent::Blocks(blocks) = &user.content {
-            images.extend(blocks.iter().filter_map(|block| match block {
-                ai::types::Content::Image(image) => Some(image.clone()),
-                _ => None,
-            }));
+            for block in blocks {
+                match block {
+                    ai::types::Content::Text(part) => {
+                        interleaved |= !images.is_empty();
+                        text.push_str(&part.text);
+                    }
+                    ai::types::Content::Image(image) => {
+                        images.push(image.clone());
+                        image_text_offsets.push(text.len());
+                    }
+                    _ => {}
+                }
+            }
         }
     }
+    if !interleaved {
+        text = queued_message_text(message);
+        image_text_offsets.fill(text.len());
+    }
     QueuedMessageView {
-        text: queued_message_text(message),
+        text,
         images,
+        image_text_offsets,
     }
 }
 

@@ -22,7 +22,7 @@ use ai::types::{ImageContent, ImageContentType};
 
 use crate::args::{parse_args, print_help, print_version, resolve_mode, Args, RunMode};
 use crate::provider::{resolve_with_extensions, ResolveError};
-use crate::session::{build_prepared, prepare_extensions, BuildError};
+use crate::session::{build_prepared_session, prepare_extensions, BuildError};
 use crate::startup_diagnostics::{Phase, StartupSpan};
 
 /// The exit code for a usage/parse error. (TS `main.ts` uses `process.exit(1)`
@@ -405,6 +405,7 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
         }
     };
     extension_prepare.finish();
+    let startup_mode = effective_run_mode(&parsed, prepared.extension_session.owns_stdio(), false);
     let model_resolve = StartupSpan::start(Phase::ModelResolve);
     let resolved = match resolve_with_extensions(
         &parsed,
@@ -412,7 +413,8 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
         project_trusted,
         &prepared.extension_session,
     ) {
-        Ok(r) => r,
+        Ok(r) => Some(r),
+        Err(ResolveError::NoApiKey { .. }) if startup_mode == RunMode::Interactive => None,
         Err(e) => {
             print_resolve_error(&e);
             return match e {
@@ -423,20 +425,25 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
     };
 
     model_resolve.finish();
-    for warning in &resolved.compat_warnings {
-        eprintln!("warning: models.json: {warning}");
+    if let Some(resolved) = &resolved {
+        for warning in &resolved.compat_warnings {
+            eprintln!("warning: models.json: {warning}");
+        }
     }
 
     // The full authenticated catalog (read-only) for the TUI's `/model`
     // selector, derived from the built provider runtimes so auth headers and
     // base-url overrides survive.
-    let model_catalog = crate::provider::authenticated_catalog(&resolved);
+    let model_catalog = resolved
+        .as_ref()
+        .map(crate::provider::authenticated_catalog)
+        .unwrap_or_default();
 
     // `--models <patterns>`: persist the Ctrl+P cycle scope to settings.json
     // (the same set `/scoped-models` edits). Each pattern matches catalog ids
     // case-insensitively; unmatched patterns are reported so a typo doesn't
     // silently empty the cycle.
-    if let Some(patterns) = &parsed.models {
+    if let Some(patterns) = parsed.models.as_ref().filter(|_| resolved.is_some()) {
         let mut matched: Vec<String> = Vec::new();
         for p in patterns {
             let hits: Vec<String> = model_catalog
@@ -463,7 +470,9 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
     // ---- harness build ----
     let harness_build = StartupSpan::start(Phase::HarnessBuild);
     let (harness, event_rx, mut reload_context) =
-        match build_prepared(&resolved, &parsed, &cwd, project_trusted, prepared).await {
+        match build_prepared_session(resolved.as_ref(), &parsed, &cwd, project_trusted, prepared)
+            .await
+        {
             Ok(triple) => triple,
             Err(e) => {
                 print_build_error(&e);
@@ -533,35 +542,7 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
     let (initial, extra) = build_initial_message(&parsed, stdin_text.as_deref(), file_text_opt);
 
     // ---- mode dispatch (TS resolveAppMode → runPrintMode / InteractiveMode / runRpcMode) ----
-    let stdin_is_tty = std::io::stdin().is_terminal();
-    let stdout_is_tty = std::io::stdout().is_terminal();
-    let mode = resolve_mode(&parsed, stdin_is_tty, stdout_is_tty);
-
-    // TS downgrades interactive → print when piped stdin is present.
-    let mode = if matches!(mode, RunMode::Interactive) && stdin_text.is_some() {
-        RunMode::Print
-    } else {
-        mode
-    };
-
-    // Debug/testing escape hatch: SHOB_FORCE_TUI=1 forces interactive mode
-    // (for testing the TUI in non-TTY environments).
-    let mode = if std::env::var("SHOB_FORCE_TUI")
-        .map(|v| v == "1")
-        .unwrap_or(false)
-    {
-        RunMode::Interactive
-    } else {
-        mode
-    };
-
-    // A plugin that claimed stdio owns this process's stdin/stdout: force the
-    // headless Rpc lifecycle (dispatch startup events, then wait for completion)
-    // and let the plugin's own protocol server read/write stdio. This is
-    // authoritative — it must win over TTY detection and SHOB_FORCE_TUI,
-    // otherwise the host would start a TUI/print run that writes to a stream the
-    // plugin owns.
-    let mode = if stdio_claimed { RunMode::Rpc } else { mode };
+    let mode = effective_run_mode(&parsed, stdio_claimed, stdin_text.is_some());
     if let Err(error) =
         crate::native_store::validate_mode(parsed.experimental_native_store.is_some(), mode)
     {
@@ -625,7 +606,11 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
                 if parsed.no_themes {
                     None
                 } else {
-                    parsed.theme.as_deref().or(resolved.theme.as_deref())
+                    parsed.theme.as_deref().or_else(|| {
+                        resolved
+                            .as_ref()
+                            .and_then(|resolved| resolved.theme.as_deref())
+                    })
                 },
                 parsed.no_themes,
                 &reload_context,
@@ -731,6 +716,26 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
         dev.cleanup();
     }
     exit_code
+}
+
+fn effective_run_mode(args: &Args, stdio_claimed: bool, piped_input: bool) -> RunMode {
+    // Extension-owned stdio takes precedence over forced TUI mode.
+    if stdio_claimed {
+        return RunMode::Rpc;
+    }
+    if std::env::var("SHOB_FORCE_TUI").is_ok_and(|value| value == "1") {
+        return RunMode::Interactive;
+    }
+    let mode = resolve_mode(
+        args,
+        std::io::stdin().is_terminal(),
+        std::io::stdout().is_terminal(),
+    );
+    if mode == RunMode::Interactive && piped_input {
+        RunMode::Print
+    } else {
+        mode
+    }
 }
 
 fn handle_parse_short_circuits(parsed: &Args) -> Option<i32> {

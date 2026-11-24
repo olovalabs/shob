@@ -230,18 +230,11 @@ impl Keybindings {
         map.insert(
             "app.clipboard.pasteImage",
             KeybindingDefinition {
-                // Upstream: `alt+v` on Windows, `ctrl+v` elsewhere. shob keeps
-                // `ctrl+v` on Windows too — its clipboard *text* fallback
-                // (crossterm never emits `Event::Paste` on the Windows console)
-                // rides the same binding, so native's key is added, not swapped.
-                default_keys: if cfg!(windows) {
-                    vec![
-                        KeyCombo::new(Char('v'), M::CONTROL),
-                        KeyCombo::new(Char('v'), M::ALT),
-                    ]
-                } else {
-                    vec![KeyCombo::new(Char('v'), M::CONTROL)]
-                },
+                // Alt+V reaches the TUI when the host terminal intercepts Ctrl+V.
+                default_keys: vec![
+                    KeyCombo::new(Char('v'), M::CONTROL),
+                    KeyCombo::new(Char('v'), M::ALT),
+                ],
                 description: Some("Paste image from clipboard"),
             },
         );

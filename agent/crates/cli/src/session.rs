@@ -818,7 +818,7 @@ pub async fn build_with_tool_hooks(
 > {
     let prepared = prepare_extensions(args, cwd, project_trusted)?;
     build_prepared_with_tool_hook_full(
-        resolved,
+        Some(resolved),
         args,
         cwd,
         project_trusted,
@@ -843,16 +843,17 @@ pub async fn build_prepared(
     ),
     BuildError,
 > {
-    build_prepared_with_tool_hook(resolved, args, cwd, project_trusted, prepared, None).await
+    build_prepared_session(Some(resolved), args, cwd, project_trusted, prepared).await
 }
 
-async fn build_prepared_with_tool_hook(
-    resolved: &ResolvedModel,
+pub(crate) const DISCONNECTED_MODEL_ID: &str = "\0disconnected";
+
+pub(crate) async fn build_prepared_session(
+    resolved: Option<&ResolvedModel>,
     args: &Args,
     cwd: &Path,
     project_trusted: bool,
     prepared: PreparedExtensions,
-    host_tool_hook: Option<agent::BeforeToolCall>,
 ) -> Result<
     (
         AgentHarness,
@@ -861,20 +862,12 @@ async fn build_prepared_with_tool_hook(
     ),
     BuildError,
 > {
-    build_prepared_with_tool_hook_full(
-        resolved,
-        args,
-        cwd,
-        project_trusted,
-        prepared,
-        host_tool_hook,
-        None,
-    )
-    .await
+    build_prepared_with_tool_hook_full(resolved, args, cwd, project_trusted, prepared, None, None)
+        .await
 }
 
 async fn build_prepared_with_tool_hook_full(
-    resolved: &ResolvedModel,
+    resolved: Option<&ResolvedModel>,
     args: &Args,
     cwd: &Path,
     project_trusted: bool,
@@ -926,7 +919,24 @@ async fn build_prepared_with_tool_hook_full(
         action_bridge,
         extension_session,
     } = prepared;
-    let catalog = crate::provider::authenticated_catalog(resolved);
+    let catalog = resolved
+        .map(crate::provider::authenticated_catalog)
+        .unwrap_or_default();
+    let providers = resolved
+        .map(|resolved| resolved.providers.clone())
+        .unwrap_or_default();
+    let model = resolved
+        .map(|resolved| resolved.model.clone())
+        .unwrap_or_else(|| {
+            // The harness requires a model descriptor even with an empty provider registry.
+            ai::Model::new(
+                DISCONNECTED_MODEL_ID,
+                "",
+                ai::Api::Other(String::new()),
+                "",
+                "",
+            )
+        });
     action_host.set_catalog(catalog.clone());
 
     // ---- Execution env + tools ----
@@ -1010,7 +1020,7 @@ async fn build_prepared_with_tool_hook_full(
     // direction as skills/prompts precedence.
     // Whether this model sees its own prior reasoning again decides how the
     // working-state rule is worded (see `default_system_prompt`).
-    let prior_reasoning_replayed = ai::model::prior_reasoning_is_replayed(&resolved.model);
+    let prior_reasoning_replayed = ai::model::prior_reasoning_is_replayed(&model);
     let prompt_tools = active.clone();
     let prompt_metadata = extension_tool_prompt_metadata(&extension_session);
     let default_prompt = || {
@@ -1363,8 +1373,11 @@ async fn build_prepared_with_tool_hook_full(
     });
 
     let options = AgentHarnessOptions {
-        model: resolved.model.clone(),
-        thinking_level: resolved.thinking_level,
+        model: model.clone(),
+        thinking_level: resolved
+            .map(|resolved| resolved.thinking_level)
+            .or(args.thinking)
+            .unwrap_or(crate::provider::DEFAULT_THINKING_LEVEL),
         active_tool_names: active.clone(),
         tools,
         system_prompt: Some(system_prompt),
@@ -1418,7 +1431,15 @@ async fn build_prepared_with_tool_hook_full(
         // so a catalog model whose `provider` matches an extension provider's id
         // routes to it. Extension providers land AFTER the gateway so the gateway
         // stays first-match for its own ids (first-wins on a `.find`).
-        models: build_models_with_extensions(resolved, &extension_session, runtime.clone()),
+        models: resolved
+            .map(|_| {
+                build_models_with_extensions_for_reload(
+                    &providers,
+                    &extension_session,
+                    runtime.clone(),
+                )
+            })
+            .unwrap_or_default(),
         to_provider_messages: None,
         entry_projectors: Default::default(),
         agent_emitter: Some(emitter),
@@ -1599,13 +1620,13 @@ async fn build_prepared_with_tool_hook_full(
         tool_context,
         file_io,
         catalog: Arc::new(std::sync::RwLock::new(catalog)),
-        providers: Arc::new(std::sync::RwLock::new(resolved.providers.clone())),
+        providers: Arc::new(std::sync::RwLock::new(providers)),
         runtime: runtime.clone(),
         cwd: cwd.to_path_buf(),
         project_trusted,
         discovered_theme_paths: Arc::new(std::sync::Mutex::new(discovered.theme_paths.clone())),
         args: reload_args,
-        resolved_model: resolved.model.clone(),
+        resolved_model: model,
         broadcast: broadcast_for_context,
         mailbox: reload_mailbox,
         // Request channel for `runtime_action(ReloadModels)` — the TUI installs
@@ -1984,6 +2005,7 @@ pub async fn reload_extension_resources(
 pub async fn reload_model_catalog_only(
     harness: &AgentHarness,
     ctx: &ReloadContext,
+    login_provider: Option<&str>,
 ) -> Result<usize, String> {
     let project_trusted = resolve_project_trust(&ctx.args, &ctx.cwd);
 
@@ -1998,7 +2020,10 @@ pub async fn reload_model_catalog_only(
     // a catalog refresh does not silently switch the user to another model.
     let mut args = ctx.args.clone();
     let current = harness.lane("main").get_model().await.ok();
-    if let Some(model) = current.as_ref() {
+    if let Some(model) = current
+        .as_ref()
+        .filter(|model| model.id != DISCONNECTED_MODEL_ID)
+    {
         args.provider = Some(model.provider.clone());
         args.model = Some(model.id.clone());
         // ⚠️ 只在 **provider 变了** 时清掉 CLI 覆盖的密钥 / endpoint。
@@ -2015,6 +2040,16 @@ pub async fn reload_model_catalog_only(
             args.api_key = None;
             args.base_url = None;
         }
+    } else if let Some(provider) = login_provider.filter(|provider| {
+        !args
+            .provider
+            .as_deref()
+            .is_some_and(|id| id.eq_ignore_ascii_case(provider))
+    }) {
+        args.provider = Some(provider.to_owned());
+        args.model = None;
+        args.api_key = None;
+        args.base_url = None;
     }
     // Keep the lane's current thinking level: the catalog refresh is about
     // *which models exist*, not about changing how the current one thinks.
@@ -2257,9 +2292,13 @@ where
     };
     let packaged = has_package_providers(&extension_session)
         || has_package_providers(&ctx.extension_session.lock().unwrap());
-    let refreshed = if packaged {
+    let current_model = harness.lane("main").get_model().await.ok();
+    let disconnected = current_model
+        .as_ref()
+        .is_some_and(|model| model.id == DISCONNECTED_MODEL_ID);
+    let refreshed = if packaged || disconnected {
         let mut args = effective_args.clone();
-        if let Ok(current) = harness.lane("main").get_model().await {
+        if let Some(current) = current_model.filter(|model| model.id != DISCONNECTED_MODEL_ID) {
             let was_package = ctx
                 .extension_session
                 .lock()
@@ -2282,7 +2321,7 @@ where
                     )],
                     had_errors: true,
                     project_trusted: None,
-                };
+                }
             }
             args.provider = Some(current.provider.clone());
             args.model = Some(current.id);
@@ -2298,6 +2337,7 @@ where
             &extension_session,
         ) {
             Ok(resolved) => Some(resolved),
+            Err(crate::provider::ResolveError::NoApiKey { .. }) if disconnected => None,
             Err(error) => {
                 return ReloadOutcome {
                     summary: "Reload failed while resolving provider packages".into(),
@@ -2305,7 +2345,7 @@ where
                     details: vec![error.to_string()],
                     had_errors: true,
                     project_trusted: None,
-                }
+                };
             }
         }
     } else {
@@ -2838,16 +2878,6 @@ pub enum BuildError {
     SessionNotFound { requested: String, dir: String },
     #[error("Could not build the harness: {0}")]
     HarnessCreate(String),
-}
-
-/// Keep configured factories (including package-specific auth and catalogs)
-/// first, then append legacy plugin registrations that have no runtime yet.
-fn build_models_with_extensions(
-    resolved: &ResolvedModel,
-    extension_session: &ExtensionSession,
-    runtime: tokio::runtime::Handle,
-) -> Vec<Arc<dyn Provider>> {
-    build_models_with_extensions_for_reload(&resolved.providers, extension_session, runtime)
 }
 
 /// Resolve project resource loading without prompting. Explicit CLI overrides

@@ -244,7 +244,7 @@ mod reservation_tests {
             .iter()
             .map(|text| QueuedMessageView {
                 text: (*text).into(),
-                images: Vec::new(),
+                ..Default::default()
             })
             .collect()
     }

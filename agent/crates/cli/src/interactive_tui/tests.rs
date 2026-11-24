@@ -169,22 +169,44 @@ fn pasted_images_accept_multiple_quoted_paths_without_consuming_normal_text() {
     );
     assert!(images_from_pasted_paths("please inspect these images").is_none());
     let state = test_tui_state();
-    let images = images_from_pasted_paths(&quoted).unwrap();
-    for image in &images {
-        state.queue_image(image.clone());
-    }
-    let sent = state.take_pending_images();
-    assert!(state.take_pending_images().is_empty());
-    state.queue_image(images[0].clone());
-    state.restore_pending_images(sent);
-    assert_eq!(state.take_pending_images().len(), 3);
+    let images = images_from_paths(&[&first, &second]).unwrap();
+    state.queue_images(images.iter().cloned());
+    assert_eq!(state.editor.get_text(), "[Image 1] [Image 2] ");
+    let mut images = state.take_pending_images();
+    images[1].data = "second image".into();
+    let message = draft_message_with_images(
+        "[Image 2] use the colors; [Image 1] use the layout; compare with [Image 2]",
+        images.clone(),
+    );
+    assert_eq!(
+        message_images(&message),
+        vec![images[1].clone(), images[0].clone()]
+    );
+    let AgentMessage::User(user) = message else {
+        panic!("expected user message")
+    };
+    let ai::types::UserContent::Blocks(blocks) = user.content else {
+        panic!("expected image blocks")
+    };
+    assert!(matches!(&blocks[0], ai::types::Content::Text(text) if text.text == "[Image 2]"));
+    assert!(
+        matches!(&blocks[2], ai::types::Content::Text(text) if text.text == " use the colors; [Image 1]")
+    );
+    let message = draft_message_with_images("Use [Image 2] for color", images.clone());
+    assert_eq!(message_images(&message), vec![images[1].clone()]);
+    assert_eq!(
+        renumber_image_references("[Image 9] then [Image 4] and [Image 9]", &[9, 24], 1),
+        "[Image 2] then [Image 3] and [Image 2]"
+    );
+
     state.editor.set_text("existing draft");
+    state.editor.set_cursor(0, "existing draft".len());
     assert!(attach_pasted_images(
         &state,
         &format!("\"{}\"", first.display())
     ));
     assert_eq!(state.take_pending_images().len(), 1);
-    assert_eq!(state.editor.get_text(), "existing draft");
+    assert_eq!(state.editor.get_text(), "existing draft [Image 1] ");
     assert!(!attach_pasted_images(&state, "normal clipboard text"));
     assert!(state.take_pending_images().is_empty());
 }
@@ -474,7 +496,7 @@ pub(super) fn test_tui_state() -> Arc<TuiState> {
         autocomplete_max_visible: 5,
         autocomplete_selection: std::sync::Mutex::new(0),
         autocomplete_selection_stamped_for: std::sync::Mutex::new(None),
-        pending_images: std::sync::Mutex::new(Vec::new()),
+        pending_images: Default::default(),
         theme_manager: Arc::new(ThemeManager::new()),
         active_theme_spec: std::sync::Mutex::new(None),
         theme_watcher: std::sync::Mutex::new(None),
@@ -684,9 +706,12 @@ async fn dequeue_restores_both_queues_images_and_folded_draft_without_aborting()
         data: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7".into(),
         mime_type: "image/gif".into(),
     };
-    lane.steer(user_message_with_images("排队修改", vec![image.clone()]))
-        .await
-        .unwrap();
+    lane.steer(draft_message_with_images(
+        "排队修改 [Image 3] 保留样式",
+        vec![image.clone(); 3],
+    ))
+    .await
+    .unwrap();
     lane.follow_up(user_message_with_images("后续消息", vec![]))
         .await
         .unwrap();
@@ -695,7 +720,7 @@ async fn dequeue_restores_both_queues_images_and_folded_draft_without_aborting()
     state.editor.handle_paste(&draft);
     state.set_status(RunStatus::Working);
     handle_dequeue(lane.clone(), state.editor.clone(), state.clone(), tui).await;
-    let expected = format!("排队修改\n\n后续消息\n\n{draft}");
+    let expected = format!("排队修改 [Image 1] 保留样式\n\n后续消息\n\n{draft}");
     assert_eq!(state.editor.get_expanded_text(), expected);
     assert_eq!(
         state.editor.cursor_position(),
@@ -1823,7 +1848,7 @@ fn test_agent_event_mapping_creates_assistant_and_tool() {
         autocomplete_max_visible: 5,
         autocomplete_selection: std::sync::Mutex::new(0),
         autocomplete_selection_stamped_for: std::sync::Mutex::new(None),
-        pending_images: std::sync::Mutex::new(Vec::new()),
+        pending_images: Default::default(),
         theme_manager: Arc::new(ThemeManager::new()),
         active_theme_spec: std::sync::Mutex::new(None),
         theme_watcher: std::sync::Mutex::new(None),
@@ -3568,7 +3593,7 @@ fn test_autocomplete_slash_suggestions_render() {
         autocomplete_max_visible: 5,
         autocomplete_selection: std::sync::Mutex::new(0),
         autocomplete_selection_stamped_for: std::sync::Mutex::new(None),
-        pending_images: std::sync::Mutex::new(Vec::new()),
+        pending_images: Default::default(),
         theme_manager: Arc::new(ThemeManager::new()),
         active_theme_spec: std::sync::Mutex::new(None),
         theme_watcher: std::sync::Mutex::new(None),
@@ -3663,7 +3688,7 @@ fn test_select_list_swap_restores_editor() {
         autocomplete_max_visible: 5,
         autocomplete_selection: std::sync::Mutex::new(0),
         autocomplete_selection_stamped_for: std::sync::Mutex::new(None),
-        pending_images: std::sync::Mutex::new(Vec::new()),
+        pending_images: Default::default(),
         theme_manager: Arc::new(ThemeManager::new()),
         active_theme_spec: std::sync::Mutex::new(None),
         theme_watcher: std::sync::Mutex::new(None),
@@ -3761,7 +3786,7 @@ fn test_message_history_browse_restores_draft() {
         autocomplete_max_visible: 5,
         autocomplete_selection: std::sync::Mutex::new(0),
         autocomplete_selection_stamped_for: std::sync::Mutex::new(None),
-        pending_images: std::sync::Mutex::new(Vec::new()),
+        pending_images: Default::default(),
         theme_manager: Arc::new(ThemeManager::new()),
         active_theme_spec: std::sync::Mutex::new(None),
         theme_watcher: std::sync::Mutex::new(None),
@@ -3862,7 +3887,7 @@ fn test_accept_top_suggestion_replaces_prefix() {
         autocomplete_max_visible: 5,
         autocomplete_selection: std::sync::Mutex::new(0),
         autocomplete_selection_stamped_for: std::sync::Mutex::new(None),
-        pending_images: std::sync::Mutex::new(Vec::new()),
+        pending_images: Default::default(),
         theme_manager: Arc::new(ThemeManager::new()),
         active_theme_spec: std::sync::Mutex::new(None),
         theme_watcher: std::sync::Mutex::new(None),
@@ -3949,7 +3974,7 @@ fn autocomplete_test_state(max_visible: usize) -> Arc<TuiState> {
         autocomplete_max_visible: max_visible,
         autocomplete_selection: std::sync::Mutex::new(0),
         autocomplete_selection_stamped_for: std::sync::Mutex::new(None),
-        pending_images: std::sync::Mutex::new(Vec::new()),
+        pending_images: Default::default(),
         theme_manager: Arc::new(ThemeManager::new()),
         active_theme_spec: std::sync::Mutex::new(None),
         theme_watcher: std::sync::Mutex::new(None),

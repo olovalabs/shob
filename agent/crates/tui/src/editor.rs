@@ -284,15 +284,32 @@ fn paste_marker_regex() -> &'static regex::Regex {
     RE.get_or_init(|| regex::Regex::new(r"\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]").unwrap())
 }
 
-/// The byte length of the `[paste #id …]` marker ending exactly at `end`
+/// Byte ranges and one-based IDs for inline image references.
+pub fn image_references(text: &str) -> impl Iterator<Item = (usize, usize, usize)> + '_ {
+    const PREFIX: &str = "[Image ";
+    text.match_indices(PREFIX).filter_map(|(start, _)| {
+        let tail = &text[start + PREFIX.len()..];
+        let digits = tail.bytes().take_while(u8::is_ascii_digit).count();
+        let id = tail[..digits].parse::<usize>().ok()?;
+        (id > 0 && tail[digits..].starts_with(']')).then_some((
+            start,
+            start + PREFIX.len() + digits + 1,
+            id,
+        ))
+    })
+}
+
+/// The byte length of the marker ending exactly at `end`
 /// (`end` is a byte offset in `line`), or `0` when no marker ends there.
-fn paste_marker_len_ending_at(line: &str, end: usize) -> usize {
+fn marker_len_ending_at(line: &str, end: usize) -> usize {
     for m in paste_marker_regex().find_iter(line) {
         if m.end() == end {
             return m.as_str().len();
         }
     }
-    0
+    image_references(line)
+        .find_map(|(start, marker_end, _)| (marker_end == end).then_some(marker_end - start))
+        .unwrap_or(0)
 }
 
 /// A paste folds when it exceeds either threshold (upstream's `handlePaste`).
@@ -1205,14 +1222,13 @@ impl Editor {
             self.delete_selection();
             return;
         }
-        // Backspacing over a `[paste #id …]` marker deletes the whole marker
-        // (and drops / renumbers the folded pastes). The marker is one atomic
-        // unit — the user cannot nibble it into an orphaned placeholder.
+        // Backspace removes the whole marker. Folded paste deletion also
+        // drops its stored text and renumbers later folded pastes.
         let deleted_marker = {
             let state = self.state.lock().unwrap();
             let row = state.cursor_row;
             (state.cursor_col > 0)
-                .then(|| paste_marker_len_ending_at(&state.lines[row], state.cursor_col))
+                .then(|| marker_len_ending_at(&state.lines[row], state.cursor_col))
                 .filter(|len| *len > 0)
                 .map(|len| (row, state.cursor_col - len, len))
         };
@@ -1278,7 +1294,13 @@ impl Editor {
             let line_len = state.lines[row].len();
             if state.cursor_col < line_len {
                 let col = state.cursor_col;
-                state.lines[row].remove(col);
+                let marker_end = image_references(&state.lines[row])
+                    .find_map(|(start, end, _)| (start == col).then_some(end));
+                if let Some(end) = marker_end {
+                    state.lines[row].replace_range(col..end, "");
+                } else {
+                    state.lines[row].remove(col);
+                }
             } else if row < state.lines.len() - 1 {
                 // Join with next line
                 let next = state.lines.remove(row + 1);
@@ -1295,7 +1317,7 @@ impl Editor {
                 let row = state.cursor_row;
                 let line = &state.lines[row];
                 // A folded paste marker is atomic: step the whole marker.
-                let marker = paste_marker_len_ending_at(line, state.cursor_col);
+                let marker = marker_len_ending_at(line, state.cursor_col);
                 if marker > 0 {
                     state.cursor_col -= marker;
                     return;
@@ -1327,6 +1349,12 @@ impl Editor {
                         state.cursor_col = m.end();
                         return;
                     }
+                }
+                let marker_end = image_references(line)
+                    .find_map(|(start, end, _)| (start == state.cursor_col).then_some(end));
+                if let Some(end) = marker_end {
+                    state.cursor_col = end;
+                    return;
                 }
                 // Advance by the byte length of the char at the cursor.
                 let ch_len = line[state.cursor_col..]
@@ -1785,7 +1813,8 @@ impl Component for Editor {
                 // offsets are char boundaries — both anchor and caret always sit
                 // on one).
                 let mut content = content;
-                if let Some((sc, ec)) = self.selection_span_on_row(&state, row_idx) {
+                let selection = self.selection_span_on_row(&state, row_idx);
+                if let Some((sc, ec)) = selection {
                     let local_start = sc.max(chunk_start).min(chunk_end);
                     let local_end = ec.max(chunk_start).min(chunk_end);
                     if local_start < local_end {
@@ -1831,6 +1860,22 @@ impl Component for Editor {
                     rendered = insert_cursor_marker(&rendered, self.options.padding_x + cursor_col);
                 }
 
+                if selection.is_none() {
+                    let mut references = image_references(&rendered).peekable();
+                    if references.peek().is_some() {
+                        let accent = crate::theme::theme().colors.accent;
+                        let mut styled = String::new();
+                        let mut cursor = 0;
+                        for (start, end, _) in references {
+                            styled.push_str(&rendered[cursor..start]);
+                            styled.push_str(&accent.fg(&rendered[start..end]));
+                            cursor = end;
+                        }
+                        styled.push_str(&rendered[cursor..]);
+                        content_lines.push(styled);
+                        continue;
+                    }
+                }
                 content_lines.push(rendered);
             }
         }

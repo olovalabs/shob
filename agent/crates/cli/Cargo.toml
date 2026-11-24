@@ -58,7 +58,7 @@ png = { workspace = true }
 # Gate the dep to non-Android targets so `cargo install` on Termux still works;
 # the `clipboard` feature becomes a harmless no-op there.
 [target.'cfg(not(target_os = "android"))'.dependencies]
-arboard = { version = "3", optional = true }
+arboard = { version = "3.6.1", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
@@ -68,8 +68,6 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Pipes",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
-    "Win32_System_DataExchange",
-    "Win32_UI_Shell",
 ] }
 
 [target.'cfg(unix)'.dependencies]
@@ -97,7 +95,7 @@ pkg-fmt = "zip"
 default = ["clipboard"]
 shob = []
 # Enables real clipboard support for `/copy` and image paste (best-effort).
-clipboard = ["dep:arboard"]
+clipboard = ["dep:arboard", "arboard?/wayland-data-control"]
 # Explicit new-session print opt-in only; never enabled by default.
 experimental-native-store = ["harness/experimental-native-store"]
 

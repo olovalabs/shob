@@ -585,7 +585,7 @@ impl SlashCommand for LoginCommand {
                     &ctx.state.notice_container(),
                     &format!("Saved credentials for {provider}; reloading providers…"),
                 );
-                let _ = ctx.tx.send(TuiMessage::ReloadExtensions);
+                let _ = ctx.tx.send(TuiMessage::ProviderLoginComplete(provider));
             }
             Err(error) => add_error_message(
                 &ctx.state.notice_container(),
@@ -816,6 +816,9 @@ impl SlashCommand for SkillsCommand {
                 &format!("Unknown skill \"{name}\". Use /skills to list available skills."),
             );
             ctx.tui.request_render(false);
+            return;
+        }
+        if !ctx.state.require_provider() {
             return;
         }
         if !ctx.state.try_start_working() {
