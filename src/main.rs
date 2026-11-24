@@ -152,6 +152,18 @@ fn sidebar_loader(phase: f32, color: Hsla) -> Div {
     grid
 }
 
+/// Wall-clock loader phase in unit cycles. Rendered, never scheduled: the dots
+/// move only on repaints the running turn already causes, so a stalled turn
+/// stills instead of burning frames on a timer.
+fn loader_phase() -> f32 {
+    (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis())
+        .unwrap_or(0) as f32
+        / 650.0)
+        .fract()
+}
+
 #[cfg(unix)]
 static STATUS_BUS: std::sync::LazyLock<Option<status_bus::BusIdentity>> =
     std::sync::LazyLock::new(|| status_bus::start().ok());
@@ -17158,13 +17170,13 @@ impl AppState {
                             .into()
                     }
                 })
-                // A fixed frame, not a repeating animation: a running turn can last
-                // hours, and a 650 ms repeat would repaint the window the whole time.
+                // Wall-clock phase: motion piggybacks on repaints the turn
+                // already causes. No timer, no extra frames; stalls go still.
                 .child(
                     div()
                         .size(px(16.0))
                         .flex_shrink_0()
-                        .child(sidebar_loader(0.0, tokens.text_muted)),
+                        .child(sidebar_loader(loader_phase(), tokens.text_muted)),
                 )
                 .child(
                     div()
@@ -19167,7 +19179,7 @@ impl AppState {
                                 .child(
                                     div()
                                         .size(px(16.0))
-                                        .child(sidebar_loader(0.0, tokens.pane_border_focused)),
+                                        .child(sidebar_loader(loader_phase(), tokens.pane_border_focused)),
                                 )
                                 .child(
                                     div()
