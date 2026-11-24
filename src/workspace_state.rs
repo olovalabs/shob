@@ -227,12 +227,29 @@ impl Default for SavedProject {
     }
 }
 
+/// Sidebar-only thread state. It lives outside `SavedSession` so the v2
+/// session shape and its migration stay untouched.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SavedSidebarThread {
+    pub session_uid: String,
+    pub pinned: bool,
+    /// Lower values appear first among pinned threads; swaps persist reordering.
+    pub pin_order: Option<u64>,
+    pub settled: bool,
+    pub snoozed_until_ms: Option<u64>,
+    pub archived: bool,
+    pub parked_at_ms: Option<u64>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SavedWorkspace {
     pub version: u32,
     pub active_project: Option<PathBuf>,
     pub projects: Vec<SavedProject>,
+    #[serde(default)]
+    pub threads: Vec<SavedSidebarThread>,
 }
 
 impl Default for SavedWorkspace {
@@ -241,6 +258,7 @@ impl Default for SavedWorkspace {
             version: CURRENT_VERSION,
             active_project: None,
             projects: Vec::new(),
+            threads: Vec::new(),
         }
     }
 }
@@ -274,6 +292,26 @@ impl SavedWorkspace {
         self.projects
             .retain(|project| !project.path.as_os_str().is_empty());
         self.projects.dedup_by(|a, b| a.path == b.path);
+        let mut seen_thread_uids = HashSet::new();
+        self.threads.retain(|thread| {
+            !thread.session_uid.is_empty() && seen_thread_uids.insert(thread.session_uid.clone())
+        });
+        // Files written before pin ordering existed still need a stable order.
+        let mut next_pin_order = self
+            .threads
+            .iter()
+            .filter_map(|thread| thread.pin_order)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+        for thread in &mut self.threads {
+            if !thread.pinned {
+                thread.pin_order = None;
+            } else if thread.pin_order.is_none() {
+                thread.pin_order = Some(next_pin_order);
+                next_pin_order = next_pin_order.saturating_add(1);
+            }
+        }
 
         for project in &mut self.projects {
             if project.name.is_empty() {
@@ -343,6 +381,14 @@ impl SavedWorkspace {
                 project.active_session = project.active_session.min(project.sessions.len() - 1);
             }
         }
+
+        let live_thread_uids: HashSet<String> = self
+            .projects
+            .iter()
+            .flat_map(|project| project.sessions.iter().map(|session| session.uid.clone()))
+            .collect();
+        self.threads
+            .retain(|thread| live_thread_uids.contains(&thread.session_uid));
 
         let active = self.active_project.as_ref().and_then(|path| {
             self.projects
@@ -442,6 +488,7 @@ fn migrate_legacy(legacy: LegacyWorkspace) -> SavedWorkspace {
         version: CURRENT_VERSION,
         active_project: legacy.active_project,
         projects,
+        threads: Vec::new(),
     }
 }
 
@@ -878,6 +925,7 @@ mod tests {
                     ],
                 }],
             }],
+            threads: Vec::new(),
         };
         let text = serde_json::to_string(&workspace).unwrap();
         let restored = load_from_text(&text);
@@ -933,6 +981,7 @@ mod tests {
                     }],
                 }],
             }],
+            threads: Vec::new(),
         };
         let text = serde_json::to_string(&workspace).unwrap();
         let restored = load_from_text(&text);
@@ -992,7 +1041,7 @@ mod tests {
 
     #[test]
     fn max_id_includes_split_nodes() {
-        let workspace = SavedWorkspace {
+        let mut workspace = SavedWorkspace {
             projects: vec![SavedProject {
                 id: 1,
                 sessions: vec![SavedSession {
@@ -1013,6 +1062,7 @@ mod tests {
             }],
             ..Default::default()
         };
+        workspace.threads = Vec::new();
         assert_eq!(workspace.max_id(), 99);
     }
 
@@ -1075,6 +1125,7 @@ mod tests {
                     ..Default::default()
                 }],
             }],
+            threads: Vec::new(),
         };
         save_atomic(&path, &workspace).expect("save");
         let loaded = load(&path);
@@ -1100,5 +1151,84 @@ mod tests {
         write_scrollback_in(&dir, "p-1", "   ").unwrap();
         assert!(read_scrollback_in(&dir, "p-1").is_none());
         let _ = fs::remove_dir_all(dir);
+    }
+
+    fn workspace_with_session(session_uid: &str) -> SavedWorkspace {
+        SavedWorkspace {
+            version: CURRENT_VERSION,
+            active_project: Some(PathBuf::from("/tmp/one")),
+            projects: vec![SavedProject {
+                id: 1,
+                path: PathBuf::from("/tmp/one"),
+                name: "one".into(),
+                sessions: vec![SavedSession {
+                    id: 2,
+                    uid: session_uid.into(),
+                    tree: SavedPaneNode::Leaf { pane: 3 },
+                    panes: vec![SavedPane {
+                        id: 3,
+                        uid: "p-3".into(),
+                        title: "terminal".into(),
+                        display_title: "terminal".into(),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            threads: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn sidebar_thread_metadata_roundtrips() {
+        let mut workspace = workspace_with_session("thread-1");
+        workspace.threads = vec![SavedSidebarThread {
+            session_uid: "thread-1".into(),
+            pinned: true,
+            pin_order: Some(1),
+            settled: false,
+            snoozed_until_ms: Some(42),
+            archived: false,
+            parked_at_ms: Some(7),
+        }];
+        workspace.normalize();
+        let text = serde_json::to_string(&workspace).unwrap();
+        let restored = load_from_text(&text);
+        assert_eq!(restored, workspace);
+        assert_eq!(restored.threads[0].session_uid, "thread-1");
+        assert_eq!(restored.threads[0].pin_order, Some(1));
+    }
+
+    #[test]
+    fn sidebar_thread_metadata_defaults_and_dedupes() {
+        let legacy: SavedWorkspace =
+            serde_json::from_str(r#"{"version":2,"projects":[]}"#).unwrap();
+        assert!(legacy.threads.is_empty());
+
+        let mut workspace = workspace_with_session("same");
+        workspace.threads = vec![
+            SavedSidebarThread {
+                session_uid: "same".into(),
+                pinned: true,
+                ..Default::default()
+            },
+            SavedSidebarThread {
+                session_uid: "same".into(),
+                settled: true,
+                ..Default::default()
+            },
+            SavedSidebarThread {
+                session_uid: "".into(),
+                archived: true,
+                ..Default::default()
+            },
+        ];
+        let restored = load_from_text(&serde_json::to_string(&workspace).unwrap());
+        assert_eq!(restored.threads.len(), 1);
+        assert_eq!(restored.threads[0].session_uid, "same");
+        assert!(restored.threads[0].pinned);
+        assert!(restored.threads[0].pin_order.is_some());
+        assert!(!restored.threads[0].settled);
     }
 }

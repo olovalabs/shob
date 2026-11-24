@@ -86,6 +86,18 @@ An empty right panel in Agent mode opens a surface picker for Terminal, Files, a
 
 The Files surface restores open files, unsaved drafts, expanded folders, and the commit message. Use Refresh to pick up external changes. Editing supports UTF-8 files up to 1 MiB and eight open tabs; saves refuse to overwrite a file changed on disk. Read-only diff snapshots and scroll positions are transient.
 
+### T3 Code Sidebar
+
+Shob's default sidebar follows T3 Code's flat thread inbox instead of a project tree:
+
+- One always-visible **Search** field, a source/project filter, **Add project**, and a square-pen **New thread** button.
+- Pinned threads first (reorderable from the row menu), then active drafts and sessions. Snoozed and Settled shelves sit at the bottom and are closed by default; Settled shows 10 rows and reveals 25 more at a time.
+- The row menu pins, reorders, settles, snoozes, archives, or deletes a thread. Archived threads can be restored from Settings. All metadata and shelf/scope state survive a workspace restore.
+- A plain **New thread** click starts a new empty draft in the one filtered project. Shift-click keeps the viewed project or opens the searchable project picker when several projects are visible. `Ctrl/Cmd+N` is the keyboard equivalent; `Ctrl/Cmd+K` focuses sidebar search and `Ctrl/Cmd+Shift+B` opens the project filter.
+- Settings → Sidebar can switch back to Shob's original project-grouped tree.
+
+This is a native GPUI adaptation of T3 Code's React sidebar semantics, not a file copy. Thread metadata is stored beside sessions in `workspace.json`; the sidebar style, project scope, and shelf expansion are stored in `settings.json`. See [docs/sidebar.md](docs/sidebar.md) for before/after UI references and behavior notes.
+
 ### Make It Yours
 
 Customize Shob to match your workflow.

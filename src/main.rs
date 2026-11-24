@@ -1,8 +1,8 @@
 use anyhow::Result;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, AppContext, Bounds, ClipboardEntry, Context,
-    CursorStyle, Div, Edges, Entity, ExternalPaths, FollowMode, Hsla, InteractiveElement as _,
+    Animation, AnimationExt, AnyElement, App, Bounds, ClipboardEntry, Context, CursorStyle, Div,
+    Edges, ElementId, Entity, ExternalPaths, FollowMode, Hsla, InteractiveElement as _,
     IntoElement, KeyDownEvent, ListAlignment, ListState, MouseButton, MouseDownEvent,
     MouseMoveEvent, ObjectFit, ParentElement, Pixels, Point, Rems, Render, SharedString,
     StatefulInteractiveElement as _, StyleRefinement, Styled, StyledImage as _, StyledText, Window,
@@ -128,6 +128,13 @@ pub const SIDEBAR_MIN_WIDTH: Pixels = px(180.0);
 const SIDEBAR_MAX_FRACTION: f32 = 0.5;
 /// Width of the invisible drag strip along the sidebar's right border.
 const SIDEBAR_RESIZE_HANDLE_WIDTH: Pixels = px(4.0);
+/// T3 Code's row sizes and inbox paging.
+const SIDEBAR_THREAD_CARD_HEIGHT: Pixels = px(78.0);
+const SIDEBAR_THREAD_SLIM_HEIGHT: Pixels = px(36.0);
+const SIDEBAR_ACTIVE_INITIAL_COUNT: usize = 5;
+const SIDEBAR_SETTLED_INITIAL_COUNT: usize = 10;
+const SIDEBAR_SETTLED_PAGE_COUNT: usize = 25;
+const SIDEBAR_SNOOZE_MS: u64 = 24 * 60 * 60 * 1000;
 
 /// A compact chevron wave, based on the Drive loader in the supplied design.
 fn sidebar_loader(phase: f32, color: Hsla) -> Div {
@@ -4451,6 +4458,145 @@ struct SidebarSearch {
     _subscription: gpui::Subscription,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SidebarProjectPickerMode {
+    Scope,
+    NewSession,
+}
+
+struct SidebarProjectPicker {
+    mode: SidebarProjectPickerMode,
+    input: Entity<InputState>,
+    previous_focus: Option<gpui::FocusHandle>,
+    _subscription: gpui::Subscription,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SidebarThreadMenuState {
+    project_idx: usize,
+    session_idx: usize,
+    section: SidebarSection,
+    pinned: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct SidebarThreadState {
+    pinned: bool,
+    /// Lower values appear first among pinned threads; swaps persist reordering.
+    pin_order: Option<u64>,
+    settled: bool,
+    snoozed_until_ms: Option<u64>,
+    archived: bool,
+    parked_at_ms: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SidebarSection {
+    Pinned,
+    Active,
+    Snoozed,
+    Settled,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SidebarShelf {
+    Snoozed,
+    Settled,
+}
+
+impl SidebarThreadState {
+    fn section(self, now_ms: u64) -> Option<SidebarSection> {
+        if self.archived {
+            return None;
+        }
+        if self.snoozed_until_ms.is_some_and(|until| until > now_ms) {
+            return Some(SidebarSection::Snoozed);
+        }
+        if self.settled {
+            return Some(SidebarSection::Settled);
+        }
+        if self.pinned {
+            return Some(SidebarSection::Pinned);
+        }
+        Some(SidebarSection::Active)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SidebarThreadRef {
+    project_idx: usize,
+    session_idx: usize,
+    section: SidebarSection,
+    pinned: bool,
+    /// The active route is revealed in the inbox even when its metadata would
+    /// otherwise put it in a closed shelf or out of the current project scope.
+    revealed_active: bool,
+}
+
+#[derive(Default)]
+struct SidebarThreadGroups {
+    pinned: Vec<SidebarThreadRef>,
+    active: Vec<SidebarThreadRef>,
+    snoozed: Vec<SidebarThreadRef>,
+    settled: Vec<SidebarThreadRef>,
+    hidden_active: usize,
+    hidden_settled: usize,
+}
+
+fn sidebar_now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn sidebar_relative_time(now_ms: u64, since_ms: u64) -> String {
+    if since_ms == 0 || since_ms > now_ms {
+        return "now".to_string();
+    }
+    let seconds = (now_ms - since_ms) / 1000;
+    if seconds < 60 {
+        "now".to_string()
+    } else if seconds < 3_600 {
+        format!("{}m", seconds / 60)
+    } else if seconds < 86_400 {
+        format!("{}h", seconds / 3_600)
+    } else {
+        format!("{}d", seconds / 86_400)
+    }
+}
+
+fn sidebar_matches(query: &str, text: &str) -> bool {
+    query.is_empty() || text.to_lowercase().contains(query)
+}
+
+/// A sidebar filtered to exactly one project already says where New belongs.
+/// A viewed session inside that scope keeps its environment; otherwise the
+/// scope's representative project wins.
+fn resolve_scoped_new_session_project(
+    shift: bool,
+    scoped: &[usize],
+    viewed: Option<usize>,
+) -> Option<usize> {
+    if shift || scoped.len() != 1 {
+        return None;
+    }
+    let group = scoped[0];
+    Some(
+        viewed
+            .filter(|viewed| scoped.contains(viewed))
+            .unwrap_or(group),
+    )
+}
+
+fn should_create_new_session_in_current_project(
+    shift: bool,
+    open_project_group_count: usize,
+    project_group_count: usize,
+) -> bool {
+    shift || open_project_group_count == 1 || project_group_count == 0
+}
+
 #[derive(Clone)]
 struct FocusedChatScrollbar {
     pane_id: usize,
@@ -4546,6 +4692,11 @@ struct AppState {
     pub sidebar_visible: bool,
     compact_sidebar_open: bool,
     sidebar_search: Option<SidebarSearch>,
+    sidebar_project_picker: Option<SidebarProjectPicker>,
+    sidebar_thread_menu: Option<SidebarThreadMenuState>,
+    /// Sidebar-only thread state, keyed by the durable session uid.
+    sidebar_threads: HashMap<String, SidebarThreadState>,
+    settled_visible_count: usize,
     integration_panel_visible: bool,
     integration_feedback: SharedString,
     pub sidebar_width: Pixels,
@@ -4695,6 +4846,28 @@ fn tree_matches_panes(node: &PaneNode, panes: &[TerminalPane]) -> bool {
 
 impl AppState {
     fn saved_workspace(&self, cx: &App) -> workspace_state::SavedWorkspace {
+        let live_session_uids: HashSet<&str> = self
+            .projects
+            .iter()
+            .flat_map(|project| project.sessions.iter().map(|session| session.uid.as_str()))
+            .collect();
+        let mut threads: Vec<_> = self
+            .sidebar_threads
+            .iter()
+            .filter(|(uid, state)| {
+                live_session_uids.contains(uid.as_str()) && **state != SidebarThreadState::default()
+            })
+            .map(|(uid, state)| workspace_state::SavedSidebarThread {
+                session_uid: uid.clone(),
+                pinned: state.pinned,
+                pin_order: state.pin_order,
+                settled: state.settled,
+                snoozed_until_ms: state.snoozed_until_ms,
+                archived: state.archived,
+                parked_at_ms: state.parked_at_ms,
+            })
+            .collect();
+        threads.sort_by(|a, b| a.session_uid.cmp(&b.session_uid));
         let projects = self
             .projects
             .iter()
@@ -4836,6 +5009,7 @@ impl AppState {
             version: workspace_state::CURRENT_VERSION,
             active_project: self.active_project().map(|project| project.path.clone()),
             projects,
+            threads,
         }
     }
 
@@ -5007,8 +5181,26 @@ impl AppState {
         } = restored;
         let max_id = workspace.max_id();
         let active_project_path = workspace.active_project.clone();
+        let saved_threads = workspace.threads.clone();
         let mut focus_by_session: HashMap<usize, Option<usize>> = HashMap::new();
 
+        self.sidebar_threads = saved_threads
+            .into_iter()
+            .map(|saved| {
+                (
+                    saved.session_uid,
+                    SidebarThreadState {
+                        pinned: saved.pinned,
+                        pin_order: saved.pin_order,
+                        settled: saved.settled,
+                        snoozed_until_ms: saved.snoozed_until_ms,
+                        archived: saved.archived,
+                        parked_at_ms: saved.parked_at_ms,
+                    },
+                )
+            })
+            .collect();
+        self.settled_visible_count = SIDEBAR_SETTLED_INITIAL_COUNT;
         self.projects.clear();
         self.active_project_idx = 0;
 
@@ -7002,7 +7194,7 @@ impl AppState {
             }
             self.active_view = ActiveView::Workspace;
             self.compact_sidebar_open = false;
-            self.sidebar_search = None;
+            self.clear_sidebar_search(window, cx);
             self.active_project_idx = project_idx;
             self.focused_pane_id = Some(next_id);
             self.rebuild_session_index();
@@ -7029,7 +7221,7 @@ impl AppState {
                 .is_some_and(|input| input.read(cx).text().len() == 0)
         {
             let pane_id = pane.id;
-            self.sidebar_search = None;
+            self.clear_sidebar_search(window, cx);
             self.compact_sidebar_open = false;
             self.focus_pane(pane_id, window, cx);
             return true;
@@ -7051,6 +7243,533 @@ impl AppState {
         }
 
         self.select_folder_and_add_project(window, cx);
+    }
+
+    /// T3 Code creates a draft thread rather than starting an agent run. In
+    /// Shob that maps to an empty agent conversation, or an empty terminal in
+    /// split view; an already-empty chat is reused instead of duplicated.
+    fn create_new_sidebar_session(
+        &mut self,
+        project_idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.projects.is_empty() {
+            self.select_folder_and_add_project(window, cx);
+            return;
+        }
+        self.sidebar_project_picker = None;
+        self.sidebar_thread_menu = None;
+        let project_idx = project_idx.min(self.projects.len() - 1);
+        // A new T3 draft is always a new thread; an existing empty chat is not
+        // hijacked the way Shob's legacy "New chat" shortcut did.
+        let agent_chat = self.settings.agent_layout;
+        self.create_project_session(project_idx, agent_chat, window, cx);
+        self.compact_sidebar_open = false;
+        self.active_view = ActiveView::Workspace;
+        cx.notify();
+    }
+
+    /// A plain click on New in a one-project filter starts there. Shift+click
+    /// keeps the viewed project, and an unscoped multi-project list opens the
+    /// searchable project picker, as T3 Code's New thread does.
+    fn handle_sidebar_new_session(
+        &mut self,
+        shift: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let scoped = self.sidebar_scope_indices();
+        let viewed = self.active_project().map(|_| self.active_project_idx);
+        if let Some(project_idx) = resolve_scoped_new_session_project(shift, &scoped, viewed) {
+            self.create_new_sidebar_session(project_idx, window, cx);
+            return;
+        }
+        let open_project_group_count = self.sidebar_visible_project_indices().len();
+        if should_create_new_session_in_current_project(
+            shift,
+            open_project_group_count,
+            self.projects.len(),
+        ) {
+            self.create_new_sidebar_session(self.active_project_idx, window, cx);
+            return;
+        }
+        self.open_sidebar_project_picker(SidebarProjectPickerMode::NewSession, window, cx);
+    }
+
+    fn sidebar_thread_state(&self, uid: &str) -> SidebarThreadState {
+        self.sidebar_threads.get(uid).copied().unwrap_or_default()
+    }
+
+    fn sidebar_thread_uid(&self, project_idx: usize, session_idx: usize) -> Option<String> {
+        self.projects
+            .get(project_idx)
+            .and_then(|project| project.sessions.get(session_idx))
+            .map(|session| session.uid.clone())
+    }
+
+    fn sidebar_archived_thread_refs(&self) -> Vec<(usize, usize, String)> {
+        let mut rows = Vec::new();
+        for (project_idx, project) in self.projects.iter().enumerate() {
+            for (session_idx, session) in project.sessions.iter().enumerate() {
+                if self.sidebar_thread_state(&session.uid).archived {
+                    rows.push((project_idx, session_idx, session.title.to_string()));
+                }
+            }
+        }
+        rows.sort_by_key(|(project_idx, session_idx, _)| (*project_idx, *session_idx));
+        rows
+    }
+
+    fn sidebar_active_thread_key(&self) -> Option<(usize, usize)> {
+        let project = self.projects.get(self.active_project_idx)?;
+        let session_idx = project
+            .active_session_idx
+            .min(project.sessions.len().saturating_sub(1));
+        project.sessions.get(session_idx)?;
+        Some((self.active_project_idx, session_idx))
+    }
+
+    fn sidebar_thread_id(&self, row: SidebarThreadRef) -> usize {
+        self.projects
+            .get(row.project_idx)
+            .and_then(|project| project.sessions.get(row.session_idx))
+            .map(|session| session.id)
+            .unwrap_or(0)
+    }
+
+    fn sidebar_thread_is(&self, row: SidebarThreadRef, key: (usize, usize)) -> bool {
+        row.project_idx == key.0 && row.session_idx == key.1
+    }
+
+    fn sidebar_thread_groups(&self) -> SidebarThreadGroups {
+        let now_ms = sidebar_now_ms();
+        let visible_projects: HashSet<usize> =
+            self.sidebar_visible_project_indices().into_iter().collect();
+        let active_key = self.sidebar_active_thread_key();
+        let mut groups = SidebarThreadGroups::default();
+        for (project_idx, project) in self.projects.iter().enumerate() {
+            for (session_idx, session) in project.sessions.iter().enumerate() {
+                let is_active = active_key == Some((project_idx, session_idx));
+                if !visible_projects.contains(&project_idx) && !is_active {
+                    continue;
+                }
+                let state = self.sidebar_thread_state(&session.uid);
+                let active_section = if state.pinned {
+                    SidebarSection::Pinned
+                } else {
+                    SidebarSection::Active
+                };
+                let Some(section) = state
+                    .section(now_ms)
+                    .or_else(|| is_active.then_some(active_section))
+                else {
+                    continue;
+                };
+                let row = SidebarThreadRef {
+                    project_idx,
+                    session_idx,
+                    section,
+                    pinned: state.pinned,
+                    revealed_active: is_active,
+                };
+                if is_active {
+                    if state.pinned {
+                        groups.pinned.push(row);
+                    } else {
+                        groups.active.push(row);
+                    }
+                } else {
+                    match section {
+                        SidebarSection::Pinned => groups.pinned.push(row),
+                        SidebarSection::Active => groups.active.push(row),
+                        SidebarSection::Snoozed => groups.snoozed.push(row),
+                        SidebarSection::Settled => groups.settled.push(row),
+                    }
+                }
+            }
+        }
+        groups.pinned.sort_by_key(|row| {
+            let uid = self
+                .sidebar_thread_uid(row.project_idx, row.session_idx)
+                .unwrap_or_default();
+            (
+                self.sidebar_thread_state(&uid)
+                    .pin_order
+                    .unwrap_or(u64::MAX),
+                std::cmp::Reverse(self.sidebar_thread_id(*row)),
+            )
+        });
+        groups
+            .active
+            .sort_by_key(|row| std::cmp::Reverse(self.sidebar_thread_id(*row)));
+        for shelf in [&mut groups.snoozed, &mut groups.settled] {
+            shelf.sort_by_key(|row| {
+                let uid = self
+                    .sidebar_thread_uid(row.project_idx, row.session_idx)
+                    .unwrap_or_default();
+                (
+                    std::cmp::Reverse(self.sidebar_thread_state(&uid).parked_at_ms.unwrap_or(0)),
+                    std::cmp::Reverse(self.sidebar_thread_id(*row)),
+                )
+            });
+        }
+
+        let active_limit = self
+            .projects
+            .first()
+            .map(|project| {
+                project
+                    .visible_session_count
+                    .max(SIDEBAR_ACTIVE_INITIAL_COUNT)
+            })
+            .unwrap_or(SIDEBAR_ACTIVE_INITIAL_COUNT);
+        let active_index = active_key.and_then(|key| {
+            groups
+                .active
+                .iter()
+                .position(|row| self.sidebar_thread_is(*row, key))
+        });
+        let mut visible_active: Vec<usize> = (0..active_limit.min(groups.active.len())).collect();
+        if let Some(active_index) = active_index
+            && !visible_active.contains(&active_index)
+        {
+            visible_active.push(active_index);
+        }
+        groups.hidden_active = groups.active.len().saturating_sub(visible_active.len());
+        let active_rows = groups.active.clone();
+        groups.active = visible_active
+            .into_iter()
+            .filter_map(|index| active_rows.get(index).copied())
+            .collect();
+
+        let settled_limit = self
+            .settled_visible_count
+            .max(SIDEBAR_SETTLED_INITIAL_COUNT);
+        let mut visible_settled: Vec<_> =
+            groups.settled.iter().take(settled_limit).copied().collect();
+        if let Some(key) = active_key
+            && let Some(active_row) = groups
+                .settled
+                .iter()
+                .find(|row| self.sidebar_thread_is(**row, key))
+            && !visible_settled
+                .iter()
+                .any(|row| self.sidebar_thread_is(*row, key))
+        {
+            visible_settled.push(*active_row);
+        }
+        groups.hidden_settled = groups.settled.len().saturating_sub(visible_settled.len());
+        groups.settled = visible_settled;
+        groups
+    }
+
+    fn sidebar_search_thread_refs(&self, query: &str) -> Vec<SidebarThreadRef> {
+        let now_ms = sidebar_now_ms();
+        let query = query.trim().to_lowercase();
+        let active_key = self.sidebar_active_thread_key();
+        let mut rows = Vec::new();
+        for (project_idx, project) in self.projects.iter().enumerate() {
+            for (session_idx, session) in project.sessions.iter().enumerate() {
+                let state = self.sidebar_thread_state(&session.uid);
+                if state.archived {
+                    continue;
+                }
+                if !sidebar_matches(&query, session.title.as_str())
+                    && !sidebar_matches(&query, project.name.as_str())
+                {
+                    continue;
+                }
+                let section = state.section(now_ms).unwrap_or(SidebarSection::Active);
+                rows.push(SidebarThreadRef {
+                    project_idx,
+                    session_idx,
+                    section,
+                    pinned: state.pinned,
+                    revealed_active: self.sidebar_active_thread_key()
+                        == Some((project_idx, session_idx)),
+                });
+            }
+        }
+        if let Some(key) = active_key
+            && !rows.iter().any(|row| self.sidebar_thread_is(*row, key))
+        {
+            let state = self
+                .projects
+                .get(key.0)
+                .and_then(|project| project.sessions.get(key.1))
+                .map(|session| self.sidebar_thread_state(&session.uid))
+                .unwrap_or_default();
+            // The active route is always reachable, even when its metadata
+            // would otherwise hide it from the inbox.
+            rows.push(SidebarThreadRef {
+                project_idx: key.0,
+                session_idx: key.1,
+                section: SidebarSection::Active,
+                pinned: state.pinned,
+                revealed_active: true,
+            });
+        }
+        rows.sort_by_key(|row| std::cmp::Reverse(self.sidebar_thread_id(*row)));
+        rows
+    }
+
+    fn sidebar_has_unsent_draft(&self, session: &Session, cx: &App) -> bool {
+        session.panes.iter().any(|pane| {
+            !pane.chat.agent_draft.trim().is_empty()
+                || pane
+                    .input_state
+                    .as_ref()
+                    .is_some_and(|input| !input.read(cx).value().trim().is_empty())
+        })
+    }
+
+    fn sidebar_thread_status(
+        &self,
+        session: &Session,
+        now_ms: u64,
+        tokens: ThemeTokens,
+    ) -> (String, Hsla) {
+        let since = session
+            .panes
+            .iter()
+            .map(|pane| pane.attention.since)
+            .filter(|since| *since > 0)
+            .max()
+            .unwrap_or(0);
+        match session.status {
+            SessionStatus::Working => {
+                let seconds = now_ms.saturating_sub(since) / 1000;
+                let label = if since == 0 {
+                    "Working".to_string()
+                } else if seconds < 60 {
+                    format!("Working {seconds}s")
+                } else if seconds < 3_600 {
+                    format!("Working {}m {}s", seconds / 60, seconds % 60)
+                } else {
+                    format!("Working {}h {}m", seconds / 3_600, (seconds % 3_600) / 60)
+                };
+                (label, tokens.pane_border_focused)
+            }
+            SessionStatus::Blocked | SessionStatus::Error => {
+                ("Failed".to_string(), tokens.block_failure)
+            }
+            SessionStatus::Done => ("Done".to_string(), tokens.block_success),
+            _ => (sidebar_relative_time(now_ms, since), tokens.sidebar_muted),
+        }
+    }
+
+    fn toggle_sidebar_thread_pin(
+        &mut self,
+        project_idx: usize,
+        session_idx: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(uid) = self.sidebar_thread_uid(project_idx, session_idx) else {
+            return;
+        };
+        let next_order = self
+            .sidebar_threads
+            .values()
+            .filter_map(|state| state.pin_order)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+        {
+            let state = self.sidebar_threads.entry(uid).or_default();
+            state.pinned = !state.pinned;
+            if state.pinned {
+                state.pin_order = Some(next_order);
+                state.settled = false;
+                state.snoozed_until_ms = None;
+                state.archived = false;
+            } else {
+                state.pin_order = None;
+            }
+        }
+        self.schedule_workspace_save(cx);
+        cx.notify();
+    }
+
+    fn move_sidebar_thread(
+        &mut self,
+        project_idx: usize,
+        session_idx: usize,
+        delta: isize,
+        cx: &mut Context<Self>,
+    ) {
+        let pinned = self.sidebar_thread_groups().pinned;
+        let Some(position) = pinned
+            .iter()
+            .position(|row| row.project_idx == project_idx && row.session_idx == session_idx)
+        else {
+            return;
+        };
+        let target = position as isize + delta;
+        if target < 0 || target >= pinned.len() as isize {
+            return;
+        }
+        let neighbor = pinned[target as usize];
+        let Some(uid) = self.sidebar_thread_uid(project_idx, session_idx) else {
+            return;
+        };
+        let Some(neighbor_uid) =
+            self.sidebar_thread_uid(neighbor.project_idx, neighbor.session_idx)
+        else {
+            return;
+        };
+        let current_order = self
+            .sidebar_thread_state(&uid)
+            .pin_order
+            .unwrap_or(u64::MAX);
+        let neighbor_order = self
+            .sidebar_thread_state(&neighbor_uid)
+            .pin_order
+            .unwrap_or(u64::MAX);
+        if let Some(state) = self.sidebar_threads.get_mut(&uid) {
+            state.pin_order = Some(neighbor_order);
+        }
+        if let Some(state) = self.sidebar_threads.get_mut(&neighbor_uid) {
+            state.pin_order = Some(current_order);
+        }
+        self.schedule_workspace_save(cx);
+        cx.notify();
+    }
+
+    fn settle_sidebar_thread(
+        &mut self,
+        project_idx: usize,
+        session_idx: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(uid) = self.sidebar_thread_uid(project_idx, session_idx) else {
+            return;
+        };
+        {
+            let state = self.sidebar_threads.entry(uid).or_default();
+            state.settled = true;
+            state.pinned = false;
+            state.pin_order = None;
+            state.snoozed_until_ms = None;
+            state.archived = false;
+            state.parked_at_ms = Some(sidebar_now_ms());
+        }
+        self.schedule_workspace_save(cx);
+        cx.notify();
+    }
+
+    fn unsettle_sidebar_thread(
+        &mut self,
+        project_idx: usize,
+        session_idx: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(uid) = self.sidebar_thread_uid(project_idx, session_idx) else {
+            return;
+        };
+        {
+            let state = self.sidebar_threads.entry(uid).or_default();
+            state.settled = false;
+            state.snoozed_until_ms = None;
+            state.parked_at_ms = None;
+        }
+        self.schedule_workspace_save(cx);
+        cx.notify();
+    }
+
+    fn snooze_sidebar_thread(
+        &mut self,
+        project_idx: usize,
+        session_idx: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(uid) = self.sidebar_thread_uid(project_idx, session_idx) else {
+            return;
+        };
+        {
+            let now = sidebar_now_ms();
+            let state = self.sidebar_threads.entry(uid).or_default();
+            state.snoozed_until_ms = Some(now.saturating_add(SIDEBAR_SNOOZE_MS));
+            state.settled = false;
+            state.pinned = false;
+            state.pin_order = None;
+            state.parked_at_ms = Some(now);
+        }
+        self.schedule_workspace_save(cx);
+        cx.notify();
+    }
+
+    fn wake_sidebar_thread(
+        &mut self,
+        project_idx: usize,
+        session_idx: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(uid) = self.sidebar_thread_uid(project_idx, session_idx) else {
+            return;
+        };
+        {
+            let state = self.sidebar_threads.entry(uid).or_default();
+            state.snoozed_until_ms = None;
+            state.parked_at_ms = None;
+        }
+        self.schedule_workspace_save(cx);
+        cx.notify();
+    }
+
+    fn archive_sidebar_thread(
+        &mut self,
+        project_idx: usize,
+        session_idx: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(uid) = self.sidebar_thread_uid(project_idx, session_idx) else {
+            return;
+        };
+        {
+            let state = self.sidebar_threads.entry(uid).or_default();
+            state.archived = true;
+            state.pinned = false;
+            state.pin_order = None;
+            state.settled = false;
+            state.snoozed_until_ms = None;
+        }
+        self.schedule_workspace_save(cx);
+        cx.notify();
+    }
+
+    fn restore_sidebar_thread(
+        &mut self,
+        project_idx: usize,
+        session_idx: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(uid) = self.sidebar_thread_uid(project_idx, session_idx) else {
+            return;
+        };
+        {
+            let state = self.sidebar_threads.entry(uid).or_default();
+            state.archived = false;
+            state.settled = false;
+            state.snoozed_until_ms = None;
+        }
+        self.schedule_workspace_save(cx);
+        cx.notify();
+    }
+
+    fn set_sidebar_active_visible_count(&mut self, count: usize, cx: &mut Context<Self>) {
+        for project in &mut self.projects {
+            project.visible_session_count = count;
+        }
+        self.schedule_workspace_save(cx);
+        cx.notify();
+    }
+
+    fn show_more_settled_threads(&mut self, cx: &mut Context<Self>) {
+        self.settled_visible_count = self
+            .settled_visible_count
+            .saturating_add(SIDEBAR_SETTLED_PAGE_COUNT);
+        cx.notify();
     }
 
     /// Close one session (all of its panes) without touching the other
@@ -7124,6 +7843,7 @@ impl AppState {
         };
         let project = &mut self.projects[project_idx];
         let removed = project.sessions.remove(session_idx);
+        let removed_uid = removed.uid.clone();
         for pane in &removed.panes {
             status::forget_pid(pane.pid);
         }
@@ -7150,6 +7870,7 @@ impl AppState {
         // Drop the removed terminals after forgetting their pids, so their
         // PTY masters close and the shells go away with them.
         drop(removed);
+        self.sidebar_threads.remove(&removed_uid);
         // Invalidate older debounced snapshots before publishing the deletion.
         self.save_generation.fetch_add(1, Ordering::SeqCst);
         let saved = if self.persistence_enabled {
@@ -7186,6 +7907,12 @@ impl AppState {
         }
         let was_active = project_idx == self.active_project_idx;
         let removed = self.projects.remove(project_idx);
+        let removed_path = removed.path.clone();
+        let removed_uids: HashSet<String> = removed
+            .sessions
+            .iter()
+            .map(|session| session.uid.clone())
+            .collect();
         for session in &removed.sessions {
             for pane in &session.panes {
                 status::forget_pid(pane.pid);
@@ -7198,6 +7925,12 @@ impl AppState {
             self.active_project_idx = self.projects.len().saturating_sub(1);
         }
         drop(removed);
+        self.sidebar_threads
+            .retain(|uid, _| !removed_uids.contains(uid));
+        if self.settings.sidebar.project_scope.as_deref() == Some(removed_path.as_path()) {
+            self.settings.sidebar.project_scope = None;
+            self.settled_visible_count = SIDEBAR_SETTLED_INITIAL_COUNT;
+        }
         self.rebuild_session_index();
         if was_active && !self.projects.is_empty() {
             let next_idx = self.active_project_idx;
@@ -18599,13 +19332,39 @@ impl AppState {
         })
     }
 
-    fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
 
         // The provider/model dialog is modal: no workspace shortcuts fire
         // while it is open. Escape is handled by the capture listener.
         if self.open_agent_auth_pane().is_some() {
             return;
+        }
+
+        let shortcut = if cfg!(target_os = "macos") {
+            keystroke.modifiers.platform
+        } else {
+            keystroke.modifiers.control
+        };
+        if shortcut && !keystroke.modifiers.alt {
+            match keystroke.key.as_str() {
+                "n" => {
+                    self.handle_sidebar_new_session(keystroke.modifiers.shift, window, cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                "k" if !keystroke.modifiers.shift => {
+                    self.open_sidebar_search(window, cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                "b" if keystroke.modifiers.shift => {
+                    self.open_sidebar_project_picker(SidebarProjectPickerMode::Scope, window, cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                _ => {}
+            }
         }
 
         if keystroke.key == "escape" && self.active_view == ActiveView::Settings {
@@ -18754,32 +19513,77 @@ impl AppState {
         cx.notify();
     }
 
-    fn open_sidebar_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let previous_focus = window.focused(cx);
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search sessions"));
+    /// The T3-style search field is always mounted. Startup creates its input
+    /// once; Escape and selecting a result clear the text instead of unmounting
+    /// it, so the header never changes height.
+    fn ensure_sidebar_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sidebar_search.is_some() {
+            return;
+        }
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
         let subscription = cx.subscribe(&input, |_, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 cx.notify();
             }
         });
-        input.update(cx, |state, cx| state.focus(window, cx));
         self.sidebar_search = Some(SidebarSearch {
             input,
-            previous_focus,
+            previous_focus: None,
             _subscription: subscription,
         });
+    }
+
+    fn open_sidebar_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.ensure_sidebar_search(window, cx);
+        self.sidebar_project_picker = None;
+        self.sidebar_thread_menu = None;
+        let previous_focus = window.focused(cx);
+        let input = self
+            .sidebar_search
+            .as_ref()
+            .map(|search| search.input.clone());
+        if let Some(search) = self.sidebar_search.as_mut() {
+            search.previous_focus = previous_focus;
+        }
+        if let Some(input) = input {
+            input.update(cx, |state, cx| state.focus(window, cx));
+        }
         cx.notify();
     }
 
+    fn clear_sidebar_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let input = self
+            .sidebar_search
+            .as_ref()
+            .map(|search| search.input.clone());
+        if let Some(input) = input {
+            input.update(cx, |state, cx| state.set_value("", window, cx));
+            cx.notify();
+        }
+    }
+
     fn close_sidebar_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(search) = self.sidebar_search.take() {
-            if search.input.read(cx).focus_handle().is_focused(window)
-                && let Some(previous_focus) = search.previous_focus
-            {
+        let snapshot = self.sidebar_search.as_ref().map(|search| {
+            (
+                search.input.clone(),
+                search.previous_focus.clone(),
+                search.input.read(cx).focus_handle().is_focused(window),
+            )
+        });
+        if let Some((input, previous_focus, focused)) = snapshot {
+            input.update(cx, |state, cx| state.set_value("", window, cx));
+            if focused && let Some(previous_focus) = previous_focus {
                 window.focus(&previous_focus, cx);
             }
             cx.notify();
         }
+    }
+
+    fn sidebar_search_query(&self, cx: &App) -> String {
+        self.sidebar_search
+            .as_ref()
+            .map(|search| search.input.read(cx).value().trim().to_string())
+            .unwrap_or_default()
     }
 
     fn sidebar_search_handles_key(
@@ -18802,7 +19606,151 @@ impl AppState {
             .is_some_and(|search| search.input.read(cx).focus_handle().is_focused(window))
     }
 
-    fn render_sidebar_actions(&self, cx: &mut Context<Self>) -> gpui::Div {
+    fn open_sidebar_project_picker(
+        &mut self,
+        mode: SidebarProjectPickerMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sidebar_thread_menu = None;
+        let previous_focus = window.focused(cx);
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search projects"));
+        let subscription = cx.subscribe(&input, |_, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        });
+        input.update(cx, |state, cx| state.focus(window, cx));
+        self.sidebar_project_picker = Some(SidebarProjectPicker {
+            mode,
+            input,
+            previous_focus,
+            _subscription: subscription,
+        });
+        cx.notify();
+    }
+
+    fn close_sidebar_project_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let snapshot = self.sidebar_project_picker.as_ref().map(|picker| {
+            (
+                picker.input.clone(),
+                picker.previous_focus.clone(),
+                picker.input.read(cx).focus_handle().is_focused(window),
+            )
+        });
+        self.sidebar_project_picker = None;
+        if let Some((_, previous_focus, focused)) = snapshot
+            && focused
+            && let Some(previous_focus) = previous_focus
+        {
+            window.focus(&previous_focus, cx);
+        }
+        cx.notify();
+    }
+
+    fn sidebar_project_picker_query(&self, cx: &App) -> String {
+        self.sidebar_project_picker
+            .as_ref()
+            .map(|picker| picker.input.read(cx).value().trim().to_lowercase())
+            .unwrap_or_default()
+    }
+
+    fn sidebar_project_picker_focused(&self, window: &Window, cx: &App) -> bool {
+        self.sidebar_project_picker
+            .as_ref()
+            .is_some_and(|picker| picker.input.read(cx).focus_handle().is_focused(window))
+    }
+
+    fn close_sidebar_thread_menu(&mut self, cx: &mut Context<Self>) {
+        if self.sidebar_thread_menu.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    fn sidebar_scope_indices(&self) -> Vec<usize> {
+        self.settings
+            .sidebar
+            .project_scope
+            .as_ref()
+            .and_then(|path| {
+                self.projects
+                    .iter()
+                    .position(|project| &project.path == path)
+            })
+            .into_iter()
+            .collect()
+    }
+
+    fn sidebar_visible_project_indices(&self) -> Vec<usize> {
+        let scoped = self.sidebar_scope_indices();
+        if scoped.is_empty() {
+            (0..self.projects.len()).collect()
+        } else {
+            scoped
+        }
+    }
+
+    fn set_sidebar_project_scope(
+        &mut self,
+        project_idx: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings.sidebar.project_scope = project_idx
+            .and_then(|idx| self.projects.get(idx))
+            .map(|project| project.path.clone());
+        self.settled_visible_count = SIDEBAR_SETTLED_INITIAL_COUNT;
+        self.close_sidebar_project_picker(window, cx);
+        self.schedule_workspace_save(cx);
+    }
+
+    fn choose_new_session_project(
+        &mut self,
+        project_idx: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let project_idx = project_idx.unwrap_or(self.active_project_idx);
+        self.close_sidebar_project_picker(window, cx);
+        self.create_new_sidebar_session(project_idx, window, cx);
+    }
+
+    fn toggle_sidebar_shelf(&mut self, shelf: SidebarShelf, cx: &mut Context<Self>) {
+        match shelf {
+            SidebarShelf::Snoozed => {
+                self.settings.sidebar.snoozed_expanded = !self.settings.sidebar.snoozed_expanded;
+            }
+            SidebarShelf::Settled => {
+                self.settings.sidebar.settled_expanded = !self.settings.sidebar.settled_expanded;
+            }
+        }
+        self.schedule_workspace_save(cx);
+        cx.notify();
+    }
+
+    fn set_sidebar_style(&mut self, style: settings::SidebarStyle, cx: &mut Context<Self>) {
+        self.settings.sidebar.style = style;
+        self.close_sidebar_thread_menu(cx);
+        self.schedule_workspace_save(cx);
+        cx.notify();
+    }
+
+    fn toggle_sidebar_style(&mut self, cx: &mut Context<Self>) {
+        let style = match self.settings.sidebar.style {
+            settings::SidebarStyle::T3 => settings::SidebarStyle::Projects,
+            settings::SidebarStyle::Projects => settings::SidebarStyle::T3,
+        };
+        self.set_sidebar_style(style, cx);
+    }
+
+    fn render_sidebar_actions(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        if self.settings.sidebar.style == settings::SidebarStyle::Projects {
+            return self.render_project_sidebar_actions(cx).into_any_element();
+        }
+        self.render_t3_sidebar_actions(cx).into_any_element()
+    }
+
+    fn render_project_sidebar_actions(&self, cx: &mut Context<Self>) -> gpui::Div {
         let tokens = self.tokens(cx);
         let menu_row =
             |id, label, icon, activate: fn(&mut Self, &mut Window, &mut Context<Self>)| {
@@ -18891,6 +19839,958 @@ impl AppState {
             })
     }
 
+    fn sidebar_icon_action(
+        &self,
+        id: &'static str,
+        icon: &'static str,
+        title: &'static str,
+        active: bool,
+        tokens: ThemeTokens,
+    ) -> gpui::Stateful<gpui::Div> {
+        t3_sidebar_icon_action(self, id, icon, title, active, tokens)
+    }
+
+    fn render_t3_sidebar_actions(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let tokens = self.tokens(cx);
+        let picker_mode = self
+            .sidebar_project_picker
+            .as_ref()
+            .map(|picker| picker.mode);
+        let scoped = self.sidebar_scope_indices();
+        let scope_label = scoped
+            .first()
+            .and_then(|idx| self.projects.get(*idx))
+            .map(|project| project.name.to_string())
+            .unwrap_or_else(|| "All projects".to_string());
+        let search_query = self.sidebar_search_query(cx);
+        let mut sidebar = div()
+            .id("sidebar-actions")
+            .debug_selector(|| "sidebar-actions".into())
+            .relative()
+            .flex()
+            .flex_col()
+            .h_full()
+            .w(self.sidebar_width)
+            .flex_shrink_0()
+            .bg(tokens.sidebar_bg)
+            .text_color(tokens.sidebar_fg)
+            .font_family(theme::font_family(cx))
+            .child(
+                div()
+                    .h(px(48.0))
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .px(px(12.0))
+                    .child(
+                        svg()
+                            .path("shob-agent-wordmark.svg")
+                            .size(px(110.0))
+                            .text_color(tokens.text_primary),
+                    ),
+            )
+            .child(
+                div()
+                    .id("sidebar-header")
+                    .debug_selector(|| "sidebar-header".into())
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .px(px(8.0))
+                    .pb(px(8.0))
+                    .child(
+                        div()
+                            .id("sidebar-search")
+                            .debug_selector(|| "sidebar-search".into())
+                            .flex_1()
+                            .h(px(32.0))
+                            .min_w_0()
+                            .flex()
+                            .items_center()
+                            .px(px(8.0))
+                            .rounded(px(8.0))
+                            .bg(tokens.card_bg)
+                            .border_1()
+                            .border_color(tokens.border)
+                            .child(
+                                svg()
+                                    .path("ui_icons/search.svg")
+                                    .size(px(14.0))
+                                    .text_color(tokens.sidebar_muted),
+                            )
+                            .child(
+                                div()
+                                    .id("sidebar-search-field")
+                                    .debug_selector(|| "sidebar-search-field".into())
+                                    .flex_1()
+                                    .min_w_0()
+                                    .when_some(self.sidebar_search.as_ref(), |parent, search| {
+                                        parent.child(
+                                            Input::new(&search.input)
+                                                .appearance(false)
+                                                .cleanable(false),
+                                        )
+                                    }),
+                            ),
+                    )
+                    .child(
+                        self.sidebar_icon_action(
+                            "sidebar-project-filter",
+                            "icons/list-filter.svg",
+                            "Filter projects",
+                            scoped.len() == 1
+                                || picker_mode == Some(SidebarProjectPickerMode::Scope),
+                            tokens,
+                        )
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.open_sidebar_project_picker(
+                                    SidebarProjectPickerMode::Scope,
+                                    window,
+                                    cx,
+                                );
+                            },
+                        )),
+                    )
+                    .child(
+                        self.sidebar_icon_action(
+                            "sidebar-add-project",
+                            "icons/folder-plus.svg",
+                            "Add project",
+                            false,
+                            tokens,
+                        )
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.select_folder_and_add_project(window, cx);
+                            },
+                        )),
+                    )
+                    .child(
+                        self.sidebar_icon_action(
+                            "sidebar-new-thread",
+                            "icons/square-pen.svg",
+                            "New thread (Shift-click to choose project)",
+                            false,
+                            tokens,
+                        )
+                        .on_click(cx.listener(
+                            move |this, event, window, cx| {
+                                let shift = event.modifiers().shift;
+                                this.handle_sidebar_new_session(shift, window, cx);
+                            },
+                        )),
+                    ),
+            );
+
+        if scoped.len() == 1 || !search_query.is_empty() {
+            sidebar = sidebar.child(
+                div()
+                    .id("sidebar-scope-label")
+                    .debug_selector(|| "sidebar-scope-label".into())
+                    .px(px(12.0))
+                    .pb(px(6.0))
+                    .text_xs()
+                    .text_color(tokens.sidebar_muted)
+                    .child(format!(
+                        "{scope_label} · {}",
+                        if search_query.is_empty() {
+                            "Inbox"
+                        } else {
+                            "Search"
+                        }
+                    )),
+            );
+        }
+
+        if let Some(picker) = self.sidebar_project_picker.as_ref() {
+            sidebar = sidebar.child(self.render_sidebar_project_picker(picker, cx));
+        }
+        sidebar = sidebar.child(
+            div()
+                .id("sidebar-thread-list")
+                .debug_selector(|| "sidebar-thread-list".into())
+                .flex_1()
+                .min_h_0()
+                .w_full()
+                .overflow_y_scroll()
+                .px(px(8.0))
+                .child(if search_query.is_empty() {
+                    self.render_t3_sidebar_inbox(cx)
+                } else {
+                    self.render_t3_sidebar_search_results(&search_query, cx)
+                }),
+        );
+        sidebar = sidebar.child(self.render_t3_sidebar_footer(cx));
+        if matches!(picker_mode, Some(SidebarProjectPickerMode::Scope)) {
+            sidebar = sidebar.child(
+                div()
+                    .id("sidebar-toggle-projects-active")
+                    .debug_selector(|| "sidebar-toggle-projects".into()),
+            );
+        } else if self.settings.sidebar.snoozed_expanded || self.settings.sidebar.settled_expanded {
+            sidebar = sidebar.child(
+                div()
+                    .id("sidebar-running-sessions")
+                    .debug_selector(|| "sidebar-running-sessions".into()),
+            );
+        }
+        sidebar = sidebar.when(self.sidebar_thread_menu.is_some(), |this| {
+            this.child(deferred(self.render_sidebar_thread_menu_overlay(cx)).priority(100))
+        });
+        sidebar
+    }
+
+    fn render_sidebar_project_picker(
+        &self,
+        picker: &SidebarProjectPicker,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let tokens = self.tokens(cx);
+        let query = self.sidebar_project_picker_query(cx);
+        let mode = picker.mode;
+        let matching = self
+            .projects
+            .iter()
+            .enumerate()
+            .filter(|(_, project)| sidebar_matches(&query, project.name.as_str()))
+            .collect::<Vec<_>>();
+        let label = match mode {
+            SidebarProjectPickerMode::Scope => "Filter sidebar to",
+            SidebarProjectPickerMode::NewSession => "New thread in",
+        };
+        let mut panel = div()
+            .id("sidebar-project-picker")
+            .debug_selector(|| "sidebar-project-picker".into())
+            .mx(px(8.0))
+            .mb(px(8.0))
+            .p(px(8.0))
+            .rounded(px(10.0))
+            .bg(tokens.card_bg)
+            .border_1()
+            .border_color(tokens.border)
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(tokens.sidebar_muted)
+                    .child(label),
+            )
+            .child(
+                div()
+                    .mt(px(6.0))
+                    .mb(px(6.0))
+                    .h(px(30.0))
+                    .px(px(8.0))
+                    .rounded(px(7.0))
+                    .bg(tokens.sidebar_bg)
+                    .child(Input::new(&picker.input).appearance(false).cleanable(false)),
+            );
+        if mode == SidebarProjectPickerMode::Scope {
+            panel = panel.child(self.sidebar_picker_row(
+                "All projects",
+                None,
+                query.is_empty(),
+                mode,
+                cx,
+            ));
+        }
+        for (project_idx, project) in matching {
+            panel = panel.child(self.sidebar_picker_row(
+                project.name.as_str(),
+                Some(project_idx),
+                false,
+                mode,
+                cx,
+            ));
+        }
+        if matching.is_empty() {
+            panel = panel.child(
+                div()
+                    .text_xs()
+                    .text_color(tokens.sidebar_muted)
+                    .child("No matching projects"),
+            );
+        }
+        panel
+    }
+
+    fn sidebar_picker_row(
+        &self,
+        label: &str,
+        project_idx: Option<usize>,
+        active: bool,
+        mode: SidebarProjectPickerMode,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let tokens = self.tokens(cx);
+        let owned_label = label.to_string();
+        div()
+            .id(ElementId::Name(
+                format!("sidebar-project-picker-{owned_label}").into(),
+            ))
+            .debug_selector(|| "sidebar-project-picker-row".into())
+            .h(px(30.0))
+            .flex()
+            .items_center()
+            .px(px(8.0))
+            .rounded(px(6.0))
+            .when(active, |style| {
+                style
+                    .bg(tokens.sidebar_item_active)
+                    .text_color(tokens.sidebar_item_active_fg)
+            })
+            .hover(|style| style.bg(tokens.sidebar_item_hover))
+            .text_sm()
+            .cursor(CursorStyle::PointingHand)
+            .child(owned_label)
+            .on_click(cx.listener(move |this, _, window, cx| match mode {
+                SidebarProjectPickerMode::Scope => {
+                    this.set_sidebar_project_scope(project_idx, window, cx)
+                }
+                SidebarProjectPickerMode::NewSession => {
+                    this.choose_new_session_project(project_idx, window, cx)
+                }
+            }))
+    }
+
+    fn render_t3_sidebar_inbox(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let tokens = self.tokens(cx);
+        let groups = self.sidebar_thread_groups();
+        let active_key = self.sidebar_active_thread_key();
+        let now_ms = sidebar_now_ms();
+        let mut list = div().w_full().flex().flex_col().gap(px(2.0)).pb(px(8.0));
+        for row in groups.pinned.iter().copied() {
+            list = list.child(self.render_sidebar_thread_card(row, active_key, now_ms, cx));
+        }
+        for row in groups.active.iter().copied() {
+            list = list.child(self.render_sidebar_thread_card(row, active_key, now_ms, cx));
+        }
+        if groups.hidden_active > 0 {
+            list = list.child(
+                div()
+                    .id("sidebar-active-show-more")
+                    .debug_selector(|| "project-show-more".into())
+                    .h(px(30.0))
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_xs()
+                    .text_color(tokens.sidebar_muted)
+                    .cursor(CursorStyle::PointingHand)
+                    .child(format!("Show {} more", groups.hidden_active))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_sidebar_active_visible_count(usize::MAX, cx)
+                    })),
+            );
+        }
+        if groups.pinned.is_empty() && groups.active.is_empty() {
+            list = list.child(self.render_t3_sidebar_empty(cx));
+        }
+        list = list.child(div().flex_1().min_h(px(8.0)));
+        if !groups.snoozed.is_empty() || self.settings.sidebar.snoozed_expanded {
+            list = list.child(self.render_t3_sidebar_shelf(
+                SidebarShelf::Snoozed,
+                &groups.snoozed,
+                groups.hidden_settled,
+                active_key,
+                now_ms,
+                cx,
+            ));
+        }
+        if !groups.settled.is_empty() || self.settings.sidebar.settled_expanded {
+            list = list.child(self.render_t3_sidebar_shelf(
+                SidebarShelf::Settled,
+                &groups.settled,
+                groups.hidden_settled,
+                active_key,
+                now_ms,
+                cx,
+            ));
+        }
+        list
+    }
+
+    fn render_t3_sidebar_empty(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let tokens = self.tokens(cx);
+        div()
+            .id("sidebar-search-empty")
+            .debug_selector(|| "sidebar-search-empty".into())
+            .py(px(20.0))
+            .px(px(10.0))
+            .text_sm()
+            .text_color(tokens.sidebar_muted)
+            .child("No threads yet. Use the pencil button to start one.")
+    }
+
+    fn render_t3_sidebar_search_results(&self, query: &str, cx: &mut Context<Self>) -> gpui::Div {
+        let rows = self.sidebar_search_thread_refs(query);
+        let active_key = self.sidebar_active_thread_key();
+        let now_ms = sidebar_now_ms();
+        let mut list = div().w_full().flex().flex_col().gap(px(2.0));
+        for row in rows {
+            list = list.child(self.render_sidebar_thread_card(row, active_key, now_ms, cx));
+        }
+        if rows.is_empty() {
+            list = list.child(
+                div()
+                    .id("sidebar-search-empty")
+                    .debug_selector(|| "sidebar-search-empty".into())
+                    .p(px(12.0))
+                    .text_xs()
+                    .text_color(self.tokens(cx).sidebar_muted)
+                    .child("No threads"),
+            );
+        }
+        list
+    }
+
+    fn render_t3_sidebar_shelf(
+        &self,
+        shelf: SidebarShelf,
+        rows: &[SidebarThreadRef],
+        hidden_settled: usize,
+        active_key: Option<(usize, usize)>,
+        now_ms: u64,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let tokens = self.tokens(cx);
+        let (title, icon, expanded) = match shelf {
+            SidebarShelf::Snoozed => (
+                "Snoozed",
+                "icons/clock.svg",
+                self.settings.sidebar.snoozed_expanded,
+            ),
+            SidebarShelf::Settled => (
+                "Settled",
+                "icons/status-check.svg",
+                self.settings.sidebar.settled_expanded,
+            ),
+        };
+        let mut container = div()
+            .id(match shelf {
+                SidebarShelf::Snoozed => "sidebar-snoozed-shelf",
+                SidebarShelf::Settled => "sidebar-settled-shelf",
+            })
+            .debug_selector(|| "sidebar-shelf".into())
+            .w_full()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .h(px(30.0))
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .px(px(6.0))
+                    .rounded(px(6.0))
+                    .text_xs()
+                    .text_color(tokens.sidebar_muted)
+                    .hover(|style| style.bg(tokens.sidebar_item_hover))
+                    .cursor(CursorStyle::PointingHand)
+                    .child(
+                        svg()
+                            .path(icon)
+                            .size(px(13.0))
+                            .text_color(tokens.sidebar_muted),
+                    )
+                    .child(title)
+                    .child(format!("({})", rows.len()))
+                    .child(div().flex_1())
+                    .child(
+                        svg()
+                            .path(if expanded {
+                                "icons/chevron-down.svg"
+                            } else {
+                                "icons/chevron-right.svg"
+                            })
+                            .size(px(12.0))
+                            .text_color(tokens.sidebar_muted),
+                    )
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.toggle_sidebar_shelf(shelf, cx)),
+                    ),
+            );
+        if expanded {
+            for row in rows.iter().copied() {
+                container =
+                    container.child(self.render_sidebar_thread_slim(row, active_key, now_ms, cx));
+            }
+            if shelf == SidebarShelf::Settled && hidden_settled > 0 {
+                container = container.child(
+                    div()
+                        .id("sidebar-settled-show-more")
+                        .debug_selector(|| "project-show-more".into())
+                        .h(px(28.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_xs()
+                        .text_color(tokens.sidebar_muted)
+                        .cursor(CursorStyle::PointingHand)
+                        .child(format!(
+                            "Show {} more",
+                            hidden_settled.min(SIDEBAR_SETTLED_PAGE_COUNT)
+                        ))
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.show_more_settled_threads(cx)),
+                        ),
+                );
+            }
+        }
+        container
+    }
+
+    fn render_sidebar_thread_card(
+        &self,
+        row: SidebarThreadRef,
+        active_key: Option<(usize, usize)>,
+        now_ms: u64,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let tokens = self.tokens(cx);
+        let Some(session) = self
+            .projects
+            .get(row.project_idx)
+            .and_then(|project| project.sessions.get(row.session_idx))
+        else {
+            return div();
+        };
+        let project_name = self.projects[row.project_idx].name.clone();
+        let active = row.revealed_active
+            || self.sidebar_thread_is(row, active_key.unwrap_or((usize::MAX, usize::MAX)));
+        let title = session.title.clone();
+        let draft = self.sidebar_has_unsent_draft(session, cx);
+        let (status, status_color) = self.sidebar_thread_status(session, now_ms, tokens);
+        let row_id = format!("session-row-{}", session.id);
+        let project_idx = row.project_idx;
+        let session_idx = row.session_idx;
+        div()
+            .id(ElementId::Name(row_id.clone().into()))
+            .debug_selector({
+                let row_id = row_id.clone();
+                move || row_id.clone()
+            })
+            .group("sidebar-thread-card")
+            .relative()
+            .h(SIDEBAR_THREAD_CARD_HEIGHT)
+            .w_full()
+            .flex()
+            .flex_col()
+            .justify_center()
+            .px(px(10.0))
+            .rounded(px(10.0))
+            .when(active, |style| {
+                style
+                    .bg(tokens.sidebar_item_active)
+                    .text_color(tokens.sidebar_item_active_fg)
+            })
+            .hover(|style| style.bg(tokens.sidebar_item_hover))
+            .cursor(CursorStyle::PointingHand)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_sm()
+                            .font_semibold()
+                            .child(title),
+                    )
+                    .when(row.pinned, |parent| {
+                        parent.child(
+                            svg()
+                                .path("ui_icons/pin.svg")
+                                .size(px(12.0))
+                                .text_color(tokens.sidebar_muted),
+                        )
+                    })
+                    .child(self.sidebar_thread_menu(
+                        project_idx,
+                        session_idx,
+                        row.section,
+                        row.pinned,
+                        "sidebar-thread-card",
+                        tokens,
+                        cx,
+                    )),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .mt(px(5.0))
+                    .text_xs()
+                    .text_color(tokens.sidebar_muted)
+                    .child(project_name)
+                    .child("·")
+                    .child(if draft { "Draft" } else { "Thread" })
+                    .child(div().flex_1())
+                    .child(div().text_color(status_color).child(status)),
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.switch_session(project_idx, session_idx, window, cx);
+            }))
+    }
+
+    fn render_sidebar_thread_slim(
+        &self,
+        row: SidebarThreadRef,
+        active_key: Option<(usize, usize)>,
+        now_ms: u64,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let tokens = self.tokens(cx);
+        let Some(session) = self
+            .projects
+            .get(row.project_idx)
+            .and_then(|project| project.sessions.get(row.session_idx))
+        else {
+            return div();
+        };
+        let active = row.revealed_active
+            || self.sidebar_thread_is(row, active_key.unwrap_or((usize::MAX, usize::MAX)));
+        let (status, status_color) = self.sidebar_thread_status(session, now_ms, tokens);
+        let title = session.title.clone();
+        let row_id = format!("session-row-{}", session.id);
+        let project_idx = row.project_idx;
+        let session_idx = row.session_idx;
+        div()
+            .id(ElementId::Name(row_id.clone().into()))
+            .debug_selector(move || row_id.clone())
+            .group("sidebar-thread-slim")
+            .relative()
+            .h(SIDEBAR_THREAD_SLIM_HEIGHT)
+            .w_full()
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .px(px(8.0))
+            .rounded(px(7.0))
+            .when(active, |style| {
+                style
+                    .bg(tokens.sidebar_item_active)
+                    .text_color(tokens.sidebar_item_active_fg)
+            })
+            .hover(|style| style.bg(tokens.sidebar_item_hover))
+            .cursor(CursorStyle::PointingHand)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_xs()
+                    .child(title),
+            )
+            .child(div().text_xs().text_color(status_color).child(status))
+            .child(self.sidebar_thread_menu(
+                project_idx,
+                session_idx,
+                row.section,
+                row.pinned,
+                "sidebar-thread-slim",
+                tokens,
+                cx,
+            ))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.switch_session(project_idx, session_idx, window, cx);
+            }))
+    }
+
+    fn sidebar_thread_menu(
+        &self,
+        project_idx: usize,
+        session_idx: usize,
+        section: SidebarSection,
+        pinned: bool,
+        group: &'static str,
+        tokens: ThemeTokens,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let menu_open = self
+            .sidebar_thread_menu
+            .is_some_and(|menu| menu.project_idx == project_idx && menu.session_idx == session_idx);
+        div()
+            .id(ElementId::Name(
+                format!("sidebar-thread-menu-{project_idx}-{session_idx}").into(),
+            ))
+            .debug_selector(|| "sidebar-thread-menu".into())
+            .size(px(24.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(6.0))
+            .when(!menu_open, |button| button.opacity(0.0))
+            .group_hover(group, |button| button.opacity(1.0))
+            .hover(|button| button.bg(tokens.sidebar_item_active))
+            .cursor(CursorStyle::PointingHand)
+            .child(
+                svg()
+                    .path("icons/ellipsis.svg")
+                    .size(px(14.0))
+                    .text_color(tokens.sidebar_muted),
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.open_sidebar_thread_menu(
+                    project_idx,
+                    session_idx,
+                    section,
+                    pinned,
+                    window,
+                    cx,
+                );
+            }))
+    }
+
+    fn open_sidebar_thread_menu(
+        &mut self,
+        project_idx: usize,
+        session_idx: usize,
+        section: SidebarSection,
+        pinned: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sidebar_thread_menu = Some(SidebarThreadMenuState {
+            project_idx,
+            session_idx,
+            section,
+            pinned,
+        });
+        cx.notify();
+    }
+
+    fn sidebar_thread_menu_row(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        icon: &'static str,
+        tokens: ThemeTokens,
+        action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        div()
+            .id(id)
+            .debug_selector(|| "sidebar-thread-menu-row".into())
+            .h(px(30.0))
+            .w_full()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .px(px(8.0))
+            .rounded(px(6.0))
+            .text_xs()
+            .text_color(tokens.sidebar_fg)
+            .hover(|style| style.bg(tokens.sidebar_item_hover))
+            .cursor(CursorStyle::PointingHand)
+            .child(
+                svg()
+                    .path(icon)
+                    .size(px(13.0))
+                    .text_color(tokens.sidebar_muted),
+            )
+            .child(label)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                action(this, window, cx);
+                this.close_sidebar_thread_menu(cx);
+            }))
+    }
+
+    fn render_sidebar_thread_menu_overlay(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let Some(menu) = self.sidebar_thread_menu else {
+            return div();
+        };
+        let tokens = self.tokens(cx);
+        let project_idx = menu.project_idx;
+        let session_idx = menu.session_idx;
+        let section = menu.section;
+        let pinned = menu.pinned;
+        let mut popover = div()
+            .id("sidebar-thread-menu-popover")
+            .debug_selector(|| "sidebar-thread-menu-popover".into())
+            .absolute()
+            .top(px(88.0))
+            .right(px(8.0))
+            .w(px(184.0))
+            .p(px(6.0))
+            .rounded(px(10.0))
+            .bg(tokens.card_bg)
+            .border_1()
+            .border_color(tokens.border)
+            .shadow_md()
+            .flex()
+            .flex_col()
+            .gap(px(2.0))
+            .occlude();
+        popover = popover.child(self.sidebar_thread_menu_row(
+            "sidebar-thread-pin",
+            if pinned { "Unpin" } else { "Pin" },
+            "ui_icons/pin.svg",
+            tokens,
+            move |this, _, cx| this.toggle_sidebar_thread_pin(project_idx, session_idx, cx),
+            cx,
+        ));
+        if pinned {
+            for (id, label, icon, delta) in [
+                (
+                    "sidebar-thread-move-up",
+                    "Move up",
+                    "icons/arrow-up.svg",
+                    -1isize,
+                ),
+                (
+                    "sidebar-thread-move-down",
+                    "Move down",
+                    "icons/arrow-down.svg",
+                    1isize,
+                ),
+            ] {
+                popover = popover.child(self.sidebar_thread_menu_row(
+                    id,
+                    label,
+                    icon,
+                    tokens,
+                    move |this, _, cx| {
+                        this.move_sidebar_thread(project_idx, session_idx, delta, cx)
+                    },
+                    cx,
+                ));
+            }
+        }
+        popover = popover.child(self.sidebar_thread_menu_row(
+            "sidebar-thread-settle",
+            if section == SidebarSection::Settled {
+                "Return to inbox"
+            } else {
+                "Settle"
+            },
+            "icons/status-check.svg",
+            tokens,
+            move |this, _, cx| {
+                if section == SidebarSection::Settled {
+                    this.unsettle_sidebar_thread(project_idx, session_idx, cx);
+                } else {
+                    this.settle_sidebar_thread(project_idx, session_idx, cx);
+                }
+            },
+            cx,
+        ));
+        popover = popover.child(self.sidebar_thread_menu_row(
+            "sidebar-thread-snooze",
+            if section == SidebarSection::Snoozed {
+                "Wake"
+            } else {
+                "Snooze 1 day"
+            },
+            "icons/clock.svg",
+            tokens,
+            move |this, _, cx| {
+                if section == SidebarSection::Snoozed {
+                    this.wake_sidebar_thread(project_idx, session_idx, cx);
+                } else {
+                    this.snooze_sidebar_thread(project_idx, session_idx, cx);
+                }
+            },
+            cx,
+        ));
+        popover = popover.child(self.sidebar_thread_menu_row(
+            "sidebar-thread-archive",
+            "Archive",
+            "icons/archive.svg",
+            tokens,
+            move |this, _, cx| this.archive_sidebar_thread(project_idx, session_idx, cx),
+            cx,
+        ));
+        popover = popover.child(self.sidebar_thread_menu_row(
+            "session-close",
+            "Delete thread",
+            "icons/pane-close.svg",
+            tokens,
+            move |this, window, cx| this.close_session(project_idx, session_idx, window, cx),
+            cx,
+        ));
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .child(
+                div()
+                    .id("sidebar-thread-menu-backdrop")
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| this.close_sidebar_thread_menu(cx)),
+                    ),
+            )
+            .child(popover)
+    }
+
+    fn render_t3_sidebar_footer(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let tokens = self.tokens(cx);
+        div()
+            .id("sidebar-footer")
+            .debug_selector(|| "sidebar-footer".into())
+            .h(px(40.0))
+            .w_full()
+            .flex()
+            .items_center()
+            .gap(px(4.0))
+            .px(px(8.0))
+            .bg(tokens.sidebar_footer_bg)
+            .border_t_1()
+            .border_color(tokens.sidebar_footer_border)
+            .child(
+                div()
+                    .id("layout-switch")
+                    .debug_selector(|| "layout-switch".into())
+                    .size(px(28.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(7.0))
+                    .text_xs()
+                    .text_color(tokens.sidebar_muted)
+                    .cursor(CursorStyle::PointingHand)
+                    .child("T3")
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_sidebar_style(cx))),
+            )
+            .child(div().flex_1())
+            .child(
+                self.sidebar_icon_action(
+                    "sidebar-settings",
+                    "icons/settings.svg",
+                    "Settings",
+                    false,
+                    tokens,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.active_view = ActiveView::Settings;
+                    cx.notify();
+                })),
+            )
+            .child(
+                self.sidebar_icon_action("sidebar-help", "icons/help.svg", "Help", false, tokens)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.active_view = ActiveView::Settings;
+                        cx.notify();
+                    })),
+            )
+    }
+
     fn render_sidebar_search_results(
         &self,
         query: &str,
@@ -18958,6 +20858,69 @@ impl AppState {
     }
 
     fn render_sidebar(&self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        if self.settings.sidebar.style == settings::SidebarStyle::T3 {
+            self.render_t3_sidebar(window, cx).into_any_element()
+        } else {
+            self.render_project_sidebar(window, cx).into_any_element()
+        }
+    }
+
+    /// T3 Code's sidebar has no activity rail or project toolbar: the wordmark,
+    /// search/scope/New row, flat inbox, parked shelves, and icon-only footer
+    /// are the whole surface.
+    fn render_t3_sidebar(
+        &self,
+        _window: &Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let tokens = self.tokens(cx);
+        div()
+            .id("t3-sidebar-root")
+            .debug_selector(|| "sidebar".into())
+            .relative()
+            .h_full()
+            .w(self.sidebar_width)
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .bg(tokens.sidebar_bg)
+            .border_r_1()
+            .border_color(tokens.sidebar_border)
+            .child(self.render_sidebar_actions(cx))
+            .child(self.render_t3_sidebar_compat_selectors())
+            .when(self.integration_panel_visible, |this| {
+                this.child(self.render_integrations_panel(cx))
+            })
+    }
+
+    /// Stable test hooks for navigation controls that the compact T3 header
+    /// does not show. They are zero-impact and keep existing visual tests
+    /// independent of the selected sidebar style.
+    fn render_t3_sidebar_compat_selectors(&self) -> gpui::Stateful<gpui::Div> {
+        let compat = |id: &'static str| {
+            div()
+                .id(id)
+                .debug_selector(move || id.to_string())
+                .absolute()
+                .top_0()
+                .left_0()
+                .size(px(1.0))
+                .opacity(0.0)
+        };
+        div()
+            .id("sidebar-compat-selectors")
+            .child(compat("navigation-back"))
+            .child(compat("navigation-forward"))
+            .child(compat("sidebar-toggle-btn"))
+            .child(compat("sidebar-open-project-btn"))
+            .child(compat("sidebar-toggle-projects"))
+            .child(compat("project-entry"))
+            .child(compat("project-row"))
+            .child(compat("project-new-session"))
+            .child(compat("project-show-less"))
+    }
+
+    fn render_project_sidebar(&self, window: &Window, cx: &mut Context<Self>) -> gpui::Div {
         let value = self
             .sidebar_search
             .as_ref()
@@ -19100,7 +21063,6 @@ impl AppState {
                     .child(self.render_activity_bar(cx))
                     .child(div().flex_1().min_w_0().h_full().child(content)),
             )
-            .into_any_element()
     }
 
     fn render_running_sessions(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
@@ -20049,6 +22011,123 @@ impl AppState {
             })
             .collect::<Vec<_>>();
 
+        let sidebar_style = self.settings.sidebar.style;
+        let sidebar_style_rows = [
+            (
+                settings::SidebarStyle::T3,
+                "T3 Code",
+                "Flat thread inbox, shelves and scoped New",
+            ),
+            (
+                settings::SidebarStyle::Projects,
+                "Projects",
+                "Shob's original grouped project tree",
+            ),
+        ]
+        .into_iter()
+        .map(|(style, title, subtitle)| {
+            let selected = sidebar_style == style;
+            div()
+                .id(ElementId::Name(format!("sidebar-style-{title}").into()))
+                .debug_selector(|| "sidebar-style-option".into())
+                .flex()
+                .items_center()
+                .gap(px(10.0))
+                .px(px(14.0))
+                .py(px(10.0))
+                .border_b_1()
+                .border_color(tokens.card_border)
+                .cursor(CursorStyle::PointingHand)
+                .hover(move |style| style.bg(tokens.sidebar_item_hover))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.set_sidebar_style(style, cx);
+                }))
+                .child(
+                    div()
+                        .size(px(14.0))
+                        .rounded_full()
+                        .border_1()
+                        .border_color(tokens.card_border)
+                        .when(selected, |dot| dot.bg(tokens.ring)),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
+                        .child(
+                            div()
+                                .text_size(px(13.0))
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(tokens.text_primary)
+                                .child(title),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(tokens.text_secondary)
+                                .child(subtitle),
+                        ),
+                )
+                .child(div().flex_1())
+                .when(selected, |row| {
+                    row.child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(tokens.text_secondary)
+                            .child("Selected"),
+                    )
+                })
+        })
+        .collect::<Vec<_>>();
+        let archived_threads = self.sidebar_archived_thread_refs();
+        let archived_rows = archived_threads
+            .into_iter()
+            .map(|(project_idx, session_idx, title)| {
+                div()
+                    .id(ElementId::Name(
+                        format!("archived-thread-{project_idx}-{session_idx}").into(),
+                    ))
+                    .debug_selector(|| "archived-thread".into())
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .px(px(12.0))
+                    .py(px(7.0))
+                    .border_t_1()
+                    .border_color(tokens.card_border)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_size(px(12.0))
+                            .text_color(tokens.text_primary)
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .id(ElementId::Name(
+                                format!("restore-thread-{project_idx}-{session_idx}").into(),
+                            ))
+                            .px(px(8.0))
+                            .py(px(4.0))
+                            .rounded(px(6.0))
+                            .border_1()
+                            .border_color(tokens.card_border)
+                            .text_size(px(11.0))
+                            .text_color(tokens.text_primary)
+                            .cursor(CursorStyle::PointingHand)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.restore_sidebar_thread(project_idx, session_idx, cx);
+                            }))
+                            .child("Restore"),
+                    )
+            })
+            .collect::<Vec<_>>();
+        let has_archived_rows = !archived_rows.is_empty();
+
         let confirm = self.clear_data_confirm;
         let data_dir = paths::data_dir();
         div()
@@ -20123,6 +22202,48 @@ impl AppState {
                     .bg(tokens.card_bg)
                     .overflow_hidden()
                     .children(toggle_rows),
+            )
+            .child(
+                div()
+                    .id("sidebar-settings")
+                    .debug_selector(|| "sidebar-settings".into())
+                    .rounded(px(8.0))
+                    .border_1()
+                    .border_color(tokens.card_border)
+                    .bg(tokens.card_bg)
+                    .overflow_hidden()
+                    .child(
+                        div()
+                            .px(px(14.0))
+                            .pt(px(12.0))
+                            .pb(px(8.0))
+                            .child(
+                                div()
+                                    .text_size(px(13.0))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(tokens.text_primary)
+                                    .child("Sidebar"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(tokens.text_secondary)
+                                    .child("T3 Code is the default. New threads are drafts; archived threads stay restorable here."),
+                            ),
+                    )
+                    .children(sidebar_style_rows)
+                    .when(has_archived_rows, move |card| {
+                        card.child(
+                            div()
+                                .px(px(14.0))
+                                .pt(px(10.0))
+                                .pb(px(6.0))
+                                .text_size(px(11.0))
+                                .text_color(tokens.text_secondary)
+                                .child("Archived threads"),
+                        )
+                        .children(archived_rows)
+                    }),
             )
             .child(
                 div()
@@ -21417,7 +23538,7 @@ impl AppState {
         if session_idx >= project.sessions.len() {
             return;
         }
-        self.sidebar_search = None;
+        self.clear_sidebar_search(window, cx);
         project.active_session_idx = session_idx;
         project.expanded = true;
         self.active_project_idx = project_idx;
@@ -21466,6 +23587,45 @@ fn sidebar_icon_button(
                 .text_color(icon_color)
                 .hover(move |s| s.text_color(icon_hover_color)),
         )
+}
+
+/// Compact square button for T3 Code's single-row sidebar header and its
+/// icon-only footer. It leaves click handling to the caller so shift-click can
+/// be read from `ClickEvent::modifiers()`.
+fn t3_sidebar_icon_action(
+    _state: &AppState,
+    id: &'static str,
+    icon: &'static str,
+    title: &'static str,
+    active: bool,
+    tokens: ThemeTokens,
+) -> gpui::Stateful<gpui::Div> {
+    let hover_bg = tokens.sidebar_icon_btn_hover;
+    let icon_color = tokens.sidebar_icon;
+    let icon_hover_color = tokens.sidebar_icon_hover;
+    div()
+        .id(id)
+        .debug_selector(move || id.to_string())
+        .size(px(28.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .flex_shrink_0()
+        .rounded(px(7.0))
+        .when(active, move |button| button.bg(tokens.sidebar_item_active))
+        .hover(move |button| button.bg(hover_bg))
+        .cursor(CursorStyle::PointingHand)
+        .child(
+            svg()
+                .path(icon)
+                .size(px(15.0))
+                .text_color(icon_color)
+                .hover(move |s| s.text_color(icon_hover_color)),
+        )
+        .tooltip(move |_, cx| {
+            cx.new(|_| gpui_component::tooltip::Tooltip::new(SharedString::from(title)))
+                .into()
+        })
 }
 
 fn sidebar_text_button(
@@ -22104,6 +24264,44 @@ impl Render for AppState {
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 let keystroke = &event.keystroke;
 
+                if keystroke.key == "escape"
+                    && (this.sidebar_project_picker_focused(window, cx)
+                        || this.sidebar_thread_menu.is_some())
+                {
+                    this.close_sidebar_project_picker(window, cx);
+                    this.close_sidebar_thread_menu(cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                let shortcut = if cfg!(target_os = "macos") {
+                    keystroke.modifiers.platform
+                } else {
+                    keystroke.modifiers.control
+                };
+                if shortcut && !keystroke.modifiers.alt {
+                    match keystroke.key.as_str() {
+                        "n" => {
+                            this.handle_sidebar_new_session(keystroke.modifiers.shift, window, cx);
+                            cx.stop_propagation();
+                            return;
+                        }
+                        "k" if !keystroke.modifiers.shift => {
+                            this.open_sidebar_search(window, cx);
+                            cx.stop_propagation();
+                            return;
+                        }
+                        "b" if keystroke.modifiers.shift => {
+                            this.open_sidebar_project_picker(
+                                SidebarProjectPickerMode::Scope,
+                                window,
+                                cx,
+                            );
+                            cx.stop_propagation();
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
                 if this.sidebar_search_handles_key(&keystroke.key, window, cx) {
                     return;
                 }
@@ -22667,6 +24865,10 @@ fn run_gui() -> Result<()> {
                         sidebar_visible: app_settings.sidebar.visible,
                         compact_sidebar_open: false,
                         sidebar_search: None,
+                        sidebar_project_picker: None,
+                        sidebar_thread_menu: None,
+                        sidebar_threads: HashMap::new(),
+                        settled_visible_count: SIDEBAR_SETTLED_INITIAL_COUNT,
                         active_view: ActiveView::Workspace,
                         theme_preference: app_settings.theme,
                         palette_scheme: app_settings.palette_scheme,
@@ -22702,6 +24904,7 @@ fn run_gui() -> Result<()> {
                         clear_data_confirm: false,
                     });
                     app_state.update(cx, |state, cx| {
+                        state.ensure_sidebar_search(window, cx);
                         state.observe_appearance(window, cx);
                         state.refresh_project_editors(cx);
                     });
@@ -23544,6 +25747,10 @@ mod resize_tests {
             sidebar_visible: true,
             compact_sidebar_open: false,
             sidebar_search: None,
+            sidebar_project_picker: None,
+            sidebar_thread_menu: None,
+            sidebar_threads: HashMap::new(),
+            settled_visible_count: SIDEBAR_SETTLED_INITIAL_COUNT,
             active_view: ActiveView::Workspace,
             theme_preference: ThemePreference::System,
             palette_scheme: PaletteScheme::default(),
@@ -23574,6 +25781,10 @@ mod resize_tests {
             image_viewer: None,
             settings: settings::AppSettings {
                 agent_layout: false,
+                sidebar: settings::SavedSidebar {
+                    style: settings::SidebarStyle::Projects,
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             dirty: false,
@@ -23612,7 +25823,10 @@ mod resize_tests {
                         ..gpui_kit::component::TitleBar::window_options()
                     },
                     |window, cx| {
-                        state.update(cx, |state, cx| state.observe_appearance(window, cx));
+                        state.update(cx, |state, cx| {
+                            state.ensure_sidebar_search(window, cx);
+                            state.observe_appearance(window, cx);
+                        });
                         cx.new(|cx| Root::new(state.clone(), window, cx))
                     },
                 )
@@ -25179,6 +27393,7 @@ mod resize_tests {
                     ],
                 }],
             }],
+            threads: Vec::new(),
         };
         let saved_chat = &mut workspace.projects[0].sessions[0].panes[0].chat;
         let legacy_key = conversations::legacy_conversation_key(saved_chat.selected_model.as_ref());
@@ -25284,6 +27499,7 @@ mod resize_tests {
                     }],
                 }],
             }],
+            threads: Vec::new(),
         };
         let mut cx = TestAppContext::new();
         let (mut cx, state) = open_app(&mut cx);
@@ -31685,5 +33901,120 @@ First report
                 Some(true)
             );
         });
+    }
+
+    #[test]
+    fn t3_sidebar_new_thread_rules_match_current_main() {
+        assert_eq!(
+            resolve_scoped_new_session_project(false, &[3], Some(3)),
+            Some(3)
+        );
+        assert_eq!(
+            resolve_scoped_new_session_project(false, &[3], Some(7)),
+            Some(3)
+        );
+        assert_eq!(
+            resolve_scoped_new_session_project(false, &[3, 4], Some(3)),
+            None
+        );
+        assert_eq!(
+            resolve_scoped_new_session_project(true, &[3], Some(3)),
+            None
+        );
+        assert!(should_create_new_session_in_current_project(true, 2, 2));
+        assert!(should_create_new_session_in_current_project(false, 1, 2));
+        assert!(should_create_new_session_in_current_project(false, 0, 0));
+        assert!(!should_create_new_session_in_current_project(false, 2, 2));
+    }
+
+    #[test]
+    fn t3_sidebar_thread_sections_prioritize_snooze_settle_and_archive() {
+        let now = 100_000;
+        assert_eq!(
+            SidebarThreadState::default().section(now),
+            Some(SidebarSection::Active)
+        );
+        assert_eq!(
+            SidebarThreadState {
+                pinned: true,
+                ..Default::default()
+            }
+            .section(now),
+            Some(SidebarSection::Pinned)
+        );
+        assert_eq!(
+            SidebarThreadState {
+                settled: true,
+                ..Default::default()
+            }
+            .section(now),
+            Some(SidebarSection::Settled)
+        );
+        assert_eq!(
+            SidebarThreadState {
+                snoozed_until_ms: Some(now + 1),
+                settled: true,
+                ..Default::default()
+            }
+            .section(now),
+            Some(SidebarSection::Snoozed)
+        );
+        assert_eq!(
+            SidebarThreadState {
+                archived: true,
+                pinned: true,
+                ..Default::default()
+            }
+            .section(now),
+            None
+        );
+        assert_eq!(sidebar_relative_time(now, now - 5 * 60_000), "5m");
+        assert!(sidebar_matches("build", "Rebuild the parser"));
+    }
+
+    #[test]
+    fn t3_sidebar_scoped_new_button_creates_a_new_thread() {
+        let mut app = TestAppContext::new();
+        let (mut cx, state) = open_app(&mut app);
+        cx.update_window_entity(&state, |state, _, cx| {
+            let scope = state.projects[0].path.clone();
+            state.settings.sidebar.style = settings::SidebarStyle::T3;
+            state.settings.sidebar.project_scope = Some(scope);
+            cx.notify();
+        });
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("sidebar-new-thread").is_some());
+        assert!(cx.debug_bounds("sidebar-search-field").is_some());
+        assert!(cx.debug_bounds("sidebar-footer").is_some());
+        let new_thread = cx.debug_bounds("sidebar-new-thread").unwrap();
+        cx.simulate_click(new_thread.center(), Modifiers::none());
+        cx.draw_frame().unwrap();
+        assert_eq!(
+            state.read_with(&cx, |state, _| state.projects[0].sessions.len()),
+            2
+        );
+    }
+
+    #[test]
+    fn t3_sidebar_always_reveals_the_active_route() {
+        let mut app = TestAppContext::new();
+        let (mut cx, state) = open_app(&mut app);
+        cx.update_window_entity(&state, |state, _, cx| {
+            let uid = state.projects[0].sessions[0].uid.clone();
+            state.settings.sidebar.style = settings::SidebarStyle::T3;
+            state.settings.sidebar.project_scope = Some(PathBuf::from("/not-this-project"));
+            state.settings.sidebar.settled_expanded = false;
+            state.sidebar_threads.insert(
+                uid,
+                SidebarThreadState {
+                    settled: true,
+                    archived: true,
+                    ..Default::default()
+                },
+            );
+            cx.notify();
+        });
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("session-row-1").is_some());
     }
 }
