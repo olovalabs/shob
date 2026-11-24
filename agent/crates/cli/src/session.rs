@@ -2321,7 +2321,7 @@ where
                     )],
                     had_errors: true,
                     project_trusted: None,
-                }
+                };
             }
             args.provider = Some(current.provider.clone());
             args.model = Some(current.id);
