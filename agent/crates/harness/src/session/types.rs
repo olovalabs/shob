@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{SessionError, SessionResult};
 
-/// JSON value alias — mirrors `JsonValue` from the TS module. `pi-harness`
+/// JSON value alias — mirrors `JsonValue` from the TS module. `harness`
 /// stores opaque app payloads as `serde_json::Value` rather than a recursive
 /// Rust enum; the behavior (JSON-serializable, no symbols/functions) is the
 /// same and the codec's `assert_json_serializable` keeps it sound.

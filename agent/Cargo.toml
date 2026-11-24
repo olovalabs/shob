@@ -30,8 +30,8 @@ resolver = "2"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
-repository = "https://github.com/bigfish1913/pi-rust"
-homepage = "https://rpi.laofu.online/"
+repository = "https://github.com/olovalabs/shob"
+homepage = "https://github.com/olovalabs/shob/"
 version = "0.21.0"
 authors = ["BigFish <fuwei201473@gmail.com>"]
 

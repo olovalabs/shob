@@ -1,5 +1,5 @@
 //! Mirrors `packages/agent/src/harness` (AgentHarness: session tree, JSONL
-//! persistence, compaction, the run loop that drives `pi-agent`).
+//! persistence, compaction, the run loop that drives `agent`).
 //!
 //! M5 surface, built up module-by-module. Currently exposes the foundation
 //! layers (`error`, `result`, `types`, `session::types`); subsequent modules

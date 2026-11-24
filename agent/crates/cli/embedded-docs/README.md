@@ -1,13 +1,13 @@
 # shob — a Rust-native coding-agent runtime
 
-[![crates.io](https://img.shields.io/crates/v/rpi-cli.svg)](https://crates.io/crates/rpi-cli)
-[![downloads](https://img.shields.io/crates/d/rpi-cli.svg)](https://crates.io/crates/rpi-cli)
-[![docs.rs](https://docs.rs/rpi-cli/badge.svg)](https://docs.rs/rpi-cli)
-[![license](https://img.shields.io/crates/l/rpi-cli.svg)](#license)
+[![crates.io](https://img.shields.io/crates/v/shob-cli.svg)](https://crates.io/crates/shob-cli)
+[![downloads](https://img.shields.io/crates/d/shob-cli.svg)](https://crates.io/crates/shob-cli)
+[![docs.rs](https://docs.rs/shob-cli/badge.svg)](https://docs.rs/shob-cli)
+[![license](https://img.shields.io/crates/l/shob-cli.svg)](#license)
 [![MSRV](https://img.shields.io/badge/MSRV-1.88-blue.svg)](#install)
-[![CI](https://github.com/bigfish1913/pi-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/bigfish1913/pi-rust/actions/workflows/ci.yml)
-[![GitHub stars](https://img.shields.io/github/stars/bigfish1913/pi-rust?style=flat)](https://github.com/bigfish1913/pi-rust/stargazers)
-[![Latest release](https://img.shields.io/github/v/release/bigfish1913/pi-rust)](https://github.com/bigfish1913/pi-rust/releases/latest)
+[![CI](https://github.com/olovalabs/shob/actions/workflows/ci.yml/badge.svg)](https://github.com/olovalabs/shob/actions/workflows/ci.yml)
+[![GitHub stars](https://img.shields.io/github/stars/olovalabs/shob?style=flat)](https://github.com/olovalabs/shob/stargazers)
+[![Latest release](https://img.shields.io/github/v/release/olovalabs/shob)](https://github.com/olovalabs/shob/releases/latest)
 
 `shob` is a library-first coding-agent runtime written in Rust, plus a terminal
 agent built on top of it. Nine composable crates span provider adapters, a
@@ -17,9 +17,9 @@ the same code works as an embedded SDK or as a ready-to-run `shob` command.
 shob began as a Rust reimplementation of the [Pi TypeScript SDK](https://github.com/earendil-works/pi)
 by Mario Zechner. It now includes its own Rust-native plugin ABI and execution
 infrastructure. See [Acknowledgements](#acknowledgements) and the repository's
-[NOTICE](https://github.com/bigfish1913/pi-rust/blob/main/NOTICE) for upstream attribution.
+[NOTICE](https://github.com/olovalabs/shob/blob/main/NOTICE) for upstream attribution.
 
-Website: <https://rpi.bigfisharc.cn/> · Docs: <https://rpi.bigfisharc.cn/docs.html>
+Website: <https://github.com/olovalabs/shob> · Docs: <https://github.com/olovalabs/shob/tree/main/docs>
 
 ![shob interactive session](docs/images/shob-interactive.png)
 
@@ -33,21 +33,20 @@ Website: <https://rpi.bigfisharc.cn/> · Docs: <https://rpi.bigfisharc.cn/docs.h
 
 | You want | Depend on | Start at |
 | -------- | --------- | -------- |
-| A working terminal coding agent | nothing | `cargo install cli` |
-| Your own agent inside your process | `agent` (+ `ai`, `tools`) | [`examples/minimal`](examples/minimal) |
-| A tool/provider that extends every session | `plugin-sdk` | [`examples/plugin-stub`](examples/plugin-stub) |
+| A working terminal coding agent | nothing | `cargo install --path . --locked` |
+| Your own agent inside your process | `agent` (+ `ai`, `tools`) | [`agent` README](https://github.com/olovalabs/shob/blob/main/agent/crates/agent/README.md) |
+| A tool/provider that extends every session | `plugin-sdk` | [`examples/plugin-stub`](../../../examples/plugin-stub) |
 
 The three share one implementation. Build your tools once, debug them inside an
 embedded agent, and ship the same code as a `cdylib` plugin that the global `shob`
-loads. See [`docs/agent/project-structure.md`](docs/agent/project-structure.md) for the recommended
-project layout.
+loads. Shob's repository root carries the desktop app and the docs for the integration.
 
 ## Install
 
 **Prebuilt binary** (no Rust toolchain needed):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/bigfish1913/pi-rust/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/olovalabs/shob/main/scripts/install.sh | sh
 ```
 
 Verifies the published SHA-256 checksum and installs to `/usr/local/bin` or
@@ -56,28 +55,28 @@ Verifies the published SHA-256 checksum and installs to `/usr/local/bin` or
 **From crates.io** (requires Rust 1.88+):
 
 ```bash
-cargo install cli
+cargo install --path . --locked
 shob --version
 ```
 
 **Package managers:**
 
 ```bash
-brew tap bigfish1913/tap && brew install shob          # macOS (Apple silicon), Linux
-scoop bucket add bigfish1913 https://github.com/bigfish1913/scoop-bucket
+brew tap olovalabs/tap && brew install shob          # macOS (Apple silicon), Linux
+scoop bucket add olovalabs https://github.com/olovalabs/scoop-bucket
 scoop install shob                                     # Windows
 ```
 
 The Homebrew formula currently supports Apple silicon on macOS. Intel Macs can
 use the prebuilt installer for releases with an `x86_64-apple-darwin` asset, or
-`cargo install cli`. A winget manifest is [open for
+`cargo install --path . --locked`. A winget manifest is [open for
 review](https://github.com/microsoft/winget-pkgs/pull/444745).
 
 **From source:**
 
 ```bash
-git clone https://github.com/bigfish1913/pi-rust.git
-cd pi-rust && cargo run -p minimal   # offline agent, no API key required
+git clone https://github.com/olovalabs/shob.git
+cd shob && cargo run -- tui --help   # the agent CLI, no API key required to inspect
 ```
 
 Real output of the two offline examples — no credentials, no network, identical
@@ -202,8 +201,7 @@ async fn main() {
 ```
 
 `make_stream_fn` bridges the synchronous `StreamFn` contract to the async
-provider — the full version is in [`examples/minimal/src/main.rs`](examples/minimal/src/main.rs)
-(`cargo run -p minimal`).
+provider, so a run can drive any `Provider` without the loop knowing about it.
 
 ## Crates
 
@@ -229,19 +227,19 @@ gets the TUI, the harness and the plugin loader at once.
 
 | Crate | What it is |
 | ----- | ---------- |
-| [`telemetry`](https://crates.io/crates/rpi-telemetry) | Span/event contracts with a no-op default — instrumentation is opt-in, and pulls in no tracing or OpenTelemetry backend |
-| [`ai`](https://crates.io/crates/rpi-ai) | Provider-agnostic message, streaming and tool-schema types; Anthropic + OpenAI-compatible + `faux` providers |
+| [`telemetry`](https://crates.io/crates/shob-telemetry) | Span/event contracts with a no-op default — instrumentation is opt-in, and pulls in no tracing or OpenTelemetry backend |
+| [`ai`](https://crates.io/crates/shob-ai) | Provider-agnostic message, streaming and tool-schema types; Anthropic + OpenAI-compatible + `faux` providers |
 | `runtime` | Embeddable model catalog, credential resolution, model selection and private execution bindings (not yet published) |
-| [`agent`](https://crates.io/crates/rpi-agent) | The agent loop: `AgentTool`, events, hooks, queues, cancellation |
-| [`tools`](https://crates.io/crates/rpi-tools) | `read`/`write`/`edit`/`bash` (+ `grep`, `find`, `ls`, `powershell`) and the `ExecutionEnv` seam |
-| [`harness`](https://crates.io/crates/rpi-harness) | Session tree, JSONL persistence, compaction, crash recovery, the run loop |
-| [`tui`](https://crates.io/crates/rpi-tui) | Terminal UI primitives: components, layout, editor, transcript rendering |
-| [`cli`](https://crates.io/crates/rpi-cli) | The `shob` binary: TUI, one-shot and JSON modes, config, plugin loading |
-| [`plugin-sdk`](https://crates.io/crates/rpi-plugin-sdk) | The stable `#[repr(C)]` ABI contract for plugins. No `shob-*` deps; only `serde_json`, behind a default `json` feature that can be turned off |
-| [`extensions`](https://crates.io/crates/rpi-extensions) | Host-side plugin loader and the async-across-ABI tool bridge |
+| [`agent`](https://crates.io/crates/shob-agent) | The agent loop: `AgentTool`, events, hooks, queues, cancellation |
+| [`tools`](https://crates.io/crates/shob-tools) | `read`/`write`/`edit`/`bash` (+ `grep`, `find`, `ls`, `powershell`) and the `ExecutionEnv` seam |
+| [`harness`](https://crates.io/crates/shob-harness) | Session tree, JSONL persistence, compaction, crash recovery, the run loop |
+| [`tui`](https://crates.io/crates/shob-tui) | Terminal UI primitives: components, layout, editor, transcript rendering |
+| [`cli`](https://crates.io/crates/shob-cli) | The `shob` binary: TUI, one-shot and JSON modes, config, plugin loading |
+| [`plugin-sdk`](https://crates.io/crates/shob-plugin-sdk) | The stable `#[repr(C)]` ABI contract for plugins. No `shob-*` deps; only `serde_json`, behind a default `json` feature that can be turned off |
+| [`extensions`](https://crates.io/crates/shob-extensions) | Host-side plugin loader and the async-across-ABI tool bridge |
 
-Every crate has its own README and docs.rs page. The `crates/shob-*`
-directories and the published crate names use the same `shob-` prefix.
+Every crate has its own README and docs.rs page. The workspace directories
+keep their short names; the published crate names use the `shob-` prefix.
 
 ## Why shob
 
@@ -346,14 +344,14 @@ The host loads project `.shob/extensions`, then global
 For a new Rust plugin, start with [`docs/extensions/authoring.md`](docs/extensions/authoring.md)
 and `examples/plugin-stub`. Use `plugin-sdk` for the `cdylib` ABI. If the plugin
 project also needs reusable session, workspace, native RPC or durable-runtime logic
-for a Web/ACP adapter, add [`shob-extcore`](https://crates.io/crates/rpi-extcore)
+for a Web/ACP adapter, add [`shob-extcore`](https://crates.io/crates/shob-extcore)
 (`shob-extcore = "0.1"`). It is a normal Rust library, not the `cdylib` entry point,
 and it does not replace `plugin-sdk`; a simple tool plugin should not add it
 unnecessarily.
 
 Ready-to-install extensions live in the companion
-[`pi-rust/shob-package`](https://github.com/pi-rust/rpi-package) repository, with
-an [online catalog](https://rpi.bigfisharc.cn/packages.html).
+[`olovalabs/shob-package`](https://github.com/olovalabs/shob-package) repository, with
+an [online catalog](https://github.com/olovalabs/shob-package).
 
 ### Optional web and subagent tools
 
@@ -378,7 +376,7 @@ fail explicitly rather than starting a subprocess with different defaults.
 
 The SDK entry point is `AgentHarness::create_child`; extensions use
 `GetExecutionContext` and `ChildAgent` runtime actions. See the
-[subagent protocol](https://github.com/bigfish1913/pi-rust/blob/main/docs/extensions/subagents.md)
+[subagent protocol](https://github.com/olovalabs/shob/blob/main/docs/extensions/subagents.md)
 for lifecycle, limits and compatibility details.
 
 ### Authoring an extension
@@ -415,7 +413,7 @@ machine. See [`docs/remote/user-guide.md`](docs/remote/user-guide.md).
 
 | | |
 | --- | --- |
-| Current release | **[0.21.0](https://github.com/bigfish1913/pi-rust/releases)** (nine crates, published together) |
+| Current release | **[0.21.0](https://github.com/olovalabs/shob/releases)** (nine crates, published together) |
 | Stability | `ai`, `agent`, `tools`, `harness`, `plugin-sdk` are the intended stable surface |
 | MSRV | 1.88 |
 | Platforms | Linux (GNU and musl), macOS, Windows (CI runs the suite on Linux) |
@@ -430,10 +428,10 @@ required and none is loaded.
 - [Architecture](docs/architecture/overview.md) — how the crates fit together and why
 - [Building an agent project](docs/agent/project-structure.md) — recommended structure
 - [Extension authoring](docs/extensions/authoring.md) — plugin templates and ABI rules
-- [Subagents](https://github.com/bigfish1913/pi-rust/blob/main/docs/extensions/subagents.md) — configuration inheritance, permissions and lifecycle
+- [Subagents](https://github.com/olovalabs/shob/blob/main/docs/extensions/subagents.md) — configuration inheritance, permissions and lifecycle
 - [Remote mode](docs/remote/user-guide.md) — protocol, tokens, limitations
 - [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md)
-- [docs.rs](https://docs.rs/rpi-cli) for per-crate API docs
+- [docs.rs](https://docs.rs/shob-cli) for per-crate API docs
 
 ## Contributing
 
@@ -492,4 +490,4 @@ The `shob-*` crates are a Rust-native coding-agent stack.
 
 ## Star history
 
-[![Star History Chart](https://api.star-history.com/svg?repos=bigfish1913/pi-rust,pi-rust/rpi-package&type=Date)](https://www.star-history.com/#bigfish1913/pi-rust&pi-rust/rpi-package&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=olovalabs/shob,olovalabs/shob-package&type=Date)](https://www.star-history.com/#olovalabs/shob&olovalabs/shob-package&Date)

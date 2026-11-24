@@ -526,7 +526,7 @@ async fn run_with_no_tool_calls_completes_in_single_turn() {
 // script, and assert the persisted ToolResultMessage carries the patched usage
 // — i.e. the hook the host installed via options actually ran inside the loop.
 //
-// (The pi-agent before_after_hooks tests prove the loop itself honors the hooks
+// (The agent before_after_hooks tests prove the loop itself honors the hooks
 // at the unit level; this proves the harness WIRING from options → inner →
 // snapshot_config → AgentLoopConfig is live, which is the B3b deliverable.)
 // ---------------------------------------------------------------------------
@@ -2680,7 +2680,7 @@ async fn a_run_that_keeps_dying_is_not_resumed_forever() {
 ///
 /// The salvaged partial is an assistant message, so the branch tip is an
 /// assistant turn. Continuing from it would hand the provider a trailing
-/// assistant message — which Anthropic rejects outright (and `pi-agent`'s own
+/// assistant message — which Anthropic rejects outright (and `agent`'s own
 /// `run_agent_loop_continue` refuses for the same reason, see `agent_loop.rs`).
 /// The run therefore ends with the salvaged partial and the user decides what is
 /// next; that is also what upstream does, because an errored assistant response
@@ -3470,7 +3470,7 @@ async fn a_multi_turn_run_resumes_after_a_crash_in_a_later_tool_call() {
 /// recovery rule ("resolve the unresolved calls of the assistant at the tip")
 /// sufficient: `execute_tool_calls_parallel` emits tool-result messages only
 /// *after every call in the batch has settled*, in source order
-/// (`pi-agent/src/agent_loop.rs`). So the fast call's result cannot land while a
+/// (`agent/src/agent_loop.rs`). So the fast call's result cannot land while a
 /// sibling is still running — either the batch emitted results, or none did and
 /// the assistant message is still the tip.
 ///

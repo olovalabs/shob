@@ -1,14 +1,14 @@
 # extensions
 
-[![crates.io](https://img.shields.io/crates/v/rpi-extensions.svg)](https://crates.io/crates/rpi-extensions)
-[![docs.rs](https://docs.rs/rpi-extensions/badge.svg)](https://docs.rs/rpi-extensions)
+[![crates.io](https://img.shields.io/crates/v/shob-extensions.svg)](https://crates.io/crates/shob-extensions)
+[![docs.rs](https://docs.rs/shob-extensions/badge.svg)](https://docs.rs/shob-extensions)
 
 The host side of the plugin system: discovers, loads and drives Rust `cdylib`
 plugins, and bridges their tools and events into the runtime's native async
 types.
 
 The ABI contract itself lives in
-[`plugin-sdk`](https://crates.io/crates/rpi-plugin-sdk); this crate is the
+[`plugin-sdk`](https://crates.io/crates/shob-plugin-sdk); this crate is the
 other half.
 
 ## Install
@@ -80,15 +80,15 @@ shob dev                                   # build + watch + live reload
 
 ## Docs
 
-- Crate docs: <https://docs.rs/rpi-extensions>
-- [Extension authoring guide](https://github.com/bigfish1913/pi-rust/blob/main/docs/extensions/authoring.md)
-- [Plugin ABI contract](https://docs.rs/rpi-plugin-sdk)
-- [Ready-to-install extensions](https://github.com/pi-rust/rpi-package)
+- Crate docs: <https://docs.rs/shob-extensions>
+- [Extension authoring guide](https://github.com/olovalabs/shob/blob/main/docs/extensions/authoring.md)
+- [Plugin ABI contract](https://docs.rs/shob-plugin-sdk)
+- [Ready-to-install extensions](https://github.com/olovalabs/shob-package)
 
 ## License
 
-MIT. See [LICENSE](https://github.com/bigfish1913/pi-rust/blob/main/LICENSE)
-and [NOTICE](https://github.com/bigfish1913/pi-rust/blob/main/NOTICE).
+MIT. See [LICENSE](https://github.com/olovalabs/shob/blob/main/LICENSE)
+and [NOTICE](https://github.com/olovalabs/shob/blob/main/NOTICE).
 
 Plugins may register the optional two-phase lifecycle hooks. Reload calls
 `begin_shutdown` outside session locks to cancel work and reject new requests.

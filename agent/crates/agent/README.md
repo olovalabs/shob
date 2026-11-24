@@ -1,7 +1,7 @@
 # agent
 
-[![crates.io](https://img.shields.io/crates/v/rpi-agent.svg)](https://crates.io/crates/rpi-agent)
-[![docs.rs](https://docs.rs/rpi-agent/badge.svg)](https://docs.rs/rpi-agent)
+[![crates.io](https://img.shields.io/crates/v/shob-agent.svg)](https://crates.io/crates/shob-agent)
+[![docs.rs](https://docs.rs/shob-agent/badge.svg)](https://docs.rs/shob-agent)
 
 The provider-agnostic agent runtime: the agent loop, the `AgentTool` trait,
 events, hooks, queues and cancellation. This is the layer you embed when you
@@ -17,8 +17,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
 For built-in file and shell tools, add
-[`tools`](https://crates.io/crates/rpi-tools). For durable sessions and
-compaction, add [`harness`](https://crates.io/crates/rpi-harness).
+[`tools`](https://crates.io/crates/shob-tools). For durable sessions and
+compaction, add [`harness`](https://crates.io/crates/shob-harness).
 
 ## Design
 
@@ -107,10 +107,10 @@ fn make_stream_fn(provider: Arc<FauxProvider>) -> agent::StreamFn {
 ```
 
 A runnable version of this lives in
-[`examples/minimal`](https://github.com/bigfish1913/pi-rust/tree/main/examples/minimal)
+[`examples/minimal`](https://github.com/olovalabs/shob/tree/main/examples/minimal)
 (`cargo run -p minimal`), and a version that drives the real filesystem through
 the built-in tools lives in
-[`examples/tools`](https://github.com/bigfish1913/pi-rust/tree/main/examples/tools).
+[`examples/tools`](https://github.com/olovalabs/shob/tree/main/examples/tools).
 
 ## Defining a tool
 
@@ -160,7 +160,7 @@ dropped by the loop, so a tool never has to track settlement itself. Returning
 `Err(AgentError)` turns into an error tool result, not a failed run.
 
 For real implementations, wrap the JSON Schema derivation with `schemars` and
-start from [`tools`](https://crates.io/crates/rpi-tools), which contains
+start from [`tools`](https://crates.io/crates/shob-tools), which contains
 complete examples of a filesystem tool and a streaming shell tool.
 
 ## Observing a run
@@ -174,18 +174,18 @@ run (`AgentStart`/`AgentEnd`), each assistant message
 
 | Crate | Role |
 | ----- | ---- |
-| [`ai`](https://crates.io/crates/rpi-ai) | Provider-agnostic message and streaming types |
-| [`tools`](https://crates.io/crates/rpi-tools) | `read`/`write`/`edit`/`bash` and friends |
-| [`harness`](https://crates.io/crates/rpi-harness) | Sessions, JSONL persistence, compaction |
-| [`cli`](https://crates.io/crates/rpi-cli) | The `shob` terminal agent built on all of the above |
+| [`ai`](https://crates.io/crates/shob-ai) | Provider-agnostic message and streaming types |
+| [`tools`](https://crates.io/crates/shob-tools) | `read`/`write`/`edit`/`bash` and friends |
+| [`harness`](https://crates.io/crates/shob-harness) | Sessions, JSONL persistence, compaction |
+| [`cli`](https://crates.io/crates/shob-cli) | The `shob` terminal agent built on all of the above |
 
 ## Documentation
 
-- Crate docs: <https://docs.rs/rpi-agent>
-- Architecture: [docs/architecture/overview.md](https://github.com/bigfish1913/pi-rust/blob/main/docs/architecture/overview.md)
-- Project structure guide: [docs/agent/project-structure.md](https://github.com/bigfish1913/pi-rust/blob/main/docs/agent/project-structure.md)
+- Crate docs: <https://docs.rs/shob-agent>
+- Architecture: [docs/architecture/overview.md](https://github.com/olovalabs/shob/blob/main/docs/architecture/overview.md)
+- Project structure guide: [docs/agent/project-structure.md](https://github.com/olovalabs/shob/blob/main/docs/agent/project-structure.md)
 
 ## License
 
-MIT. See [LICENSE](https://github.com/bigfish1913/pi-rust/blob/main/LICENSE)
-and [NOTICE](https://github.com/bigfish1913/pi-rust/blob/main/NOTICE).
+MIT. See [LICENSE](https://github.com/olovalabs/shob/blob/main/LICENSE)
+and [NOTICE](https://github.com/olovalabs/shob/blob/main/NOTICE).

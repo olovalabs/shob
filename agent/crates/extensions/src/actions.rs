@@ -943,7 +943,7 @@ impl ActionBridge {
         }
     }
     /// Build a bridge. The `Handle` MUST be captured from a thread running the
-    /// target runtime (pi-cli builds the bridge on the async main thread).
+    /// target runtime (cli builds the bridge on the async main thread).
     pub fn new(runtime: Handle, host: Arc<dyn RuntimeActionHost>) -> Arc<Self> {
         Arc::new(Self {
             invocation: None,
@@ -1159,7 +1159,7 @@ impl ActionBridge {
 /// which drops the old keepalive, happens after the call returns). This breaks
 /// the self-unmapping race a synchronous plugin-initiated reload would have.
 ///
-/// extensions carries only `()` (no pi-cli `TuiMessage` type) — preserving
+/// extensions carries only `()` (no cli `TuiMessage` type) — preserving
 /// the leaf DAG. The TUI owns the receiver + the actual reload routine.
 #[derive(Clone)]
 pub struct ReloadMailbox {

@@ -43,7 +43,7 @@ pub async fn run_driver_tui<D: SessionDriver>(driver: &D, addr: &str) -> Result<
     document.add_child(transcript_container.clone());
     let scroll = Arc::new(ScrollView::primary(document.clone()));
 
-    // Retained transcript view: the same pi-tui components the local TUI uses,
+    // Retained transcript view: the same tui components the local TUI uses,
     // updated in place from the driver's normalized event stream.
     let view = TranscriptView::new(transcript_container.clone());
     view.set_hide_thinking(true);
@@ -341,7 +341,7 @@ fn is_ctrl(key: &KeyEvent, ch: char) -> bool {
 }
 
 /// The non-transcript chrome (top banner + status slot + footer), built from
-/// the same `pi-tui` components the local TUI uses ([`StatusIndicator`],
+/// the same `tui` components the local TUI uses ([`StatusIndicator`],
 /// [`FooterComponent`]) so the two screens read the same.
 struct ChatChrome {
     header: Arc<Text>,

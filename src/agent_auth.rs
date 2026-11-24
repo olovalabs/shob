@@ -20,12 +20,23 @@ pub struct Provider {
     pub source: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
 pub enum ModelBackend {
-    #[serde(alias = "Rpi")]
     Embedded,
-    #[serde(alias = "Omp")]
     Shob,
+}
+
+impl<'de> Deserialize<'de> for ModelBackend {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Workspaces from earlier releases name the backends differently. An
+        // unknown name must not fail the whole restore, and `Embedded` is the
+        // backend every current release actually runs, so it is the safe map.
+        let name = String::deserialize(deserializer)?;
+        Ok(match name.as_str() {
+            "Shob" | "Omp" => Self::Shob,
+            _ => Self::Embedded,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

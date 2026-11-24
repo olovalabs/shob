@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 use tools::{ExecutionErrorCode, OsExecutionEnv, Shell, ShellExecOptions};
 
 fn scratch(tag: &str) -> std::path::PathBuf {
-    let tmp = std::env::temp_dir().join(format!("pi-tools-{tag}-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("tools-{tag}-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&tmp);
     tmp
 }

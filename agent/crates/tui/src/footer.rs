@@ -6,7 +6,7 @@
 //! Upstream's footer is a two-line status bar:
 //!
 //! ```text
-//! ~/proj/pi-rust (main) • my-session
+//! ~/proj/shob (main) • my-session
 //! ↑12k ↓3.4k R40k W1.2k CH72.0% $0.421 63.2%/200k (auto)   [model • medium]
 //! ```
 //!

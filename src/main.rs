@@ -5357,11 +5357,11 @@ impl AppState {
         for pane_id in restored_changes {
             self.refresh_project_diff(pane_id, cx);
         }
-        if let Some(pane_id) = self.focused_pane_id {
-            if let Some(pane) = self.pane_ref(pane_id) {
-                let dir = self.agent_working_directory(pane);
-                self.schedule_git_refresh(dir, cx);
-            }
+        if let Some(pane_id) = self.focused_pane_id
+            && let Some(pane) = self.pane_ref(pane_id)
+        {
+            let dir = self.agent_working_directory(pane);
+            self.schedule_git_refresh(dir, cx);
         }
         self.schedule_workspace_save(cx);
         cx.notify();

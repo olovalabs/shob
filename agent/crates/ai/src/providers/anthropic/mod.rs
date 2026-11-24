@@ -985,7 +985,7 @@ fn merge_header(headers: &mut Vec<(String, String)>, name: String, value: String
 }
 
 /// Wall-clock ms-since-epoch for the assistant message timestamp. Mirrors TS
-/// `Date.now()`. The provider is the one `pi-ai` component that touches real
+/// `Date.now()`. The provider is the one `ai` component that touches real
 /// time: the message timestamp is persisted into the harness JSONL log, so a
 /// monotonic counter (as faux uses) would be wrong here.
 fn now_ms() -> i64 {

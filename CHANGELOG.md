@@ -58,7 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Polish the agent composer with a contextual placeholder, a roomier input, hidden key hints, a pill-styled model picker, and the same overall height as the terminal composer.
 - Google Antigravity OAuth and model selection in `/auth`, with separate native chat sessions using the installed oh-my-pi agent.
 - `/auth` in agent mode opens provider discovery and authentication with masked input and shob-managed credentials.
-- Native per-pane pi-rust agent chat with streamed replies, tool activity, cancellation, and a terminal/agent switch. Requires a separately installed and configured `shob` executable.
+- Native per-pane embedded agent chat with streamed replies, tool activity, cancellation, and a terminal/agent switch. Requires a separately installed and configured `shob` executable.
 - **Shob input editor**:
   - Shell history from zsh, bash, and fish history files, merged with the session's own commands for Up/Down recall and ghost suggestions.
   - Context-aware completion menu (Tab) for `PATH` commands, shell builtins, files and directories, git branches, and history — with arrow navigation and click-to-accept.

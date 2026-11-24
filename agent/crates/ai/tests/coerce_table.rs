@@ -1,7 +1,7 @@
 //! Integration tests for `coerce_with_json_schema` + `validate_tool_arguments`.
 //! Mirrors the table-driven cases in `validation.ts`'s test block. Lives in
-//! `tests/` so it exercises the crate's public API exactly the way `pi-agent`
-//! and `pi-tools` will.
+//! `tests/` so it exercises the crate's public API exactly the way `agent`
+//! and `tools` will.
 
 use ai::schema::{coerce_with_json_schema, validate_tool_arguments, validate_tool_call};
 use ai::{AiError, Schema, Tool, ToolCall, ToolCallType};

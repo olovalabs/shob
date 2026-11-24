@@ -376,7 +376,7 @@ pub struct StableToolSchema {
 /// The value is an object; today:
 ///
 /// ```json
-/// { "cwd": "D:\\Projects\\pi-rust",
+/// { "cwd": "D:\\Projects\\shob",
 ///   "sessionId": "01adb026-7230-708b-855b-91eab6b056b8" }
 /// ```
 ///

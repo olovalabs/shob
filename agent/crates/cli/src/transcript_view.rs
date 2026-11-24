@@ -3,14 +3,14 @@
 //! This is the shared render layer behind unification ("only the transport
 //! differs"): both the local interactive TUI (driven by in-process
 //! `AgentEvent`s) and the remote client (driven by wire `RemoteEvent`s) build
-//! their transcript from the **same** `pi-tui` components — an
+//! their transcript from the **same** `tui` components — an
 //! [`AssistantMessageComponent`] per assistant message, a
 //! [`ToolExecutionComponent`] per tool call, a [`BashExecutionComponent`] per
 //! bash run, and user bubbles. Each side maps its native event stream into the
 //! provider-free [`UiEvent`] enum and feeds it to [`TranscriptView`]; the view
 //! holds the live component maps and updates them in place.
 //!
-//! Keeping this provider-free (only `pi-tui` + `serde_json::Value`) is what lets
+//! Keeping this provider-free (only `tui` + `serde_json::Value`) is what lets
 //! the local host and the remote client share it without dragging `agent`
 //! types into the client.
 

@@ -1,6 +1,6 @@
 # Shob
 
-Shob is a GPU-accelerated terminal emulator for developers orchestrating AI coding agents. A GPUI Fast frontend renders an [alacritty_terminal](https://github.com/alacritty/alacritty)-based terminal widget, a Unix-socket status bus tracks agent state in real time, and an embedded Rust agent runtime (pi-rust) powers native agent chat with a frozen multi-provider catalog.
+Shob is a GPU-accelerated terminal emulator for developers orchestrating AI coding agents. A GPUI Fast frontend renders an [alacritty_terminal](https://github.com/alacritty/alacritty)-based terminal widget, a Unix-socket status bus tracks agent state in real time, and an embedded Rust agent runtime (the `agent/` subtree) powers native agent chat with a frozen multi-provider catalog.
 
 You can think of Shob as a native desktop counterpart to tools like Warp and Zed's terminal, built specifically around the problem that matters when agents do the typing: knowing when an agent is blocked, when it finished while you were away, and when it needs you — without notification fatigue.
 
@@ -144,7 +144,7 @@ Architecture and its constraints: [ARCHITECTURE.md](ARCHITECTURE.md).
   - `theme.rs`, `logos.rs`, `sound.rs`, `diagnostics.rs`, `stream_timing.rs` — presentation and diagnostics.
 - `terminal/` — the standalone terminal widget crate: PTY management, coalescer, VTE integration, cell grid, selection, rendering.
 - `components/` — the local gpui-component fork, wired in through `[patch.crates-io]`. GPUI UI primitives live here; treat upstream API carefully when bumping.
-- `agent/` — the vendored pi-rust Git subtree with its own Cargo workspace. Shob path-depends on `agent/crates/embedded`. Do not restructure casually; syncs are subtree operations. Non-build upstream assets were removed at import.
+- `agent/` — the vendored agent runtime Git subtree with its own Cargo workspace. Shob path-depends on `agent/crates/embedded`. Do not restructure casually; syncs are subtree operations. Non-build upstream assets were removed at import.
 - `provider/` — the native provider and authentication catalog crate (based on Oh My Pi), built and tested standalone.
 - `assets/` — icons, sounds, themes, agent-detection TOML manifests, integration scripts.
 - `scripts/` — demo and benchmark utilities.

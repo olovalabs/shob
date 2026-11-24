@@ -1,4 +1,4 @@
-//! `pi-cli` — a terminal coding-agent CLI built on the shob library crates.
+//! `cli` — a terminal coding-agent CLI built on the Shob library crates.
 //!
 //! It provides the argument surface, provider/model resolution, harness
 //! construction, output modes, and the interactive TUI that a harness-backed

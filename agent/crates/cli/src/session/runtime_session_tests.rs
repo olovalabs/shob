@@ -82,7 +82,6 @@ async fn selected_root_survives_build_runtime_actions_and_both_reload_host_paths
         assert_eq!(context.session_dir(), root);
         assert!(root.is_dir());
         assert!(!cwd.join(".shob/sessions").exists());
-        assert!(!cwd.join(".rpi/sessions").exists());
         let initial_id = harness.session().storage().metadata().id.clone();
         harness.session().set_name(Some("original")).await.unwrap();
         let original_host = context

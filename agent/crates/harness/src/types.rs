@@ -1,7 +1,7 @@
 //! Mirrors `packages/agent/src/harness/types.ts` (harness-level surface only).
 //!
 //! The TS `types.ts` is split: a `FileSystem`/`Shell`/`ExecutionEnv` section
-//! (ported in M4 to `pi-tools/src/env.rs`) and a harness-configuration section
+//! (ported in M4 to `tools/src/env.rs`) and a harness-configuration section
 //! (`Skill`, `PromptTemplate`, `AgentHarnessResources`, `AgentHarnessTool`,
 //! `AgentHarnessStreamOptions` + `Patch`, `AgentHarnessOptions`, `DrivingMode`).
 //! This module mirrors the latter; it re-exports the M4 env types via `tools`
@@ -430,9 +430,9 @@ pub struct AgentHarnessOptions {
     // ---- B3b additions: the three exists-but-`None` `AgentLoopConfig` hooks --
     //
     // `AgentLoopConfig` already has `before_tool_call`/`after_tool_call`/
-    // `transform_context` slots (pi-agent/hooks.rs), but the harness hardcoded
+    // `transform_context` slots (agent/hooks.rs), but the harness hardcoded
     // them to `None` (agent_harness.rs:944/950-951). These option fields expose
-    // them on `AgentHarnessOptions` so a host (pi-cli, via extensions
+    // them on `AgentHarnessOptions` so a host (cli, via extensions
     // adapters) can populate them; the harness forwards them into the config it
     // builds per run (snapshot_config + the config build site).
     /// `(context, signal) -> Option<BeforeToolCallResult>` — can block a tool

@@ -2300,7 +2300,7 @@ mod tests {
         ] {
             assert!(canonical_repository(invalid).is_err());
         }
-        assert_eq!(release_url("https://github.com/publisher/monorepo","plugin-one","1.2.3","shob-extension.json").unwrap(),"https://github.com/publisher/monorepo/releases/download/plugin-one-v1.2.3/rpi-extension.json");
+        assert_eq!(release_url("https://github.com/publisher/monorepo","plugin-one","1.2.3","shob-extension.json").unwrap(),"https://github.com/publisher/monorepo/releases/download/plugin-one-v1.2.3/shob-extension.json");
         assert!(release_url(
             "https://github.com/publisher/monorepo",
             "plugin-two",

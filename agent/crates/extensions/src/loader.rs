@@ -418,7 +418,7 @@ impl PluginKeepalive {
 
 /// The result of loading a session's worth of extensions: a shared keepalive for
 /// the cdylib handles + a snapshot of the merged registry. Built by
-/// [`load_session`]; the host (pi-cli) stashes one per harness build and hands
+/// [`load_session`]; the host (cli) stashes one per harness build and hands
 /// clones of the keepalive to each adapter it constructs from the snapshot.
 ///
 /// The snapshot is held behind `Arc` so the host can hand a clone to the
@@ -439,7 +439,7 @@ pub struct ExtensionSession {
     /// B5a: the session's action bridge (`None` when no plugins / tests / the
     /// `--no-extensions` path). Kept here so `cli` can recover it after
     /// `AgentHarness::create` to call `set_harness` — the bridge's `user_data`
-    /// pointer was already handed out during `register`, so pi-cli must fill the
+    /// pointer was already handed out during `register`, so cli must fill the
     /// host's harness cell immediately after create. Cloning is cheap (an `Arc`
     /// clone); the keepalive also holds a clone for the lifetime guarantee.
     action_bridge: Option<Arc<ActionBridge>>,
@@ -506,7 +506,7 @@ impl ExtensionSession {
     }
 
     /// Whether any loaded plugin claimed ownership of this host process's stdio
-    /// (`declare {"ownsStdio":true}`). When `true`, the host (pi-cli) must not
+    /// (`declare {"ownsStdio":true}`). When `true`, the host (cli) must not
     /// drain stdin before the plugin's `register` has run, and must run the
     /// headless `Rpc` lifecycle (dispatch BeforeTuiStart + SessionStart, then
     /// park) instead of Print/TUI so it never writes to the plugin's stdio.

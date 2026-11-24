@@ -1,7 +1,7 @@
 # tui
 
-[![crates.io](https://img.shields.io/crates/v/rpi-tui.svg)](https://crates.io/crates/rpi-tui)
-[![docs.rs](https://docs.rs/rpi-tui/badge.svg)](https://docs.rs/rpi-tui)
+[![crates.io](https://img.shields.io/crates/v/shob-tui.svg)](https://crates.io/crates/shob-tui)
+[![docs.rs](https://docs.rs/shob-tui/badge.svg)](https://docs.rs/shob-tui)
 
 The terminal UI primitives behind the `shob` interactive agent: a component
 model, layout containers, an editor, transcript rendering, and both fullscreen
@@ -9,7 +9,7 @@ and main-screen terminal modes.
 
 This is the rendering layer, not an extension point. Agents extend `shob` by
 registering tools and event handlers (see
-[`plugin-sdk`](https://crates.io/crates/rpi-plugin-sdk)), and the CLI decides
+[`plugin-sdk`](https://crates.io/crates/shob-plugin-sdk)), and the CLI decides
 how to draw them.
 
 ## Install
@@ -73,17 +73,17 @@ cargo run -p tui
 
 Interactive demo with a scrollable transcript, an editor and keyboard
 navigation — the source is at
-[`examples/tui`](https://github.com/bigfish1913/pi-rust/tree/main/examples/tui).
+[`examples/tui`](https://github.com/olovalabs/shob/tree/main/examples/tui).
 
 ## Documentation
 
-- Crate docs: <https://docs.rs/rpi-tui>
-- [TUI gap analysis](https://github.com/bigfish1913/pi-rust/blob/main/docs/README.md)
+- Crate docs: <https://docs.rs/shob-tui>
+- [TUI gap analysis](https://github.com/olovalabs/shob/blob/main/docs/README.md)
 
 ## License
 
-MIT. See [LICENSE](https://github.com/bigfish1913/pi-rust/blob/main/LICENSE)
-and [NOTICE](https://github.com/bigfish1913/pi-rust/blob/main/NOTICE).
+MIT. See [LICENSE](https://github.com/olovalabs/shob/blob/main/LICENSE)
+and [NOTICE](https://github.com/olovalabs/shob/blob/main/NOTICE).
 
 `TuiAltScreen::set_scroll_to_end_indicator` accepts an optional label callback.
 It displays the label on the last visible row of a follow-end primary

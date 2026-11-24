@@ -10,7 +10,7 @@
 //!
 //! `AgentBuilder` lets callers install an explicit `StreamFn`. When omitted,
 //! `get_default_stream_fn` is used; like TS, it errors if no default has been
-//! installed via `set_default_stream_fn` — `pi-ai` providers are not silently
+//! installed via `set_default_stream_fn` — `ai` providers are not silently
 //! picked so the agent crate stays free of provider wiring.
 
 use ai::provider::SimpleStreamOptions;

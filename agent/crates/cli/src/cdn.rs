@@ -3,8 +3,8 @@ use percent_encoding::percent_decode_str;
 use reqwest::Url;
 
 const CDN_ENV: &str = "SHOB_CDN_BASE_URL";
-const CLI_REPOSITORY: &str = "https://github.com/bigfish1913/pi-rust";
-const PACKAGE_REPOSITORY: &str = "https://github.com/pi-rust/rpi-package";
+const CLI_REPOSITORY: &str = "https://github.com/olovalabs/shob";
+const PACKAGE_REPOSITORY: &str = "https://github.com/olovalabs/shob-package";
 
 /// Resolve and validate the optional CDN base. The CDN is only a transport;
 /// manifests and all release identity fields still come from GitHub.
@@ -199,28 +199,28 @@ mod tests {
             &base,
             CLI_REPOSITORY,
             "v1.2.3",
-            "https://github.com/bigfish1913/pi-rust/releases/download/v1.2.3/rpi.zip",
+            "https://github.com/olovalabs/shob/releases/download/v1.2.3/shob.zip",
         )
         .unwrap()
         .unwrap();
         assert_eq!(
             url.as_str(),
-            "https://assets.example.test/mirror/rpi/releases/v1.2.3/rpi.zip"
+            "https://assets.example.test/mirror/shob/releases/v1.2.3/shob.zip"
         );
-        let scoped = resolve_base(Some("https://assets.example.test/rpi"))
+        let scoped = resolve_base(Some("https://assets.example.test/shob"))
             .unwrap()
             .unwrap();
         let scoped_url = archive_url(
             &scoped,
             CLI_REPOSITORY,
             "v1.2.3",
-            "https://github.com/bigfish1913/pi-rust/releases/download/v1.2.3/rpi.zip",
+            "https://github.com/olovalabs/shob/releases/download/v1.2.3/shob.zip",
         )
         .unwrap()
         .unwrap();
         assert_eq!(
             scoped_url.as_str(),
-            "https://assets.example.test/rpi/releases/v1.2.3/rpi.zip"
+            "https://assets.example.test/shob/releases/v1.2.3/shob.zip"
         );
     }
 

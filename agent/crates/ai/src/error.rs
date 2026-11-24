@@ -8,7 +8,7 @@
 
 use std::fmt;
 
-/// Every failure mode the `pi-ai` crate can surface.
+/// Every failure mode the `ai` crate can surface.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AiError {
     /// HTTP transport failure (connection, DNS, TLS, non-retryable status).

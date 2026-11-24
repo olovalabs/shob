@@ -1474,7 +1474,7 @@ impl TUI for TuiAltScreen {
         }
 
         // Get terminal and start it (spawns its own input-reader thread whose
-        // callbacks are stubs below; kept for the non-pi-tui callers that still
+        // callbacks are stubs below; kept for the non-tui callers that still
         // rely on `start()`). The asynchronous interactive path uses
         // `start_readerless` instead to avoid a competing stdin reader.
         if let Ok(terminal) = self.terminal.lock() {

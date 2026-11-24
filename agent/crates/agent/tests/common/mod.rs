@@ -1,4 +1,4 @@
-//! Shared helpers for `pi-agent` integration tests. Mirrors the
+//! Shared helpers for `agent` integration tests. Mirrors the
 //! `MockAssistantStream` + `queueMicrotask` pattern from the TS
 //! `agent-loop.test.ts`/`agent.test.ts`: a [`mock_stream_fn`] that returns a
 //! scripted `AssistantMessage` per LLM call, emitting a `Start` + `Done` (or

@@ -1,7 +1,7 @@
 //! Mirrors `packages/ai/src/providers/faux.ts` — the deterministic, scripted,
-//! no-network provider used by every crate's tests. Hoisted into `pi-ai` (TS
+//! no-network provider used by every crate's tests. Hoisted into `ai` (TS
 //! keeps a copy in `packages/agent/src/faux.ts`; we centralize it here per the
-//! plan so `pi-agent`/`pi-tools`/`pi-harness` tests reuse it without a circular
+//! plan so `agent`/`tools`/`harness` tests reuse it without a circular
 //! dependency on a higher crate).
 //!
 //! v1 scope (per plan): text/thinking/tool-call blocks, `streamWithDeltas`

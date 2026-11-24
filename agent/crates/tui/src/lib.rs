@@ -1,4 +1,4 @@
-//! Terminal User Interface for pi-rust
+//! Terminal User Interface for shob
 //!
 //! This crate provides a TUI system similar to the TypeScript implementation
 //! in `packages/tui/`. It supports:

@@ -33,7 +33,7 @@
 插件；它们属于宿主侧。
 
 如果插件项目还需要 Web/ACP/远程适配器共享的会话、工作区、RPC、事件重放和运行
-状态逻辑，可以复用 crates.io 的 [`shob-extcore`](https://crates.io/crates/rpi-extcore)：
+状态逻辑，可以复用 crates.io 的 [`shob-extcore`](https://crates.io/crates/shob-extcore)：
 
 ```toml
 [dependencies]
@@ -87,7 +87,7 @@ name = "my-shob-extension"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/example/my-rpi-extension"
+repository = "https://github.com/example/my-shob-extension"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -272,7 +272,7 @@ if let Some(register_prompt) = api.register_tool_prompt {
 
 ```json
 { "action": "add", "text": "…",
-  "__shob": { "cwd": "D:\\Projects\\pi-rust",
+  "__shob": { "cwd": "D:\\Projects\\shob",
              "sessionId": "01adb026-7230-708b-855b-91eab6b056b8" } }
 ```
 
@@ -648,8 +648,8 @@ Linux/macOS 使用冒号分隔。命令行和环境变量适合本机开发、CI
 新增供应商优先在包内添加模块；只有根模块导出一次 `export_plugin!`，各模块共用注册桥接。
 provider ID、目录与凭据继续独立。单 provider 教学样例才使用 `export_provider!`。
 
-完整规范：[Provider 接入规范](https://github.com/bigfish1913/pi-rust/blob/feature-stream-porider/docs/extensions/provider-integration.md)。创建推理扩展时优先复制
-正式 provider package 示例见 [shob-providers](https://github.com/pi-rust/rpi-package/tree/feature-1014/packages/rpi-providers)，通用工具扩展再使用 `plugin-stub`。当前接入约定如下。
+完整规范：[Provider 接入规范](https://github.com/olovalabs/shob/blob/feature-stream-porider/docs/extensions/provider-integration.md)。创建推理扩展时优先复制
+正式 provider package 示例见 [shob-providers](https://github.com/olovalabs/shob-package/tree/feature-1014/packages/shob-providers)，通用工具扩展再使用 `plugin-stub`。当前接入约定如下。
 
 ### 方式与目录
 
@@ -715,7 +715,7 @@ OAuth 供应商流程另外通过 `register_oauth_provider` 接入，宿主负�
 UTF-8 跨块、usage、唯一终态、响应未结束时取消与 HTTP 401；认证隔离、端点 / 请求头
 覆盖、公开目录无认证头、命令与重载也要验证。工具和 OAuth 只声明已完成验证的能力。
 真实 API 测试默认 ignored，显式运行时从环境注入 key 并限制超时、重试和用量。
-正式统一包位于独立的 [shob-package 项目](https://github.com/pi-rust/rpi-package/tree/feature-1014/packages/rpi-providers)，
+正式统一包位于独立的 [shob-package 项目](https://github.com/olovalabs/shob-package/tree/feature-1014/packages/shob-providers)，
 保留 `deepseek` ID，声明 `DEEPSEEK_API_KEY`，并通过 `requiresReasoningContent` 支持工具续轮。
 
 在 shob-package 仓库运行正式 package 的离线验证：
@@ -727,7 +727,7 @@ cargo test -p shob-providers --test streaming
 cargo test -p shob-providers --test host
 ```
 
-在 pi-rust 仓库运行 CLI 集成测试时设置 `SHOB_TEST_PROVIDER_LIBRARY` 和
+在 shob 仓库运行 CLI 集成测试时设置 `SHOB_TEST_PROVIDER_LIBRARY` 和
 `SHOB_TEST_PROVIDER_PACKAGE`，再执行：
 
 ```sh

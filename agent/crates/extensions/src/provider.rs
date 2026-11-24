@@ -125,7 +125,7 @@ impl PluggableProvider {
     /// snapshot, as `Arc<dyn Provider>`. Returns an empty vec when no plugin
     /// registered a provider (so a session without provider plugins injects
     /// nothing). The `Handle` MUST be captured from a thread running the target
-    /// runtime (pi-cli builds providers on the async main thread, same as the
+    /// runtime (cli builds providers on the async main thread, same as the
     /// `ActionBridge`).
     pub fn from_session(session: &ExtensionSession, runtime: Handle) -> Vec<Arc<dyn Provider>> {
         let Some(snapshot) = session.snapshot_arc() else {

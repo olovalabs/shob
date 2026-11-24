@@ -3785,7 +3785,7 @@ impl AgentHarness {
     /// Build the `SessionContextBuildOptions` from the entry projectors + the
     /// caller-supplied context-entry transforms (B3b). Previously
     /// `entry_transforms` was hardcoded to `Vec::new()`; the options field now
-    /// flows through so a host (pi-cli, via extensions) can inject transforms.
+    /// flows through so a host (cli, via extensions) can inject transforms.
     fn build_opts(
         projectors: &BTreeMap<String, CustomEntryContextMessageProjector>,
         entry_transforms: &[ContextEntryTransform],

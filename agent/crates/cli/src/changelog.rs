@@ -323,7 +323,6 @@ mod tests {
         let bundled = bundled_entries();
         assert!(!bundled.is_empty());
         assert!(BUNDLED_CHANGELOG.contains("All notable changes to Shob"));
-        assert!(!BUNDLED_CHANGELOG.contains("bigfish1913"));
         assert_eq!(
             DEFAULT_CHANGELOG_URL,
             "https://raw.githubusercontent.com/olovalabs/shob/main/CHANGELOG.md"

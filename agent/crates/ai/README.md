@@ -1,7 +1,7 @@
 # ai
 
-[![crates.io](https://img.shields.io/crates/v/rpi-ai.svg)](https://crates.io/crates/rpi-ai)
-[![docs.rs](https://docs.rs/rpi-ai/badge.svg)](https://docs.rs/rpi-ai)
+[![crates.io](https://img.shields.io/crates/v/shob-ai.svg)](https://crates.io/crates/shob-ai)
+[![docs.rs](https://docs.rs/shob-ai/badge.svg)](https://docs.rs/shob-ai)
 
 The unified, provider-agnostic LLM layer: message and content types, the
 `Provider` trait, streaming events, and concrete provider implementations.
@@ -47,7 +47,7 @@ it is the default.
 - `providers` — concrete implementations: `faux` (always), `anthropic`,
   `openai_completions`, `openai_responses` (behind `providers`).
   DeepSeek, OpenRouter, llama.cpp and Proxy live together in the optional
-  [shob-providers package](https://github.com/pi-rust/rpi-package/tree/feature-1014/packages/rpi-providers);
+  [shob-providers package](https://github.com/olovalabs/shob-package/tree/feature-1014/packages/shob-providers);
   see the [migration guide](../../docs/architecture/provider-packages.md).
 
 ## The `Provider` trait
@@ -120,22 +120,22 @@ let model = provider.default_model().clone();
 
 A tool call followed by a text turn is enough to exercise the whole
 tool → result → follow-up cycle offline. See
-[`examples/tools`](https://github.com/bigfish1913/pi-rust/tree/main/examples/tools).
+[`examples/tools`](https://github.com/olovalabs/shob/tree/main/examples/tools).
 
 ## Related crates
 
 | Crate | Role |
 | ----- | ---- |
-| [`agent`](https://crates.io/crates/rpi-agent) | The agent loop built on this layer |
-| [`harness`](https://crates.io/crates/rpi-harness) | Sessions, persistence, compaction |
-| [`cli`](https://crates.io/crates/rpi-cli) | The `shob` terminal agent |
+| [`agent`](https://crates.io/crates/shob-agent) | The agent loop built on this layer |
+| [`harness`](https://crates.io/crates/shob-harness) | Sessions, persistence, compaction |
+| [`cli`](https://crates.io/crates/shob-cli) | The `shob` terminal agent |
 
 ## Documentation
 
-- Crate docs: <https://docs.rs/rpi-ai>
-- Architecture: [docs/architecture/overview.md](https://github.com/bigfish1913/pi-rust/blob/main/docs/architecture/overview.md)
+- Crate docs: <https://docs.rs/shob-ai>
+- Architecture: [docs/architecture/overview.md](https://github.com/olovalabs/shob/blob/main/docs/architecture/overview.md)
 
 ## License
 
-MIT. See [LICENSE](https://github.com/bigfish1913/pi-rust/blob/main/LICENSE)
-and [NOTICE](https://github.com/bigfish1913/pi-rust/blob/main/NOTICE).
+MIT. See [LICENSE](https://github.com/olovalabs/shob/blob/main/LICENSE)
+and [NOTICE](https://github.com/olovalabs/shob/blob/main/NOTICE).

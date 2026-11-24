@@ -1,12 +1,12 @@
 # tools
 
-[![crates.io](https://img.shields.io/crates/v/rpi-tools.svg)](https://crates.io/crates/rpi-tools)
-[![docs.rs](https://docs.rs/rpi-tools/badge.svg)](https://docs.rs/rpi-tools)
+[![crates.io](https://img.shields.io/crates/v/shob-tools.svg)](https://crates.io/crates/shob-tools)
+[![docs.rs](https://docs.rs/shob-tools/badge.svg)](https://docs.rs/shob-tools)
 
 The built-in agent tools and the execution environment they run against:
 `read`, `write`, `edit`, `bash`, plus `grep`, `find`, `ls` and `powershell`,
 implemented as `AgentTool`s that any agent built on
-[`agent`](https://crates.io/crates/rpi-agent) can use.
+[`agent`](https://crates.io/crates/shob-agent) can use.
 
 The point of the crate is the split between *what a tool does* and *where it
 runs*. Tools are written against `ExecutionEnv`, so the same `read` tool works
@@ -55,7 +55,7 @@ let agent = agent::AgentBuilder::new()
 
 A complete, runnable version — a faux provider that writes a file through the
 real OS backend and reads it back — is in
-[`examples/tools`](https://github.com/bigfish1913/pi-rust/tree/main/examples/tools)
+[`examples/tools`](https://github.com/olovalabs/shob/tree/main/examples/tools)
 (`cargo run -p tools`).
 
 ## Testing against the in-memory backend
@@ -213,17 +213,17 @@ and the existing display byte limit. `files` stops at the first match per file.
 
 | Crate | Role |
 | ----- | ---- |
-| [`agent`](https://crates.io/crates/rpi-agent) | The `AgentTool` trait these tools implement |
-| [`ai`](https://crates.io/crates/rpi-ai) | Message and tool-schema types |
-| [`harness`](https://crates.io/crates/rpi-harness) | Sessions and the run loop that drives them |
-| [`cli`](https://crates.io/crates/rpi-cli) | The terminal agent |
+| [`agent`](https://crates.io/crates/shob-agent) | The `AgentTool` trait these tools implement |
+| [`ai`](https://crates.io/crates/shob-ai) | Message and tool-schema types |
+| [`harness`](https://crates.io/crates/shob-harness) | Sessions and the run loop that drives them |
+| [`cli`](https://crates.io/crates/shob-cli) | The terminal agent |
 
 ## Documentation
 
-- Crate docs: <https://docs.rs/rpi-tools>
-- Architecture: [docs/architecture/overview.md](https://github.com/bigfish1913/pi-rust/blob/main/docs/architecture/overview.md)
+- Crate docs: <https://docs.rs/shob-tools>
+- Architecture: [docs/architecture/overview.md](https://github.com/olovalabs/shob/blob/main/docs/architecture/overview.md)
 
 ## License
 
-MIT. See [LICENSE](https://github.com/bigfish1913/pi-rust/blob/main/LICENSE)
-and [NOTICE](https://github.com/bigfish1913/pi-rust/blob/main/NOTICE).
+MIT. See [LICENSE](https://github.com/olovalabs/shob/blob/main/LICENSE)
+and [NOTICE](https://github.com/olovalabs/shob/blob/main/NOTICE).

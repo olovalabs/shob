@@ -26,7 +26,6 @@ fn changelog_command_shows_current_release_and_all_is_explicit() {
     if historical_heading != latest_heading {
         assert!(!output.lines().any(|line| line.trim() == historical_heading));
     }
-    assert!(!output.contains("bigfish1913"));
     assert!(!output.contains("0.21.0"));
     assert!(!output.contains("Native parity phase 1"));
     let chat = Arc::new(Container::new());

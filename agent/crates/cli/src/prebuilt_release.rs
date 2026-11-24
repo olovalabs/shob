@@ -8,7 +8,7 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-const REPOSITORY: &str = "https://github.com/bigfish1913/pi-rust";
+const REPOSITORY: &str = "https://github.com/olovalabs/shob";
 const MAX_MANIFEST: u64 = 256 * 1024;
 const MAX_ARCHIVE: u64 = 256 * 1024 * 1024;
 
