@@ -6,9 +6,9 @@ use std::{
 
 use gpui::{
     AnyElement, App, DefiniteLength, Div, Element, ElementId, FontStyle, FontWeight, Half,
-    HighlightStyle, InteractiveElement as _, IntoElement, Length, ListState, ObjectFit,
+    HighlightStyle, Hsla, InteractiveElement as _, IntoElement, Length, ListState, ObjectFit,
     ParentElement, SharedString, SharedUri, StatefulInteractiveElement, Styled, StyledImage as _,
-    Window, div, img, prelude::FluentBuilder as _, px, relative, rems,
+    Window, div, img, prelude::FluentBuilder as _, px, relative, rems, rgb, rgba,
 };
 use markdown::mdast;
 use ropey::Rope;
@@ -29,6 +29,62 @@ use super::{TextViewStyle, utils::list_item_prefix};
 #[path = "node_flow.rs"]
 mod flow_fragments;
 pub(crate) use flow_fragments::FlowFragment;
+
+fn is_shell_language(lang: Option<&str>) -> bool {
+    let Some(lang) = lang else {
+        return false;
+    };
+    matches!(
+        lang.to_ascii_lowercase().as_str(),
+        "bash" | "sh" | "shell" | "zsh" | "fish" | "console" | "terminal"
+    )
+}
+
+#[derive(Clone, Copy)]
+struct MarkdownColors {
+    text_base: Hsla,
+    text_muted: Hsla,
+    link: Hsla,
+    border_base: Hsla,
+    border_muted: Hsla,
+    code_bg: Hsla,
+    shell_code_bg: Hsla,
+    table_frame_bg: Hsla,
+    table_body_bg: Hsla,
+    table_body_border: Hsla,
+}
+
+impl MarkdownColors {
+    fn for_theme(is_dark: bool) -> Self {
+        if is_dark {
+            Self {
+                text_base: rgb(0xf2f2f2).into(),
+                text_muted: rgb(0xaeaeae).into(),
+                link: rgb(0xa2bcff).into(),
+                border_base: rgba(0xffffff1a).into(),
+                border_muted: rgba(0xffffff14).into(),
+                code_bg: rgb(0x151515).into(),
+                shell_code_bg: rgb(0x3a3a3a).into(),
+                table_frame_bg: rgb(0x2e2e2e).into(),
+                table_body_bg: rgb(0x242424).into(),
+                table_body_border: rgba(0xffffff29).into(),
+            }
+        } else {
+            Self {
+                text_base: rgb(0x161616).into(),
+                text_muted: rgb(0x5c5c5c).into(),
+                link: rgb(0x3b5cf6).into(),
+                border_base: rgba(0x0000001a).into(),
+                border_muted: rgba(0x00000014).into(),
+                code_bg: rgb(0xfcfcfc).into(),
+                shell_code_bg: rgb(0xf2f2f2).into(),
+                table_frame_bg: rgb(0xfafafa).into(),
+                table_body_bg: rgb(0xffffff).into(),
+                table_body_border: rgba(0x0000001f).into(),
+            }
+        }
+    }
+}
 
 fn table_column_fractions(lengths: &[usize]) -> Vec<f32> {
     let largest = lengths.iter().copied().max().unwrap_or(5).clamp(5, 150);
@@ -401,21 +457,60 @@ impl CodeBlock {
         cx: &mut App,
     ) -> AnyElement {
         let style = &node_cx.style;
+        let colors = MarkdownColors::for_theme(cx.theme().is_dark());
+        let is_shell = is_shell_language(self.lang.as_deref());
+        let (code_bg, border_color, text_color, code_styles) = if is_shell {
+            (
+                colors.shell_code_bg,
+                colors.border_muted,
+                colors.text_base,
+                Vec::new(),
+            )
+        } else {
+            (
+                colors.code_bg,
+                colors.border_base,
+                if cx.theme().is_dark() {
+                    rgba(0xffffff9e).into()
+                } else {
+                    rgb(0x6f6f6f).into()
+                },
+                self.styles.clone(),
+            )
+        };
+        let is_first_fragment = self.flow_edges.is_none_or(|(first, _)| first);
+        let is_last_fragment = self.flow_edges.is_none_or(|(_, last)| last);
+        let group_name: SharedString = format!("markdown-code-{}", options.ix).into();
 
         div()
             .w_full()
             .min_w_0()
-            .when(!options.is_last, |this| this.pb(style.paragraph_gap))
+            .when(
+                is_first_fragment
+                    && !options.is_first
+                    && !options.after_heading
+                    && !options.in_list,
+                |this| this.pt(px(12.)),
+            )
+            .when(
+                is_last_fragment && !options.is_last && !options.in_list,
+                |this| this.pb(px(24.)),
+            )
             .child(
                 div()
                     .id(("codeblock", options.ix))
+                    .group(group_name.clone())
                     .w_full()
                     .min_w_0()
-                    .p_3()
-                    .rounded(cx.theme().radius)
-                    .bg(cx.theme().muted)
+                    .p(px(12.))
+                    .rounded(px(6.))
+                    .border(px(0.5))
+                    .border_color(border_color)
+                    .bg(code_bg)
+                    .text_color(text_color)
                     .font_family(cx.theme().mono_font_family.clone())
-                    .text_size(cx.theme().mono_font_size)
+                    .text_size(px(13.))
+                    .line_height(px(20.))
                     .relative()
                     .refine_style(&style.code_block)
                     .when(
@@ -438,20 +533,17 @@ impl CodeBlock {
                             this
                         },
                     )
-                    .child(Inline::new(
-                        "code",
-                        self.state.clone(),
-                        vec![],
-                        self.styles.clone(),
-                    ))
+                    .child(Inline::new("code", self.state.clone(), vec![], code_styles))
                     .when_some(node_cx.code_block_actions.clone(), |this, actions| {
                         this.child(
                             div()
                                 .absolute()
-                                .top_2()
-                                .right_2()
-                                .bg(cx.theme().muted)
-                                .rounded(cx.theme().radius)
+                                .top(px(4.))
+                                .right(px(4.))
+                                .opacity(0.)
+                                .group_hover(group_name, |this| this.opacity(1.))
+                                .bg(code_bg)
+                                .rounded(px(4.))
                                 .child(actions(&self, window, cx)),
                         )
                     }),
@@ -695,6 +787,7 @@ impl Paragraph {
                 for (range, style) in &inline_node.marks {
                     let inner_range = (offset + range.start)..(offset + range.end);
 
+                    let colors = MarkdownColors::for_theme(cx.theme().is_dark());
                     let mut highlight = HighlightStyle::default();
                     if style.bold {
                         highlight.font_weight = Some(FontWeight::BOLD);
@@ -709,17 +802,17 @@ impl Paragraph {
                         });
                     }
                     if style.code {
-                        code_ranges.push(inner_range.clone());
+                        if style.link.is_none() {
+                            code_ranges.push(inner_range.clone());
+                            highlight.color = Some(colors.text_base);
+                        }
                         if !style.bold {
                             highlight.font_weight = Some(FontWeight::MEDIUM);
-                        }
-                        if style.link.is_none() {
-                            highlight.background_color = Some(cx.theme().muted);
                         }
                     }
 
                     if let Some(mut link_mark) = style.link.clone() {
-                        highlight.color = Some(cx.theme().link);
+                        highlight.color = Some(colors.link);
                         highlight.underline = None;
 
                         if let Some(identifier) = link_mark.identifier.as_ref() {
@@ -766,7 +859,9 @@ struct NodeRenderOptions {
     todo: bool,
     ordered: bool,
     depth: usize,
+    is_first: bool,
     is_last: bool,
+    after_heading: bool,
 }
 
 impl NodeRenderOptions {
@@ -963,6 +1058,7 @@ impl Node {
         checked: Option<bool>,
         cx: &mut App,
     ) -> Div {
+        let colors = MarkdownColors::for_theme(cx.theme().is_dark());
         h_flex()
             .w_full()
             .flex_1()
@@ -971,7 +1067,12 @@ impl Node {
             .items_start()
             .content_start()
             .when(!options.todo && checked.is_none(), |this| {
-                this.child(list_item_prefix(ix, options.ordered, options.depth))
+                this.child(
+                    div()
+                        .min_w(px(16.))
+                        .text_color(colors.text_muted)
+                        .child(list_item_prefix(ix, options.ordered, options.depth)),
+                )
             })
             .when_some(checked, |this, checked| {
                 this.child(
@@ -1040,6 +1141,7 @@ impl Node {
                                             v_flex().child(preceding_row).child(
                                                 div()
                                                     .w_full()
+                                                    .pt(px(8.))
                                                     .pl(rems(1.))
                                                     .overflow_hidden()
                                                     .child(text),
@@ -1053,8 +1155,12 @@ impl Node {
                                     text, ix, options, *checked, cx,
                                 ));
                             }
-                            Node::List { .. } => {
-                                items.push(div().ml(rems(1.)).child(child.render_block(
+                            Node::List {
+                                ordered: nested_ordered,
+                                ..
+                            } => {
+                                let indent = if *nested_ordered { px(28.) } else { px(16.) };
+                                items.push(div().my(px(4.)).pl(indent).child(child.render_block(
                                     NodeRenderOptions {
                                         ix: child_ix,
                                         depth: options.depth + 1,
@@ -1113,6 +1219,7 @@ impl Node {
 
     fn render_table(
         item: &Node,
+        options: &NodeRenderOptions,
         node_cx: &NodeContext,
         window: &mut Window,
         cx: &mut App,
@@ -1146,104 +1253,152 @@ impl Node {
             _ => table_column_fractions(&col_lens),
         };
 
+        let colors = MarkdownColors::for_theme(cx.theme().is_dark());
+
         match item {
-            Node::Table(table) => div()
-                .when(table.flow_edges.is_none_or(|(_, last)| last), |this| {
-                    this.pb(rems(1.))
-                })
-                .w_full()
-                .child(
+            Node::Table(table) => {
+                let is_first_fragment = table.flow_edges.is_none_or(|(first, _)| first);
+                let is_last_fragment = table.flow_edges.is_none_or(|(_, last)| last);
+                let render_row_cells = |row_ix: usize,
+                                        row: &TableRow,
+                                        is_body_last: bool,
+                                        is_header: bool,
+                                        window: &mut Window,
+                                        cx: &mut App| {
                     div()
-                        .id("table")
+                        .id(("row", row_ix))
                         .w_full()
                         .min_w_0()
-                        .border_1()
-                        .border_color(cx.theme().border)
-                        .rounded(cx.theme().radius)
-                        .when(
-                            table.flow_edges.is_some_and(|(first, _)| !first),
-                            |mut this| {
-                                this.style().border_widths.top = Some(px(0.).into());
-                                this.style().corner_radii.top_left = Some(px(0.).into());
-                                this.style().corner_radii.top_right = Some(px(0.).into());
-                                this
-                            },
-                        )
-                        .when(
-                            table.flow_edges.is_some_and(|(_, last)| !last),
-                            |mut this| {
-                                this.style().corner_radii.bottom_left = Some(px(0.).into());
-                                this.style().corner_radii.bottom_right = Some(px(0.).into());
-                                this
-                            },
-                        )
-                        .overflow_hidden()
+                        .when(!is_header && !is_body_last, |this| {
+                            this.border_b(px(0.5)).border_color(colors.border_muted)
+                        })
+                        .flex()
+                        .flex_row()
+                        .text_size(px(13.))
+                        .line_height(px(16.))
+                        .when(is_header, |this| {
+                            this.text_color(colors.text_muted)
+                                .font_weight(FontWeight::MEDIUM)
+                        })
+                        .when(!is_header, |this| {
+                            this.text_color(colors.text_base)
+                                .font_weight(FontWeight::NORMAL)
+                        })
                         .children({
-                            let mut rows = Vec::with_capacity(table.children.len());
-                            for (row_ix, row) in table.children.iter().enumerate() {
-                                rows.push(
-                                    div()
-                                        .id(("row", row_ix))
-                                        .w_full()
-                                        .min_w_0()
-                                        .when(row_ix < table.children.len() - 1, |this| {
-                                            this.border_b_1()
-                                        })
-                                        .border_color(cx.theme().border)
-                                        .flex()
-                                        .flex_row()
-                                        .when(row.header, |this| {
-                                            this.bg(cx.theme().muted)
-                                                .text_color(cx.theme().muted_foreground)
-                                                .font_weight(FontWeight::SEMIBOLD)
-                                        })
-                                        .children({
-                                            let mut cells = Vec::with_capacity(row.children.len());
-                                            for (ix, cell) in row.children.iter().enumerate() {
-                                                let align = table.column_align(ix);
-                                                let is_last_col = ix == row.children.len() - 1;
-                                                let width = column_fractions
-                                                    .get(ix)
-                                                    .copied()
-                                                    .unwrap_or(0.0);
+                            let mut cells = Vec::with_capacity(row.children.len());
+                            for (ix, cell) in row.children.iter().enumerate() {
+                                let align = table.column_align(ix);
+                                let width = column_fractions.get(ix).copied().unwrap_or(0.0);
 
-                                                cells.push(
-                                                    div()
-                                                        .id(("cell", row_ix * 64 + ix))
-                                                        .flex()
-                                                        .min_w_0()
-                                                        .whitespace_normal()
-                                                        .when(
-                                                            align == ColumnumnAlign::Center,
-                                                            |this| {
-                                                                this.justify_center().text_center()
-                                                            },
-                                                        )
-                                                        .when(
-                                                            align == ColumnumnAlign::Right,
-                                                            |this| this.justify_end().text_right(),
-                                                        )
-                                                        .w(Length::Definite(relative(width)))
-                                                        .px_2()
-                                                        .py_1()
-                                                        .when(!is_last_col, |this| {
-                                                            this.border_r_1()
-                                                                .border_color(cx.theme().border)
-                                                        })
-                                                        .child(
-                                                            cell.children
-                                                                .render(node_cx, window, cx),
-                                                        ),
-                                                )
-                                            }
-                                            cells
-                                        }),
+                                cells.push(
+                                    div()
+                                        .id(("cell", row_ix * 64 + ix))
+                                        .flex()
+                                        .min_w_0()
+                                        .whitespace_normal()
+                                        .when(align == ColumnumnAlign::Center, |this| {
+                                            this.justify_center().text_center()
+                                        })
+                                        .when(align == ColumnumnAlign::Right, |this| {
+                                            this.justify_end().text_right()
+                                        })
+                                        .w(Length::Definite(relative(width)))
+                                        .px(px(12.))
+                                        .py(if is_header { px(8.) } else { px(10.) })
+                                        .child(cell.children.render(node_cx, window, cx)),
                                 )
                             }
-                            rows
-                        }),
-                )
-                .into_any_element(),
+                            cells
+                        })
+                };
+
+                let header_rows: Vec<(usize, &TableRow)> = table
+                    .children
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, row)| row.header)
+                    .collect();
+                let body_rows: Vec<(usize, &TableRow)> = table
+                    .children
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, row)| !row.header)
+                    .collect();
+
+                div()
+                    .when(
+                        is_first_fragment
+                            && !options.is_first
+                            && !options.after_heading
+                            && !options.in_list,
+                        |this| this.pt(px(16.)),
+                    )
+                    .when(
+                        is_last_fragment && !options.is_last && !options.in_list,
+                        |this| this.pb(px(16.)),
+                    )
+                    .w_full()
+                    .child(
+                        div()
+                            .id("table")
+                            .w_full()
+                            .min_w_0()
+                            .p(px(2.))
+                            .bg(colors.table_frame_bg)
+                            .border(px(0.5))
+                            .border_color(colors.border_muted)
+                            .rounded(px(6.))
+                            .when(
+                                table.flow_edges.is_some_and(|(first, _)| !first),
+                                |mut this| {
+                                    this.style().border_widths.top = Some(px(0.).into());
+                                    this.style().corner_radii.top_left = Some(px(0.).into());
+                                    this.style().corner_radii.top_right = Some(px(0.).into());
+                                    this
+                                },
+                            )
+                            .when(
+                                table.flow_edges.is_some_and(|(_, last)| !last),
+                                |mut this| {
+                                    this.style().border_widths.bottom = Some(px(0.).into());
+                                    this.style().corner_radii.bottom_left = Some(px(0.).into());
+                                    this.style().corner_radii.bottom_right = Some(px(0.).into());
+                                    this
+                                },
+                            )
+                            .overflow_hidden()
+                            .children(header_rows.into_iter().map(|(row_ix, row)| {
+                                render_row_cells(row_ix, row, false, true, window, cx)
+                            }))
+                            .when(!body_rows.is_empty(), |this| {
+                                let body_len = body_rows.len();
+                                this.child(
+                                    div()
+                                        .w_full()
+                                        .min_w_0()
+                                        .rounded(px(4.))
+                                        .bg(colors.table_body_bg)
+                                        .border(px(0.5))
+                                        .border_color(colors.table_body_border)
+                                        .shadow_xs()
+                                        .overflow_hidden()
+                                        .children(body_rows.into_iter().enumerate().map(
+                                            |(body_ix, (row_ix, row))| {
+                                                render_row_cells(
+                                                    row_ix,
+                                                    row,
+                                                    body_ix + 1 == body_len,
+                                                    false,
+                                                    window,
+                                                    cx,
+                                                )
+                                            },
+                                        )),
+                                )
+                            }),
+                    )
+                    .into_any_element()
+            }
             _ => div().into_any_element(),
         }
     }
@@ -1256,6 +1411,7 @@ impl Node {
         cx: &mut App,
     ) -> impl IntoElement {
         let options = NodeRenderOptions {
+            is_first: true,
             is_last: true,
             ..Default::default()
         };
@@ -1280,11 +1436,14 @@ impl Node {
 
         gpui::list(list_state, move |ix, window, cx| {
             let is_last = ix + 1 == children.len();
+            let after_heading = ix > 0 && matches!(children[ix - 1], Node::Heading { .. });
             children[ix]
                 .render_block(
                     NodeRenderOptions {
                         ix,
+                        is_first: ix == 0,
                         is_last,
+                        after_heading,
                         ..options
                     },
                     &node_cx,
@@ -1304,20 +1463,24 @@ impl Node {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
+        let colors = MarkdownColors::for_theme(cx.theme().is_dark());
         let mb = if options.in_list || options.is_last {
-            rems(0.)
+            px(0.)
         } else {
-            node_cx.style.paragraph_gap
+            px(12.)
         };
 
         match self {
             Node::Root { children } => div()
                 .id("div")
                 .children(children.iter().enumerate().map(move |(ix, node)| {
+                    let after_heading = ix > 0 && matches!(children[ix - 1], Node::Heading { .. });
                     node.render_block(
                         NodeRenderOptions {
                             ix,
+                            is_first: ix == 0,
                             is_last: ix + 1 == children.len(),
+                            after_heading,
                             ..options
                         },
                         node_cx,
@@ -1330,54 +1493,73 @@ impl Node {
                 .id(("p", options.ix))
                 .w_full()
                 .min_w_0()
+                .line_height(relative(1.6))
                 .pb(mb)
                 .child(paragraph.render(node_cx, window, cx))
                 .into_any_element(),
             Node::Heading { level, children } => {
-                let (text_size, font_weight) = match level {
-                    1 => (rems(2.), FontWeight::BOLD),
-                    2 => (rems(1.5), FontWeight::SEMIBOLD),
-                    3 => (rems(1.25), FontWeight::SEMIBOLD),
-                    4 => (rems(1.125), FontWeight::SEMIBOLD),
-                    5 => (rems(1.), FontWeight::SEMIBOLD),
-                    6 => (rems(1.), FontWeight::MEDIUM),
-                    _ => (rems(1.), FontWeight::NORMAL),
+                let (default_size, font_weight, top_margin, bottom_margin, is_muted) = match level {
+                    1 => (px(17.), FontWeight::SEMIBOLD, px(28.), px(12.), false),
+                    2 => (px(15.), FontWeight::SEMIBOLD, px(24.), px(10.), false),
+                    3 => (px(14.), FontWeight::BOLD, px(20.), px(8.), false),
+                    4 | 5 | 6 => (px(14.), FontWeight::MEDIUM, px(20.), px(8.), true),
+                    _ => (px(14.), FontWeight::NORMAL, px(20.), px(8.), false),
                 };
 
-                let mut text_size = text_size.to_pixels(node_cx.style.heading_base_font_size);
-                if let Some(f) = node_cx.style.heading_font_size.as_ref() {
-                    text_size = (f)(*level, node_cx.style.heading_base_font_size);
-                }
+                let text_size = if let Some(f) = node_cx.style.heading_font_size.as_ref() {
+                    (f)(*level, node_cx.style.heading_base_font_size)
+                } else {
+                    default_size
+                };
 
                 div()
                     .id(SharedString::from(format!("h{}-{}", level, options.ix)))
                     .w_full()
                     .min_w_0()
-                    .pb(rems(0.3))
+                    .when(!options.is_first && !options.in_list, |this| {
+                        this.pt(top_margin)
+                    })
+                    .when(!options.is_last, |this| this.pb(bottom_margin))
                     .whitespace_normal()
                     .text_size(text_size)
+                    .line_height(relative(1.5))
                     .font_weight(font_weight)
+                    .text_color(if is_muted {
+                        colors.text_muted
+                    } else {
+                        colors.text_base
+                    })
                     .child(children.render(node_cx, window, cx))
                     .into_any_element()
             }
             Node::Blockquote { children } => div()
                 .w_full()
-                .pb(mb)
+                .when(
+                    !options.is_first && !options.after_heading && !options.in_list,
+                    |this| this.pt(px(16.)),
+                )
+                .when(!options.is_last && !options.in_list, |this| {
+                    this.pb(px(16.))
+                })
                 .child(
                     div()
                         .id(("blockquote", options.ix))
                         .w_full()
-                        .text_color(cx.theme().muted_foreground)
-                        .border_l_3()
-                        .border_color(cx.theme().secondary_active)
-                        .px_4()
+                        .text_color(colors.text_muted)
+                        .border_l(px(1.))
+                        .border_color(colors.border_base)
+                        .pl(px(8.))
                         .children({
                             let children_len = children.len();
                             children.into_iter().enumerate().map(move |(index, c)| {
                                 let is_last = index == children_len - 1;
+                                let after_heading = index > 0
+                                    && matches!(children[index - 1], Node::Heading { .. });
                                 c.render_block(
                                     NodeRenderOptions {
                                         ix: index,
+                                        is_first: index == 0,
+                                        after_heading,
                                         ..options.is_last(is_last)
                                     },
                                     node_cx,
@@ -1396,7 +1578,19 @@ impl Node {
                 .id((if *ordered { "ol" } else { "ul" }, options.ix))
                 .w_full()
                 .min_w_0()
-                .pb(mb)
+                .gap(px(8.))
+                .when(
+                    options.depth == 0
+                        && !options.is_first
+                        && !options.after_heading
+                        && !options.in_list,
+                    |this| this.pt(px(8.)),
+                )
+                .when(
+                    options.depth == 0 && !options.is_last && !options.in_list,
+                    |this| this.pb(px(12.)),
+                )
+                .when(options.depth == 0, |this| this.pl(px(16.)))
                 .children({
                     let mut items = Vec::with_capacity(children.len());
                     let mut item_index = start.saturating_sub(1);
@@ -1424,15 +1618,13 @@ impl Node {
                 })
                 .into_any_element(),
             Node::CodeBlock(code_block) => code_block.render(&options, node_cx, window, cx),
-            Node::Table { .. } => Self::render_table(self, node_cx, window, cx).into_any_element(),
+            Node::Table { .. } => {
+                Self::render_table(self, &options, node_cx, window, cx).into_any_element()
+            }
             Node::Divider => div()
-                .pb(mb)
-                .child(
-                    div()
-                        .id(("divider", options.ix))
-                        .bg(cx.theme().border)
-                        .h(px(2.)),
-                )
+                .id(("divider", options.ix))
+                .w_full()
+                .h(px(32.))
                 .into_any_element(),
             Node::Break { .. } => div().id(("break", options.ix)).into_any_element(),
             Node::Unknown | Node::Definition { .. } => div().into_any_element(),

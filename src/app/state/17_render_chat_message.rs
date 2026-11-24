@@ -144,6 +144,11 @@ impl AppState {
             ChatRole::Assistant => {
                 let id =
                     SharedString::from(format!("agent-markdown-{pane_id}-{conversation}-{index}"));
+                let markdown_text_color: Hsla = if cx.theme().is_dark() {
+                    gpui::rgb(0xf2f2f2).into()
+                } else {
+                    gpui::rgb(0x161616).into()
+                };
                 let mut body = div()
                     .w_full()
                     .min_w_0()
@@ -152,7 +157,7 @@ impl AppState {
                     .gap(px(12.0))
                     .text_size(px(14.0))
                     .line_height(relative(1.6))
-                    .text_color(tokens.text_primary);
+                    .text_color(markdown_text_color);
 
                 if let Some(view) = message.stream.as_ref().filter(|_| message.streaming) {
                     if !view.settled.is_empty() {
@@ -161,7 +166,7 @@ impl AppState {
                             view.settled.clone(),
                             px(14.0),
                             rems(0.75),
-                            tokens.text_primary,
+                            markdown_text_color,
                             ChatRenderContext { tokens, window, cx },
                         ));
                     }
@@ -173,7 +178,7 @@ impl AppState {
                             view,
                             px(14.0),
                             rems(0.75),
-                            tokens.text_primary,
+                            markdown_text_color,
                             ChatRenderContext { tokens, window, cx },
                         ));
                     }
@@ -186,7 +191,7 @@ impl AppState {
                         message.markdown(),
                         px(14.0),
                         rems(0.75),
-                        tokens.text_primary,
+                        markdown_text_color,
                         ChatRenderContext { tokens, window, cx },
                     ));
                 }

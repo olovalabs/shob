@@ -9,8 +9,8 @@ use std::{
 };
 
 use crate::{
-    highlighter::{languages, Language},
-    ActiveTheme, ThemeMode, DEFAULT_THEME_COLORS,
+    ActiveTheme, DEFAULT_THEME_COLORS, ThemeMode,
+    highlighter::{Language, languages},
 };
 
 pub(super) const HIGHLIGHT_NAMES: [&str; 40] = [
@@ -266,7 +266,6 @@ impl SyntaxColors {
         if style.is_some() {
             style
         } else {
-
             if name.contains(".") {
                 if let Some(prefix) = name.split(".").next() {
                     return self.style(prefix);
@@ -448,6 +447,170 @@ impl HighlightTheme {
     pub fn default_light() -> Arc<Self> {
         DEFAULT_THEME_COLORS[&ThemeMode::Light].1.clone()
     }
+
+    pub fn opencode_dark() -> Arc<Self> {
+        static THEME: LazyLock<Arc<HighlightTheme>> = LazyLock::new(|| {
+            let style = |hex: u32| -> Option<ThemeStyle> {
+                Some(ThemeStyle {
+                    color: Some(gpui::rgba(hex).into()),
+                    font_style: None,
+                    font_weight: None,
+                })
+            };
+            let text_base = style(0xffffff9e);
+            let text_weak = style(0xffffff6c);
+            let text_strong = style(0xffffffef);
+            let string = style(0x00ceb9ff);
+            let primitive = style(0xffba92ff);
+            let property = style(0xff9ae2ff);
+            let ty = style(0xecf58cff);
+            let constant = style(0x93e9f6ff);
+            let info = style(0x93e9f6ff);
+
+            Arc::new(HighlightTheme {
+                name: "OpenCode Dark".to_string(),
+                appearance: ThemeMode::Dark,
+                style: HighlightThemeStyle {
+                    editor_background: Some(gpui::rgb(0x151515).into()),
+                    editor_foreground: Some(gpui::rgba(0xffffff9e).into()),
+                    syntax: SyntaxColors {
+                        attribute: property,
+                        boolean: constant,
+                        comment: text_weak,
+                        comment_doc: text_weak,
+                        constant,
+                        constructor: ty,
+                        embedded: text_base,
+                        emphasis: text_base,
+                        emphasis_strong: text_strong,
+                        enum_: ty,
+                        function: primitive,
+                        hint: text_weak,
+                        keyword: text_weak,
+                        label: constant,
+                        link_text: info,
+                        link_uri: text_weak,
+                        number: constant,
+                        operator: text_weak,
+                        predictive: Some(ThemeStyle {
+                            color: Some(gpui::rgba(0xffffff6c).into()),
+                            font_style: Some(FontStyle::Italic),
+                            font_weight: None,
+                        }),
+                        preproc: text_weak,
+                        primary: info,
+                        property: text_strong,
+                        punctuation: text_weak,
+                        punctuation_bracket: text_weak,
+                        punctuation_delimiter: text_weak,
+                        punctuation_list_marker: text_weak,
+                        punctuation_special: text_weak,
+                        string,
+                        string_escape: constant,
+                        string_regex: text_base,
+                        string_special: constant,
+                        string_special_symbol: constant,
+                        tag: text_weak,
+                        tag_doctype: text_weak,
+                        text_literal: string,
+                        title: Some(ThemeStyle {
+                            color: Some(gpui::rgba(0xffffff6c).into()),
+                            font_style: None,
+                            font_weight: Some(FontWeightContent::Bold),
+                        }),
+                        type_: ty,
+                        variable: text_strong,
+                        variable_special: constant,
+                        variant: constant,
+                    },
+                    ..Default::default()
+                },
+            })
+        });
+        THEME.clone()
+    }
+
+    pub fn opencode_light() -> Arc<Self> {
+        static THEME: LazyLock<Arc<HighlightTheme>> = LazyLock::new(|| {
+            let style = |hex: u32| -> Option<ThemeStyle> {
+                Some(ThemeStyle {
+                    color: Some(gpui::rgba(hex).into()),
+                    font_style: None,
+                    font_weight: None,
+                })
+            };
+            let text_base = style(0x6f6f6fff);
+            let text_weak = style(0x8f8f8fff);
+            let text_strong = style(0x171717ff);
+            let string = style(0x006656ff);
+            let primitive = style(0xfb4804ff);
+            let property = style(0xed6dc8ff);
+            let ty = style(0x596600ff);
+            let constant = style(0x007b80ff);
+            let info = style(0x0092a8ff);
+
+            Arc::new(HighlightTheme {
+                name: "OpenCode Light".to_string(),
+                appearance: ThemeMode::Light,
+                style: HighlightThemeStyle {
+                    editor_background: Some(gpui::rgb(0xfcfcfc).into()),
+                    editor_foreground: Some(gpui::rgb(0x6f6f6f).into()),
+                    syntax: SyntaxColors {
+                        attribute: property,
+                        boolean: constant,
+                        comment: text_weak,
+                        comment_doc: text_weak,
+                        constant,
+                        constructor: ty,
+                        embedded: text_base,
+                        emphasis: text_base,
+                        emphasis_strong: text_strong,
+                        enum_: ty,
+                        function: primitive,
+                        hint: text_weak,
+                        keyword: text_weak,
+                        label: constant,
+                        link_text: info,
+                        link_uri: text_weak,
+                        number: constant,
+                        operator: text_base,
+                        predictive: Some(ThemeStyle {
+                            color: Some(gpui::rgb(0x8f8f8f).into()),
+                            font_style: Some(FontStyle::Italic),
+                            font_weight: None,
+                        }),
+                        preproc: text_weak,
+                        primary: info,
+                        property: text_strong,
+                        punctuation: text_base,
+                        punctuation_bracket: text_base,
+                        punctuation_delimiter: text_base,
+                        punctuation_list_marker: text_base,
+                        punctuation_special: text_weak,
+                        string,
+                        string_escape: constant,
+                        string_regex: text_base,
+                        string_special: constant,
+                        string_special_symbol: constant,
+                        tag: text_weak,
+                        tag_doctype: text_weak,
+                        text_literal: string,
+                        title: Some(ThemeStyle {
+                            color: Some(gpui::rgb(0x8f8f8f).into()),
+                            font_style: None,
+                            font_weight: Some(FontWeightContent::Bold),
+                        }),
+                        type_: ty,
+                        variable: text_strong,
+                        variable_special: constant,
+                        variant: constant,
+                    },
+                    ..Default::default()
+                },
+            })
+        });
+        THEME.clone()
+    }
 }
 
 pub struct LanguageRegistry {
@@ -455,7 +618,6 @@ pub struct LanguageRegistry {
 }
 
 impl LanguageRegistry {
-
     pub fn singleton() -> &'static LazyLock<LanguageRegistry> {
         static INSTANCE: LazyLock<LanguageRegistry> = LazyLock::new(|| LanguageRegistry {
             languages: Mutex::new(

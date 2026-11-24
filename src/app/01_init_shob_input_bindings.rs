@@ -427,9 +427,9 @@ fn chat_markdown(
             paragraph_gap,
             is_dark: dark,
             highlight_theme: if dark {
-                HighlightTheme::default_dark()
+                HighlightTheme::opencode_dark()
             } else {
-                HighlightTheme::default_light()
+                HighlightTheme::opencode_light()
             },
             ..Default::default()
         }
@@ -437,16 +437,7 @@ fn chat_markdown(
             1 => base * (17.0 / 14.0),
             2 => base * (15.0 / 14.0),
             _ => base,
-        })
-        .code_block(
-            StyleRefinement::default()
-                .bg(tokens.card_hover)
-                .border(px(0.5))
-                .border_color(tokens.border_subtle)
-                .rounded(px(6.0))
-                .px(px(12.0))
-                .py(px(12.0)),
-        ),
+        }),
     )
     .code_block_actions(move |block, _window, _cx| {
         let code = block.code();

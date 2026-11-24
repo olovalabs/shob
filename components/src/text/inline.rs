@@ -5,13 +5,12 @@ use std::{
 };
 
 use gpui::{
-    point, px, quad, App, BorderStyle, Bounds, CursorStyle, Edges, Element, ElementId,
-    GlobalElementId, Half, HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId,
-    LayoutId, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, StyledText, TextLayout,
-    Window,
+    App, BorderStyle, Bounds, CursorStyle, Edges, Element, ElementId, GlobalElementId, Half,
+    HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, LayoutId, MouseMoveEvent,
+    MouseUpEvent, Pixels, Point, SharedString, StyledText, TextLayout, Window, point, px, quad,
 };
 
-use crate::{global_state::GlobalState, input::Selection, text::node::LinkMark, ActiveTheme};
+use crate::{ActiveTheme, global_state::GlobalState, input::Selection, text::node::LinkMark};
 
 pub(super) struct Inline {
     id: ElementId,
@@ -33,7 +32,6 @@ pub(crate) struct InlineState {
 }
 
 impl InlineState {
-
     pub(crate) fn set_text(&mut self, text: SharedString) {
         self.text = text;
     }
@@ -301,6 +299,74 @@ impl Element for Inline {
         let mut state = self.state.lock().unwrap();
 
         let text_layout = self.styled_text.layout().clone();
+        if !self.code_ranges.is_empty() {
+            let code_bg: gpui::Hsla = if cx.theme().is_dark() {
+                gpui::rgba(0xf2f2f214).into()
+            } else {
+                gpui::rgba(0x16161614).into()
+            };
+            let line_height = text_layout.line_height();
+            let radius = px(4.);
+            let pad_x = px(2.);
+            let pad_y = px(1.);
+            for range in &self.code_ranges {
+                let (Some(start_pos), Some(end_pos)) = (
+                    text_layout.position_for_index(range.start),
+                    text_layout.position_for_index(range.end),
+                ) else {
+                    continue;
+                };
+                if start_pos.y == end_pos.y {
+                    window.paint_quad(quad(
+                        Bounds::from_corners(
+                            point(start_pos.x - pad_x, start_pos.y + pad_y),
+                            point(end_pos.x + pad_x, start_pos.y + line_height - pad_y),
+                        ),
+                        radius,
+                        code_bg,
+                        Edges::default(),
+                        gpui::transparent_black(),
+                        BorderStyle::default(),
+                    ));
+                } else {
+                    window.paint_quad(quad(
+                        Bounds::from_corners(
+                            point(start_pos.x - pad_x, start_pos.y + pad_y),
+                            point(bounds.right(), start_pos.y + line_height - pad_y),
+                        ),
+                        radius,
+                        code_bg,
+                        Edges::default(),
+                        gpui::transparent_black(),
+                        BorderStyle::default(),
+                    ));
+                    if end_pos.y > start_pos.y + line_height {
+                        window.paint_quad(quad(
+                            Bounds::from_corners(
+                                point(bounds.left(), start_pos.y + line_height + pad_y),
+                                point(bounds.right(), end_pos.y - pad_y),
+                            ),
+                            radius,
+                            code_bg,
+                            Edges::default(),
+                            gpui::transparent_black(),
+                            BorderStyle::default(),
+                        ));
+                    }
+                    window.paint_quad(quad(
+                        Bounds::from_corners(
+                            point(bounds.left(), end_pos.y + pad_y),
+                            point(end_pos.x + pad_x, end_pos.y + line_height - pad_y),
+                        ),
+                        radius,
+                        code_bg,
+                        Edges::default(),
+                        gpui::transparent_black(),
+                        BorderStyle::default(),
+                    ));
+                }
+            }
+        }
         self.styled_text
             .paint(global_id, None, bounds, &mut (), &mut (), window, cx);
 
@@ -342,7 +408,6 @@ impl Element for Inline {
         });
 
         if !is_selection {
-
             window.on_mouse_event({
                 let links = self.links.clone();
                 let text_layout = text_layout.clone();
@@ -356,7 +421,9 @@ impl Element for Inline {
                         Self::link_for_position(&text_layout, &links, event.position)
                     {
                         cx.stop_propagation();
-                        let handler = cx.try_global::<super::TextLinkHandler>().map(|h| h.0.clone());
+                        let handler = cx
+                            .try_global::<super::TextLinkHandler>()
+                            .map(|h| h.0.clone());
                         if handler.is_some_and(|handler| handler(&link.url, window, cx)) {
                             return;
                         }
@@ -385,7 +452,6 @@ fn point_in_text_selection(
 
     let single_line = (bottom - top) <= line_height;
     if single_line {
-
         return pos.x + char_width.half() >= left && pos.x + char_width.half() <= right;
     }
 
@@ -404,7 +470,7 @@ fn point_in_text_selection(
 #[cfg(test)]
 mod tests {
     use super::point_in_text_selection;
-    use gpui::{point, px, size, Bounds};
+    use gpui::{Bounds, point, px, size};
 
     #[test]
     fn test_point_in_text_selection() {

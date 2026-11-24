@@ -19,6 +19,10 @@ enum FlowWrapper {
 }
 
 impl FlowFragment {
+    pub(crate) fn is_heading(&self) -> bool {
+        self.wrappers.is_empty() && matches!(self.node, Node::Heading { .. })
+    }
+
     pub(crate) fn selected_text(&self) -> String {
         self.node.selected_text()
     }
@@ -26,14 +30,19 @@ impl FlowFragment {
     pub(crate) fn render(
         &self,
         ix: usize,
+        is_first: bool,
+        after_heading: bool,
         context: &NodeContext,
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
+        let colors = MarkdownColors::for_theme(cx.theme().is_dark());
         let mut element = self.node.render_block(
             NodeRenderOptions {
                 ix,
+                is_first: is_first && self.wrappers.is_empty(),
                 is_last: self.continuation,
+                after_heading: after_heading && self.wrappers.is_empty(),
                 ..Default::default()
             },
             context,
@@ -44,10 +53,10 @@ impl FlowFragment {
             element = match wrapper {
                 FlowWrapper::Quote => div()
                     .w_full()
-                    .border_l_3()
-                    .border_color(cx.theme().secondary_active)
-                    .text_color(cx.theme().muted_foreground)
-                    .px_4()
+                    .border_l(px(1.))
+                    .border_color(colors.border_base)
+                    .text_color(colors.text_muted)
+                    .pl(px(8.))
                     .child(element)
                     .into_any_element(),
                 FlowWrapper::Item {

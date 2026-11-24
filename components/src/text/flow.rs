@@ -227,12 +227,17 @@ impl Element for FlowElement {
         let mut elements = Vec::new();
         let mut changed = false;
         loop {
-            let (block, offset) = {
+            let (block, prev_is_heading, offset) = {
                 let flow = self.flow.lock().unwrap();
                 let Some(block) = flow.blocks.get(index) else {
                     break;
                 };
-                (block.clone(), flow.prefix(index))
+                let prev_is_heading = index > 0
+                    && flow
+                        .blocks
+                        .get(index - 1)
+                        .is_some_and(|prev| prev.node.is_heading());
+                (block.clone(), prev_is_heading, flow.prefix(index))
             };
             if offset > bottom {
                 break;
@@ -240,7 +245,10 @@ impl Element for FlowElement {
             let mut context = (*block.context).clone();
             context.code_block_actions = self.context.code_block_actions.clone();
             context.style.heading_font_size = self.context.style.heading_font_size.clone();
-            let mut element = block.node.render(index, &context, window, cx);
+            let mut element =
+                block
+                    .node
+                    .render(index, index == 0, prev_is_heading, &context, window, cx);
             let measured = element.layout_as_root(
                 Size {
                     width: AvailableSpace::Definite(bounds.size.width),
