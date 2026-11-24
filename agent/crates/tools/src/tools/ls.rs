@@ -38,7 +38,14 @@ const DEFAULT_LIMIT: u32 = 500;
 #[derive(Debug, Clone, JsonSchema, Deserialize)]
 pub struct LsInput {
     /// Directory to list (default: current directory).
-    #[serde(default)]
+    #[serde(
+        default,
+        alias = "dir",
+        alias = "directory",
+        alias = "folder",
+        alias = "file",
+        alias = "src"
+    )]
     pub path: Option<String>,
     /// Maximum number of entries to return (default 500).
     #[serde(default)]

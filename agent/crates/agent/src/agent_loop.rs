@@ -647,6 +647,16 @@ impl ProviderMessageCache {
 /// Stream one assistant response, folding protocol events into the partial
 /// message and emitting agent `Message*` events. Mirrors TS
 /// `streamAssistantResponse`.
+#[tracing::instrument(
+    name = "agent.model_request",
+    level = "debug",
+    skip_all,
+    fields(
+        history_messages = context.messages.len(),
+        tool_count = context.tools.len(),
+        first_text_ms = tracing::field::Empty
+    )
+)]
 async fn stream_assistant_response(
     context: &mut AgentContext,
     config: &AgentLoopConfig,
@@ -732,6 +742,7 @@ async fn stream_assistant_response(
     let mut thinking_durations = HashMap::new();
     let mut added_partial = false;
     let mut first_poll = true;
+    let mut first_text_seen = false;
 
     loop {
         let poll_started = diagnostics.enabled.then(Instant::now);
@@ -750,6 +761,18 @@ async fn stream_assistant_response(
                         AssistantRequestDiagnostics::elapsed_ns(stream_started);
                 }
                 first_poll = false;
+            }
+        }
+        if !first_text_seen && matches!(&event, AssistantMessageEvent::TextDelta { .. }) {
+            first_text_seen = true;
+            if let Some(stream_started) = diagnostics.stream_started {
+                let elapsed_ns = AssistantRequestDiagnostics::elapsed_ns(stream_started);
+                tracing::Span::current().record("first_text_ms", (elapsed_ns / 1_000_000) as u64);
+                tracing::debug!(
+                    target: "shob::perf",
+                    first_text_ms = (elapsed_ns / 1_000_000) as u64,
+                    "model first text delta"
+                );
             }
         }
         match &event {
@@ -986,6 +1009,12 @@ async fn fail_tool_calls_from_truncated_message(
 // ----------------------------------------------------------------------------
 
 /// Execute parallel groups separated by exclusive tool-call barriers.
+#[tracing::instrument(
+    name = "agent.tool_dispatch",
+    level = "debug",
+    skip_all,
+    fields(tool_count = tool_calls.len())
+)]
 async fn execute_tool_calls(
     current_context: &AgentContext,
     assistant_message: &AssistantMessage,
@@ -1149,6 +1178,12 @@ async fn execute_tool_calls_sequential(
 ///    without hooks, `tool_execution_end` follows completion order.
 /// 4. After all settle, **tool-result `MessageStart`/`MessageEnd` are emitted in
 ///    SOURCE/ordinal order** — we walk the finalized vec by index.
+#[tracing::instrument(
+    name = "agent.tool_parallel_group",
+    level = "trace",
+    skip_all,
+    fields(tool_count = tool_calls.len())
+)]
 async fn execute_tool_calls_parallel(
     current_context: &Arc<AgentContext>,
     assistant_message: &Arc<AssistantMessage>,
@@ -1489,19 +1524,24 @@ async fn prepare_tool_call(
             };
         }
     };
-    // A malformed wire argument is preserved as text, not an empty object.
-    // Do not let a compatibility hook erase it before validation.
+    // Normalize string-form wire arguments before tool-specific preparation.
+    // This keeps compatibility hooks from erasing malformed input while also
+    // ensuring repaired/bare-string arguments actually reach the executor.
+    let mut normalized_tool_call = tool_call.clone();
     if tool_call.arguments.is_string() {
-        if let Err(error) = validate_tool_arguments(tool.schema(), tool_call) {
-            return Prepared::Immediate {
-                result: create_error_tool_result(&error.to_string()),
-                is_error: true,
-            };
+        match validate_tool_arguments(tool.schema(), tool_call) {
+            Ok(arguments) => normalized_tool_call.arguments = arguments,
+            Err(error) => {
+                return Prepared::Immediate {
+                    result: create_error_tool_result(&error.to_string()),
+                    is_error: true,
+                };
+            }
         }
     }
 
     // prepareArguments + schema validation.
-    let prepared_args = match tool.prepare_arguments(tool_call.arguments.clone()) {
+    let prepared_args = match tool.prepare_arguments(normalized_tool_call.arguments.clone()) {
         Ok(v) => v,
         Err(e) => {
             return Prepared::Immediate {
@@ -1510,7 +1550,7 @@ async fn prepare_tool_call(
             };
         }
     };
-    let mut prepared_tool_call = tool_call.clone();
+    let mut prepared_tool_call = normalized_tool_call;
     prepared_tool_call.arguments = prepared_args;
 
     let validated_args = match validate_tool_arguments(tool.schema(), &prepared_tool_call) {
@@ -1714,6 +1754,12 @@ impl Drop for ToolUpdateGuard {
 
 /// Run the tool's `execute` with late-update suppression. Mirrors TS
 /// `executePreparedToolCall`.
+#[tracing::instrument(
+    name = "agent.tool_execute",
+    level = "trace",
+    skip_all,
+    fields(tool_name = %tool_call.name)
+)]
 async fn execute_prepared_tool_call(
     tool_call: &ToolCall,
     tool: &Arc<dyn AgentTool>,

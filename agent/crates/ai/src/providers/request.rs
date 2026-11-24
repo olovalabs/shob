@@ -31,6 +31,11 @@ impl PreparedJsonRequest {
         Self::new_with_diagnostics(builder, body, None)
     }
 
+    #[tracing::instrument(
+        name = "provider.request.serialize_and_build",
+        level = "trace",
+        skip_all
+    )]
     pub(super) fn new_with_diagnostics<T: serde::Serialize + ?Sized>(
         builder: reqwest::RequestBuilder,
         body: &T,

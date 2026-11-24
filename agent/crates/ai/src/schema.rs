@@ -419,8 +419,128 @@ fn sub_schema_accepts_null(schema: &Value) -> bool {
 }
 
 // ----------------------------------------------------------------------------
-// validateToolArguments — public entry point
+// Tool-argument normalization + validation
 // ----------------------------------------------------------------------------
+
+fn expects_object(schema: &Value) -> bool {
+    let types = schema_types(schema);
+    (types.iter().any(|ty| ty == "object") && !types.iter().any(|ty| ty == "string"))
+        || schema
+            .as_object()
+            .is_some_and(|object| object.contains_key("properties"))
+}
+
+fn primary_string_property(schema: &Value) -> Option<&str> {
+    let properties = schema.as_object()?.get("properties")?.as_object()?;
+    [
+        "path",
+        "src",
+        "file",
+        "directory",
+        "dir",
+        "command",
+        "query",
+        "text",
+        "pattern",
+    ]
+    .into_iter()
+    .find(|key| properties.contains_key(*key))
+    .or_else(|| {
+        (properties.len() == 1)
+            .then(|| properties.keys().next().map(String::as_str))
+            .flatten()
+    })
+}
+
+/// Normalize common LLM/provider wire-format deviations before JSON-Schema
+/// validation. This intentionally only applies object-shape heuristics when
+/// the tool schema expects an object; tools whose schema accepts strings retain
+/// their original string semantics.
+fn normalize_tool_arguments(mut args: Value, schema: &Value) -> Value {
+    let object_schema = expects_object(schema);
+    if object_schema {
+        if let Value::String(raw) = &args {
+            args = crate::json_parse::parse_terminal_tool_arguments(raw);
+        }
+    }
+
+    if object_schema && args.is_null() {
+        args = Value::Object(Map::new());
+    }
+    if object_schema {
+        args = match args {
+            Value::String(text) => {
+                let mut object = Map::new();
+                if let Some(key) = primary_string_property(schema) {
+                    object.insert(key.to_owned(), Value::String(text));
+                }
+                Value::Object(object)
+            }
+            other => other,
+        };
+    }
+
+    // Common semantic aliases are applied only when the canonical key appears
+    // in this tool's schema and is absent from the supplied object.
+    if let (Value::Object(arguments), Some(properties)) = (
+        &mut args,
+        schema
+            .as_object()
+            .and_then(|object| object.get("properties"))
+            .and_then(Value::as_object),
+    ) {
+        for (alias, canonical) in [
+            ("dir", "path"),
+            ("directory", "path"),
+            ("folder", "path"),
+            ("file", "path"),
+            ("src", "path"),
+        ] {
+            if properties.contains_key(canonical)
+                && !arguments.contains_key(canonical)
+                && arguments.contains_key(alias)
+            {
+                if let Some(value) = arguments.remove(alias) {
+                    arguments.insert(canonical.to_owned(), value);
+                }
+            }
+        }
+    }
+    args
+}
+
+fn example_value(schema: &Value) -> Value {
+    if let Some(values) = schema.get("enum").and_then(Value::as_array) {
+        if let Some(first) = values.first() {
+            return first.clone();
+        }
+    }
+    match schema_types(schema).first().map(String::as_str) {
+        Some("object") => {
+            let mut object = Map::new();
+            let required: HashSet<&str> = schema
+                .get("required")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect();
+            if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
+                for (key, property) in properties {
+                    if required.contains(key.as_str()) {
+                        object.insert(key.clone(), example_value(property));
+                    }
+                }
+            }
+            Value::Object(object)
+        }
+        Some("array") => Value::Array(Vec::new()),
+        Some("string") => Value::String(String::new()),
+        Some("integer") | Some("number") => Value::from(0),
+        Some("boolean") => Value::Bool(false),
+        _ => Value::Object(Map::new()),
+    }
+}
 
 /// Validate (and coerce) tool-call arguments against the tool's parameter
 /// schema. Mirrors TS `validateToolArguments`:
@@ -431,28 +551,16 @@ fn sub_schema_accepts_null(schema: &Value) -> bool {
 ///
 /// Returns the coerced arguments on success, or `AiError::Schema` with a
 /// formatted message (path + message per error + the received JSON) on failure.
+#[tracing::instrument(
+    name = "tool.arguments.validate",
+    level = "trace",
+    skip(tool_call),
+    fields(tool_name = %tool.name)
+)]
 pub fn validate_tool_arguments(tool: &Tool, tool_call: &ToolCall) -> Result<Value, AiError> {
-    // Terminal parsing preserves malformed wire JSON as a string. Reject it
-    // before coercion when the tool requires an object; string-valued tools
-    // (including object|string unions) keep their normal validation path.
-    if let Value::String(raw) = &tool_call.arguments {
-        let types = schema_types(tool.parameters.as_value());
-        if types.iter().any(|ty| ty == "object") && !types.iter().any(|ty| ty == "string") {
-            let problem = if raw.trim().is_empty() {
-                "Missing"
-            } else {
-                "Malformed"
-            };
-            return Err(AiError::Schema {
-                message: format!(
-                    "{problem} tool arguments for {:?}: expected a JSON object.\n\nReceived raw arguments:\n{raw:?}",
-                    tool.name,
-                ),
-            });
-        }
-    }
-
-    let mut args = tool_call.arguments.clone();
+    let raw_arguments = &tool_call.arguments;
+    tracing::debug!(tool = %tool.name, arguments = ?raw_arguments, "normalizing tool arguments");
+    let mut args = normalize_tool_arguments(raw_arguments.clone(), tool.parameters.as_value());
 
     // Step 1: normalize optional nulls.
     normalize_optional_nulls(&mut args, tool.parameters.as_value());
@@ -493,10 +601,14 @@ pub fn validate_tool_arguments(tool: &Tool, tool_call: &ToolCall) -> Result<Valu
 
     Err(AiError::Schema {
         message: format!(
-            "Validation failed for tool {:?}:\n{errors_block}\n\nReceived arguments:\n{}",
+            "Validation failed for tool {:?}:\n{errors_block}\n\nReceived arguments:\n{}\n\nExpected parameter schema:\n{}\n\nOne valid example:\n{}",
             tool_call.name,
             serde_json::to_string_pretty(&tool_call.arguments)
-                .unwrap_or_else(|_| "<unprintable>".into())
+                .unwrap_or_else(|_| "<unprintable>".into()),
+            serde_json::to_string_pretty(tool.parameters.as_value())
+                .unwrap_or_else(|_| "<unavailable>".into()),
+            serde_json::to_string_pretty(&example_value(tool.parameters.as_value()))
+                .unwrap_or_else(|_| "{}".into())
         ),
     })
 }
@@ -648,23 +760,67 @@ mod tests {
     }
 
     #[test]
-    fn object_tool_rejects_malformed_and_missing_raw_arguments() {
-        let t = tool("t", json!({"type": "object"}));
-        for raw in ["", " \n", "{\"payload\":", "undefined", "{\"payload\": 1}"] {
-            let error = validate_tool_arguments(&t, &call(json!(raw))).unwrap_err();
-            let message = error.to_string();
-            assert!(message.contains(if raw.trim().is_empty() {
-                "Missing tool arguments"
-            } else {
-                "Malformed tool arguments"
-            }));
-            assert!(message.contains("expected a JSON object"));
-            assert!(message.contains(&format!("{raw:?}")));
+    fn object_tool_normalizes_common_wire_argument_shapes() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "limit": {"type": "integer"}
+            }
+        });
+        let t = tool("ls", schema.clone());
+        let raw_cases = [
+            ("", json!({})),
+            ("null", json!({})),
+            ("{}", json!({})),
+            (
+                r#"```json
+{"path":"."}
+```"#,
+                json!({"path":"."}),
+            ),
+            (r#"{"path":".""#, json!({"path":"."})),
+            (r#"{"path":".",}"#, json!({"path":"."})),
+            (r#"{'path':'.'}"#, json!({"path":"."})),
+            (r#""{\"path\":\".\"}""#, json!({"path":"."})),
+            (".", json!({"path":"."})),
+        ];
+        for (raw, expected) in &raw_cases {
+            assert_eq!(
+                normalize_tool_arguments(json!(raw), &schema),
+                expected.clone(),
+                "normalizing {raw:?}"
+            );
         }
         assert_eq!(
-            validate_tool_arguments(&t, &call(json!({}))).unwrap(),
-            json!({})
+            normalize_tool_arguments(json!({"dir":"."}), &schema),
+            json!({"path":"."})
         );
+        for (raw, _) in &raw_cases {
+            assert!(
+                validate_tool_arguments(&t, &call(json!(raw))).is_ok(),
+                "{raw:?}"
+            );
+        }
+        assert!(validate_tool_arguments(&t, &call(json!({"dir":"."}))).is_ok());
+    }
+
+    #[test]
+    fn validation_errors_include_model_friendly_schema_and_example() {
+        let t = tool(
+            "required",
+            json!({
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"]
+            }),
+        );
+        let message = validate_tool_arguments(&t, &call(json!({})))
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("Expected parameter schema"));
+        assert!(message.contains("One valid example"));
+        assert!(message.contains(r#""name": """#));
     }
 
     #[test]

@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use agent::agent_tool::AgentTool;
 use agent::error::AgentError;
+use ai::types::{ToolCall, ToolCallType};
 use tokio_util::sync::CancellationToken;
 use tools::{ExecutionToolContext, FileSystem, InMemoryExecutionEnv};
 
@@ -73,6 +74,47 @@ async fn ls_lists_entries_with_dir_suffix() {
     );
     assert!(out.contains("alpha.txt"), "file alpha present: {out}");
     assert!(out.contains("beta.md"), "file beta present: {out}");
+}
+
+#[tokio::test]
+async fn ls_accepts_repaired_and_aliased_wire_arguments() {
+    let (_env, ctx) = fresh_context();
+    let tool = tools::create_ls_tool(&ctx, None);
+    let inputs = [
+        serde_json::json!(""),
+        serde_json::json!("null"),
+        serde_json::json!("{}"),
+        serde_json::Value::String(
+            r#"```json
+{"path":"."}
+```"#
+                .into(),
+        ),
+        serde_json::Value::String(r#"{"path":".""#.into()),
+        serde_json::Value::String(r#"{"path":".",}"#.into()),
+        serde_json::Value::String(r#"{'path':'.'}"#.into()),
+        serde_json::Value::String(r#""{\"path\":\".\"}""#.into()),
+        serde_json::json!("."),
+        serde_json::json!({"dir": "."}),
+    ];
+
+    for arguments in inputs {
+        let call = ToolCall {
+            kind: ToolCallType,
+            id: "ls-test".into(),
+            name: "ls".into(),
+            arguments,
+            thought_signature: None,
+            namespace: None,
+            recorded: None,
+        };
+        let normalized = ai::validate_tool_arguments(tool.schema(), &call)
+            .unwrap_or_else(|error| panic!("ls argument normalization failed: {error}"));
+        let result = run_ls(tool.clone(), normalized)
+            .await
+            .expect("normalized ls call succeeds");
+        assert!(!text_output(&result).is_empty());
+    }
 }
 
 #[tokio::test]
