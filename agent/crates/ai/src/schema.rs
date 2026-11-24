@@ -432,10 +432,24 @@ fn expects_object(schema: &Value) -> bool {
 
 fn primary_string_property(schema: &Value) -> Option<&str> {
     let properties = schema.as_object()?.get("properties")?.as_object()?;
-    ["path", "src", "file", "directory", "dir", "command", "query", "text", "pattern"]
-        .into_iter()
-        .find(|key| properties.contains_key(*key))
-        .or_else(|| (properties.len() == 1).then(|| properties.keys().next().map(String::as_str)).flatten())
+    [
+        "path",
+        "src",
+        "file",
+        "directory",
+        "dir",
+        "command",
+        "query",
+        "text",
+        "pattern",
+    ]
+    .into_iter()
+    .find(|key| properties.contains_key(*key))
+    .or_else(|| {
+        (properties.len() == 1)
+            .then(|| properties.keys().next().map(String::as_str))
+            .flatten()
+    })
 }
 
 /// Normalize common LLM/provider wire-format deviations before JSON-Schema
@@ -470,7 +484,10 @@ fn normalize_tool_arguments(mut args: Value, schema: &Value) -> Value {
     // in this tool's schema and is absent from the supplied object.
     if let (Value::Object(arguments), Some(properties)) = (
         &mut args,
-        schema.as_object().and_then(|object| object.get("properties")).and_then(Value::as_object),
+        schema
+            .as_object()
+            .and_then(|object| object.get("properties"))
+            .and_then(Value::as_object),
     ) {
         for (alias, canonical) in [
             ("dir", "path"),
@@ -756,9 +773,12 @@ mod tests {
             ("", json!({})),
             ("null", json!({})),
             ("{}", json!({})),
-            (r#"```json
+            (
+                r#"```json
 {"path":"."}
-```"#, json!({"path":"."})),
+```"#,
+                json!({"path":"."}),
+            ),
             (r#"{"path":".""#, json!({"path":"."})),
             (r#"{"path":".",}"#, json!({"path":"."})),
             (r#"{'path':'.'}"#, json!({"path":"."})),
@@ -777,7 +797,10 @@ mod tests {
             json!({"path":"."})
         );
         for (raw, _) in &raw_cases {
-            assert!(validate_tool_arguments(&t, &call(json!(raw))).is_ok(), "{raw:?}");
+            assert!(
+                validate_tool_arguments(&t, &call(json!(raw))).is_ok(),
+                "{raw:?}"
+            );
         }
         assert!(validate_tool_arguments(&t, &call(json!({"dir":"."}))).is_ok());
     }

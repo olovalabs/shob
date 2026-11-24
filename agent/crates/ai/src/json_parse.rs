@@ -205,7 +205,9 @@ fn parse_tool_json_candidate(candidate: &str) -> Option<serde_json::Value> {
     if let Ok(value) = parse_json_with_repair(&single_quoted) {
         return Some(value);
     }
-    parse_incremental(candidate).ok().or_else(|| parse_incremental(&single_quoted).ok())
+    parse_incremental(candidate)
+        .ok()
+        .or_else(|| parse_incremental(&single_quoted).ok())
 }
 
 /// Convert single-quoted JSON-like strings to JSON strings without touching

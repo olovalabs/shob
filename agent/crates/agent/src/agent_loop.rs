@@ -767,10 +767,7 @@ async fn stream_assistant_response(
             first_text_seen = true;
             if let Some(stream_started) = diagnostics.stream_started {
                 let elapsed_ns = AssistantRequestDiagnostics::elapsed_ns(stream_started);
-                tracing::Span::current().record(
-                    "first_text_ms",
-                    (elapsed_ns / 1_000_000) as u64,
-                );
+                tracing::Span::current().record("first_text_ms", (elapsed_ns / 1_000_000) as u64);
                 tracing::debug!(
                     target: "shob::perf",
                     first_text_ms = (elapsed_ns / 1_000_000) as u64,

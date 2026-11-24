@@ -84,9 +84,12 @@ async fn ls_accepts_repaired_and_aliased_wire_arguments() {
         serde_json::json!(""),
         serde_json::json!("null"),
         serde_json::json!("{}"),
-        serde_json::Value::String(r#"```json
+        serde_json::Value::String(
+            r#"```json
 {"path":"."}
-```"#.into()),
+```"#
+                .into(),
+        ),
         serde_json::Value::String(r#"{"path":".""#.into()),
         serde_json::Value::String(r#"{"path":".",}"#.into()),
         serde_json::Value::String(r#"{'path':'.'}"#.into()),
