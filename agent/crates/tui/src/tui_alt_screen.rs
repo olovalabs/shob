@@ -1123,6 +1123,12 @@ impl TuiAltScreen {
     }
 
     /// Perform a differential render with constrained layout.
+    #[tracing::instrument(
+        name = "tui.frame.render",
+        level = "trace",
+        skip_all,
+        fields(reuse_scroll_content)
+    )]
     fn do_render(&self, reuse_scroll_content: bool) {
         if self.is_render_suspended() {
             return;

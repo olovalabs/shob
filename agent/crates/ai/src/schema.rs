@@ -534,6 +534,12 @@ fn example_value(schema: &Value) -> Value {
 ///
 /// Returns the coerced arguments on success, or `AiError::Schema` with a
 /// formatted message (path + message per error + the received JSON) on failure.
+#[tracing::instrument(
+    name = "tool.arguments.validate",
+    level = "trace",
+    skip(tool_call),
+    fields(tool_name = %tool.name)
+)]
 pub fn validate_tool_arguments(tool: &Tool, tool_call: &ToolCall) -> Result<Value, AiError> {
     let raw_arguments = &tool_call.arguments;
     tracing::debug!(tool = %tool.name, arguments = ?raw_arguments, "normalizing tool arguments");

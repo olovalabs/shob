@@ -156,6 +156,7 @@ impl TUI for TuiMainScreen {
         self.terminal.stop();
     }
 
+    #[tracing::instrument(name = "tui.main_frame.render", level = "trace", skip_all)]
     fn render_now(&self, force: bool) {
         if force {
             if let Ok(mut count) = self.full_redraw_count.lock() {
