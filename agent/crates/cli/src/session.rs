@@ -301,7 +301,7 @@ pub use tools::tools::{task_list, user_input};
 /// Keep tool-specific advice out of restricted sessions and extension overrides.
 fn builtin_tool_guideline(name: &str) -> Option<&'static str> {
     Some(match name {
-        "batch" => "For repository exploration, use batch by default when two or more independent reads or searches are known. Group enabled read-only tools in the calls array. Use codemode to return matching lines when full results are unnecessary. Reserve shell commands for work that requires shell execution, such as builds and tests.",
+        "batch" => "For repository exploration, use batch by default when two or more independent reads or searches are known. Each calls entry must use an enabled read-only tool: read, grep, find, ls, or output, with its fields directly in the entry. Never put bash, powershell, shell commands, edits, or writes in batch. Run shell commands using the standalone bash or powershell tool. Use codemode to return matching lines when full results are unnecessary.",
         "grep" => "Use the built-in ripgrep search for repository text searches. Use rg if a shell pipeline needs search.",
         "bash" | "powershell" => "For noisy builds and tests, request output_mode=compact. Keep raw output when exact text matters.",
         "output" => "Inspect the saved log with output before rerunning a command for missing details.",

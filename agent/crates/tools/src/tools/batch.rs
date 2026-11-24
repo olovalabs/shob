@@ -255,6 +255,32 @@ impl AgentTool for BatchTool {
         ToolExecutionMode::Parallel
     }
 
+    fn prepare_arguments(&self, args: Value) -> Result<Value, AgentError> {
+        if let Some(calls) = args.get("calls").and_then(Value::as_array) {
+            for (index, call) in calls.iter().enumerate() {
+                if let Some(name) = call.get("tool").and_then(Value::as_str) {
+                    if !self
+                        .tools
+                        .iter()
+                        .any(|entry| entry.tool.schema().name == name)
+                    {
+                        let enabled = self
+                            .tools
+                            .iter()
+                            .map(|entry| entry.tool.schema().name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        return Err(AgentError::Validation(format!(
+                            "batch call {index}: tool '{name}' is not available in batch. Enabled batch tools: {}. Run shell commands with the standalone bash or powershell tool; use batch only for independent read-only calls.",
+                            if enabled.is_empty() { "none" } else { &enabled }
+                        )));
+                    }
+                }
+            }
+        }
+        Ok(args)
+    }
+
     async fn execute(
         &self,
         tool_call_id: &str,

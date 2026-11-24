@@ -121,6 +121,13 @@ async fn overlaps_independent_reads_preserving_order_and_structured_failures() {
 async fn validates_every_child_before_starting_and_rejects_disabled_or_mutating_tools() {
     let read = ConcurrentRead::new();
     let batch = tools::create_batch_tool(vec![read.clone()]);
+    let error = batch
+        .prepare_arguments(json!({"calls": [{"tool":"bash","command":"pwd"}]}))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("call 0"));
+    assert!(error.contains("standalone bash or powershell"));
+    assert!(error.contains("Enabled batch tools: read"));
     for calls in [
         json!([{"tool":"read","index":0}, {"tool":"read"}]),
         json!([{"tool":"grep","pattern":"error"}]),
