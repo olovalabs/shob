@@ -109,7 +109,7 @@ impl GrepTool {
         Tool {
             name: "grep".to_string(),
             description: format!(
-                "Search file contents for a pattern. mode=content returns matching lines with paths \
+                "Search file contents with ripgrep. mode=content returns matching lines with paths \
                  and line numbers (default), files returns each matching path once, and count returns \
                  matching-line counts per file. Native directory searches respect ignore rules. \
                  Results are deterministic, breadth-first filename order. Use offset=next_offset from \

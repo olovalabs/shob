@@ -309,49 +309,67 @@ impl AgentTool for BatchTool {
         }
         let child = signal.child_token();
         let _cancel = child.clone().drop_guard();
-        let pending = calls.into_iter().map(|(entry, arguments, index): (&Entry, Value, usize)| {
-            let signal = child.clone();
-            async move {
-                let name = &entry.tool.schema().name;
-                let id = format!("{tool_call_id}:{index}");
-                let result = if signal.is_cancelled() {
-                    Err(AgentError::Abort)
-                } else {
-                    entry.tool.execute(&id, arguments, signal, Arc::new(|_| {})).await
-                };
-                let (result, is_error, error) = match result {
-                    Ok(result) => (Some(match projection { Some(p) => p.apply(result), None => result }), false, None),
-                    Err(AgentError::StructuredTool(result)) => (Some(*result), true, None),
-                    Err(error) => (None, true, Some(error.to_string())),
-                };
-                let item = BatchItem { index, tool: name, is_error, result, error };
-                let mut writer = LimitedWriter(Vec::new());
-                if serde_json::to_writer(&mut writer, &item).is_err() {
-                    json!({"index": index, "tool": name, "is_error": true, "error": "Result exceeds 128 KiB; use the standalone tool"}).to_string()
-                } else {
-                    // serde_json writes valid UTF-8.
-                    String::from_utf8(writer.0).expect("JSON is UTF-8")
+        let pending = calls
+            .into_iter()
+            .map(|(entry, arguments, index): (&Entry, Value, usize)| {
+                let signal = child.clone();
+                async move {
+                    let name = entry.tool.schema().name.as_str();
+                    let id = format!("{tool_call_id}:{index}");
+                    let result = if signal.is_cancelled() {
+                        Err(AgentError::Abort)
+                    } else {
+                        entry.tool.execute(&id, arguments, signal, Arc::new(|_| {})).await
+                    };
+                    let (result, is_error, error) = match result {
+                        Ok(result) => (Some(match projection { Some(p) => p.apply(result), None => result }), false, None),
+                        Err(AgentError::StructuredTool(result)) => (Some(*result), true, None),
+                        Err(error) => (None, true, Some(error.to_string())),
+                    };
+                    let item = BatchItem { index, tool: name, is_error, result, error };
+                    let mut writer = LimitedWriter(Vec::new());
+                    let text = if serde_json::to_writer(&mut writer, &item).is_err() {
+                        json!({"index": index, "tool": name, "is_error": true, "error": "Result exceeds 128 KiB; use the standalone tool"}).to_string()
+                    } else {
+                        String::from_utf8(writer.0).expect("JSON is UTF-8")
+                    };
+                    (index, text)
                 }
-            }
-        }).collect::<Vec<_>>();
-        let collect = stream::iter(pending)
-            .buffered(MAX_CONCURRENCY)
+            })
             .collect::<Vec<_>>();
-        let results = if projection.is_some() {
+        let collect = stream::iter(pending)
+            .buffer_unordered(MAX_CONCURRENCY)
+            .collect::<Vec<_>>();
+        let mut results = if projection.is_some() {
             tokio::select! {
                 _ = signal.cancelled() => return Err(AgentError::Abort),
                 result = tokio::time::timeout(std::time::Duration::from_secs(30), collect) =>
                     result.map_err(|_| AgentError::Tool("codemode exceeded 30 seconds".into()))?,
             }
         } else {
-            collect.await
+            tokio::select! {
+                _ = signal.cancelled() => return Err(AgentError::Abort),
+                result = collect => result,
+            }
         };
         if signal.is_cancelled() {
             return Err(AgentError::Abort);
         }
+        results.sort_unstable_by_key(|(index, _)| *index);
+        let count = results.len();
+        let size = results.iter().map(|(_, item)| item.len()).sum::<usize>();
+        let mut output = String::with_capacity(size + count + 1);
+        output.push('[');
+        for (index, item) in results {
+            if index != 0 {
+                output.push(',');
+            }
+            output.push_str(&item);
+        }
+        output.push(']');
         Ok(AgentToolResult {
-            content: vec![TextContentOrImage::text(format!("[{}]", results.join(",")))],
-            details: json!({"calls": results.len(), "max_concurrency": MAX_CONCURRENCY}),
+            content: vec![TextContentOrImage::text(output)],
+            details: json!({"calls": count, "max_concurrency": MAX_CONCURRENCY}),
             ..Default::default()
         })
     }

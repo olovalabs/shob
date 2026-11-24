@@ -267,7 +267,7 @@ impl AgentTool for BashTool {
             .await
             .map_err(exec_err_to_agent)?;
 
-        finish_shell_capture(&capture, input.output_mode, timeout, false)
+        finish_shell_capture(capture, input.output_mode, timeout, false)
     }
 }
 
@@ -308,7 +308,7 @@ pub(super) fn emit_update(
 /// tail, with the elided count and the full-log path stated. The window is refused
 /// whenever it would not be strictly smaller than what it replaces, so this can
 /// never inflate a result.
-pub(crate) fn build_bash_output(capture: &ShellCaptureResult) -> (String, BashToolDetails) {
+fn build_bash_output(capture: &mut ShellCaptureResult) -> (String, BashToolDetails) {
     let path_str = capture
         .full_output_path
         .as_ref()
@@ -344,7 +344,7 @@ pub(crate) fn build_bash_output(capture: &ShellCaptureResult) -> (String, BashTo
             );
         }
     }
-    let mut output_text = capture.output.clone();
+    let mut output_text = std::mem::take(&mut capture.output);
     let details = if capture.truncated {
         let t = &capture.truncation;
         let start_line = t.total_lines.saturating_sub(t.output_lines) + 1;
@@ -394,13 +394,13 @@ pub(crate) fn build_bash_output(capture: &ShellCaptureResult) -> (String, BashTo
 
 /// Shared final formatting and failure classification for both shell tools.
 pub(crate) fn finish_shell_capture(
-    capture: &ShellCaptureResult,
+    mut capture: ShellCaptureResult,
     mode: ShellOutputMode,
     timeout: Option<f64>,
     powershell: bool,
 ) -> Result<AgentToolResult, AgentError> {
     let started = Instant::now();
-    let (mut text, mut details) = build_bash_output(capture);
+    let (mut text, mut details) = build_bash_output(&mut capture);
     details.exit_code = capture.exit_code;
     let mut compact_status = "raw";
     if mode == ShellOutputMode::Compact {
@@ -587,7 +587,8 @@ mod tests {
 
     #[test]
     fn failed_truncated_command_shows_head_and_tail() {
-        let (text, details) = build_bash_output(&capture_with(20_000, Some(1), Some("/tmp/o.log")));
+        let (text, details) =
+            build_bash_output(&mut capture_with(20_000, Some(1), Some("/tmp/o.log")));
         // The cause near the top and the verdict at the bottom both survive.
         assert!(text.starts_with("L000000"));
         assert!(text.contains("L019999"));
@@ -607,7 +608,7 @@ mod tests {
 
     #[test]
     fn successful_truncated_command_stays_tail_only() {
-        let (text, _) = build_bash_output(&capture_with(20_000, Some(0), Some("/tmp/o.log")));
+        let (text, _) = build_bash_output(&mut capture_with(20_000, Some(0), Some("/tmp/o.log")));
         assert!(!text.starts_with("L000000"));
         assert!(text.starts_with("L018000"));
         assert!(text.contains("Showing lines 18001-20000 of 20000"));
@@ -620,7 +621,7 @@ mod tests {
         capture.truncated = false;
         capture.output = "boom\n".to_string();
         capture.head_output = String::new();
-        let (text, details) = build_bash_output(&capture);
+        let (text, details) = build_bash_output(&mut capture);
         assert_eq!(text, "boom\n");
         assert!(details.truncation.is_none());
         assert!(details.full_output_path.is_none());
@@ -632,7 +633,7 @@ mod tests {
         // existing tail notice is the honest message.
         let mut capture = capture_with(20_000, Some(1), Some("/tmp/o.log"));
         capture.head_output = String::new();
-        let (text, details) = build_bash_output(&capture);
+        let (text, details) = build_bash_output(&mut capture);
         assert!(text.contains("Showing lines 18001-20000 of 20000"));
         assert_eq!(details.truncation.map(|t| t.output_lines), Some(2_000));
     }

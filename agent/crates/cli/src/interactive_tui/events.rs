@@ -484,7 +484,7 @@ pub(super) async fn handle_agent_event(
             state.transcript_view().apply(
                 &UiEvent::ToolEnd {
                     id: tool_call_id,
-                    name: tool_name,
+                    name: tool_name.clone(),
                     result: crate::remote::protocol::tool_result_json(&result),
                     is_error,
                 },
@@ -496,10 +496,12 @@ pub(super) async fn handle_agent_event(
                 state.images_visible(),
             );
             state.sync_working_loader_with_bash();
-            // Bash tool completion is user-visible: immediate render ensures the
-            // result is displayed even when the scheduler thread is busy or the
-            // throttle window has not elapsed.
-            tui.render_now(false);
+            if tool_name == "bash" {
+                // Preserve the shell panel's immediate terminal update.
+                tui.render_now(false);
+            } else {
+                tui.request_render(false);
+            }
         }
     }
 }

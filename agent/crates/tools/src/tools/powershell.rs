@@ -140,7 +140,7 @@ impl AgentTool for PowerShellTool {
         )
         .await
         .map_err(|e| AgentError::Tool(e.to_string()))?;
-        finish_shell_capture(&capture, input.output_mode, timeout, true)
+        finish_shell_capture(capture, input.output_mode, timeout, true)
     }
 }
 
@@ -196,7 +196,7 @@ mod tests {
         .await
         .unwrap();
         let error =
-            finish_shell_capture(&capture, ShellOutputMode::Compact, None, true).unwrap_err();
+            finish_shell_capture(capture, ShellOutputMode::Compact, None, true).unwrap_err();
         let AgentError::StructuredTool(result) = error else {
             panic!("structured failure required")
         };

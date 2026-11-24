@@ -667,7 +667,8 @@ fn tool_title(name: &str) -> String {
         "read" | "read_file" => "Read".into(),
         "list" | "ls" | "list_dir" => "List".into(),
         "find" | "glob" => "Glob".into(),
-        "grep" | "ast_grep" | "search" | "rg" => "Grep".into(),
+        "grep" | "rg" => "Ripgrep".into(),
+        "ast_grep" | "search" => "Search".into(),
         "webfetch" | "web_fetch" | "fetch" => "Webfetch".into(),
         "websearch" | "web_search" | "search_web" => "Web Search".into(),
         "shell" | "bash" | "powershell" | "run" | "run_command" | "exec" | "execute"
@@ -758,7 +759,7 @@ impl ToolDisplay {
             && (view.subtitle.is_empty()
                 || !matches!(
                     view.title.as_str(),
-                    "Read" | "List" | "Glob" | "Grep" | "Webfetch" | "Web Search"
+                    "Read" | "List" | "Glob" | "Ripgrep" | "Search" | "Webfetch" | "Web Search"
                 ));
         Self {
             view,
@@ -1591,7 +1592,7 @@ fn chat_tool_header(
         "Read" => IconName::BookOpen,
         "List" => IconName::FolderClosed,
         "Web Search" | "Webfetch" | "Browser" => IconName::Globe,
-        "Grep" | "Glob" => IconName::Search,
+        "Ripgrep" | "Search" | "Glob" => IconName::Search,
         "Edit" | "Patch" => IconName::Replace,
         _ if is_agent_tool(&tool.name) => IconName::Bot,
         _ => IconName::File,
@@ -30333,11 +30334,11 @@ First report
                     input: r#"{"calls":[{"tool":"read","path":"README.md"},{"tool":"grep","path":"src","pattern":"TODO"},{"tool":"read_file","path":"Cargo.toml"}]}"#.into(),
                 },
             );
-            assert_eq!(chat_activity(messages), "Read, Grep · 3 calls…");
-            assert_eq!(chat_batch::counts(messages[0].tool.as_ref().unwrap()).as_str(), "Read 2 · Grep 1");
+            assert_eq!(chat_activity(messages), "Read, Ripgrep · 3 calls…");
+            assert_eq!(chat_batch::counts(messages[0].tool.as_ref().unwrap()).as_str(), "Read 2 · Ripgrep 1");
             let activity = chat_activity_tooltip(messages);
             assert!(activity.contains("Read · README.md"));
-            assert!(activity.contains("Grep · src"));
+            assert!(activity.contains("Ripgrep · src"));
             assert!(activity.contains("TODO"));
             cx.notify();
         });
@@ -30390,7 +30391,7 @@ First report
             .expect("Read stays visible");
         assert!(
             cx.debug_bounds("tool-call-0-1").is_some(),
-            "Grep stays visible"
+            "Ripgrep stays visible"
         );
         assert!(cx.debug_bounds("tool-call-output-0-0").is_none());
         assert!(cx.debug_bounds("tool-call-output-0-1").is_none());

@@ -301,7 +301,8 @@ pub use tools::tools::{task_list, user_input};
 /// Keep tool-specific advice out of restricted sessions and extension overrides.
 fn builtin_tool_guideline(name: &str) -> Option<&'static str> {
     Some(match name {
-        "batch" => "Group independent reads and searches in batch. Use codemode to return matching lines when full results are unnecessary.",
+        "batch" => "For repository exploration, use batch by default when two or more independent reads or searches are known. Group enabled read-only tools in the calls array. Use codemode to return matching lines when full results are unnecessary. Reserve shell commands for work that requires shell execution, such as builds and tests.",
+        "grep" => "Use the built-in ripgrep search for repository text searches. Use rg if a shell pipeline needs search.",
         "bash" | "powershell" => "For noisy builds and tests, request output_mode=compact. Keep raw output when exact text matters.",
         "output" => "Inspect the saved log with output before rerunning a command for missing details.",
         _ => return None,
@@ -317,7 +318,7 @@ fn builtin_tool_snippet(name: &str) -> Option<&'static str> {
         "edit" => "Find/replace edits to existing files",
         "write" => "Create or overwrite files",
         "docs" => "Look up shob commands, extensions, Pi package compatibility and .shob configuration instead of guessing",
-        "grep" => "Search file contents for a pattern",
+        "grep" => "Search file contents with ripgrep",
         "find" => "Find files by glob pattern",
         "ls" => "List directory contents",
         "powershell" => "Execute PowerShell commands on Windows",
@@ -4919,6 +4920,8 @@ mod tests {
         let none = default_system_prompt_with_tools("/tmp/proj", false, &[]);
         assert!(none.contains("Available tools:\n(none)"));
         for rule in [
+            "use batch by default",
+            "Reserve shell commands for work that requires shell execution",
             "Use codemode",
             "output_mode=compact",
             "Inspect the saved log",

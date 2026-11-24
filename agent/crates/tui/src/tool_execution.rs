@@ -55,7 +55,7 @@ pub struct ToolExecutionComponent {
     /// Tool arguments (displayed)
     args: Mutex<String>,
     /// Tool result (displayed after execution)
-    result: Mutex<Option<String>>,
+    result: Mutex<Option<ToolResult>>,
     /// Execution status
     status: Mutex<ToolStatus>,
     /// When the tool started running (for elapsed time display)
@@ -85,6 +85,11 @@ pub struct ToolExecutionComponent {
     /// renderCached`), which is what keeps a transcript repaint from
     /// re-rendering every finished tool panel.
     cache: Mutex<Option<ToolRenderCache>>,
+}
+
+struct ToolResult {
+    text: String,
+    preview: Option<String>,
 }
 
 #[derive(Clone)]
@@ -132,11 +137,16 @@ impl ToolExecutionComponent {
 
     /// Set the tool result.
     pub fn set_result(&self, result: &str, is_error: bool) {
+        self.set_result_with_preview(result.to_owned(), None, is_error);
+    }
+
+    /// Set a structured tool result with a compact summary for collapsed mode.
+    pub fn set_result_with_preview(&self, text: String, preview: Option<String>, is_error: bool) {
         if let Ok(mut r) = self.result.lock() {
             // The header glyph + bg tint already convey status (✗/red for
             // failure, ✓/green for success), so the result text is stored
             // raw — no redundant emoji prefix (pi doesn't double these up).
-            *r = Some(result.to_string());
+            *r = Some(ToolResult { text, preview });
         }
         if let Ok(mut s) = self.status.lock() {
             *s = if is_error {
@@ -385,7 +395,7 @@ impl ToolExecutionComponent {
         // `SkillInvocationMessageComponent` while reusing the tool panel's
         // result streaming + Ctrl+O expand plumbing.
         if let Some(skill) = skill_name.as_deref() {
-            let content = result.as_deref().unwrap_or("");
+            let content = result.as_ref().map_or("", |result| &result.text);
             let mut lines = render_skill(theme, skill, content, *expanded, width);
             // Trailing spacer (one convention for every panel). The skill box
             // used to skip the top spacer entirely — its render path
@@ -465,8 +475,8 @@ impl ToolExecutionComponent {
             if !summary.is_empty() {
                 header.push_str(&format!("  {}", colors.tool_output.fg(&summary)));
             }
-            if let Some(output) = result.as_deref().filter(|_| compact_read && !*expanded) {
-                let count = output.lines().count();
+            if let Some(output) = result.as_ref().filter(|_| compact_read && !*expanded) {
+                let count = output.text.lines().count();
                 let unit = if count == 1 { "line" } else { "lines" };
                 header.push_str(&format!(
                     "  {}",
@@ -524,6 +534,8 @@ impl ToolExecutionComponent {
             OUTPUT_PREVIEW_LINES
         };
         if let Some(r) = result.as_ref().filter(|_| !compact_read || *expanded) {
+            let preview = r.preview.as_deref().filter(|_| !*expanded);
+            let text = preview.unwrap_or(&r.text);
             // The gutter belongs to the content, not the panel's outer inset.
             // Drop it only when it would leave no room for output text.
             let gutter = !*result_markdown && content_width > 2;
@@ -533,14 +545,14 @@ impl ToolExecutionComponent {
             // plain path keeps the existing naive wrap so non-markdown tool
             // output is unchanged.
             let visual_lines: Vec<String> = if *result_markdown {
-                crate::markdown::Markdown::new(r.clone(), 0, 0).render(body_width)
+                crate::markdown::Markdown::new(text.to_owned(), 0, 0).render(body_width)
             } else {
-                normalized_output_lines(r)
+                normalized_output_lines(text)
                     .into_iter()
                     .flat_map(|line| wrap_text_with_ansi(&line, body_width))
                     .collect()
             };
-            let shown = if *expanded {
+            let shown = if *expanded || preview.is_some() {
                 visual_lines.len()
             } else {
                 visual_lines.len().min(preview_lines)
@@ -567,7 +579,11 @@ impl ToolExecutionComponent {
                 for part in wrap_text_with_ansi(&hint, content_width) {
                     lines.push(panel.line(&part));
                 }
-            } else if *expanded && (compact_read || visual_lines.len() > preview_lines) {
+            } else if preview.is_some() {
+                lines.push(panel.line(&colors.muted.fg("└ Ctrl+O to expand")));
+            } else if *expanded
+                && (r.preview.is_some() || compact_read || visual_lines.len() > preview_lines)
+            {
                 let hint = colors.muted.fg("Ctrl+O to collapse");
                 for part in wrap_text_with_ansi(&hint, content_width) {
                     lines.push(panel.line(&part));
@@ -826,7 +842,10 @@ mod tools {
     /// names in their natural lowercase form (`read`, `edit`, …) with bold
     /// styling, matching the original casing from the tool definition.
     pub fn tool_label(name: &str) -> String {
-        name.to_string()
+        match name {
+            "grep" | "rg" => "ripgrep".to_owned(),
+            _ => name.to_owned(),
+        }
     }
 
     /// Parse a known builtin tool's args JSON into a compact arg summary.
@@ -886,6 +905,10 @@ mod tools {
                 }
             }
             "bash" => get("command"),
+            "batch" => parse_json_array_len(args_json, "calls").map_or_else(String::new, |count| {
+                let unit = if count == 1 { "call" } else { "calls" };
+                format!("{count} {unit}")
+            }),
             _ => {
                 // Unknown tool: show the first string-valued field if any.
                 map.into_iter().next().map(|(_, v)| v).unwrap_or_default()

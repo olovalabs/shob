@@ -169,7 +169,7 @@ The editor shortcut opens the last editor you chose. If you haven’t chosen one
 
 Project scripts are saved per project in `settings.json` and run in a new terminal tab using the project directory.
 
-Native agent tools support opt-in compact shell results (`output_mode: "compact"`), saved-log inspection with `output`, compact/paged `grep`, and up to eight independent read-only operations in `batch`, with up to four running at a time. Compact shell results retain diagnostics and link to the complete sanitized log. Raw shell output is the default. Native agent chat uses these tools through the embedded and legacy RPC backends.
+Native agent tools support opt-in compact shell results (`output_mode: "compact"`), saved-log inspection with `output`, compact and paged ripgrep search through `grep`, and up to eight independent read-only operations in `batch`, with up to four running at a time. Compact shell results retain diagnostics and link to the complete sanitized log. Raw shell output is the default. The TUI and native agent chat share these tools through the embedded and legacy RPC backends. In the TUI, press `Ctrl+O` to expand the individual results of a batch.
 
 For read-only investigations, the built-in agent can use declarative **codemode** in a `batch` call. For example, `{"calls":[{"tool":"read","path":"Cargo.toml"},{"tool":"read","path":"agent/Cargo.toml"}],"codemode":{"contains":"edition","limit":3}}` returns up to three matching text lines per manifest. Filtering happens before results enter model context. Omit `contains` to take the first lines. Projected calls have a 30-second batch deadline and a 4 KiB text budget per successful result, plus a truncation marker. This mode does not execute JavaScript or shell commands.
 

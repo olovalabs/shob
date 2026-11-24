@@ -560,24 +560,21 @@ impl TranscriptView {
         }
         if name == "bash" {
             let bash = self.bash_components.lock().unwrap().remove(id);
+            let text = tool_result_text(result);
             match bash {
-                Some(comp) => finalize_bash(&comp, result, is_error),
+                Some(comp) => finalize_bash_with_text(&comp, result, &text, is_error),
                 None => {
                     let command = result
                         .get("details")
                         .and_then(|details| details.get("command"))
                         .and_then(Value::as_str)
                         .unwrap_or("");
-                    let text = tool_result_text(result);
                     if command.trim().is_empty() && text.trim().is_empty() {
                         return;
                     }
                     let comp = Arc::new(BashExecutionComponent::new(command));
                     comp.set_expanded(self.expanded());
-                    if !text.is_empty() {
-                        comp.append_output(&text);
-                    }
-                    finalize_bash(&comp, result, is_error);
+                    finalize_bash_with_text(&comp, result, &text, is_error);
                     self.chat.add_child(comp);
                 }
             }
@@ -604,7 +601,7 @@ impl TranscriptView {
                 comp
             }
         };
-        comp.set_result(&text, is_error);
+        set_tool_result(&comp, name, text, is_error);
         if !ask_user {
             if tool_result_requests_markdown(details) {
                 comp.set_result_markdown(true);
@@ -776,6 +773,74 @@ pub fn tool_calls_from_value(message: &Value) -> Vec<UiToolCall> {
         });
     }
     calls
+}
+
+/// Decode built-in batch results for display while preserving ordinary and
+/// extension-supplied tool text.
+pub(crate) fn set_tool_result(
+    component: &ToolExecutionComponent,
+    name: &str,
+    text: String,
+    is_error: bool,
+) {
+    let batch = (name == "batch" && !is_error)
+        .then(|| format_batch_result(&text))
+        .flatten();
+    match batch {
+        Some((output, preview)) => component.set_result_with_preview(output, Some(preview), false),
+        None => component.set_result_with_preview(text, None, is_error),
+    }
+}
+
+fn format_batch_result(text: &str) -> Option<(String, String)> {
+    use std::fmt::Write;
+    use tools::tools::batch::{MAX_CALLS, MAX_OUTPUT_BYTES};
+
+    if text.len() > MAX_OUTPUT_BYTES {
+        return None;
+    }
+    let items: Vec<Value> = serde_json::from_str(text).ok()?;
+    if items.is_empty() || items.len() > MAX_CALLS {
+        return None;
+    }
+    let mut output = String::new();
+    let mut preview = String::new();
+    for (index, item) in items.iter().enumerate() {
+        if item.get("index")?.as_u64()? != index as u64 {
+            return None;
+        }
+        let tool = match item.get("tool")?.as_str()? {
+            "read" => "READ",
+            "grep" => "RIPGREP",
+            "find" => "FIND",
+            "ls" => "LIST",
+            "output" => "OUTPUT",
+            _ => return None,
+        };
+        let status = if item.get("is_error")?.as_bool()? {
+            "failed"
+        } else {
+            "done"
+        };
+        let body = if let Some(error) = item.get("error").and_then(Value::as_str) {
+            error.to_owned()
+        } else {
+            tool_result_text(item.get("result")?)
+        };
+        let first = body
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or("");
+        let excerpt = tui::utils::truncate_to_width(first, 72, "…");
+        let heading = format!("{tool} · {status}");
+        if index != 0 {
+            preview.push('\n');
+            output.push_str("\n\n");
+        }
+        let _ = write!(preview, "{heading}  {excerpt}");
+        let _ = write!(output, "{heading}\n{body}");
+    }
+    Some((output, preview))
 }
 
 /// Text out of a wire tool-result payload (`{content:[{type:"text",text}]}`).
@@ -976,9 +1041,25 @@ fn apply_edit_diff(
 
 /// Mark a bash panel complete from the wire result payload. The exit code is
 /// derived from `is_error`; truncation info is read from `details`.
-fn finalize_bash(comp: &Arc<BashExecutionComponent>, result: &Value, is_error: bool) {
+fn finalize_bash_with_text(
+    comp: &BashExecutionComponent,
+    result: &Value,
+    text: &str,
+    is_error: bool,
+) {
+    if !text.is_empty() {
+        comp.append_output(text);
+    }
     let details = result.get("details");
-    let exit_code = Some(if is_error { 1 } else { 0 });
+    let exit_code = details
+        .and_then(|details| details.get("exit_code"))
+        .and_then(Value::as_i64)
+        .and_then(|code| i32::try_from(code).ok())
+        .or(Some(i32::from(is_error)));
+    let cancelled = details
+        .and_then(|details| details.get("failure_kind"))
+        .and_then(Value::as_str)
+        == Some("cancelled");
     let truncated = details
         .and_then(|details| details.get("truncation"))
         .and_then(|truncation| truncation.get("truncated"))
@@ -996,7 +1077,7 @@ fn finalize_bash(comp: &Arc<BashExecutionComponent>, result: &Value, is_error: b
     }
     comp.set_complete(
         exit_code,
-        false,
+        cancelled,
         BashTruncation {
             truncated,
             full_output_path,
@@ -1289,6 +1370,32 @@ mod tests {
     }
 
     #[test]
+    fn batch_transcript_summarizes_every_child_and_expands_results() {
+        let view = view();
+        let items = json!([
+            {"index":0,"tool":"read","is_error":false,
+             "result":{"content":[{"text":"first line\nexpanded detail"}]}},
+            {"index":1,"tool":"grep","is_error":true,"error":"invalid pattern"}
+        ]);
+        view.apply(
+            &UiEvent::ToolEnd {
+                id: "batch".into(),
+                name: "batch".into(),
+                result: json!({"content":[{"text":items.to_string()}]}),
+                is_error: false,
+            },
+            100,
+        );
+        let compact = strip_ansi(&view.chat.render(100).join("\n"));
+        assert!(compact.contains("READ · done") && compact.contains("RIPGREP · failed"));
+        assert!(compact.contains("Ctrl+O to expand"));
+        assert!(!compact.contains("expanded detail"));
+        view.set_expanded(true);
+        let full = strip_ansi(&view.chat.render(100).join("\n"));
+        assert!(full.contains("expanded detail") && full.contains("invalid pattern"));
+    }
+
+    #[test]
     fn tool_start_routes_bash_to_its_own_map() {
         let view = view();
         view.apply(
@@ -1310,6 +1417,20 @@ mod tests {
         assert!(view.bash_components.lock().unwrap().contains_key("b1"));
         assert!(view.tool_components.lock().unwrap().contains_key("r1"));
         assert!(view.tool_components.lock().unwrap().get("b1").is_none());
+        view.apply(
+            &UiEvent::ToolEnd {
+                id: "b1".into(),
+                name: "bash".into(),
+                result: json!({
+                    "content": [{"text":"final shell output"}],
+                    "details": {"exit_code": 23}
+                }),
+                is_error: true,
+            },
+            80,
+        );
+        let rendered = strip_ansi(&view.chat.render(80).join("\n"));
+        assert!(rendered.contains("final shell output") && rendered.contains("(exit 23)"));
     }
 
     #[test]

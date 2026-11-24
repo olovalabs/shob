@@ -13,6 +13,7 @@ use tokio_util::sync::CancellationToken;
 struct ConcurrentRead {
     schema: Tool,
     release: Notify,
+    release_first: Notify,
     started: AtomicUsize,
 }
 
@@ -28,6 +29,7 @@ impl ConcurrentRead {
                 constrained_sampling: None,
             },
             release: Notify::new(),
+            release_first: Notify::new(),
             started: AtomicUsize::new(0),
         })
     }
@@ -53,7 +55,9 @@ impl AgentTool for ConcurrentRead {
     ) -> Result<AgentToolResult, AgentError> {
         self.started.fetch_add(1, Ordering::Relaxed);
         let index = arguments["index"].as_u64().unwrap();
-        if index < 4 {
+        if index == 0 {
+            self.release_first.notified().await;
+        } else if index < 4 {
             self.release.notified().await;
         }
         let result = AgentToolResult {
@@ -88,6 +92,9 @@ async fn overlaps_independent_reads_preserving_order_and_structured_failures() {
     assert!(futures::poll!(&mut execution).is_pending());
     assert_eq!(read.started.load(Ordering::Relaxed), 4);
     read.release.notify_waiters();
+    assert!(futures::poll!(&mut execution).is_pending());
+    assert_eq!(read.started.load(Ordering::Relaxed), 5);
+    read.release_first.notify_one();
     let result = execution.await.unwrap();
     let TextContentOrImage::Text(text) = &result.content[0] else {
         panic!("text result")

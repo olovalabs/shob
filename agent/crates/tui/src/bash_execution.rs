@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use super::component::{Component, RenderedDocument};
 use crate::ansi::bold;
 use crate::ansi::strip_ansi;
-use crate::theme::{theme, theme_revision, Theme, ThemeColors};
+use crate::theme::{theme, theme_revision, Color, Theme, ThemeColors};
 use crate::tool_panel::ToolPanel;
 use crate::utils::{truncate_to_width, wrap_text_with_ansi};
 use crate::visual_truncate::truncate_to_visual_lines;
@@ -59,10 +59,24 @@ struct BashRenderCache {
     lines: Arc<Vec<String>>,
 }
 
+#[derive(Default)]
+struct BashOutput {
+    lines: Vec<String>,
+    rendered: Option<BashOutputRows>,
+}
+
+struct BashOutputRows {
+    width: usize,
+    expanded: bool,
+    color: Color,
+    lines: Arc<Vec<String>>,
+    hidden: usize,
+}
+
 /// Component that displays a bash command execution with streaming output.
 pub struct BashExecutionComponent {
     command: Mutex<String>,
-    output_lines: Mutex<Vec<String>>,
+    output: Mutex<BashOutput>,
     status: Mutex<BashStatus>,
     exit_code: Mutex<Option<i32>>,
     expanded: Mutex<bool>,
@@ -96,7 +110,7 @@ impl BashExecutionComponent {
     pub fn new_with_context(command: impl Into<String>, exclude_from_context: bool) -> Self {
         Self {
             command: Mutex::new(command.into()),
-            output_lines: Mutex::new(Vec::new()),
+            output: Mutex::new(BashOutput::default()),
             status: Mutex::new(BashStatus::Running),
             exit_code: Mutex::new(None),
             expanded: Mutex::new(false),
@@ -146,9 +160,10 @@ impl BashExecutionComponent {
     pub fn set_command(&self, command: &str) {
         if !command.trim().is_empty() {
             let mut c = self.command.lock().unwrap();
-            *c = command.to_string();
-            drop(c);
-            self.bump();
+            if *c != command {
+                *c = command.to_owned();
+                self.bump();
+            }
         }
     }
 
@@ -159,8 +174,8 @@ impl BashExecutionComponent {
     /// (`a`, then `a\nb` became `aa\nb`). Keep the latest snapshot instead.
     pub fn append_output(&self, chunk: &str) {
         let clean = strip_ansi(chunk).replace("\r\n", "\n").replace('\r', "\n");
-        if let Ok(mut out) = self.output_lines.lock() {
-            *out = if clean.is_empty() {
+        if let Ok(mut out) = self.output.lock() {
+            out.lines = if clean.is_empty() {
                 Vec::new()
             } else {
                 clean
@@ -168,6 +183,7 @@ impl BashExecutionComponent {
                     .map(|line| line.replace('\t', "    "))
                     .collect()
             };
+            out.rendered = None;
         }
         self.bump();
     }
@@ -216,9 +232,9 @@ impl BashExecutionComponent {
 
     /// Get the raw joined output.
     pub fn get_output(&self) -> String {
-        self.output_lines
+        self.output
             .lock()
-            .map(|o| o.join("\n"))
+            .map(|o| o.lines.join("\n"))
             .unwrap_or_default()
     }
 
@@ -277,6 +293,45 @@ impl BashExecutionComponent {
         }
     }
 
+    fn render_output(&self, width: usize, color: Color) -> (Arc<Vec<String>>, usize) {
+        let expanded = self.is_expanded();
+        let mut output = self.output.lock().unwrap();
+        if let Some(rows) = &output.rendered {
+            if rows.width == width && rows.expanded == expanded && rows.color == color {
+                return (rows.lines.clone(), rows.hidden);
+            }
+        }
+
+        let (lines, hidden) = if output.lines.is_empty() {
+            (Vec::new(), 0)
+        } else {
+            let styled = format!(
+                "\n{}",
+                output
+                    .lines
+                    .iter()
+                    .map(|line| color.fg(line))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+            if expanded {
+                (crate::text::Text::new(styled, 0, 0).render(width), 0)
+            } else {
+                let preview = truncate_to_visual_lines(&styled, PREVIEW_LINES, width, 0);
+                (preview.visual_lines, preview.skipped_count)
+            }
+        };
+        let lines = Arc::new(lines);
+        output.rendered = Some(BashOutputRows {
+            width,
+            expanded,
+            color,
+            lines: lines.clone(),
+            hidden,
+        });
+        (lines, hidden)
+    }
+
     /// Render against one theme snapshot; keep all insets inside the background.
     fn render_panel(&self, width: usize, status: BashStatus, theme: &Theme) -> Vec<String> {
         let colors = &theme.colors;
@@ -325,31 +380,8 @@ impl BashExecutionComponent {
             lines.push(panel_line(&part));
         }
 
-        let (display_lines, hidden) = {
-            let out = self.output_lines.lock().unwrap();
-            let expanded = *self.expanded.lock().unwrap();
-            if out.is_empty() {
-                (Vec::new(), 0usize)
-            } else {
-                let styled = format!(
-                    "\n{}",
-                    out.iter()
-                        .map(|l| colors.muted.fg(l))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                );
-                if expanded {
-                    (
-                        crate::text::Text::new(&styled, 0, 0).render(content_width),
-                        0,
-                    )
-                } else {
-                    let r = truncate_to_visual_lines(&styled, PREVIEW_LINES, content_width, 0);
-                    (r.visual_lines, r.skipped_count)
-                }
-            }
-        };
-        for line in &display_lines {
+        let (display_lines, hidden) = self.render_output(content_width, colors.muted);
+        for line in display_lines.iter() {
             lines.push(panel_line(line));
         }
 

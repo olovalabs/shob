@@ -588,7 +588,12 @@ pub(super) fn render_history_entries(
                     // completed tool panels so resumed sessions show the
                     // command output as well as the user's prompts.
                     let comp = Arc::new(ToolExecutionComponent::new(&result.tool_name, ""));
-                    comp.set_result(&tool_result_message_text(result), result.is_error);
+                    crate::transcript_view::set_tool_result(
+                        &comp,
+                        &result.tool_name,
+                        tool_result_message_text(result),
+                        result.is_error,
+                    );
                     if tool_result_requests_markdown(result.details.as_ref()) {
                         comp.set_result_markdown(true);
                     }
