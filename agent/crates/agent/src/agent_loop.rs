@@ -1489,19 +1489,24 @@ async fn prepare_tool_call(
             };
         }
     };
-    // A malformed wire argument is preserved as text, not an empty object.
-    // Do not let a compatibility hook erase it before validation.
+    // Normalize string-form wire arguments before tool-specific preparation.
+    // This keeps compatibility hooks from erasing malformed input while also
+    // ensuring repaired/bare-string arguments actually reach the executor.
+    let mut normalized_tool_call = tool_call.clone();
     if tool_call.arguments.is_string() {
-        if let Err(error) = validate_tool_arguments(tool.schema(), tool_call) {
-            return Prepared::Immediate {
-                result: create_error_tool_result(&error.to_string()),
-                is_error: true,
-            };
+        match validate_tool_arguments(tool.schema(), tool_call) {
+            Ok(arguments) => normalized_tool_call.arguments = arguments,
+            Err(error) => {
+                return Prepared::Immediate {
+                    result: create_error_tool_result(&error.to_string()),
+                    is_error: true,
+                };
+            }
         }
     }
 
     // prepareArguments + schema validation.
-    let prepared_args = match tool.prepare_arguments(tool_call.arguments.clone()) {
+    let prepared_args = match tool.prepare_arguments(normalized_tool_call.arguments.clone()) {
         Ok(v) => v,
         Err(e) => {
             return Prepared::Immediate {
@@ -1510,7 +1515,7 @@ async fn prepare_tool_call(
             };
         }
     };
-    let mut prepared_tool_call = tool_call.clone();
+    let mut prepared_tool_call = normalized_tool_call;
     prepared_tool_call.arguments = prepared_args;
 
     let validated_args = match validate_tool_arguments(tool.schema(), &prepared_tool_call) {

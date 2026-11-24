@@ -162,11 +162,111 @@ pub fn parse_streaming_json(json: Option<&str>) -> serde_json::Value {
 /// Parse complete arguments, retaining the existing invalid-escape repair.
 /// Preserve unrecoverable input as text for tool-owned validation diagnostics.
 pub fn parse_terminal_tool_arguments(raw: &str) -> serde_json::Value {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
+    let mut candidate = raw.trim();
+    if candidate.is_empty() || candidate.eq_ignore_ascii_case("null") || candidate == "None" {
         return serde_json::Value::Object(serde_json::Map::new());
     }
-    parse_json_with_repair(trimmed).unwrap_or_else(|_| serde_json::Value::String(raw.to_owned()))
+
+    // Models sometimes include a markdown code fence despite being asked for
+    // raw JSON. Strip only a whole-value fence; don't rewrite embedded text.
+    if let Some(fenced) = candidate.strip_prefix("```") {
+        let fenced = fenced.trim_start();
+        let body = fenced
+            .find('\n')
+            .map(|newline| &fenced[newline + 1..])
+            .unwrap_or(fenced);
+        candidate = body.trim_end();
+        if let Some(body) = candidate.strip_suffix("```") {
+            candidate = body.trim_end();
+        }
+    }
+
+    // A few providers/models double-encode the tool arguments. Decode a
+    // bounded number of layers, preserving the final string if it is ordinary
+    // (non-JSON) text so schema-aware normalization can decide what to do.
+    let Some(mut value) = parse_tool_json_candidate(candidate) else {
+        return serde_json::Value::String(raw.to_owned());
+    };
+    for _ in 0..2 {
+        let Some(encoded) = value.as_str() else { break };
+        let Some(decoded) = parse_tool_json_candidate(encoded.trim()) else {
+            break;
+        };
+        value = decoded;
+    }
+    value
+}
+
+fn parse_tool_json_candidate(candidate: &str) -> Option<serde_json::Value> {
+    if let Ok(value) = parse_json_with_repair(candidate) {
+        return Some(value);
+    }
+    let single_quoted = repair_single_quoted_json(candidate);
+    if let Ok(value) = parse_json_with_repair(&single_quoted) {
+        return Some(value);
+    }
+    parse_incremental(candidate).ok().or_else(|| parse_incremental(&single_quoted).ok())
+}
+
+/// Convert single-quoted JSON-like strings to JSON strings without touching
+/// double-quoted JSON strings. Apostrophes escaped inside a single-quoted value
+/// are retained as ordinary apostrophe characters.
+fn repair_single_quoted_json(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut in_double = false;
+    let mut in_single = false;
+    let mut escaped = false;
+    for c in input.chars() {
+        if in_double {
+            output.push(c);
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_double = false;
+            }
+        } else if in_single {
+            if escaped {
+                if c == '\'' {
+                    output.push('\'');
+                } else {
+                    output.push('\\');
+                    output.push(c);
+                }
+                escaped = false;
+            } else {
+                match c {
+                    '\\' => escaped = true,
+                    '\'' => {
+                        output.push('"');
+                        in_single = false;
+                    }
+                    '"' => output.push_str("\\\""),
+                    _ => output.push(c),
+                }
+            }
+        } else {
+            match c {
+                '"' => {
+                    in_double = true;
+                    output.push(c);
+                }
+                '\'' => {
+                    in_single = true;
+                    output.push('"');
+                }
+                _ => output.push(c),
+            }
+        }
+    }
+    if escaped && in_single {
+        output.push('\\');
+    }
+    if in_single {
+        output.push('"');
+    }
+    output
 }
 
 /// Incremental JSON parser: closes open strings/objects/arrays to coerce a
@@ -174,8 +274,44 @@ pub fn parse_terminal_tool_arguments(raw: &str) -> serde_json::Value {
 /// Unlike a strict parser, unknown trailing characters after a complete value
 /// are ignored.
 fn parse_incremental(s: &str) -> Result<serde_json::Value, serde_json::Error> {
-    let closed = close_truncated_json(s);
+    let without_trailing_commas = remove_trailing_commas(s);
+    let closed = close_truncated_json(&without_trailing_commas);
     serde_json::from_str(&closed)
+}
+
+/// Remove commas immediately before a closing object or array delimiter while
+/// preserving commas inside JSON strings.
+fn remove_trailing_commas(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if in_string {
+            out.push(c);
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+        } else if c == '"' {
+            in_string = true;
+            out.push(c);
+        } else if c == ',' {
+            let next = chars[i + 1..].iter().find(|next| !next.is_whitespace());
+            if !next.copied().is_some_and(|next| matches!(next, '}' | ']')) {
+                out.push(c);
+            }
+        } else {
+            out.push(c);
+        }
+        i += 1;
+    }
+    out
 }
 
 /// Close any open string/object/array in a truncated JSON document.
@@ -294,12 +430,18 @@ mod tests {
     }
 
     #[test]
-    fn terminal_parse_rejects_truncation_and_garbage() {
+    fn terminal_parse_repairs_truncation_and_preserves_plain_text() {
         let truncated = parse_terminal_tool_arguments(r#"{"path":"A"#);
-        assert_eq!(truncated, json!(r#"{"path":"A"#));
+        assert_eq!(truncated, json!({"path":"A"}));
         assert_eq!(
             parse_terminal_tool_arguments("not json at all"),
             json!("not json at all")
+        );
+        assert_eq!(parse_terminal_tool_arguments(" null "), json!({}));
+        assert_eq!(parse_terminal_tool_arguments("None"), json!({}));
+        assert_eq!(
+            parse_terminal_tool_arguments(r#""{\"path\":\"A\"}""#),
+            json!({"path":"A"})
         );
     }
 
