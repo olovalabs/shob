@@ -18,7 +18,6 @@ reduce prompt spend without hurting task success.
 | Search cache | An identical `grep`/`find`/`ls` is answered locally when nothing it scanned changed | `src/token_efficiency/cache.rs`, `hooks.rs` |
 | Anchor edits | `edit` accepts `PUT n.==m:` against a hashed line snapshot instead of retyped `oldText` | `src/token_efficiency/anchors.rs` |
 | Output minimization | Repeated/blank/noise lines collapse in `bash`/`grep`/`find`/`ls` output | `src/token_efficiency/minimize.rs` |
-| Cheap-task routing | Conversation titles run on a configured `smol` model | `src/token_efficiency/routing.rs` |
 | Prompt-prefix guard | Detects a volatile system prompt or reordered tools, which silently invalidate the provider cache | `src/token_efficiency/prefix.rs` |
 | Measurement | Per-turn input/output/cache tokens and cache hit rate, as JSONL | `src/token_efficiency/metrics.rs` |
 

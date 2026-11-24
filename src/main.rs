@@ -1,13 +1,12 @@
 use anyhow::Result;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, Bounds, ClipboardEntry, Context, CursorStyle, Div,
-    Edges, ElementId, Entity, ExternalPaths, FollowMode, Hsla, InteractiveElement as _,
-    IntoElement, KeyDownEvent, ListAlignment, ListState, MouseButton, MouseDownEvent,
-    MouseMoveEvent, ObjectFit, ParentElement, Pixels, Point, Rems, Render, SharedString,
-    StatefulInteractiveElement as _, StyleRefinement, Styled, StyledImage as _, StyledText, Window,
-    WindowControlArea, WindowDecorations, WindowOptions, actions, canvas, deferred, div, img, list,
-    px, relative, rems, rgba, size, svg,
+    AnyElement, App, AppContext as _, Bounds, ClipboardEntry, Context, CursorStyle, Div, Edges,
+    ElementId, Entity, ExternalPaths, FollowMode, Hsla, InteractiveElement as _, IntoElement,
+    KeyDownEvent, ListAlignment, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit,
+    ParentElement, Pixels, Point, Rems, Render, SharedString, StatefulInteractiveElement as _,
+    StyleRefinement, Styled, StyledImage as _, StyledText, Window, WindowDecorations,
+    WindowOptions, actions, canvas, deferred, div, img, list, px, relative, rems, rgba, size, svg,
 };
 #[cfg(target_os = "linux")]
 use gpui_component::TitleBar;
@@ -73,6 +72,7 @@ mod status;
 mod status_bus;
 mod stream_timing;
 mod subagent_chat;
+mod system_detection;
 mod theme;
 mod token_efficiency;
 mod updater;
@@ -1547,6 +1547,107 @@ impl gpui::Asset for FaviconAsset {
             result.map_err(Into::into)
         }
     }
+}
+
+enum ProjectFaviconAsset {}
+
+impl gpui::Asset for ProjectFaviconAsset {
+    type Source = PathBuf;
+    type Output = Result<Arc<gpui::RenderImage>, gpui::ImageCacheError>;
+
+    fn load(root: PathBuf, cx: &mut App) -> impl Future<Output = Self::Output> + Send + 'static {
+        static SLOTS: std::sync::LazyLock<(
+            smol::channel::Sender<()>,
+            smol::channel::Receiver<()>,
+        )> = std::sync::LazyLock::new(|| {
+            let (sender, receiver) = smol::channel::bounded(4);
+            for _ in 0..4 {
+                let _ = sender.try_send(());
+            }
+            (sender, receiver)
+        });
+        let renderer = cx.svg_renderer();
+        async move {
+            let _ = SLOTS.1.recv().await;
+            let result = smol::unblock(move || -> anyhow::Result<Arc<gpui::RenderImage>> {
+                use std::io::Read as _;
+                const CANDIDATES: &[(&str, gpui::ImageFormat)] = &[
+                    ("favicon.svg", gpui::ImageFormat::Svg),
+                    ("favicon.ico", gpui::ImageFormat::Ico),
+                    ("favicon.png", gpui::ImageFormat::Png),
+                    ("public/favicon.svg", gpui::ImageFormat::Svg),
+                    ("public/favicon.ico", gpui::ImageFormat::Ico),
+                    ("public/favicon.png", gpui::ImageFormat::Png),
+                    ("app/favicon.ico", gpui::ImageFormat::Ico),
+                    ("app/icon.svg", gpui::ImageFormat::Svg),
+                    ("app/icon.png", gpui::ImageFormat::Png),
+                    ("src/app/favicon.ico", gpui::ImageFormat::Ico),
+                    ("src/app/icon.svg", gpui::ImageFormat::Svg),
+                    ("src/app/icon.png", gpui::ImageFormat::Png),
+                    ("assets/icon.svg", gpui::ImageFormat::Svg),
+                    ("assets/icon.png", gpui::ImageFormat::Png),
+                    ("assets/logo.svg", gpui::ImageFormat::Svg),
+                    ("assets/logo.png", gpui::ImageFormat::Png),
+                    ("web/favicon.png", gpui::ImageFormat::Png),
+                ];
+                for (path, format) in CANDIDATES {
+                    let Ok(file) = std::fs::File::open(root.join(path)) else {
+                        continue;
+                    };
+                    let mut bytes = Vec::new();
+                    if file.take(1024 * 1024 + 1).read_to_end(&mut bytes).is_ok()
+                        && bytes.len() <= 1024 * 1024
+                        && let Ok(image) =
+                            gpui::Image::from_bytes(*format, bytes).to_image_data(renderer.clone())
+                    {
+                        return Ok(image);
+                    }
+                }
+                anyhow::bail!("no project favicon")
+            })
+            .await;
+            let _ = SLOTS.0.try_send(());
+            result.map_err(Into::into)
+        }
+    }
+}
+
+fn sidebar_project_icon(project: &Project, tokens: ThemeTokens) -> AnyElement {
+    let root = project.path.clone();
+    let initial = project
+        .name
+        .chars()
+        .next()
+        .unwrap_or('?')
+        .to_uppercase()
+        .to_string();
+    let fallback = move || {
+        div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_size(px(9.0))
+            .text_color(tokens.sidebar_fg)
+            .child(initial.clone())
+            .into_any_element()
+    };
+    div()
+        .size(px(14.0))
+        .flex_none()
+        .rounded(px(3.0))
+        .overflow_hidden()
+        .bg(tokens.sidebar_item_hover)
+        .child(
+            img(move |window: &mut Window, cx: &mut App| {
+                window.use_asset::<ProjectFaviconAsset>(&root, cx)
+            })
+            .size_full()
+            .object_fit(ObjectFit::Contain)
+            .with_loading(fallback.clone())
+            .with_fallback(fallback),
+        )
+        .into_any_element()
 }
 
 fn web_sources(name: &str, output: &str) -> Vec<String> {
@@ -4410,30 +4511,9 @@ pub struct Project {
     visible_session_count: usize,
 }
 
-#[derive(Clone)]
-struct DragProject {
-    id: usize,
-    index: usize,
-    name: SharedString,
-}
-
-impl Render for DragProject {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .px(px(12.0))
-            .py(px(7.0))
-            .rounded(px(6.0))
-            .bg(cx.theme().popover)
-            .text_color(cx.theme().foreground)
-            .border_1()
-            .border_color(cx.theme().drag_border)
-            .shadow_md()
-            .child(self.name.clone())
-    }
-}
-
 /// Storage order is oldest-first so restore, selection, and close indices stay
 /// stable. The sidebar shows the newest `visible_count` sessions, newest first.
+#[cfg(test)]
 fn sidebar_session_indices(
     session_count: usize,
     visible_count: usize,
@@ -4444,6 +4524,7 @@ fn sidebar_session_indices(
 }
 
 /// Keep the active session reachable even when it is older than the preview.
+#[cfg(test)]
 fn sidebar_visible_sessions(count: usize, visible: usize, active: Option<usize>) -> Vec<usize> {
     let mut indices: Vec<_> = sidebar_session_indices(count, visible).collect();
     if let Some(active) = active.filter(|&index| index < count && !indices.contains(&index)) {
@@ -4466,6 +4547,7 @@ enum SidebarProjectPickerMode {
 
 struct SidebarProjectPicker {
     mode: SidebarProjectPickerMode,
+    selected: usize,
     input: Entity<InputState>,
     previous_focus: Option<gpui::FocusHandle>,
     _subscription: gpui::Subscription,
@@ -4535,6 +4617,8 @@ struct SidebarThreadRef {
 
 #[derive(Default)]
 struct SidebarThreadGroups {
+    working: Vec<SidebarThreadRef>,
+    working_count: usize,
     pinned: Vec<SidebarThreadRef>,
     active: Vec<SidebarThreadRef>,
     snoozed: Vec<SidebarThreadRef>,
@@ -4568,33 +4652,6 @@ fn sidebar_relative_time(now_ms: u64, since_ms: u64) -> String {
 
 fn sidebar_matches(query: &str, text: &str) -> bool {
     query.is_empty() || text.to_lowercase().contains(query)
-}
-
-/// A sidebar filtered to exactly one project already says where New belongs.
-/// A viewed session inside that scope keeps its environment; otherwise the
-/// scope's representative project wins.
-fn resolve_scoped_new_session_project(
-    shift: bool,
-    scoped: &[usize],
-    viewed: Option<usize>,
-) -> Option<usize> {
-    if shift || scoped.len() != 1 {
-        return None;
-    }
-    let group = scoped[0];
-    Some(
-        viewed
-            .filter(|viewed| scoped.contains(viewed))
-            .unwrap_or(group),
-    )
-}
-
-fn should_create_new_session_in_current_project(
-    shift: bool,
-    open_project_group_count: usize,
-    project_group_count: usize,
-) -> bool {
-    shift || open_project_group_count == 1 || project_group_count == 0
 }
 
 #[derive(Clone)]
@@ -4694,6 +4751,8 @@ struct AppState {
     sidebar_search: Option<SidebarSearch>,
     sidebar_project_picker: Option<SidebarProjectPicker>,
     sidebar_thread_menu: Option<SidebarThreadMenuState>,
+    system_snapshot: system_detection::Snapshot,
+    system_monitor_open: bool,
     /// Sidebar-only thread state, keyed by the durable session uid.
     sidebar_threads: HashMap<String, SidebarThreadState>,
     settled_visible_count: usize,
@@ -4707,7 +4766,6 @@ struct AppState {
     /// True while the sidebar's right edge is being dragged, so the width is
     /// only persisted once the drag ends instead of on every mouse move.
     sidebar_resizing: bool,
-    drag_start_pos: Option<Point<Pixels>>,
     persistence_path: Option<PathBuf>,
     save_generation: Arc<AtomicU64>,
     startup_loaded: bool,
@@ -5648,42 +5706,6 @@ impl AppState {
         cx.notify();
     }
 
-    fn make_drag_area(&self, cx: &Context<Self>) -> gpui::Div {
-        div()
-            .window_control_area(WindowControlArea::Drag)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, ev: &MouseDownEvent, window, _| {
-                    if ev.click_count == 2 {
-                        this.drag_start_pos = None;
-                        window.zoom_window();
-                    } else {
-                        this.drag_start_pos = Some(ev.position);
-                    }
-                }),
-            )
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, _, _, _| {
-                    this.drag_start_pos = None;
-                }),
-            )
-            .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, _| {
-                if ev.pressed_button != Some(MouseButton::Left) {
-                    this.drag_start_pos = None;
-                    return;
-                }
-                if let Some(start_pos) = this.drag_start_pos {
-                    let dx = (ev.position.x - start_pos.x).to_f64();
-                    let dy = (ev.position.y - start_pos.y).to_f64();
-                    if dx * dx + dy * dy >= 64.0 {
-                        this.drag_start_pos = None;
-                        window.start_window_move();
-                    }
-                }
-            }))
-    }
-
     fn active_project(&self) -> Option<&Project> {
         self.projects.get(self.active_project_idx)
     }
@@ -6325,13 +6347,23 @@ impl AppState {
         let mut title_changed = false;
         let mut panes_polled = 0u64;
         let focused_id = self.focused_pane_id;
+        let agent_layout = self.settings.agent_layout;
         // `T3_STATUS_DEBUG=1` dumps every detection pass: the facts that went in
         // and the badge that came out. Without this the poller is invisible.
         let debug = status::debug_enabled();
         let trace = status::trace_enabled();
         for project in &mut self.projects {
             for session in &mut project.sessions {
-                let default_primary_id = session.pane_tree.as_ref().map(|t| t.first_leaf());
+                let default_primary_id = if agent_layout {
+                    session
+                        .panes
+                        .iter()
+                        .find(|pane| pane.one_mode && !pane.tool_panel && pane.chat.active)
+                        .map(|pane| pane.id)
+                        .or_else(|| session.pane_tree.as_ref().map(|tree| tree.first_leaf()))
+                } else {
+                    session.pane_tree.as_ref().map(|tree| tree.first_leaf())
+                };
                 let pane_count = session.panes.len();
                 let mut primary_idx: Option<usize> = None;
                 let mut primary_focused = false;
@@ -7110,6 +7142,7 @@ impl AppState {
         self.schedule_workspace_save(cx);
     }
 
+    #[cfg(test)]
     fn toggle_project_expanded(&mut self, project_idx: usize, cx: &mut Context<Self>) {
         if let Some(project) = self.projects.get_mut(project_idx) {
             project.expanded = !project.expanded;
@@ -7206,6 +7239,7 @@ impl AppState {
         }
     }
 
+    #[cfg(test)]
     fn focus_empty_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.settings.agent_layout
             && let Some(pane) = self
@@ -7229,6 +7263,7 @@ impl AppState {
         false
     }
 
+    #[cfg(test)]
     fn create_new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.settings.agent_layout {
             return;
@@ -7270,31 +7305,15 @@ impl AppState {
         cx.notify();
     }
 
-    /// A plain click on New in a one-project filter starts there. Shift+click
-    /// keeps the viewed project, and an unscoped multi-project list opens the
-    /// searchable project picker, as T3 Code's New thread does.
     fn handle_sidebar_new_session(
         &mut self,
-        shift: bool,
+        _shift: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let scoped = self.sidebar_scope_indices();
-        let viewed = self.active_project().map(|_| self.active_project_idx);
-        if let Some(project_idx) = resolve_scoped_new_session_project(shift, &scoped, viewed) {
-            self.create_new_sidebar_session(project_idx, window, cx);
-            return;
+        if !self.projects.is_empty() {
+            self.open_sidebar_project_picker(SidebarProjectPickerMode::NewSession, window, cx);
         }
-        let open_project_group_count = self.sidebar_visible_project_indices().len();
-        if should_create_new_session_in_current_project(
-            shift,
-            open_project_group_count,
-            self.projects.len(),
-        ) {
-            self.create_new_sidebar_session(self.active_project_idx, window, cx);
-            return;
-        }
-        self.open_sidebar_project_picker(SidebarProjectPickerMode::NewSession, window, cx);
     }
 
     fn sidebar_thread_state(&self, uid: &str) -> SidebarThreadState {
@@ -7342,6 +7361,19 @@ impl AppState {
         row.project_idx == key.0 && row.session_idx == key.1
     }
 
+    fn sidebar_session_has_title(&self, session: &Session) -> bool {
+        !self.settings.agent_layout
+            || !self.one_mode_pane(session).is_some_and(|pane| {
+                pane.chat.active
+                    && (pane.chat.conversation_title().is_none()
+                        || pane
+                            .chat
+                            .bridge
+                            .as_ref()
+                            .is_some_and(|bridge| bridge.waiting_for_title()))
+            })
+    }
+
     fn sidebar_thread_groups(&self) -> SidebarThreadGroups {
         let now_ms = sidebar_now_ms();
         let visible_projects: HashSet<usize> =
@@ -7355,6 +7387,12 @@ impl AppState {
                     continue;
                 }
                 let state = self.sidebar_thread_state(&session.uid);
+                if session.status == SessionStatus::Working && !state.archived {
+                    groups.working_count += 1;
+                }
+                if !self.sidebar_session_has_title(session) {
+                    continue;
+                }
                 let active_section = if state.pinned {
                     SidebarSection::Pinned
                 } else {
@@ -7373,7 +7411,9 @@ impl AppState {
                     pinned: state.pinned,
                     revealed_active: is_active,
                 };
-                if is_active {
+                if session.status == SessionStatus::Working && !state.archived && !state.settled {
+                    groups.working.push(row);
+                } else if is_active && !state.settled {
                     if state.pinned {
                         groups.pinned.push(row);
                     } else {
@@ -7389,6 +7429,9 @@ impl AppState {
                 }
             }
         }
+        groups
+            .working
+            .sort_by_key(|row| std::cmp::Reverse(self.sidebar_thread_id(*row)));
         groups.pinned.sort_by_key(|row| {
             let uid = self
                 .sidebar_thread_uid(row.project_idx, row.session_idx)
@@ -7472,7 +7515,7 @@ impl AppState {
         for (project_idx, project) in self.projects.iter().enumerate() {
             for (session_idx, session) in project.sessions.iter().enumerate() {
                 let state = self.sidebar_thread_state(&session.uid);
-                if state.archived {
+                if state.archived || !self.sidebar_session_has_title(session) {
                     continue;
                 }
                 if !sidebar_matches(&query, session.title.as_str())
@@ -7492,6 +7535,11 @@ impl AppState {
             }
         }
         if let Some(key) = active_key
+            && self
+                .projects
+                .get(key.0)
+                .and_then(|project| project.sessions.get(key.1))
+                .is_some_and(|session| self.sidebar_session_has_title(session))
             && !rows.iter().any(|row| self.sidebar_thread_is(*row, key))
         {
             let state = self
@@ -7654,6 +7702,7 @@ impl AppState {
             state.archived = false;
             state.parked_at_ms = Some(sidebar_now_ms());
         }
+        self.settings.sidebar.settled_expanded = true;
         self.schedule_workspace_save(cx);
         cx.notify();
     }
@@ -11611,6 +11660,18 @@ impl AppState {
         let primary = self
             .focused_pane_id
             .filter(|id| session.panes.iter().any(|pane| pane.id == *id))
+            .or_else(|| {
+                self.settings
+                    .agent_layout
+                    .then(|| {
+                        session
+                            .panes
+                            .iter()
+                            .find(|pane| pane.one_mode && !pane.tool_panel && pane.chat.active)
+                            .map(|pane| pane.id)
+                    })
+                    .flatten()
+            })
             .or_else(|| session.pane_tree.as_ref().map(|tree| tree.first_leaf()))
             .or_else(|| session.panes.first().map(|pane| pane.id));
         if primary != Some(pane_id) {
@@ -19623,6 +19684,7 @@ impl AppState {
         input.update(cx, |state, cx| state.focus(window, cx));
         self.sidebar_project_picker = Some(SidebarProjectPicker {
             mode,
+            selected: 0,
             input,
             previous_focus,
             _subscription: subscription,
@@ -19711,6 +19773,19 @@ impl AppState {
         cx: &mut Context<Self>,
     ) {
         let project_idx = project_idx.unwrap_or(self.active_project_idx);
+        if self
+            .settings
+            .sidebar
+            .project_scope
+            .as_ref()
+            .is_some_and(|scope| {
+                self.projects
+                    .get(project_idx)
+                    .is_some_and(|project| &project.path != scope)
+            })
+        {
+            self.settings.sidebar.project_scope = None;
+        }
         self.close_sidebar_project_picker(window, cx);
         self.create_new_sidebar_session(project_idx, window, cx);
     }
@@ -19726,117 +19801,6 @@ impl AppState {
         }
         self.schedule_workspace_save(cx);
         cx.notify();
-    }
-
-    fn set_sidebar_style(&mut self, style: settings::SidebarStyle, cx: &mut Context<Self>) {
-        self.settings.sidebar.style = style;
-        self.close_sidebar_thread_menu(cx);
-        self.schedule_workspace_save(cx);
-        cx.notify();
-    }
-
-    fn toggle_sidebar_style(&mut self, cx: &mut Context<Self>) {
-        let style = match self.settings.sidebar.style {
-            settings::SidebarStyle::T3 => settings::SidebarStyle::Projects,
-            settings::SidebarStyle::Projects => settings::SidebarStyle::T3,
-        };
-        self.set_sidebar_style(style, cx);
-    }
-
-    fn render_sidebar_actions(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        if self.settings.sidebar.style == settings::SidebarStyle::Projects {
-            return self.render_project_sidebar_actions(cx).into_any_element();
-        }
-        self.render_t3_sidebar_actions(cx).into_any_element()
-    }
-
-    fn render_project_sidebar_actions(&self, cx: &mut Context<Self>) -> gpui::Div {
-        let tokens = self.tokens(cx);
-        let menu_row =
-            |id, label, icon, activate: fn(&mut Self, &mut Window, &mut Context<Self>)| {
-                div()
-                    .id(id)
-                    .debug_selector(move || String::from(id))
-                    .h(px(30.0))
-                    .px(px(6.0))
-                    .rounded(px(6.0))
-                    .flex()
-                    .items_center()
-                    .gap(px(8.0))
-                    .cursor(CursorStyle::PointingHand)
-                    .hover(move |row| row.bg(tokens.sidebar_item_hover))
-                    .text_size(px(13.0))
-                    .text_color(tokens.sidebar_fg)
-                    .child(
-                        svg()
-                            .path(icon)
-                            .size(px(15.0))
-                            .flex_none()
-                            .text_color(tokens.sidebar_icon),
-                    )
-                    .child(label)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, _, window, cx| {
-                            cx.stop_propagation();
-                            activate(this, window, cx);
-                        }),
-                    )
-            };
-        div()
-            .flex()
-            .flex_col()
-            .flex_shrink_0()
-            .gap(px(4.0))
-            .px(px(8.0))
-            .pt(px(8.0))
-            .when(self.settings.agent_layout, |sidebar| {
-                sidebar.child(menu_row(
-                    "sidebar-new-thread",
-                    "New chat",
-                    "session-create.svg",
-                    Self::create_new_chat,
-                ))
-            })
-            .child(if let Some(search) = &self.sidebar_search {
-                div()
-                    .id("sidebar-search-field")
-                    .debug_selector(|| "sidebar-search-field".into())
-                    .h(px(30.0))
-                    .flex()
-                    .items_center()
-                    .gap(px(4.0))
-                    .child(
-                        div().flex_1().min_w_0().child(
-                            Input::new(&search.input)
-                                .w_full()
-                                .with_size(gpui_component::Size::Small),
-                        ),
-                    )
-                    .child(
-                        sidebar_icon_button(
-                            "sidebar-search-close",
-                            "icons/x.svg",
-                            12.0,
-                            &tokens,
-                            cx.listener(|this, _, window, cx| {
-                                this.close_sidebar_search(window, cx);
-                            }),
-                        )
-                        .tooltip(|window, cx| {
-                            gpui_component::tooltip::Tooltip::new("Close search").build(window, cx)
-                        }),
-                    )
-                    .into_any_element()
-            } else {
-                menu_row(
-                    "sidebar-search",
-                    "Search",
-                    "ui_icons/search.svg",
-                    Self::open_sidebar_search,
-                )
-                .into_any_element()
-            })
     }
 
     fn sidebar_icon_action(
@@ -19874,7 +19838,6 @@ impl AppState {
             .flex_shrink_0()
             .bg(tokens.sidebar_bg)
             .text_color(tokens.sidebar_fg)
-            .font_family(theme::font_family(cx))
             .child(
                 div()
                     .h(px(48.0))
@@ -19882,11 +19845,28 @@ impl AppState {
                     .flex()
                     .items_center()
                     .px(px(12.0))
+                    .gap(px(8.0))
+                    .child(sidebar_icon_button(
+                        "sidebar-toggle-btn",
+                        "icons/panel-left.svg",
+                        16.0,
+                        &tokens,
+                        cx.listener::<MouseDownEvent>(|this, _, window, cx| {
+                            this.close_sidebar_search(window, cx);
+                            if window.viewport_size().width < COMPACT_WINDOW_WIDTH {
+                                this.compact_sidebar_open = false;
+                            } else {
+                                this.sidebar_visible = false;
+                                this.schedule_workspace_save(cx);
+                            }
+                            cx.notify();
+                        }),
+                    ))
                     .child(
-                        svg()
-                            .path("shob-agent-wordmark.svg")
-                            .size(px(110.0))
-                            .text_color(tokens.text_primary),
+                        div()
+                            .text_size(px(13.0))
+                            .text_color(tokens.sidebar_fg)
+                            .child("shobharness"),
                     ),
             )
             .child(
@@ -19970,12 +19950,12 @@ impl AppState {
                         self.sidebar_icon_action(
                             "sidebar-new-thread",
                             "icons/square-pen.svg",
-                            "New thread (Shift-click to choose project)",
+                            "New thread",
                             false,
                             tokens,
                         )
                         .on_click(cx.listener(
-                            move |this, event, window, cx| {
+                            move |this, event: &gpui::ClickEvent, window, cx| {
                                 let shift = event.modifiers().shift;
                                 this.handle_sidebar_new_session(shift, window, cx);
                             },
@@ -20003,7 +19983,9 @@ impl AppState {
             );
         }
 
-        if let Some(picker) = self.sidebar_project_picker.as_ref() {
+        if let Some(picker) = self.sidebar_project_picker.as_ref()
+            && picker.mode == SidebarProjectPickerMode::Scope
+        {
             sidebar = sidebar.child(self.render_sidebar_project_picker(picker, cx));
         }
         sidebar = sidebar.child(
@@ -20034,6 +20016,9 @@ impl AppState {
                     .id("sidebar-running-sessions")
                     .debug_selector(|| "sidebar-running-sessions".into()),
             );
+        }
+        if self.system_monitor_open {
+            sidebar = sidebar.child(deferred(self.render_system_monitor(cx)).priority(101));
         }
         sidebar = sidebar.when(self.sidebar_thread_menu.is_some(), |this| {
             this.child(deferred(self.render_sidebar_thread_menu_overlay(cx)).priority(100))
@@ -20094,6 +20079,7 @@ impl AppState {
                 cx,
             ));
         }
+        let no_matches = matching.is_empty();
         for (project_idx, project) in matching {
             panel = panel.child(self.sidebar_picker_row(
                 project.name.as_str(),
@@ -20103,7 +20089,7 @@ impl AppState {
                 cx,
             ));
         }
-        if matching.is_empty() {
+        if no_matches {
             panel = panel.child(
                 div()
                     .text_xs()
@@ -20112,6 +20098,128 @@ impl AppState {
             );
         }
         panel
+    }
+
+    fn render_new_session_project_modal(
+        &self,
+        picker: &SidebarProjectPicker,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let tokens = self.tokens(cx);
+        let query = self.sidebar_project_picker_query(cx);
+        let matching: Vec<_> = self
+            .projects
+            .iter()
+            .enumerate()
+            .filter(|(_, project)| {
+                sidebar_matches(&query, project.name.as_str())
+                    || sidebar_matches(&query, &project.path.to_string_lossy())
+            })
+            .collect();
+        let selected = picker.selected.min(matching.len().saturating_sub(1));
+        let mut list = div()
+            .id("new-session-project-list")
+            .w_full()
+            .max_h(px(360.0))
+            .overflow_y_scroll()
+            .flex()
+            .flex_col();
+        for (index, (project_idx, project)) in matching.iter().enumerate() {
+            let project_idx = *project_idx;
+            list = list.child(
+                div()
+                    .id(("new-session-project", project_idx))
+                    .w_full()
+                    .px(px(12.0))
+                    .py(px(8.0))
+                    .rounded(px(6.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .when(index == selected, |row| row.bg(tokens.sidebar_item_active))
+                    .hover(|row| row.bg(tokens.sidebar_item_hover))
+                    .cursor(CursorStyle::PointingHand)
+                    .child(sidebar_project_icon(project, tokens))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(div().text_sm().truncate().child(project.name.clone()))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(tokens.sidebar_muted)
+                                    .truncate()
+                                    .child(project.path.to_string_lossy().to_string()),
+                            ),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.choose_new_session_project(Some(project_idx), window, cx)
+                    })),
+            );
+        }
+        if matching.is_empty() {
+            list = list.child(
+                div()
+                    .p(px(12.0))
+                    .text_sm()
+                    .text_color(tokens.sidebar_muted)
+                    .child("No matching projects"),
+            );
+        }
+        div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .justify_center()
+            .items_center()
+            .bg(rgba(0x00000080))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| this.close_sidebar_project_picker(window, cx)),
+            )
+            .child(
+                div()
+                    .id("new-session-project-modal")
+                    .debug_selector(|| "new-session-project-modal".into())
+                    .w(px(560.0))
+                    .max_w(relative(0.9))
+                    .max_h(relative(0.8))
+                    .occlude()
+                    .rounded(px(12.0))
+                    .border_1()
+                    .border_color(tokens.border)
+                    .bg(tokens.card_bg)
+                    .shadow_md()
+                    .flex()
+                    .flex_col()
+                    .p(px(12.0))
+                    .child(
+                        div()
+                            .h(px(36.0))
+                            .w_full()
+                            .child(Input::new(&picker.input).appearance(false).cleanable(false)),
+                    )
+                    .child(
+                        div()
+                            .px(px(12.0))
+                            .py(px(8.0))
+                            .text_xs()
+                            .text_color(tokens.sidebar_muted)
+                            .child("Projects"),
+                    )
+                    .child(list)
+                    .child(
+                        div()
+                            .px(px(12.0))
+                            .pt(px(10.0))
+                            .text_xs()
+                            .text_color(tokens.sidebar_muted)
+                            .child("↑ ↓ Navigate    Enter Select    Esc Close"),
+                    ),
+            )
     }
 
     fn sidebar_picker_row(
@@ -20124,12 +20232,20 @@ impl AppState {
     ) -> gpui::Stateful<gpui::Div> {
         let tokens = self.tokens(cx);
         let owned_label = label.to_string();
-        div()
+        let project_id = project_idx
+            .and_then(|idx| self.projects.get(idx))
+            .map(|project| project.id);
+        let renaming = project_id.and_then(|id| {
+            self.renaming_project
+                .as_ref()
+                .filter(|rename| rename.project_id == id)
+        });
+        let mut row = div()
             .id(ElementId::Name(
                 format!("sidebar-project-picker-{owned_label}").into(),
             ))
             .debug_selector(|| "sidebar-project-picker-row".into())
-            .h(px(30.0))
+            .min_h(px(30.0))
             .flex()
             .items_center()
             .px(px(8.0))
@@ -20141,16 +20257,83 @@ impl AppState {
             })
             .hover(|style| style.bg(tokens.sidebar_item_hover))
             .text_sm()
-            .cursor(CursorStyle::PointingHand)
-            .child(owned_label)
-            .on_click(cx.listener(move |this, _, window, cx| match mode {
+            .cursor(CursorStyle::PointingHand);
+        if let Some(rename) = renaming {
+            let input = rename.input.clone();
+            let id = rename.project_id;
+            row = row
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(Input::new(&input).cleanable(false)),
+                )
+                .child(sidebar_icon_button(
+                    ("project-rename-save", id),
+                    "icons/status-check.svg",
+                    12.0,
+                    &tokens,
+                    cx.listener(move |this, _, _, cx| {
+                        let name = input.read(cx).value();
+                        this.finish_renaming_project(id, name, cx);
+                    }),
+                ))
+                .child(sidebar_icon_button(
+                    ("project-rename-cancel", id),
+                    "icons/x.svg",
+                    12.0,
+                    &tokens,
+                    cx.listener(|this, _, _, cx| this.cancel_renaming_project(cx)),
+                ));
+        } else {
+            row = row.child(div().flex_1().min_w_0().truncate().child(owned_label));
+            if let Some(id) = project_id.filter(|_| mode == SidebarProjectPickerMode::Scope) {
+                row = row
+                    .child(
+                        sidebar_icon_button(
+                            ("project-rename", id),
+                            "icons/square-pen.svg",
+                            12.0,
+                            &tokens,
+                            cx.listener(move |this, _, window, cx| {
+                                this.start_renaming_project(id, window, cx)
+                            }),
+                        )
+                        .tooltip(|window, cx| {
+                            gpui_component::tooltip::Tooltip::new("Rename project")
+                                .build(window, cx)
+                        }),
+                    )
+                    .child(
+                        sidebar_icon_button(
+                            ("project-remove", id),
+                            "icons/x.svg",
+                            12.0,
+                            &tokens,
+                            cx.listener(move |this, _, window, cx| {
+                                if let Some(index) =
+                                    this.projects.iter().position(|project| project.id == id)
+                                {
+                                    this.close_project(index, window, cx);
+                                }
+                            }),
+                        )
+                        .tooltip(|window, cx| {
+                            gpui_component::tooltip::Tooltip::new("Remove project")
+                                .build(window, cx)
+                        }),
+                    );
+            }
+            row = row.on_click(cx.listener(move |this, _, window, cx| match mode {
                 SidebarProjectPickerMode::Scope => {
                     this.set_sidebar_project_scope(project_idx, window, cx)
                 }
                 SidebarProjectPickerMode::NewSession => {
                     this.choose_new_session_project(project_idx, window, cx)
                 }
-            }))
+            }));
+        }
+        row
     }
 
     fn render_t3_sidebar_inbox(&self, cx: &mut Context<Self>) -> gpui::Div {
@@ -20159,6 +20342,51 @@ impl AppState {
         let active_key = self.sidebar_active_thread_key();
         let now_ms = sidebar_now_ms();
         let mut list = div().w_full().flex().flex_col().gap(px(2.0)).pb(px(8.0));
+        if groups.working_count > 0 {
+            let expanded = self.settings.sidebar.working_expanded;
+            list = list.child(
+                div()
+                    .id("sidebar-working-toggle")
+                    .debug_selector(|| "sidebar-working-toggle".into())
+                    .h(px(30.0))
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .px(px(8.0))
+                    .rounded(px(6.0))
+                    .text_xs()
+                    .text_color(tokens.sidebar_muted)
+                    .cursor(CursorStyle::PointingHand)
+                    .hover(|style| style.bg(tokens.sidebar_item_hover))
+                    .child("Working")
+                    .child(div().flex_1())
+                    .child(groups.working_count.to_string())
+                    .child(
+                        svg()
+                            .path(if expanded {
+                                "icons/chevron-down.svg"
+                            } else {
+                                "icons/chevron-right.svg"
+                            })
+                            .size(px(12.0))
+                            .ml(px(6.0)),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.settings.sidebar.working_expanded =
+                            !this.settings.sidebar.working_expanded;
+                        this.schedule_workspace_save(cx);
+                        cx.notify();
+                    })),
+            );
+            for row in groups
+                .working
+                .iter()
+                .copied()
+                .filter(|row| expanded || row.revealed_active)
+            {
+                list = list.child(self.render_sidebar_thread_card(row, active_key, now_ms, cx));
+            }
+        }
         for row in groups.pinned.iter().copied() {
             list = list.child(self.render_sidebar_thread_card(row, active_key, now_ms, cx));
         }
@@ -20184,7 +20412,7 @@ impl AppState {
                     })),
             );
         }
-        if groups.pinned.is_empty() && groups.active.is_empty() {
+        if groups.working_count == 0 && groups.pinned.is_empty() && groups.active.is_empty() {
             list = list.child(self.render_t3_sidebar_empty(cx));
         }
         list = list.child(div().flex_1().min_h(px(8.0)));
@@ -20228,10 +20456,11 @@ impl AppState {
         let active_key = self.sidebar_active_thread_key();
         let now_ms = sidebar_now_ms();
         let mut list = div().w_full().flex().flex_col().gap(px(2.0));
+        let no_rows = rows.is_empty();
         for row in rows {
             list = list.child(self.render_sidebar_thread_card(row, active_key, now_ms, cx));
         }
-        if rows.is_empty() {
+        if no_rows {
             list = list.child(
                 div()
                     .id("sidebar-search-empty")
@@ -20278,6 +20507,7 @@ impl AppState {
             .flex_col()
             .child(
                 div()
+                    .id("sidebar-shelf-toggle")
                     .h(px(30.0))
                     .w_full()
                     .flex()
@@ -20296,7 +20526,15 @@ impl AppState {
                             .text_color(tokens.sidebar_muted),
                     )
                     .child(title)
-                    .child(format!("({})", rows.len()))
+                    .child(format!(
+                        "({})",
+                        rows.len()
+                            + if shelf == SidebarShelf::Settled {
+                                hidden_settled
+                            } else {
+                                0
+                            }
+                    ))
                     .child(div().flex_1())
                     .child(
                         svg()
@@ -20355,23 +20593,26 @@ impl AppState {
             .get(row.project_idx)
             .and_then(|project| project.sessions.get(row.session_idx))
         else {
-            return div();
+            return div().id(("missing-sidebar-card", row.session_idx));
         };
-        let project_name = self.projects[row.project_idx].name.clone();
+        let project = &self.projects[row.project_idx];
         let active = row.revealed_active
             || self.sidebar_thread_is(row, active_key.unwrap_or((usize::MAX, usize::MAX)));
-        let title = session.title.clone();
-        let draft = self.sidebar_has_unsent_draft(session, cx);
         let (status, status_color) = self.sidebar_thread_status(session, now_ms, tokens);
+        let branch = session
+            .panes
+            .first()
+            .and_then(|pane| pane.chat.workspace_override.as_ref().or(pane.cwd.as_ref()))
+            .and_then(|path| self.git_snapshots.get(path))
+            .or_else(|| self.git_snapshots.get(&project.path))
+            .and_then(|snapshot| snapshot.current_branch.clone());
+        let draft = self.sidebar_has_unsent_draft(session, cx);
         let row_id = format!("session-row-{}", session.id);
         let project_idx = row.project_idx;
         let session_idx = row.session_idx;
         div()
             .id(ElementId::Name(row_id.clone().into()))
-            .debug_selector({
-                let row_id = row_id.clone();
-                move || row_id.clone()
-            })
+            .debug_selector(move || row_id.clone())
             .group("sidebar-thread-card")
             .relative()
             .h(SIDEBAR_THREAD_CARD_HEIGHT)
@@ -20379,8 +20620,8 @@ impl AppState {
             .flex()
             .flex_col()
             .justify_center()
-            .px(px(10.0))
-            .rounded(px(10.0))
+            .px(px(8.0))
+            .rounded(px(7.0))
             .when(active, |style| {
                 style
                     .bg(tokens.sidebar_item_active)
@@ -20393,50 +20634,58 @@ impl AppState {
                     .flex()
                     .items_center()
                     .gap(px(6.0))
+                    .text_xs()
+                    .text_color(tokens.sidebar_muted)
+                    .child(sidebar_project_icon(project, tokens))
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_sm()
-                            .font_semibold()
-                            .child(title),
+                            .truncate()
+                            .child(project.name.clone()),
                     )
                     .when(row.pinned, |parent| {
-                        parent.child(
-                            svg()
-                                .path("ui_icons/pin.svg")
-                                .size(px(12.0))
-                                .text_color(tokens.sidebar_muted),
-                        )
+                        parent.child(svg().path("ui_icons/pin.svg").size(px(12.0)))
                     })
-                    .child(self.sidebar_thread_menu(
-                        project_idx,
-                        session_idx,
-                        row.section,
-                        row.pinned,
+                    .child(self.sidebar_thread_status_menu(
+                        row,
+                        status,
+                        status_color,
                         "sidebar-thread-card",
                         tokens,
                         cx,
                     )),
             )
             .child(
+                div().w_full().flex().items_center().mt(px(3.0)).child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_sm()
+                        .child(session.title.clone()),
+                ),
+            )
+            .child(
                 div()
                     .flex()
                     .items_center()
                     .gap(px(6.0))
-                    .mt(px(5.0))
+                    .mt(px(2.0))
                     .text_xs()
                     .text_color(tokens.sidebar_muted)
-                    .child(project_name)
-                    .child("·")
-                    .child(if draft { "Draft" } else { "Thread" })
-                    .child(div().flex_1())
-                    .child(div().text_color(status_color).child(status)),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(branch.unwrap_or_default()),
+                    )
+                    .when(draft, |parent| parent.child("Draft"))
+                    .child(session_logo_icon(session.logo.clone(), tokens.sidebar_icon)),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.switch_session(project_idx, session_idx, window, cx);
+                this.select_session(project_idx, session_idx, window, cx);
             }))
     }
 
@@ -20453,12 +20702,11 @@ impl AppState {
             .get(row.project_idx)
             .and_then(|project| project.sessions.get(row.session_idx))
         else {
-            return div();
+            return div().id(("missing-sidebar-slim", row.session_idx));
         };
         let active = row.revealed_active
             || self.sidebar_thread_is(row, active_key.unwrap_or((usize::MAX, usize::MAX)));
         let (status, status_color) = self.sidebar_thread_status(session, now_ms, tokens);
-        let title = session.title.clone();
         let row_id = format!("session-row-{}", session.id);
         let project_idx = row.project_idx;
         let session_idx = row.session_idx;
@@ -20471,7 +20719,7 @@ impl AppState {
             .w_full()
             .flex()
             .items_center()
-            .gap(px(6.0))
+            .gap(px(10.0))
             .px(px(8.0))
             .rounded(px(7.0))
             .when(active, |style| {
@@ -20481,28 +20729,109 @@ impl AppState {
             })
             .hover(|style| style.bg(tokens.sidebar_item_hover))
             .cursor(CursorStyle::PointingHand)
+            .child(session_logo_icon(session.logo.clone(), tokens.sidebar_icon))
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_xs()
-                    .child(title),
+                    .truncate()
+                    .text_sm()
+                    .child(session.title.clone()),
             )
-            .child(div().text_xs().text_color(status_color).child(status))
-            .child(self.sidebar_thread_menu(
-                project_idx,
-                session_idx,
-                row.section,
-                row.pinned,
+            .child(self.sidebar_thread_status_menu(
+                row,
+                status,
+                status_color,
                 "sidebar-thread-slim",
                 tokens,
                 cx,
             ))
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.switch_session(project_idx, session_idx, window, cx);
+                this.select_session(project_idx, session_idx, window, cx);
             }))
+    }
+
+    fn sidebar_thread_status_menu(
+        &self,
+        row: SidebarThreadRef,
+        status: String,
+        status_color: Hsla,
+        group: &'static str,
+        tokens: ThemeTokens,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let menu_open = self.sidebar_thread_menu.is_some_and(|menu| {
+            menu.project_idx == row.project_idx && menu.session_idx == row.session_idx
+        });
+        div()
+            .relative()
+            .min_w(px(24.0))
+            .h(px(24.0))
+            .flex()
+            .items_center()
+            .justify_end()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(status_color)
+                    .child(status)
+                    .when(menu_open, |label| label.invisible())
+                    .group_hover(group, |label| label.invisible()),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .right_0()
+                    .flex()
+                    .items_center()
+                    .when(row.section != SidebarSection::Settled, |actions| {
+                        actions.child(
+                            div()
+                                .id(ElementId::Name(
+                                    format!(
+                                        "sidebar-quick-settle-{}-{}",
+                                        row.project_idx, row.session_idx
+                                    )
+                                    .into(),
+                                ))
+                                .debug_selector(|| "sidebar-quick-settle".into())
+                                .h(px(24.0))
+                                .px(px(5.0))
+                                .rounded(px(6.0))
+                                .flex()
+                                .items_center()
+                                .gap(px(3.0))
+                                .text_xs()
+                                .text_color(tokens.sidebar_muted)
+                                .cursor(CursorStyle::PointingHand)
+                                .hover(|button| button.bg(tokens.sidebar_item_active))
+                                .child(svg().path("icons/status-check.svg").size(px(12.0)))
+                                .child("Settle")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.settle_sidebar_thread(
+                                        row.project_idx,
+                                        row.session_idx,
+                                        cx,
+                                    );
+                                }))
+                                .when(!menu_open, |button| button.invisible())
+                                .group_hover(group, |button| button.visible()),
+                        )
+                    })
+                    .child(
+                        self.sidebar_thread_menu(
+                            row.project_idx,
+                            row.session_idx,
+                            row.section,
+                            row.pinned,
+                            tokens,
+                            cx,
+                        )
+                        .when(!menu_open, |button| button.invisible())
+                        .group_hover(group, |button| button.visible()),
+                    ),
+            )
     }
 
     fn sidebar_thread_menu(
@@ -20511,13 +20840,9 @@ impl AppState {
         session_idx: usize,
         section: SidebarSection,
         pinned: bool,
-        group: &'static str,
         tokens: ThemeTokens,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        let menu_open = self
-            .sidebar_thread_menu
-            .is_some_and(|menu| menu.project_idx == project_idx && menu.session_idx == session_idx);
         div()
             .id(ElementId::Name(
                 format!("sidebar-thread-menu-{project_idx}-{session_idx}").into(),
@@ -20528,8 +20853,6 @@ impl AppState {
             .items_center()
             .justify_center()
             .rounded(px(6.0))
-            .when(!menu_open, |button| button.opacity(0.0))
-            .group_hover(group, |button| button.opacity(1.0))
             .hover(|button| button.bg(tokens.sidebar_item_active))
             .cursor(CursorStyle::PointingHand)
             .child(
@@ -20739,6 +21062,110 @@ impl AppState {
             .child(popover)
     }
 
+    fn render_system_monitor(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let tokens = self.tokens(cx);
+        let stats = self.system_snapshot;
+        let percent = |value: Option<u8>| {
+            value
+                .map(|value| format!("{value}%"))
+                .unwrap_or_else(|| "Unavailable".into())
+        };
+        let memory = if stats.memory_total == 0 {
+            "Unavailable".to_string()
+        } else {
+            format!(
+                "{:.1} / {:.1} GiB",
+                stats.memory_used as f64 / 1_073_741_824.0,
+                stats.memory_total as f64 / 1_073_741_824.0
+            )
+        };
+        let row = |label: &'static str, value: String, detail: Option<String>| {
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap(px(5.0))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_size(px(12.0))
+                                .text_color(tokens.text_secondary)
+                                .child(label),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(12.0))
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .text_color(tokens.text_primary)
+                                .child(value),
+                        ),
+                )
+                .when_some(detail, |this, detail| {
+                    this.child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(tokens.text_muted)
+                            .child(detail),
+                    )
+                })
+        };
+        div()
+            .id("system-monitor-panel")
+            .debug_selector(|| "system-monitor-panel".into())
+            .absolute()
+            .bottom(px(46.0))
+            .right(px(8.0))
+            .w(px(230.0))
+            .max_w(relative(0.95))
+            .p(px(14.0))
+            .rounded(px(10.0))
+            .border_1()
+            .border_color(tokens.border)
+            .bg(tokens.card_bg)
+            .shadow_md()
+            .flex()
+            .flex_col()
+            .gap(px(12.0))
+            .occlude()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(tokens.text_primary)
+                            .child("System monitor"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(tokens.text_muted)
+                            .child("LIVE"),
+                    ),
+            )
+            .child(row("CPU", percent(stats.cpu), None))
+            .child(row(
+                "Memory",
+                memory,
+                stats.memory.map(|value| format!("{value}% in use")),
+            ))
+            .child(row(
+                "GPU",
+                percent(stats.gpu),
+                stats
+                    .gpu
+                    .is_none()
+                    .then(|| "Utilization is not exposed by this driver".into()),
+            ))
+    }
+
     fn render_t3_sidebar_footer(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let tokens = self.tokens(cx);
         div()
@@ -20757,24 +21184,67 @@ impl AppState {
                 div()
                     .id("layout-switch")
                     .debug_selector(|| "layout-switch".into())
-                    .size(px(28.0))
+                    .h(px(28.0))
+                    .px(px(8.0))
                     .flex()
                     .items_center()
-                    .justify_center()
+                    .gap(px(5.0))
                     .rounded(px(7.0))
-                    .text_xs()
-                    .text_color(tokens.sidebar_muted)
+                    .when(self.settings.agent_layout, |button| {
+                        button.bg(tokens.sidebar_item_active)
+                    })
+                    .hover(move |button| button.bg(tokens.sidebar_item_hover))
                     .cursor(CursorStyle::PointingHand)
-                    .child("T3")
-                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_sidebar_style(cx))),
+                    .tooltip({
+                        let label = if self.settings.agent_layout {
+                            "Agent mode on · Switch to split view"
+                        } else {
+                            "Agent mode off · Switch to Agent mode"
+                        };
+                        move |window, cx| {
+                            gpui_component::tooltip::Tooltip::new(label).build(window, cx)
+                        }
+                    })
+                    .child(
+                        gpui_component::Icon::new(gpui_component::IconName::Bot)
+                            .size(px(15.0))
+                            .text_color(if self.settings.agent_layout {
+                                tokens.ring
+                            } else {
+                                tokens.sidebar_icon
+                            }),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(tokens.sidebar_fg)
+                            .child("Agent"),
+                    )
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.switch_agent_layout(window, cx)),
+                    ),
             )
             .child(div().flex_1())
+            .child(
+                self.sidebar_icon_action(
+                    "system-monitor",
+                    "icons/monitor.svg",
+                    "System monitor",
+                    self.system_monitor_open,
+                    tokens,
+                )
+                .debug_selector(|| "system-monitor".into())
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.system_monitor_open = !this.system_monitor_open;
+                    cx.notify();
+                })),
+            )
             .child(
                 self.sidebar_icon_action(
                     "sidebar-settings",
                     "icons/settings.svg",
                     "Settings",
-                    false,
+                    self.update_state.needs_attention(),
                     tokens,
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -20782,87 +21252,10 @@ impl AppState {
                     cx.notify();
                 })),
             )
-            .child(
-                self.sidebar_icon_action("sidebar-help", "icons/help.svg", "Help", false, tokens)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.active_view = ActiveView::Settings;
-                        cx.notify();
-                    })),
-            )
-    }
-
-    fn render_sidebar_search_results(
-        &self,
-        query: &str,
-        cx: &mut Context<Self>,
-    ) -> Vec<gpui::AnyElement> {
-        let tokens = self.tokens(cx);
-        let mut rows = Vec::new();
-        for (project_idx, project) in self.projects.iter().enumerate() {
-            let mut matches = project
-                .sessions
-                .iter()
-                .enumerate()
-                .rev()
-                .filter(|(_, session)| {
-                    let title = session.title.as_str();
-                    if title.is_ascii() {
-                        title
-                            .as_bytes()
-                            .windows(query.len())
-                            .any(|part| part.eq_ignore_ascii_case(query.as_bytes()))
-                    } else {
-                        title.to_lowercase().contains(query)
-                    }
-                })
-                .peekable();
-            if matches.peek().is_none() {
-                continue;
-            }
-            rows.push(
-                div()
-                    .px(px(14.0))
-                    .pt(px(12.0))
-                    .pb(px(4.0))
-                    .truncate()
-                    .text_size(px(13.0))
-                    .text_color(tokens.sidebar_section_header)
-                    .child(project.name.clone())
-                    .into_any_element(),
-            );
-            for (session_idx, session) in matches {
-                rows.push(self.render_session_entry(
-                    project_idx,
-                    session_idx,
-                    session,
-                    project_idx == self.active_project_idx
-                        && session_idx == project.active_session_idx,
-                    cx,
-                ));
-            }
-        }
-        if rows.is_empty() {
-            rows.push(
-                div()
-                    .id("sidebar-search-empty")
-                    .debug_selector(|| "sidebar-search-empty".into())
-                    .px(px(14.0))
-                    .py(px(12.0))
-                    .text_size(px(12.0))
-                    .text_color(tokens.sidebar_muted)
-                    .child("No matching sessions")
-                    .into_any_element(),
-            );
-        }
-        rows
     }
 
     fn render_sidebar(&self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
-        if self.settings.sidebar.style == settings::SidebarStyle::T3 {
-            self.render_t3_sidebar(window, cx).into_any_element()
-        } else {
-            self.render_project_sidebar(window, cx).into_any_element()
-        }
+        self.render_t3_sidebar(window, cx).into_any_element()
     }
 
     /// T3 Code's sidebar has no activity rail or project toolbar: the wordmark,
@@ -20886,7 +21279,7 @@ impl AppState {
             .bg(tokens.sidebar_bg)
             .border_r_1()
             .border_color(tokens.sidebar_border)
-            .child(self.render_sidebar_actions(cx))
+            .child(self.render_t3_sidebar_actions(cx))
             .child(self.render_t3_sidebar_compat_selectors())
             .when(self.integration_panel_visible, |this| {
                 this.child(self.render_integrations_panel(cx))
@@ -20911,467 +21304,12 @@ impl AppState {
             .id("sidebar-compat-selectors")
             .child(compat("navigation-back"))
             .child(compat("navigation-forward"))
-            .child(compat("sidebar-toggle-btn"))
             .child(compat("sidebar-open-project-btn"))
             .child(compat("sidebar-toggle-projects"))
             .child(compat("project-entry"))
             .child(compat("project-row"))
             .child(compat("project-new-session"))
             .child(compat("project-show-less"))
-    }
-
-    fn render_project_sidebar(&self, window: &Window, cx: &mut Context<Self>) -> gpui::Div {
-        let value = self
-            .sidebar_search
-            .as_ref()
-            .map(|search| search.input.read(cx).value());
-        let query = value.as_ref().map_or("", |value| value.trim());
-        let searching = !query.is_empty();
-        let project_rows = if searching {
-            self.render_sidebar_search_results(&query.to_lowercase(), cx)
-        } else {
-            self.projects
-                .iter()
-                .enumerate()
-                .map(|(p_idx, project)| self.render_project_entry(p_idx, project, cx))
-                .collect()
-        };
-
-        let tokens = self.tokens(cx);
-
-        let content = div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .bg(tokens.sidebar_bg)
-            .border_r_1()
-            .border_color(tokens.sidebar_border)
-            .when(self.project_menu.is_some(), |this| {
-                this.child(
-                    deferred(
-                        div()
-                            .id("project-menu-backdrop")
-                            .size_full()
-                            .absolute()
-                            .top_0()
-                            .left_0()
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, _, cx| {
-                                    this.project_menu = None;
-                                    cx.notify();
-                                }),
-                            ),
-                    )
-                    .priority(100),
-                )
-            })
-            .child(self.render_sidebar_actions(cx))
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_hidden()
-                    .overflow_y_scrollbar()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .px(px(14.0))
-                            .pt(px(12.0))
-                            .pb(px(10.0))
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .text_size(px(13.0))
-                            .text_color(tokens.sidebar_section_header)
-                            .child(if searching {
-                                "Search results"
-                            } else {
-                                "Projects"
-                            })
-                            .when(!searching && !self.projects.is_empty(), |this| {
-                                let all_expanded = self.projects.iter().all(|p| p.expanded);
-                                let label = if all_expanded {
-                                    "Collapse all projects"
-                                } else {
-                                    "Expand all projects"
-                                };
-                                this.child(
-                                    sidebar_icon_button(
-                                        "sidebar-toggle-projects",
-                                        if all_expanded {
-                                            "icons/chevron-down.svg"
-                                        } else {
-                                            "icons/chevron-right.svg"
-                                        },
-                                        14.0,
-                                        &tokens,
-                                        cx.listener(move |this, _, _, cx| {
-                                            for project in &mut this.projects {
-                                                project.expanded = !all_expanded;
-                                            }
-                                            this.schedule_workspace_save(cx);
-                                            cx.notify();
-                                        }),
-                                    )
-                                    .tooltip(move |_, cx| {
-                                        cx.new(|_| {
-                                            gpui_component::tooltip::Tooltip::new(
-                                                SharedString::from(label),
-                                            )
-                                        })
-                                        .into()
-                                    }),
-                                )
-                            }),
-                    )
-                    .pb(px(10.0))
-                    .children(project_rows)
-                    .when(!searching && self.projects.is_empty(), |this| {
-                        this.child(self.render_sidebar_empty_state(cx))
-                    }),
-            )
-            .when(self.integration_panel_visible, |this| {
-                this.child(self.render_integrations_panel(cx))
-            })
-            .when(
-                !searching
-                    && self.projects.iter().any(|project| {
-                        project.sessions.iter().any(|session| {
-                            session
-                                .panes
-                                .iter()
-                                .any(|pane| pane.status == SessionStatus::Working)
-                        })
-                    }),
-                |this| this.child(self.render_running_sessions(cx)),
-            )
-            .child(self.render_sidebar_footer(cx));
-
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .bg(tokens.sidebar_bg)
-            .child(self.render_sidebar_toolbar(window, cx))
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_h_0()
-                    .child(self.render_activity_bar(cx))
-                    .child(div().flex_1().min_w_0().h_full().child(content)),
-            )
-    }
-
-    fn render_running_sessions(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let tokens = self.tokens(cx);
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-        let mut cards = Vec::new();
-        for (project_idx, project) in self.projects.iter().enumerate() {
-            for (session_idx, session) in project.sessions.iter().enumerate() {
-                let Some(pane) = session
-                    .panes
-                    .iter()
-                    .find(|pane| pane.status == SessionStatus::Working)
-                else {
-                    continue;
-                };
-                let elapsed = (pane.attention.last == Some(SessionStatus::Working)
-                    && pane.attention.since > 0)
-                    .then(|| now_ms.saturating_sub(pane.attention.since) / 1000);
-                let label = elapsed
-                    .map(|seconds| {
-                        if seconds < 60 {
-                            format!("Working {seconds}s")
-                        } else if seconds < 3600 {
-                            format!("Working {}m {}s", seconds / 60, seconds % 60)
-                        } else {
-                            format!("Working {}h {}m", seconds / 3600, (seconds % 3600) / 60)
-                        }
-                    })
-                    .unwrap_or_else(|| "Working".to_string());
-                let branch = self.pane_git_branch(pane);
-                cards.push(
-                    div()
-                        .id(("running-session", session.id))
-                        .debug_selector({
-                            let id = session.id;
-                            move || format!("running-session-{id}")
-                        })
-                        .w_full()
-                        .p(px(10.0))
-                        .rounded(px(6.0))
-                        .bg(tokens.sidebar_item_active)
-                        .hover(move |style| style.bg(tokens.sidebar_item_hover))
-                        .cursor(CursorStyle::PointingHand)
-                        .flex()
-                        .flex_col()
-                        .gap(px(4.0))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(6.0))
-                                .child(session_logo_icon(session.logo.clone(), tokens.sidebar_icon))
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .truncate()
-                                        .text_size(px(11.0))
-                                        .text_color(tokens.sidebar_muted)
-                                        .child(project.name.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .size(px(16.0))
-                                        .child(sidebar_loader(0.0, tokens.pane_border_focused)),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(11.0))
-                                        .text_color(tokens.pane_border_focused)
-                                        .child(label),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .w_full()
-                                .truncate()
-                                .text_size(px(13.0))
-                                .text_color(tokens.sidebar_fg)
-                                .child(session.display_title.clone()),
-                        )
-                        .when_some(branch, |card, branch| {
-                            card.child(
-                                div()
-                                    .w_full()
-                                    .truncate()
-                                    .text_size(px(11.0))
-                                    .text_color(tokens.sidebar_muted)
-                                    .child(branch),
-                            )
-                        })
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, _, window, cx| {
-                                this.select_session(project_idx, session_idx, window, cx);
-                            }),
-                        )
-                        .into_any_element(),
-                );
-            }
-        }
-        let count = cards.len();
-        div()
-            .id("sidebar-running-sessions")
-            .debug_selector(|| "sidebar-running-sessions".to_string())
-            .flex_shrink_0()
-            .px(px(8.0))
-            .pb(px(8.0))
-            .child(
-                div()
-                    .px(px(4.0))
-                    .py(px(6.0))
-                    .text_size(px(11.0))
-                    .text_color(tokens.sidebar_muted)
-                    .child(format!("Running ({count})")),
-            )
-            .child(
-                div()
-                    .max_h(px(240.0))
-                    .overflow_y_scrollbar()
-                    .flex()
-                    .flex_col()
-                    .gap(px(5.0))
-                    .children(cards),
-            )
-            .into_any_element()
-    }
-
-    fn render_activity_bar(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
-        let tokens = self.tokens(cx);
-        let is_home = self.active_view == ActiveView::Workspace;
-        div()
-            .id("activity-bar")
-            .w(px(48.0))
-            .h_full()
-            .flex_shrink_0()
-            .flex()
-            .flex_col()
-            .items_center()
-            .pt(px(8.0))
-            .pb(px(8.0))
-            .bg(tokens.sidebar_bg)
-            .border_r_1()
-            .border_color(tokens.sidebar_border)
-            .child(
-                div()
-                    .id("activity-home")
-                    .debug_selector(|| "activity-home".into())
-                    .size(px(36.0))
-                    .rounded(px(8.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor(CursorStyle::PointingHand)
-                    .when(is_home, |button| button.bg(tokens.sidebar_item_active))
-                    .hover(move |button| button.bg(tokens.sidebar_item_hover))
-                    .tooltip(|window, cx| {
-                        gpui_component::tooltip::Tooltip::new("Home").build(window, cx)
-                    })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.active_view = ActiveView::Workspace;
-                            cx.notify();
-                        }),
-                    )
-                    .child(
-                        svg()
-                            .path("icons/home.svg")
-                            .size(px(18.0))
-                            .text_color(if is_home {
-                                tokens.sidebar_item_active_fg
-                            } else {
-                                tokens.sidebar_icon
-                            }),
-                    ),
-            )
-            .child(div().flex_1())
-            .child(
-                div()
-                    .id("sidebar-settings-btn")
-                    .debug_selector(|| "activity-settings".into())
-                    .relative()
-                    .size(px(36.0))
-                    .rounded(px(8.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor(CursorStyle::PointingHand)
-                    .when(!is_home, |button| button.bg(tokens.sidebar_item_active))
-                    .hover(move |button| button.bg(tokens.sidebar_item_hover))
-                    .tooltip({
-                        let update = self.update_state.needs_attention();
-                        move |window, cx| {
-                            gpui_component::tooltip::Tooltip::new(if update {
-                                "Shob update available"
-                            } else {
-                                "Settings"
-                            })
-                            .build(window, cx)
-                        }
-                    })
-                    .when(self.update_state.needs_attention(), |button| {
-                        button.child(
-                            div()
-                                .absolute()
-                                .top(px(5.0))
-                                .right(px(5.0))
-                                .size(px(6.0))
-                                .rounded(px(3.0))
-                                .bg(tokens.ring),
-                        )
-                    })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.active_view = ActiveView::Settings;
-                            if this.update_state.needs_attention() {
-                                this.settings_section = SettingsSection::Updates;
-                            }
-                            this.compact_sidebar_open = false;
-                            cx.notify();
-                        }),
-                    )
-                    .child(svg().path("icons/settings.svg").size(px(18.0)).text_color(
-                        if !is_home {
-                            tokens.sidebar_item_active_fg
-                        } else {
-                            tokens.sidebar_icon
-                        },
-                    )),
-            )
-    }
-
-    fn render_sidebar_footer(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
-        let tokens = self.tokens(cx);
-
-        div()
-            .id("sidebar-footer")
-            .w_full()
-            .flex_shrink_0()
-            .p(px(8.0))
-            .border_t_1()
-            .border_color(tokens.sidebar_footer_border)
-            .bg(tokens.sidebar_footer_bg)
-            .flex()
-            .items_center()
-            .justify_end()
-            .child(
-                div()
-                    .id("layout-switch")
-                    .debug_selector(|| "layout-switch".to_string())
-                    .flex()
-                    .flex_shrink_0()
-                    .items_center()
-                    .justify_center()
-                    .gap(px(6.0))
-                    .px(px(12.0))
-                    .h(px(30.0))
-                    .rounded_full()
-                    .border_1()
-                    .border_color(tokens.border)
-                    .bg(if self.settings.agent_layout {
-                        tokens.sidebar_item_active
-                    } else {
-                        tokens.sidebar_footer_bg
-                    })
-                    .cursor(CursorStyle::PointingHand)
-                    .hover(move |s| s.bg(tokens.sidebar_item_hover))
-                    .tooltip({
-                        let label = if self.settings.agent_layout {
-                            "Agent mode on · Switch to split view"
-                        } else {
-                            "Agent mode off · Switch to Agent mode"
-                        };
-                        move |window, cx| {
-                            gpui_component::tooltip::Tooltip::new(label).build(window, cx)
-                        }
-                    })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, window, cx| {
-                            cx.stop_propagation();
-                            this.switch_agent_layout(window, cx);
-                        }),
-                    )
-                    .child(
-                        gpui_component::Icon::new(gpui_component::IconName::Bot)
-                            .size(px(15.0))
-                            .text_color(if self.settings.agent_layout {
-                                tokens.ring
-                            } else {
-                                tokens.sidebar_icon
-                            }),
-                    )
-                    .when(self.sidebar_width >= px(248.0), |pill| {
-                        pill.child(
-                            div()
-                                .text_size(px(11.0))
-                                .text_color(tokens.sidebar_fg)
-                                .child("Agent"),
-                        )
-                    }),
-            )
     }
 
     fn render_settings_page(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
@@ -21426,7 +21364,7 @@ impl AppState {
                     .flex_1()
                     .items_center()
                     .gap(px(8.0))
-                    .when(!sidebar_docked, |row| row.child(settings_close))
+                    .child(settings_close)
                     .when(!sidebar_docked, |row| {
                         row.child(sidebar_icon_button(
                             "settings-sidebar-toggle-btn",
@@ -22011,75 +21949,6 @@ impl AppState {
             })
             .collect::<Vec<_>>();
 
-        let sidebar_style = self.settings.sidebar.style;
-        let sidebar_style_rows = [
-            (
-                settings::SidebarStyle::T3,
-                "T3 Code",
-                "Flat thread inbox, shelves and scoped New",
-            ),
-            (
-                settings::SidebarStyle::Projects,
-                "Projects",
-                "Shob's original grouped project tree",
-            ),
-        ]
-        .into_iter()
-        .map(|(style, title, subtitle)| {
-            let selected = sidebar_style == style;
-            div()
-                .id(ElementId::Name(format!("sidebar-style-{title}").into()))
-                .debug_selector(|| "sidebar-style-option".into())
-                .flex()
-                .items_center()
-                .gap(px(10.0))
-                .px(px(14.0))
-                .py(px(10.0))
-                .border_b_1()
-                .border_color(tokens.card_border)
-                .cursor(CursorStyle::PointingHand)
-                .hover(move |style| style.bg(tokens.sidebar_item_hover))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.set_sidebar_style(style, cx);
-                }))
-                .child(
-                    div()
-                        .size(px(14.0))
-                        .rounded_full()
-                        .border_1()
-                        .border_color(tokens.card_border)
-                        .when(selected, |dot| dot.bg(tokens.ring)),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(2.0))
-                        .child(
-                            div()
-                                .text_size(px(13.0))
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .text_color(tokens.text_primary)
-                                .child(title),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(11.0))
-                                .text_color(tokens.text_secondary)
-                                .child(subtitle),
-                        ),
-                )
-                .child(div().flex_1())
-                .when(selected, |row| {
-                    row.child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(tokens.text_secondary)
-                            .child("Selected"),
-                    )
-                })
-        })
-        .collect::<Vec<_>>();
         let archived_threads = self.sidebar_archived_thread_refs();
         let archived_rows = archived_threads
             .into_iter()
@@ -22228,10 +22097,9 @@ impl AppState {
                                 div()
                                     .text_size(px(11.0))
                                     .text_color(tokens.text_secondary)
-                                    .child("T3 Code is the default. New threads are drafts; archived threads stay restorable here."),
+                                    .child("Restore archived threads here."),
                             ),
                     )
-                    .children(sidebar_style_rows)
                     .when(has_archived_rows, move |card| {
                         card.child(
                             div()
@@ -22531,137 +22399,6 @@ impl AppState {
             )
     }
 
-    fn render_sidebar_toolbar(&self, window: &Window, cx: &mut Context<Self>) -> gpui::Div {
-        let tokens = self.tokens(cx);
-        let can_back = self.active_view == ActiveView::Settings
-            || self.navigation_history
-                [..self.navigation_position.min(self.navigation_history.len())]
-                .iter()
-                .any(|id| self.session_index.contains_key(id));
-        let can_forward = self
-            .navigation_history
-            .iter()
-            .skip(self.navigation_position + 1)
-            .any(|id| self.session_index.contains_key(id));
-        div()
-            .h(px(38.0))
-            .flex_shrink_0()
-            .w_full()
-            .flex()
-            .items_center()
-            .justify_between()
-            .pl(if cfg!(target_os = "macos") && !window.is_fullscreen() {
-                px(80.0)
-            } else {
-                px(11.0)
-            })
-            .pr(px(10.0))
-            .child(self.navigation_button(
-                "navigation-back",
-                "icons/arrow-left.svg",
-                "Back",
-                can_back,
-                false,
-                cx,
-            ))
-            .child(self.navigation_button(
-                "navigation-forward",
-                "icons/arrow-right.svg",
-                "Forward",
-                can_forward,
-                true,
-                cx,
-            ))
-            .child(sidebar_icon_button(
-                "sidebar-toggle-btn",
-                "icons/panel-left.svg",
-                16.0,
-                &tokens,
-                cx.listener::<MouseDownEvent>(|this, _, window, cx| {
-                    this.close_sidebar_search(window, cx);
-                    if window.viewport_size().width < COMPACT_WINDOW_WIDTH {
-                        this.compact_sidebar_open = false;
-                        cx.notify();
-                        return;
-                    }
-                    this.sidebar_visible = !this.sidebar_visible;
-                    cx.notify();
-                    this.schedule_workspace_save(cx);
-                }),
-            ))
-            .child(self.make_drag_area(cx).flex_1().h_full())
-            .child(div().flex().items_center().child(sidebar_icon_button(
-                "sidebar-open-project-btn",
-                "icons/folder-plus.svg",
-                15.0,
-                &tokens,
-                cx.listener::<MouseDownEvent>(|this, _, window, cx| {
-                    this.select_folder_and_add_project(window, cx);
-                }),
-            )))
-    }
-
-    fn navigation_button(
-        &self,
-        id: &'static str,
-        icon: &'static str,
-        label: &'static str,
-        enabled: bool,
-        forward: bool,
-        cx: &mut Context<Self>,
-    ) -> gpui::Stateful<gpui::Div> {
-        let tokens = self.tokens(cx);
-        div()
-            .id(id)
-            .debug_selector(move || id.to_string())
-            .size(px(26.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .when(enabled, |button| {
-                button
-                    .cursor(CursorStyle::PointingHand)
-                    .hover(move |style| style.bg(tokens.sidebar_icon_btn_hover))
-            })
-            .tooltip(move |window, cx| {
-                gpui_component::tooltip::Tooltip::new(label).build(window, cx)
-            })
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _, window, cx| {
-                    cx.stop_propagation();
-                    if !forward && this.active_view == ActiveView::Settings {
-                        this.active_view = ActiveView::Workspace;
-                        cx.notify();
-                    } else if enabled {
-                        this.navigate_history(forward, window, cx);
-                    }
-                }),
-            )
-            .child(svg().path(icon).size(px(15.0)).text_color(if enabled {
-                tokens.sidebar_icon
-            } else {
-                tokens.text_muted.opacity(0.45)
-            }))
-    }
-
-    fn navigate_history(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let positions: Box<dyn Iterator<Item = usize>> = if forward {
-            Box::new(self.navigation_position + 1..self.navigation_history.len())
-        } else {
-            Box::new((0..self.navigation_position).rev())
-        };
-        for position in positions {
-            if let Some(&(project, session)) =
-                self.session_index.get(&self.navigation_history[position])
-            {
-                self.navigation_position = position;
-                self.select_session(project, session, window, cx);
-                return;
-            }
-        }
-    }
-
     fn render_integrations_panel(&self, cx: &mut Context<Self>) -> gpui::Div {
         let weak = cx.entity().downgrade();
         let tokens = self.tokens(cx);
@@ -22706,6 +22443,7 @@ impl AppState {
             )
     }
 
+    #[cfg(test)]
     fn reorder_project(&mut self, source_id: usize, target_id: usize, cx: &mut Context<Self>) {
         let Some(source) = self
             .projects
@@ -22738,712 +22476,6 @@ impl AppState {
         cx.notify();
     }
 
-    /// One collapsible project block: the project header followed by its session rows.
-    fn render_project_entry(
-        &self,
-        project_idx: usize,
-        project: &Project,
-        cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
-        let tokens = self.tokens(cx);
-        let is_active_project = project_idx == self.active_project_idx;
-        let needs_attention = project
-            .sessions
-            .iter()
-            .filter(|s| matches!(s.status, SessionStatus::Blocked | SessionStatus::Error))
-            .count();
-
-        let mut rows: Vec<gpui::AnyElement> = Vec::new();
-        if project.expanded {
-            if project.sessions.is_empty() {
-                rows.push(
-                    div()
-                        .pl(px(18.0))
-                        .pr(px(16.0))
-                        .py(px(6.0))
-                        .text_size(px(11.5))
-                        .text_color(tokens.sidebar_muted)
-                        .child("No sessions yet")
-                        .into_any_element(),
-                );
-            }
-            let visible_sessions = sidebar_visible_sessions(
-                project.sessions.len(),
-                project.visible_session_count,
-                is_active_project.then_some(project.active_session_idx),
-            );
-            let hidden_count = project
-                .sessions
-                .len()
-                .saturating_sub(visible_sessions.len());
-            for s_idx in visible_sessions {
-                let session = &project.sessions[s_idx];
-                let is_active_session = is_active_project && s_idx == project.active_session_idx;
-                rows.push(self.render_session_entry(
-                    project_idx,
-                    s_idx,
-                    session,
-                    is_active_session,
-                    cx,
-                ));
-            }
-            for (show_more, visible) in [
-                (true, hidden_count > 0),
-                (false, project.visible_session_count > 5),
-            ] {
-                if !visible {
-                    continue;
-                }
-                let (id, label) = if show_more {
-                    ("project-show-more", format!("Show more ({hidden_count})"))
-                } else {
-                    ("project-show-less", "Show less".to_string())
-                };
-                rows.push(
-                    div()
-                        .id((id, project.id))
-                        .debug_selector(move || id.to_string())
-                        .ml(px(6.0))
-                        .mr(px(6.0))
-                        .h(px(30.0))
-                        .pl(px(12.0))
-                        .rounded(px(8.0))
-                        .flex()
-                        .items_center()
-                        .text_size(px(12.0))
-                        .text_color(tokens.sidebar_muted)
-                        .cursor(CursorStyle::PointingHand)
-                        .hover(move |s| {
-                            s.bg(tokens.sidebar_item_hover)
-                                .text_color(tokens.sidebar_fg)
-                        })
-                        .child(label)
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                if let Some(project) = this.projects.get_mut(project_idx) {
-                                    project.visible_session_count = if show_more {
-                                        project.visible_session_count.saturating_add(10)
-                                    } else {
-                                        5
-                                    };
-                                    cx.notify();
-                                }
-                            }),
-                        )
-                        .into_any_element(),
-                );
-            }
-        }
-
-        let is_renaming = self
-            .renaming_project
-            .as_ref()
-            .is_some_and(|r| r.project_id == project.id);
-        let is_menu_open = self.project_menu == Some(project.id);
-        let group_name = SharedString::from(format!("project-row-{}", project.id));
-        let project_id = project.id;
-
-        let header_content: gpui::AnyElement = if is_renaming {
-            let renaming = self.renaming_project.as_ref().unwrap();
-            let input_entity = renaming.input.clone();
-            div()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .items_center()
-                .gap(px(4.0))
-                .child(
-                    div().flex_1().min_w_0().child(
-                        Input::new(&renaming.input)
-                            .with_size(gpui_component::Size::Small)
-                            .cleanable(false),
-                    ),
-                )
-                .child(sidebar_icon_button(
-                    ("project-rename-save", project.id),
-                    "icons/status-check.svg",
-                    12.0,
-                    &tokens,
-                    cx.listener(move |this, _, _, cx| {
-                        let val = input_entity.read(cx).value();
-                        this.finish_renaming_project(project_id, val, cx);
-                    }),
-                ))
-                .child(sidebar_icon_button(
-                    ("project-rename-cancel", project.id),
-                    "icons/x.svg",
-                    11.0,
-                    &tokens,
-                    cx.listener(move |this, _, _, cx| {
-                        this.cancel_renaming_project(cx);
-                    }),
-                ))
-                .into_any_element()
-        } else {
-            div()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .items_center()
-                .gap(px(4.0))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_size(px(13.0))
-                        .font_weight(gpui::FontWeight::NORMAL)
-                        .text_color(tokens.sidebar_fg)
-                        .child(project.name.clone()),
-                )
-                .child(
-                    div()
-                        .relative()
-                        .child(
-                            sidebar_icon_button(
-                                ("project-options", project.id),
-                                "icons/ellipsis.svg",
-                                13.0,
-                                &tokens,
-                                cx.listener::<MouseDownEvent>(move |this, _, _, cx| {
-                                    this.project_menu = if this.project_menu == Some(project_id) {
-                                        None
-                                    } else {
-                                        Some(project_id)
-                                    };
-                                    cx.notify();
-                                }),
-                            )
-                            .when(!is_menu_open, |this| this.invisible())
-                            .group_hover(group_name.clone(), |s| s.visible()),
-                        )
-                        .when(is_menu_open, |this| {
-                            this.child(
-                                deferred(
-                                    div()
-                                        .id(("project-menu-popover", project.id))
-                                        .absolute()
-                                        .top(px(24.0))
-                                        .left_0()
-                                        .w(px(130.0))
-                                        .bg(tokens.card_bg)
-                                        .border_1()
-                                        .border_color(tokens.card_border)
-                                        .rounded(px(6.0))
-                                        .shadow_md()
-                                        .p(px(4.0))
-                                        .flex()
-                                        .flex_col()
-                                        .gap(px(2.0))
-                                        .child(
-                                            div()
-                                                .id(("menu-rename", project.id))
-                                                .px(px(8.0))
-                                                .py(px(5.0))
-                                                .rounded(px(4.0))
-                                                .text_size(px(12.0))
-                                                .text_color(tokens.text_primary)
-                                                .cursor(CursorStyle::PointingHand)
-                                                .hover(move |s| s.bg(tokens.sidebar_item_hover))
-                                                .child("Rename")
-                                                .on_mouse_down(
-                                                    MouseButton::Left,
-                                                    cx.listener(move |this, _, window, cx| {
-                                                        cx.stop_propagation();
-                                                        this.start_renaming_project(
-                                                            project_id, window, cx,
-                                                        );
-                                                    }),
-                                                ),
-                                        )
-                                        .child(
-                                            div()
-                                                .id(("menu-remove", project.id))
-                                                .px(px(8.0))
-                                                .py(px(5.0))
-                                                .rounded(px(4.0))
-                                                .text_size(px(12.0))
-                                                .text_color(tokens.text_primary)
-                                                .cursor(CursorStyle::PointingHand)
-                                                .hover(move |s| s.bg(tokens.sidebar_item_hover))
-                                                .child("Remove")
-                                                .on_mouse_down(
-                                                    MouseButton::Left,
-                                                    cx.listener(move |this, _, window, cx| {
-                                                        cx.stop_propagation();
-                                                        this.project_menu = None;
-                                                        if let Some(idx) = this
-                                                            .projects
-                                                            .iter()
-                                                            .position(|p| p.id == project_id)
-                                                        {
-                                                            this.close_project(idx, window, cx);
-                                                        }
-                                                    }),
-                                                ),
-                                        ),
-                                )
-                                .priority(101),
-                            )
-                        }),
-                )
-                .when(needs_attention > 0, |this| {
-                    this.child(
-                        div()
-                            .text_size(px(11.0))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(rgba(0xb7782fff))
-                            .child(format!("{needs_attention} needs you")),
-                    )
-                })
-                .child(
-                    sidebar_icon_button(
-                        ("project-new-session", project.id),
-                        "icons/plus.svg",
-                        13.0,
-                        &tokens,
-                        cx.listener::<MouseDownEvent>(move |this, _, window, cx| {
-                            if project_idx != this.active_project_idx
-                                || !this.focus_empty_chat(window, cx)
-                            {
-                                this.create_new_session_in_project(project_idx, window, cx);
-                            }
-                        }),
-                    )
-                    .invisible()
-                    .group_hover(group_name.clone(), |s| s.visible())
-                    .debug_selector(|| "project-new-session".to_string()),
-                )
-                .into_any_element()
-        };
-
-        div()
-            .id(("project-entry", project.id))
-            .flex()
-            .flex_col()
-            .mb(px(12.0))
-            .when(!is_renaming, |entry| {
-                entry
-                    .drag_over::<DragProject>(move |style, drag, _, cx| {
-                        if drag.id == project_id {
-                            style
-                        } else if drag.index > project_idx {
-                            style.border_t_2().border_color(cx.theme().drag_border)
-                        } else {
-                            style.border_b_2().border_color(cx.theme().drag_border)
-                        }
-                    })
-                    .on_drop(cx.listener(move |this, drag: &DragProject, _, cx| {
-                        this.reorder_project(drag.id, project_id, cx);
-                    }))
-            })
-            .child(
-                div()
-                    .id(("project-row", project.id))
-                    .group(group_name)
-                    .ml(px(6.0))
-                    .mr(px(6.0))
-                    .mt(px(2.0))
-                    .h(px(34.0))
-                    .pl(px(8.0))
-                    .pr(px(4.0))
-                    .rounded(px(8.0))
-                    .cursor(CursorStyle::PointingHand)
-                    .flex()
-                    .items_center()
-                    .gap(px(10.0))
-                    .bg(rgba(0x00000000))
-                    .hover(move |s| s.bg(tokens.sidebar_item_hover))
-                    .when(!is_renaming, |row| {
-                        row.on_drag(
-                            DragProject {
-                                id: project_id,
-                                index: project_idx,
-                                name: project.name.clone(),
-                            },
-                            |drag, _, _, cx| cx.new(|_| drag.clone()),
-                        )
-                    })
-                    .child(
-                        div()
-                            .id(("project-chevron", project.id))
-                            .size(px(18.0))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(px(3.0))
-                            .hover(move |s| s.bg(tokens.sidebar_icon_btn_hover))
-                            .child(
-                                svg()
-                                    .path(if project.expanded {
-                                        "icons/chevron-down.svg"
-                                    } else {
-                                        "icons/chevron-right.svg"
-                                    })
-                                    .size(px(14.0))
-                                    .text_color(tokens.sidebar_icon),
-                            )
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener::<MouseDownEvent>(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    this.toggle_project_expanded(project_idx, cx);
-                                }),
-                            ),
-                    )
-                    .child(header_content)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        if this.renaming_project.as_ref().map(|r| r.project_id) == Some(project_id)
-                        {
-                            return;
-                        }
-                        this.activate_project(project_idx, window, cx);
-                    })),
-            )
-            .children(rows)
-            .into_any_element()
-    }
-
-    /// One session (screen) inside a project: logo, live status, title and a
-    /// close action. Clicking it swaps the workspace to that session.
-    fn render_session_entry(
-        &self,
-        project_idx: usize,
-        session_idx: usize,
-        session: &Session,
-        is_active_session: bool,
-        cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
-        let tokens = self.tokens(cx);
-        let selected_evidence = session
-            .panes
-            .iter()
-            .max_by_key(|pane| pane.status.rank())
-            .map(|pane| {
-                format!(
-                    "{} — {:?} evidence, {:?} confidence",
-                    pane.status.label(),
-                    pane.detection.evidence,
-                    pane.detection.confidence
-                )
-            })
-            .unwrap_or_else(|| format!("{} — no pane evidence", session.status.label()));
-        let indicator = match session.status {
-            SessionStatus::Working => div()
-                .size(px(16.0))
-                .with_animation(
-                    ("session-spinner", session.id),
-                    Animation::new(std::time::Duration::from_millis(650))
-                        .repeat_synced()
-                        .with_max_fps(12.0),
-                    move |element, phase| {
-                        element.child(sidebar_loader(phase, tokens.sidebar_muted))
-                    },
-                )
-                .into_any_element(),
-            SessionStatus::Done => div()
-                .id(("session-status-ack", session.id))
-                .size(px(19.0))
-                .rounded_full()
-                .bg(rgba(0x43b976dd))
-                .border_1()
-                .border_color(rgba(0xc1f7d8ff))
-                .flex()
-                .items_center()
-                .justify_center()
-                .cursor(CursorStyle::PointingHand)
-                .tooltip(|_, cx| {
-                    cx.new(|_| {
-                        gpui_component::tooltip::Tooltip::new(SharedString::from(
-                            "Clear completed status",
-                        ))
-                    })
-                    .into()
-                })
-                .child(
-                    svg()
-                        .path("icons/status-check.svg")
-                        .size(px(12.0))
-                        .text_color(rgba(0xffffffff)),
-                )
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        if let Some(session) = this
-                            .projects
-                            .get_mut(project_idx)
-                            .and_then(|project| project.sessions.get_mut(session_idx))
-                        {
-                            for pane in &mut session.panes {
-                                if matches!(pane.status, SessionStatus::Done | SessionStatus::Error)
-                                {
-                                    pane.status = SessionStatus::Idle;
-                                    pane.chat.status = SessionStatus::Idle;
-                                    pane.native_status = None;
-                                    pane.native_acknowledged = true;
-                                    pane.attention.seen = true;
-                                    pane.attention.last = Some(SessionStatus::Idle);
-                                    pane.ack_screen =
-                                        Some(screen_fingerprint(&pane.screen_scratch, &pane.title));
-                                    pane.osc_report_active = false;
-                                    pane.pending_approvals.clear();
-                                    pane.poll_cache = None;
-                                    pane.detection = status::DetectionResult::new(
-                                        SessionStatus::Idle,
-                                        status::EvidenceSource::NoSignal,
-                                        status::Confidence::None,
-                                    );
-                                    pane.terminal.update(cx, |terminal, _| {
-                                        terminal.clear_agent_status_reports()
-                                    });
-                                }
-                            }
-                            session.status = session
-                                .panes
-                                .iter()
-                                .map(|pane| pane.status)
-                                .max_by_key(|status| status.rank())
-                                .unwrap_or(SessionStatus::Idle);
-                        }
-                        cx.notify();
-                    }),
-                )
-                .into_any_element(),
-            SessionStatus::Error => div()
-                .id(("session-error-ack", session.id))
-                .size(px(19.0))
-                .rounded_full()
-                .bg(rgba(0xf85149dd))
-                .border_1()
-                .border_color(rgba(0xffc7c4ff))
-                .flex()
-                .items_center()
-                .justify_center()
-                .cursor(CursorStyle::PointingHand)
-                .tooltip(|_, cx| {
-                    cx.new(|_| {
-                        gpui_component::tooltip::Tooltip::new(SharedString::from(
-                            "Clear failed status",
-                        ))
-                    })
-                    .into()
-                })
-                .child(
-                    div()
-                        .text_size(px(12.0))
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(rgba(0xffffffff))
-                        .child("!"),
-                )
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        if let Some(session) = this
-                            .projects
-                            .get_mut(project_idx)
-                            .and_then(|project| project.sessions.get_mut(session_idx))
-                        {
-                            for pane in &mut session.panes {
-                                if matches!(pane.status, SessionStatus::Done | SessionStatus::Error)
-                                {
-                                    pane.status = SessionStatus::Idle;
-                                    pane.chat.status = SessionStatus::Idle;
-                                    pane.native_status = None;
-                                    pane.native_acknowledged = true;
-                                    pane.attention.seen = true;
-                                    pane.attention.last = Some(SessionStatus::Idle);
-                                    pane.ack_screen =
-                                        Some(screen_fingerprint(&pane.screen_scratch, &pane.title));
-                                    pane.osc_report_active = false;
-                                    pane.pending_approvals.clear();
-                                    pane.poll_cache = None;
-                                    pane.detection = status::DetectionResult::new(
-                                        SessionStatus::Idle,
-                                        status::EvidenceSource::NoSignal,
-                                        status::Confidence::None,
-                                    );
-                                    pane.terminal.update(cx, |terminal, _| {
-                                        terminal.clear_agent_status_reports()
-                                    });
-                                }
-                            }
-                            session.status = session
-                                .panes
-                                .iter()
-                                .map(|pane| pane.status)
-                                .max_by_key(|status| status.rank())
-                                .unwrap_or(SessionStatus::Idle);
-                        }
-                        cx.notify();
-                    }),
-                )
-                .into_any_element(),
-            SessionStatus::Blocked => div()
-                .size(px(19.0))
-                .rounded_full()
-                .bg(rgba(0xffedc9cc))
-                .border_1()
-                .border_color(rgba(0xc8873cff))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(div().size(px(7.0)).rounded_full().bg(rgba(0xc8873cff)))
-                .into_any_element(),
-            SessionStatus::Unknown => div()
-                .flex()
-                .items_center()
-                .text_size(px(10.0))
-                .text_color(tokens.sidebar_muted)
-                .child("Unknown")
-                .into_any_element(),
-            SessionStatus::Active | SessionStatus::Idle => div().size(px(19.0)).into_any_element(),
-        };
-
-        div()
-            .id(("session-item", session.id))
-            .debug_selector({
-                let id = session.id;
-                move || format!("session-row-{id}")
-            })
-            .group("session-row")
-            .ml(px(6.0))
-            .mr(px(6.0))
-            .h(px(32.0))
-            .pl(px(24.0))
-            .pr(px(4.0))
-            .rounded(px(8.0))
-            .cursor(CursorStyle::PointingHand)
-            .tooltip(move |_, cx| {
-                let text = selected_evidence.clone();
-                cx.new(|_| gpui_component::tooltip::Tooltip::new(SharedString::from(text)))
-                    .into()
-            })
-            .flex()
-            .items_center()
-            .gap(px(8.0))
-            .bg(if is_active_session {
-                tokens.sidebar_item_active
-            } else {
-                rgba(0x00000000).into()
-            })
-            .hover(move |s| {
-                if is_active_session {
-                    s
-                } else {
-                    s.bg(tokens.sidebar_item_hover)
-                }
-            })
-            .child(session_logo_icon(session.logo.clone(), tokens.sidebar_icon))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_size(px(13.0))
-                    .font_weight(
-                        if matches!(
-                            session.status,
-                            SessionStatus::Blocked | SessionStatus::Error
-                        ) {
-                            gpui::FontWeight::SEMIBOLD
-                        } else {
-                            gpui::FontWeight::NORMAL
-                        },
-                    )
-                    .text_color(if is_active_session {
-                        tokens.sidebar_item_active_fg
-                    } else {
-                        tokens.sidebar_fg
-                    })
-                    .child(session.display_title.clone()),
-            )
-            .when(
-                !matches!(session.status, SessionStatus::Active | SessionStatus::Idle),
-                |this| this.child(indicator),
-            )
-            .child(
-                sidebar_icon_button(
-                    ("session-close", session.id),
-                    "icons/x.svg",
-                    12.0,
-                    &tokens,
-                    cx.listener::<MouseDownEvent>(move |this, _, window, cx| {
-                        this.close_session(project_idx, session_idx, window, cx);
-                    }),
-                )
-                .tooltip(|window, cx| {
-                    gpui_component::tooltip::Tooltip::new("Delete session and Shob history")
-                        .build(window, cx)
-                })
-                .invisible()
-                .group_hover("session-row", |s| s.visible())
-                .debug_selector(|| "session-close".to_string()),
-            )
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener::<MouseDownEvent>(move |this, _, window, cx| {
-                    this.select_session(project_idx, session_idx, window, cx);
-                }),
-            )
-            .into_any_element()
-    }
-
-    fn render_sidebar_empty_state(&self, cx: &mut Context<Self>) -> gpui::Div {
-        let tokens = self.tokens(cx);
-        div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .pt(px(36.0))
-            .px(px(20.0))
-            .gap(px(8.0))
-            .child(
-                div()
-                    .size(px(40.0))
-                    .rounded(px(10.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .bg(tokens.card_bg)
-                    .child(
-                        svg()
-                            .path("icons/folder.svg")
-                            .size(px(20.0))
-                            .text_color(tokens.sidebar_icon),
-                    ),
-            )
-            .child(
-                div()
-                    .text_size(px(12.5))
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(tokens.sidebar_fg)
-                    .child("No projects open"),
-            )
-            .child(
-                div()
-                    .text_size(px(11.5))
-                    .text_color(tokens.sidebar_muted)
-                    .text_center()
-                    .child("Open any folder to start a project with its own sessions."),
-            )
-            .child(sidebar_text_button(
-                "sidebar-empty-open-project",
-                "Open project",
-                "icons/folder-plus.svg",
-                true,
-                &tokens,
-                cx.listener::<MouseDownEvent>(|this, _, window, cx| {
-                    this.select_folder_and_add_project(window, cx);
-                }),
-            ))
-    }
-
-    /// Shown in the terminal area when the active project has no session, or
-    /// when no project is open at all.
     fn render_empty_terminal(&self, cx: &mut Context<Self>) -> gpui::Div {
         let has_project = self.active_project().is_some();
         let project_idx = self.active_project_idx;
@@ -23532,13 +22564,15 @@ impl AppState {
     ) {
         self.active_view = ActiveView::Workspace;
         self.compact_sidebar_open = false;
-        let Some(project) = self.projects.get_mut(project_idx) else {
-            return;
-        };
-        if session_idx >= project.sessions.len() {
+        if !self
+            .projects
+            .get(project_idx)
+            .is_some_and(|project| session_idx < project.sessions.len())
+        {
             return;
         }
         self.clear_sidebar_search(window, cx);
+        let project = &mut self.projects[project_idx];
         project.active_session_idx = session_idx;
         project.expanded = true;
         self.active_project_idx = project_idx;
@@ -24264,6 +23298,13 @@ impl Render for AppState {
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 let keystroke = &event.keystroke;
 
+                if keystroke.key == "escape" && this.system_monitor_open {
+                    this.system_monitor_open = false;
+                    cx.stop_propagation();
+                    cx.notify();
+                    return;
+                }
+
                 if keystroke.key == "escape"
                     && (this.sidebar_project_picker_focused(window, cx)
                         || this.sidebar_thread_menu.is_some())
@@ -24272,6 +23313,55 @@ impl Render for AppState {
                     this.close_sidebar_thread_menu(cx);
                     cx.stop_propagation();
                     return;
+                }
+                if this
+                    .sidebar_project_picker
+                    .as_ref()
+                    .is_some_and(|picker| picker.mode == SidebarProjectPickerMode::NewSession)
+                {
+                    let query = this.sidebar_project_picker_query(cx);
+                    let matches: Vec<usize> = this
+                        .projects
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, project)| {
+                            sidebar_matches(&query, project.name.as_str())
+                                || sidebar_matches(&query, &project.path.to_string_lossy())
+                        })
+                        .map(|(index, _)| index)
+                        .collect();
+                    match keystroke.key.as_str() {
+                        "up" | "down" => {
+                            if let Some(picker) = this.sidebar_project_picker.as_mut() {
+                                picker.selected = if matches.is_empty() {
+                                    0
+                                } else if keystroke.key == "down" {
+                                    (picker.selected + 1).min(matches.len() - 1)
+                                } else {
+                                    picker.selected.min(matches.len() - 1).saturating_sub(1)
+                                };
+                            }
+                            cx.stop_propagation();
+                            cx.notify();
+                            return;
+                        }
+                        "enter" => {
+                            if let Some(index) = this
+                                .sidebar_project_picker
+                                .as_ref()
+                                .and_then(|picker| {
+                                    matches
+                                        .get(picker.selected.min(matches.len().saturating_sub(1)))
+                                })
+                                .copied()
+                            {
+                                this.choose_new_session_project(Some(index), window, cx);
+                            }
+                            cx.stop_propagation();
+                            return;
+                        }
+                        _ => return,
+                    }
                 }
                 let shortcut = if cfg!(target_os = "macos") {
                     keystroke.modifiers.platform
@@ -24424,6 +23514,17 @@ impl Render for AppState {
                         ),
                 )
             })
+            .when(
+                self.sidebar_project_picker
+                    .as_ref()
+                    .is_some_and(|picker| picker.mode == SidebarProjectPickerMode::NewSession),
+                |this| {
+                    this.child(self.render_new_session_project_modal(
+                        self.sidebar_project_picker.as_ref().unwrap(),
+                        cx,
+                    ))
+                },
+            )
             .when(self.terminal_context_menu.is_some(), |this| {
                 this.child(self.render_terminal_context_menu_layer(cx))
             })
@@ -24867,6 +23968,8 @@ fn run_gui() -> Result<()> {
                         sidebar_search: None,
                         sidebar_project_picker: None,
                         sidebar_thread_menu: None,
+                        system_snapshot: system_detection::Snapshot::default(),
+                        system_monitor_open: false,
                         sidebar_threads: HashMap::new(),
                         settled_visible_count: SIDEBAR_SETTLED_INITIAL_COUNT,
                         active_view: ActiveView::Workspace,
@@ -24878,7 +23981,6 @@ fn run_gui() -> Result<()> {
                         sidebar_width: px(app_settings.sidebar.width.max(120.0)),
                         sidebar_resize_offset: None,
                         sidebar_resizing: false,
-                        drag_start_pos: None,
                         persistence_path: persistence_path.clone(),
                         save_generation: Arc::new(AtomicU64::new(0)),
                         startup_loaded: false,
@@ -25161,6 +24263,25 @@ fn run_gui() -> Result<()> {
                         }
                     })
                     .detach();
+
+                    let system_state = app_state.downgrade();
+                    cx.spawn(async move |cx: &mut gpui::AsyncApp| {
+                        let mut sampler = cx.background_executor().spawn(async { system_detection::Sampler::new() }).await;
+                        loop {
+                            cx.background_executor().timer(std::time::Duration::from_secs(2)).await;
+                            let (next, snapshot) = cx.background_executor().spawn(async move {
+                                let snapshot = sampler.sample();
+                                (sampler, snapshot)
+                            }).await;
+                            sampler = next;
+                            if system_state.update(cx, |state, cx| {
+                                if state.system_snapshot != snapshot {
+                                    state.system_snapshot = snapshot;
+                                    if state.system_monitor_open && (state.sidebar_visible || state.compact_sidebar_open) { cx.notify(); }
+                                }
+                            }).is_err() { break; }
+                        }
+                    }).detach();
 
                     // Keep the active project's summary and Git workspace snapshot fresh without running Git on the UI thread.
                     // One loop serves active agent panes and never overlaps requests.
@@ -25749,6 +24870,8 @@ mod resize_tests {
             sidebar_search: None,
             sidebar_project_picker: None,
             sidebar_thread_menu: None,
+            system_snapshot: system_detection::Snapshot::default(),
+            system_monitor_open: false,
             sidebar_threads: HashMap::new(),
             settled_visible_count: SIDEBAR_SETTLED_INITIAL_COUNT,
             active_view: ActiveView::Workspace,
@@ -25762,7 +24885,6 @@ mod resize_tests {
             sidebar_width: SIDEBAR_WIDTH,
             sidebar_resize_offset: None,
             sidebar_resizing: false,
-            drag_start_pos: None,
             persistence_path: None,
             save_generation: Arc::new(AtomicU64::new(0)),
             startup_loaded: true,
@@ -25781,10 +24903,6 @@ mod resize_tests {
             image_viewer: None,
             settings: settings::AppSettings {
                 agent_layout: false,
-                sidebar: settings::SavedSidebar {
-                    style: settings::SidebarStyle::Projects,
-                    ..Default::default()
-                },
                 ..Default::default()
             },
             dirty: false,
@@ -27155,13 +26273,26 @@ mod resize_tests {
         let (mut cx, state) = open_app(&mut cx);
         let pane_id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
         cx.update_window_entity(&state, |s, window, cx| {
-            s.set_chat_mode(pane_id, true, window, cx);
-            s.pane_mut(pane_id)
+            s.settings.agent_layout = true;
+            s.focus_one_chat(pane_id, window, cx);
+            let chat_id = s.focused_pane_id.unwrap();
+            assert_ne!(chat_id, pane_id);
+            assert!(s.sidebar_thread_groups().active.is_empty());
+            assert!(s.sidebar_search_thread_refs("").is_empty());
+            s.pane_mut(chat_id)
                 .unwrap()
                 .chat
                 .set_prompt_title("Refactor the auth module".into());
             let foregrounds: HashMap<u32, Arc<[String]>> = HashMap::new();
             s.poll_sessions_status_with(&foregrounds, cx);
+            assert_eq!(s.sidebar_thread_groups().active.len(), 1);
+            assert_eq!(s.sidebar_search_thread_refs("Refactor").len(), 1);
+            s.focused_pane_id = None;
+            s.poll_sessions_status_with(&foregrounds, cx);
+            assert_eq!(
+                s.projects[0].sessions[0].title.as_str(),
+                "Refactor the auth module"
+            );
         });
         state.read_with(&cx, |s, _| {
             let session = &s.projects[0].sessions[0];
@@ -29048,8 +28179,8 @@ mod settings_and_theme_tests {
         cx.draw_frame().expect("draw settings page frame");
 
         let bounds = cx
-            .debug_bounds("navigation-back")
-            .expect("navigation back button bounds");
+            .debug_bounds("settings-close-btn")
+            .expect("settings back button bounds");
         let center = point(
             bounds.origin.x + bounds.size.width / 2.0,
             bounds.origin.y + bounds.size.height / 2.0,
@@ -30997,7 +30128,7 @@ First report
         );
 
         let new_session = cx
-            .debug_bounds("project-new-session")
+            .debug_bounds("sidebar-new-thread")
             .expect("sidebar new-session button renders");
         let click = point(
             new_session.origin.x + new_session.size.width / 2.0,
@@ -31012,6 +30143,10 @@ First report
                 s.projects[0].sessions.len(),
                 sessions_before,
                 "clicks behind the dialog must not reach the sidebar"
+            );
+            assert!(
+                s.sidebar_project_picker.is_none(),
+                "the new-thread picker must not open behind the dialog"
             );
             assert!(
                 s.pane_ref(pane_id).unwrap().chat.auth.is_none(),
@@ -33904,32 +33039,8 @@ First report
     }
 
     #[test]
-    fn t3_sidebar_new_thread_rules_match_current_main() {
-        assert_eq!(
-            resolve_scoped_new_session_project(false, &[3], Some(3)),
-            Some(3)
-        );
-        assert_eq!(
-            resolve_scoped_new_session_project(false, &[3], Some(7)),
-            Some(3)
-        );
-        assert_eq!(
-            resolve_scoped_new_session_project(false, &[3, 4], Some(3)),
-            None
-        );
-        assert_eq!(
-            resolve_scoped_new_session_project(true, &[3], Some(3)),
-            None
-        );
-        assert!(should_create_new_session_in_current_project(true, 2, 2));
-        assert!(should_create_new_session_in_current_project(false, 1, 2));
-        assert!(should_create_new_session_in_current_project(false, 0, 0));
-        assert!(!should_create_new_session_in_current_project(false, 2, 2));
-    }
-
-    #[test]
     fn t3_sidebar_thread_sections_prioritize_snooze_settle_and_archive() {
-        let now = 100_000;
+        let now = 1_000_000;
         assert_eq!(
             SidebarThreadState::default().section(now),
             Some(SidebarSection::Active)
@@ -33973,12 +33084,81 @@ First report
     }
 
     #[test]
-    fn t3_sidebar_scoped_new_button_creates_a_new_thread() {
+    fn system_monitor_button_toggles_live_panel() {
+        let mut app = TestAppContext::new();
+        let (mut cx, state) = open_app(&mut app);
+        cx.draw_frame().unwrap();
+        let button = cx.debug_bounds("system-monitor").unwrap();
+        cx.simulate_click(button.center(), Modifiers::none());
+        cx.draw_frame().unwrap();
+        assert!(state.read_with(&cx, |state, _| state.system_monitor_open));
+        assert!(cx.debug_bounds("system-monitor-panel").is_some());
+        cx.simulate_click(button.center(), Modifiers::none());
+        assert!(!state.read_with(&cx, |state, _| state.system_monitor_open));
+    }
+
+    #[test]
+    fn sidebar_quick_settle_moves_active_thread_to_settled() {
+        let mut app = TestAppContext::new();
+        let (mut cx, state) = open_app(&mut app);
+        cx.draw_frame().unwrap();
+        let row = cx.debug_bounds("session-row-1").unwrap();
+        cx.simulate_mouse_move(row.center(), None, Modifiers::none());
+        cx.draw_frame().unwrap();
+        let settle = cx.debug_bounds("sidebar-quick-settle").unwrap();
+        cx.simulate_click(settle.center(), Modifiers::none());
+        state.read_with(&cx, |state, _| {
+            let uid = &state.projects[0].sessions[0].uid;
+            assert!(state.sidebar_thread_state(uid).settled);
+            assert!(state.settings.sidebar.settled_expanded);
+            let groups = state.sidebar_thread_groups();
+            assert!(groups.active.is_empty());
+            assert_eq!(groups.settled.len(), 1);
+        });
+    }
+
+    #[test]
+    fn t3_sidebar_working_section_counts_and_keeps_active_when_collapsed() {
+        let mut app = TestAppContext::new();
+        let (mut cx, state) = open_app(&mut app);
+        cx.update_window_entity(&state, |state, _, cx| {
+            state.settings.agent_layout = false;
+            state.settings.sidebar.working_expanded = true;
+            state.projects[0].sessions[0].status = SessionStatus::Working;
+            let title: SharedString = "Other running task".into();
+            state.projects[0].sessions.push(Session {
+                id: 999,
+                uid: "working-test".into(),
+                title: title.clone(),
+                display_title: title,
+                logo: logos::default_logo(),
+                pane_tree: None,
+                maximized_pane_id: None,
+                panes: Vec::new(),
+                status: SessionStatus::Working,
+            });
+            let groups = state.sidebar_thread_groups();
+            assert_eq!(groups.working_count, 2);
+            assert_eq!(groups.working.len(), 2);
+            assert!(groups.active.is_empty());
+            cx.notify();
+        });
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("session-row-999").is_some());
+        let toggle = cx.debug_bounds("sidebar-working-toggle").unwrap();
+        cx.simulate_click(toggle.center(), Modifiers::none());
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("session-row-999").is_none());
+        assert!(cx.debug_bounds("session-row-1").is_some());
+        assert!(!state.read_with(&cx, |state, _| state.settings.sidebar.working_expanded));
+    }
+
+    #[test]
+    fn t3_sidebar_new_button_chooses_project_before_creating_thread() {
         let mut app = TestAppContext::new();
         let (mut cx, state) = open_app(&mut app);
         cx.update_window_entity(&state, |state, _, cx| {
             let scope = state.projects[0].path.clone();
-            state.settings.sidebar.style = settings::SidebarStyle::T3;
             state.settings.sidebar.project_scope = Some(scope);
             cx.notify();
         });
@@ -33989,6 +33169,12 @@ First report
         let new_thread = cx.debug_bounds("sidebar-new-thread").unwrap();
         cx.simulate_click(new_thread.center(), Modifiers::none());
         cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("new-session-project-modal").is_some());
+        assert_eq!(
+            state.read_with(&cx, |state, _| state.projects[0].sessions.len()),
+            1
+        );
+        cx.simulate_keystrokes("enter");
         assert_eq!(
             state.read_with(&cx, |state, _| state.projects[0].sessions.len()),
             2
@@ -34001,7 +33187,6 @@ First report
         let (mut cx, state) = open_app(&mut app);
         cx.update_window_entity(&state, |state, _, cx| {
             let uid = state.projects[0].sessions[0].uid.clone();
-            state.settings.sidebar.style = settings::SidebarStyle::T3;
             state.settings.sidebar.project_scope = Some(PathBuf::from("/not-this-project"));
             state.settings.sidebar.settled_expanded = false;
             state.sidebar_threads.insert(

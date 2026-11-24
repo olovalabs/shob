@@ -347,6 +347,10 @@ impl AgentBridge {
         self.send_prompt_with_context(prompt, None, None)
     }
 
+    pub(crate) fn waiting_for_title(&self) -> bool {
+        matches!(self.first_prompt, Some(FirstPrompt::Waiting(..)))
+    }
+
     pub(crate) fn send_first_prompt(
         &mut self,
         prompt: &str,
@@ -355,18 +359,8 @@ impl AgentBridge {
         cwd: &Path,
         selector: &str,
     ) -> Result<(), String> {
-        // Naming a conversation is a cheap task: route it to the configured
-        // `smol` model and fall back to the conversation's own selector when
-        // none is configured (`Router` returns the primary in that case, which
-        // reproduces the previous behavior exactly).
-        let title_selector = crate::token_efficiency::route_title_model(selector);
-        let Ok(title) = embedded::SessionTitleRequest::spawn_routed(
-            cwd,
-            &title_selector,
-            selector,
-            prompt,
-            signal_wake,
-        ) else {
+        let Ok(title) = embedded::SessionTitleRequest::spawn(cwd, selector, prompt, signal_wake)
+        else {
             return self.send_prompt_with_context(prompt, resume, context);
         };
         self.first_prompt = Some(FirstPrompt::Waiting(

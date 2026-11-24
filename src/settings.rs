@@ -84,27 +84,17 @@ impl SavedWindow {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SidebarStyle {
-    /// T3 Code's flat thread inbox with parked shelves.
-    #[default]
-    T3,
-    /// Shob's original project-grouped tree.
-    Projects,
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SavedSidebar {
     #[serde(default = "default_true")]
     pub visible: bool,
     #[serde(default = "default_sidebar_width")]
     pub width: f32,
-    #[serde(default)]
-    pub style: SidebarStyle,
     /// Canonical path of the one project shown by the sidebar filter.
     #[serde(default)]
     pub project_scope: Option<PathBuf>,
+    #[serde(default = "default_true")]
+    pub working_expanded: bool,
     #[serde(default)]
     pub snoozed_expanded: bool,
     #[serde(default)]
@@ -116,8 +106,8 @@ impl Default for SavedSidebar {
         Self {
             visible: true,
             width: default_sidebar_width(),
-            style: SidebarStyle::T3,
             project_scope: None,
+            working_expanded: true,
             snoozed_expanded: false,
             settled_expanded: false,
         }
@@ -450,8 +440,8 @@ mod tests {
             sidebar: SavedSidebar {
                 visible: false,
                 width: 300.0,
-                style: SidebarStyle::Projects,
                 project_scope: Some(PathBuf::from("/tmp/one")),
+                working_expanded: true,
                 snoozed_expanded: true,
                 settled_expanded: true,
             },
@@ -626,13 +616,12 @@ mod memory_settings_tests {
     }
 
     #[test]
-    fn t3_sidebar_is_the_default_and_legacy_settings_keep_it() {
-        assert_eq!(AppSettings::default().sidebar.style, SidebarStyle::T3);
-        assert_eq!(SavedSidebar::default().style, SidebarStyle::T3);
+    fn sidebar_settings_accept_legacy_style() {
         assert!(!SavedSidebar::default().snoozed_expanded);
         assert!(!SavedSidebar::default().settled_expanded);
         let legacy: AppSettings = serde_json::from_str(r#"{"version":1,"theme":"dark"}"#).unwrap();
-        assert_eq!(legacy.sidebar.style, SidebarStyle::T3);
         assert!(legacy.sidebar.project_scope.is_none());
+        let old: AppSettings = serde_json::from_str(r#"{"sidebar":{"style":"projects"}}"#).unwrap();
+        assert_eq!(old.sidebar, SavedSidebar::default());
     }
 }

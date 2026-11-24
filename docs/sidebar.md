@@ -1,6 +1,6 @@
 # Sidebar: before and after
 
-The default sidebar now uses T3 Code's flat thread-inbox semantics. The original Shob project tree remains available from Settings → Sidebar → Projects.
+Shob uses a flat thread inbox with project filtering.
 
 ## Before
 
@@ -12,16 +12,16 @@ Legacy behavior: a separate activity rail, project-tree toolbar, per-project ses
 
 ![T3 Code-style flat thread inbox](sidebar-after.png)
 
-Current behavior: always-visible search, source filter, add project, square-pen New thread, pinned and active thread cards, bottom Snoozed/Settled shelves, and icon-only utility chrome. No project headings are shown at rest.
+The image is a reference for the flat thread inbox, rather than a current screenshot.
 
-> The two images are design/reference captures produced for this UI change. They are not automated runtime screenshots: this sandbox has no Rust toolchain, so the native GPUI app could not be launched here.
+> The two images are design references, not runtime screenshots.
 
 ## Behavior notes
 
-- Pinned threads come first and can be reordered from the row menu.
+- Running threads appear in the Working section; pinned threads can be reordered from the row menu.
 - Settled shows 10 rows initially, then 25 more per click.
 - Snoozed and Settled shelves are closed by default and pushed to the bottom.
 - Archived threads are excluded from the inbox but can be restored in Settings.
-- The active thread is always revealed, even when filtered, parked, or archived.
-- A one-project filter makes New thread start in that project. Shift-click and multi-project scopes use the viewed project or open the searchable project picker.
-- Sidebar style, project scope, shelf expansion, and per-thread metadata are persisted across restores.
+- The active thread remains visible when the Working section is collapsed.
+- New thread opens a searchable project picker.
+- Project scope, shelf expansion, and per-thread metadata are persisted across restores.

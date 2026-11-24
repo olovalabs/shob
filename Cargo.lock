@@ -8688,6 +8688,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "sysinfo",
  "tempfile",
  "terminal",
  "tokio",
