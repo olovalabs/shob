@@ -49,7 +49,6 @@ pub use hooks::{After, Before, TokenEfficiency};
 pub use metrics::{MetricsSink, Summary, TurnRow};
 #[allow(unused_imports)]
 pub use prefix::{PrefixGuard, PrefixSnapshot};
-pub use routing::{Role, Router};
 
 use std::sync::Arc;
 
@@ -206,18 +205,6 @@ pub fn metrics_summary() -> Option<Summary> {
         .and_then(|slot| slot.as_ref().map(|sink| sink.summary().clone()))
 }
 
-/// The selector to use for cheap tasks (conversation titles), given the
-/// conversation's own selector. Falls back to that selector when no small model
-/// is configured, which reproduces the pre-routing behavior exactly.
-pub fn route_title_model(primary: &str) -> String {
-    let settings = settings_from_app();
-    let router = Router::from_settings(Some(primary), &settings);
-    router
-        .route(Role::Smol)
-        .map(|selector| selector.0.clone())
-        .unwrap_or_else(|| primary.to_string())
-}
-
 /// Concatenate a result's text blocks. Images are ignored: the seam only
 /// replaces results whose savings are textual, and never drops an image block.
 pub fn join_text(content: &[TextContentOrImage]) -> String {
@@ -303,17 +290,5 @@ mod tests {
             hooks::observe_result(&layer, "read", &args, "body\n", false),
             After::Replace(stub) if stub.contains("turn 1")
         ));
-    }
-
-    #[test]
-    fn routing_a_title_falls_back_to_the_primary_selector() {
-        // With no `smol_model` configured, routing is a no-op. (The configured
-        // case is covered in `routing`.)
-        let settings = TokenEfficiencySettings::default();
-        let router = Router::from_settings(Some("anthropic/claude-opus-4-7"), &settings);
-        assert_eq!(
-            router.route(Role::Smol).map(|selector| selector.0.clone()),
-            Some("anthropic/claude-opus-4-7".to_string())
-        );
     }
 }

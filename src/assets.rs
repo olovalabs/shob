@@ -125,6 +125,11 @@ mod tests {
         assert!(assets.load("icons/moon.svg").unwrap().is_some());
         assert!(assets.load("icons/monitor.svg").unwrap().is_some());
         assert!(assets.load("icons/ellipsis.svg").unwrap().is_some());
+        assert!(assets.load("icons/list-filter.svg").unwrap().is_some());
+        assert!(assets.load("icons/square-pen.svg").unwrap().is_some());
+        assert!(assets.load("icons/clock.svg").unwrap().is_some());
+        assert!(assets.load("icons/archive.svg").unwrap().is_some());
+        assert!(assets.load("icons/help.svg").unwrap().is_some());
         assert!(assets.load("shob-wordmark.png").unwrap().is_some());
         assert!(assets.load("logo/shob.png").unwrap().is_some());
         let icon = image::load_from_memory(crate::APP_ICON_PNG)

@@ -90,6 +90,15 @@ pub struct SavedSidebar {
     pub visible: bool,
     #[serde(default = "default_sidebar_width")]
     pub width: f32,
+    /// Canonical path of the one project shown by the sidebar filter.
+    #[serde(default)]
+    pub project_scope: Option<PathBuf>,
+    #[serde(default = "default_true")]
+    pub working_expanded: bool,
+    #[serde(default)]
+    pub snoozed_expanded: bool,
+    #[serde(default)]
+    pub settled_expanded: bool,
 }
 
 impl Default for SavedSidebar {
@@ -97,6 +106,10 @@ impl Default for SavedSidebar {
         Self {
             visible: true,
             width: default_sidebar_width(),
+            project_scope: None,
+            working_expanded: true,
+            snoozed_expanded: false,
+            settled_expanded: false,
         }
     }
 }
@@ -427,6 +440,10 @@ mod tests {
             sidebar: SavedSidebar {
                 visible: false,
                 width: 300.0,
+                project_scope: Some(PathBuf::from("/tmp/one")),
+                working_expanded: true,
+                snoozed_expanded: true,
+                settled_expanded: true,
             },
             window: Some(SavedWindow {
                 state: WindowState::Maximized,
@@ -596,5 +613,15 @@ mod memory_settings_tests {
             ..MemorySettings::default()
         };
         assert!(!memory.policy().enabled);
+    }
+
+    #[test]
+    fn sidebar_settings_accept_legacy_style() {
+        assert!(!SavedSidebar::default().snoozed_expanded);
+        assert!(!SavedSidebar::default().settled_expanded);
+        let legacy: AppSettings = serde_json::from_str(r#"{"version":1,"theme":"dark"}"#).unwrap();
+        assert!(legacy.sidebar.project_scope.is_none());
+        let old: AppSettings = serde_json::from_str(r#"{"sidebar":{"style":"projects"}}"#).unwrap();
+        assert_eq!(old.sidebar, SavedSidebar::default());
     }
 }

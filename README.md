@@ -86,6 +86,12 @@ An empty right panel in Agent mode opens a surface picker for Terminal, Files, a
 
 The Files surface restores open files, unsaved drafts, expanded folders, and the commit message. Use Refresh to pick up external changes. Editing supports UTF-8 files up to 1 MiB and eight open tabs; saves refuse to overwrite a file changed on disk. Read-only diff snapshots and scroll positions are transient.
 
+### Sidebar
+
+The sidebar groups running, pinned, active, snoozed, and settled threads. Use the project filter to narrow the list, and the row menu to pin, settle, snooze, archive, or delete a thread. Archived threads can be restored from Settings.
+
+**New thread** opens a project chooser. `Ctrl/Cmd+N` opens the chooser, `Ctrl/Cmd+K` focuses sidebar search, and `Ctrl/Cmd+Shift+B` opens the project filter. Thread metadata is stored in `workspace.json`; project scope and shelf expansion are stored in `settings.json`.
+
 ### Make It Yours
 
 Customize Shob to match your workflow.
