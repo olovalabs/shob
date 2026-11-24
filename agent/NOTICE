@@ -1,4 +1,4 @@
-rpi
+shob
 ===
 
 This crate family is a Rust port of the TypeScript `pi` SDK, not a verbatim

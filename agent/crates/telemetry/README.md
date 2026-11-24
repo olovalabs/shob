@@ -1,7 +1,7 @@
 # telemetry
 
-[![crates.io](https://img.shields.io/crates/v/rpi-telemetry.svg)](https://crates.io/crates/rpi-telemetry)
-[![docs.rs](https://docs.rs/rpi-telemetry/badge.svg)](https://docs.rs/rpi-telemetry)
+[![crates.io](https://img.shields.io/crates/v/shob-telemetry.svg)](https://crates.io/crates/shob-telemetry)
+[![docs.rs](https://docs.rs/shob-telemetry/badge.svg)](https://docs.rs/shob-telemetry)
 
 Minimal span and event contracts, with a no-op default. This is the smallest
 crate in the family and it exists so that instrumentation is a *choice*: the
@@ -44,9 +44,9 @@ assertions in tests.
 
 ## Documentation
 
-- Crate docs: <https://docs.rs/rpi-telemetry>
+- Crate docs: <https://docs.rs/shob-telemetry>
 
 ## License
 
-MIT. See [LICENSE](https://github.com/bigfish1913/pi-rust/blob/main/LICENSE)
-and [NOTICE](https://github.com/bigfish1913/pi-rust/blob/main/NOTICE).
+MIT. See [LICENSE](https://github.com/olovalabs/shob/blob/main/LICENSE)
+and [NOTICE](https://github.com/olovalabs/shob/blob/main/NOTICE).

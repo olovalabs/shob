@@ -43,15 +43,9 @@ use tools::env::ExecutionEnv;
 /// The project-local shob configuration directory.
 pub const PROJECT_CONFIG_DIR_NAME: &str = ".shob";
 
-/// Resolve the preferred project-local resource subdir `<cwd>/.shob/<sub>`.
+/// Resolve the project-local resource subdir `<cwd>/.shob/<sub>`.
 pub fn project_root(cwd: &Path) -> PathBuf {
-    let preferred = cwd.join(PROJECT_CONFIG_DIR_NAME);
-    let legacy = cwd.join(".rpi");
-    if !preferred.exists() && legacy.is_dir() {
-        legacy
-    } else {
-        preferred
-    }
+    cwd.join(PROJECT_CONFIG_DIR_NAME)
 }
 
 pub fn project_dir(cwd: &Path, sub: &str) -> PathBuf {
@@ -502,11 +496,6 @@ mod tests {
         let d = project_dir(Path::new("/proj"), "skills");
         assert_eq!(d, PathBuf::from("/proj/.shob/skills"));
         let root = tempfile::tempdir().unwrap();
-        std::fs::create_dir(root.path().join(".rpi")).unwrap();
-        assert_eq!(
-            project_dir(root.path(), "skills"),
-            root.path().join(".rpi/skills")
-        );
         std::fs::create_dir(root.path().join(".shob")).unwrap();
         assert_eq!(
             project_dir(root.path(), "skills"),
@@ -515,13 +504,13 @@ mod tests {
     }
 
     #[test]
-    fn project_dirs_only_use_shob_after_de_pi() {
+    fn project_dirs_only_use_the_shob_directory() {
         let dirs = project_dirs(Path::new("/proj"), "extensions");
         assert_eq!(dirs, vec![PathBuf::from("/proj/.shob/extensions")]);
     }
 
     #[test]
-    fn project_config_files_only_use_shob_after_de_pi() {
+    fn project_config_files_only_use_the_shob_directory() {
         let p = project_config_file(Path::new("/proj"), "SYSTEM.md");
         assert_eq!(p, PathBuf::from("/proj/.shob/SYSTEM.md"));
         assert_eq!(

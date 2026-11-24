@@ -56,7 +56,7 @@ fn sample_typed() -> TypedPayload {
             "include_hidden": false,
         }),
         metadata: PayloadMetadata {
-            cwd: "D:/Projects/pi-rust".into(),
+            cwd: "D:/Projects/shob".into(),
             session_id: "01HZZZZZZZZZZZZZZZZZZZZZZ".into(),
             flags: vec!["binary".into(), "streaming".into(), "trusted".into()],
         },

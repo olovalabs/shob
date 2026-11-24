@@ -1,6 +1,6 @@
 //! Concrete providers. Mirrors `packages/ai/src/api/*` + the in-tree faux
 //! provider (`packages/agent/src/faux.ts`, hoisted here so every crate's tests
-//! can reuse it without depending on `pi-agent`).
+//! can reuse it without depending on `agent`).
 //!
 //! Faux is always available. HTTP providers are enabled by the `providers`
 //! feature.

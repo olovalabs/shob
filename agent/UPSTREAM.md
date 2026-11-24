@@ -19,13 +19,14 @@ After import, the following non-build items were removed to keep the tree
 limited to what Shob compiles:
 
 - `website/`, `docs/`, `scripts/`, `packaging/`, `demo/`, `deploy/`
-- `.github/`, `.codegraph/`, `.rpi/`, `.runtime-tests.tmp`
+- `.github/`, `.codegraph/`, the upstream agent-config directory,
+  `.runtime-tests.tmp`
 - the other standalone `examples/` (`examples/plugin-stub` is retained because
   the upstream resource-selection integration tests build it as a fixture)
 - `Taskfile.yml`, `release-helper.rs`, `release-plz.toml`, `commit.id`,
   `.git-blame-ignore-revs`
 - root upstream README/CHANGELOG/CONTRIBUTING/CODE_OF_CONDUCT/SECURITY/ROADMAP/
-  RPI_SELF_REVIEW markdown
+  self-review markdown
 
 All library crates under `crates/`, their in-crate tests, `LICENSE`, `NOTICE`,
 `Cargo.toml` and `Cargo.lock` remain. Shob's host-facing wrapper is

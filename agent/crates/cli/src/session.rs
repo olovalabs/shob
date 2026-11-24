@@ -445,10 +445,6 @@ pub(crate) fn shob_session_dir() -> PathBuf {
 
 /// Shared durable agent-session root for the terminal and desktop frontends.
 pub fn session_dir_in(data: &Path) -> PathBuf {
-    let legacy = data.join("rpi").join("sessions");
-    if legacy.is_dir() {
-        return legacy;
-    }
     data.join("shob").join("sessions")
 }
 
@@ -1330,7 +1326,7 @@ async fn build_prepared_with_tool_hook_full(
     let saved_settings = crate::settings::load_settings().unwrap_or_default();
 
     // `httpProxy` applies to shob's own HTTP clients. Setting the environment is how
-    // they are configured (`pi-ai/src/http.rs`), and upstream does the same thing
+    // they are configured (`ai/src/http.rs`), and upstream does the same thing
     // with this key — an explicit environment variable still wins, so a shell-level
     // proxy override is not silently replaced by the setting.
     if let Some(proxy) = &saved_settings.http_proxy {
@@ -1710,7 +1706,7 @@ fn extension_tool_call_hook(
 //
 // The reload is a `cli` concern (NOT a harness op): `extensions`
 // carries only the `ActionBridge` staleness flag + a `ReloadMailbox` `()` signal
-// (no pi-cli `TuiMessage` type — leaf DAG preserved). The TUI owns the mailbox
+// (no cli `TuiMessage` type — leaf DAG preserved). The TUI owns the mailbox
 // receiver + the actual reload routine; a plugin's
 // `runtime_action(Reload)` signals the mailbox and returns `Ok(null)`
 // immediately so the calling plugin's cdylib is NOT unmapped while its
@@ -3008,7 +3004,7 @@ pub fn bash_options() -> tools::tools::bash::BashToolOptions {
     // `shellCommandPrefix` is prepended to every command (upstream's key for
     // alias/`shopt` setup). Native's `shellPath` is *not* wired: neither
     // `BashToolOptions` nor `ShellCaptureOptions` carries a shell binary today, so
-    // honouring it means plumbing one through pi-tools first.
+    // honouring it means plumbing one through tools first.
     let settings = crate::settings::load_settings().unwrap_or_default();
     BashToolOptions {
         command_prefix: settings.shell_command_prefix.clone(),
@@ -5738,7 +5734,6 @@ mod tests {
         let cwd = tmp.path();
         assert_eq!(default_session_dir(cwd), shob_session_dir());
         assert!(!cwd.join(".shob").exists());
-        assert!(!cwd.join(".rpi").exists());
         std::fs::create_dir_all(cwd.join(".shob/sessions")).unwrap();
         assert_eq!(default_session_dir(cwd), shob_session_dir());
         assert_eq!(
@@ -5748,17 +5743,17 @@ mod tests {
     }
 
     #[test]
-    fn shared_session_root_keeps_existing_global_sessions() {
+    fn shared_session_root_lives_under_shob() {
         let data = tempfile::tempdir().unwrap();
         assert_eq!(
             session_dir_in(data.path()),
             data.path().join("shob/sessions")
         );
-        let legacy = data.path().join("rpi/sessions");
-        std::fs::create_dir_all(&legacy).unwrap();
-        assert_eq!(session_dir_in(data.path()), legacy);
         std::fs::create_dir_all(data.path().join("shob/sessions")).unwrap();
-        assert_eq!(session_dir_in(data.path()), legacy);
+        assert_eq!(
+            session_dir_in(data.path()),
+            data.path().join("shob/sessions")
+        );
     }
 
     #[test]

@@ -139,7 +139,7 @@ Environment overrides: `SHOB_DATA_DIR=/absolute/path` (derives config/state/logs
 
 ### 2.6 Embedded shob agent (`agent/`)
 
-The pi-rust v0.21.0 library crates and CLI sources are vendored as a Git subtree
+The v0.21.0 library crates and CLI sources are vendored as a Git subtree
 under `agent/` and kept as its own Cargo workspace. Non-build upstream assets
 (website, docs, scripts, packaging, deploy/demo, CI metadata and most examples)
 were removed after import; `examples/plugin-stub` remains as a test fixture.

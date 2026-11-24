@@ -1,10 +1,10 @@
-# pi-rust architecture
+# shob architecture
 
 A Rust coding-agent stack, layered so each crate stays small and testable. The workspace is shaped so a CLI crate can sit on top of the library crates without pulling the libraries toward CLI concerns.
 
 ## 1. What the TypeScript Pi SDK actually is
 
-Read from `.reference/pi/packages/`. Five layers, each an npm package:
+The upstream TypeScript SDK this stack ports. Five layers, each an npm package:
 
 | TS package          | Responsibility                                                  | Key files (under `packages/`) |
 |---------------------|-----------------------------------------------------------------|-------------------------------|
@@ -84,40 +84,38 @@ The harness is a *stateful wrapper* over the stateless `Agent` loop — exactly 
 ## 2. Workspace design (crates.io-style workspace)
 
 ```
-pi-rust/
+agent/
   Cargo.toml              (workspace root)
   crates/
-    pi-telemetry/         → pi-ai
-    pi-ai/                → pi-agent
-    pi-agent/             → pi-tools  (optional dep; tools are pluggable)
-    pi-tools/             → pi-harness
-    pi-harness/           → pi-cli
-    pi-cli/               (future binary; reserved)
+    telemetry/            → ai
+    ai/                   → agent
+    agent/                → tools  (optional dep; tools are pluggable)
+    tools/                → harness
+    harness/              → cli
+    cli/                  (the `shob` binary)
   examples/
-    minimal/  tools/  persistent/
-  docs/
-  .reference/pi/          (TS source, read-only)
+    plugin-stub/
 ```
 
 **Dependency direction is strictly one-way** (left arrows = "depends on"):
 
 ```
-pi-telemetry ◀ pi-ai ◀ pi-agent ◀ pi-tools ◀ pi-harness ◀ pi-cli
+telemetry ◀ ai ◀ agent ◀ tools ◀ harness ◀ cli
 ```
 
 ### Why these crate boundaries
 
-- **`pi-ai`** is reusable on its own (LLM client + types). A user who just wants "call Anthropic with tool-use, no loop" depends only on `pi-ai`.
-- **`pi-agent`** depends only on `pi-ai`. It owns the loop, `Agent`, `AgentTool`, events, hooks, queues. No filesystem, no shell — those live in tools.
-- **`pi-tools`** owns the `ExecutionEnv` trait (file/shell abstraction, mirrors `harness/types.ts`) and built-in tools `read`/`write`/`edit`/`bash`. Apps that bring their own tools skip this crate entirely.
-- **`pi-harness`** owns session tree/compaction/JSONL. Heavy and optional; only for agents that need durable branching.
-- **`pi-cli`** is the future command-line coding agent. Having it as a separate crate means the library crates never link argparse/TUI/prompt handling.
+- **`ai`** is reusable on its own (LLM client + types). A user who just wants "call Anthropic with tool-use, no loop" depends only on `ai`.
+- **`agent`** depends only on `ai`. It owns the loop, `Agent`, `AgentTool`, events, hooks, queues. No filesystem, no shell — those live in tools.
+- **`tools`** owns the `ExecutionEnv` trait (file/shell abstraction, mirrors `harness/types.ts`) and built-in tools `read`/`write`/`edit`/`bash`. Apps that bring their own tools skip this crate entirely.
+- **`harness`** owns session tree/compaction/JSONL. Heavy and optional; only for agents that need durable branching.
+- **`cli`** is the command-line coding agent and the `shob` binary. Having it as a separate crate means the library crates never link argparse/TUI/prompt handling.
 
 ### Async runtime
 
-Tokio. The loop, streaming, and tools are all `async`. `pi-harness` JSONL writes go through a blocking thread pool (`tokio::task::spawn_blocking`) since `std::fs` is the persistence layer for phase 2.
+Tokio. The loop, streaming, and tools are all `async`. `harness` JSONL writes go through a blocking thread pool (`tokio::task::spawn_blocking`) since `std::fs` is the persistence layer for phase 2.
 
-## 3. Core types (`pi-ai`)
+## 3. Core types (`ai`)
 
 Mirror `ai/src/types.ts`.
 
@@ -235,7 +233,7 @@ User said "保持一致" (keep consistent with the TS source) → port the provi
 
 Rust providers are each their own submodule under `crates/ai/src/providers/`. HTTP via `reqwest` (streaming SSE via `reqwest::Response::bytes_stream()`). Each provider **does not** use the official SDK — the TS source calls raw REST too (`anthropic-messages.ts` uses `@anthropic-ai/sdk` but only as an HTTP/payload helper; we go straight to reqwest to keep it dependency-light and uniform across providers).
 
-## 4. Agent runtime (`pi-agent`)
+## 4. Agent runtime (`agent`)
 
 Mirrors `packages/agent/src/agent.ts` + `agent-loop.ts` + `types.ts`.
 
@@ -366,7 +364,7 @@ provider request is assembled.
 
 TS uses `AbortSignal`. Rust uses `tokio_util::sync::CancellationToken` (graceful cooperative cancel, child tokens for nested work). `Agent::abort()` cancels the run's token; tools receive a child token and must check/await it. Partial-update callbacks are no-ops after the tool future resolves (`acceptingUpdates` flag → a `bool` behind the closure).
 
-## 5. Built-in tools + execution env (`pi-tools`)
+## 5. Built-in tools + execution env (`tools`)
 
 Mirrors `harness/tools/*.ts` + `harness/env/nodejs.ts` + `harness/types.ts::ExecutionEnv`.
 
@@ -399,7 +397,7 @@ This is the seam between the tools and the host. Default impl: `NodejsEnv` (real
 
 Each is `pub fn create_read_tool(opts) -> Arc<dyn AgentTool>` etc. — same factory shape as the TS exports.
 
-## 6. Harness + persistence (`pi-harness`) — phase 2
+## 6. Harness + persistence (`harness`) — phase 2
 
 Mirror `harness/agent-harness.ts` + `session/` + `compaction/`. Spec is in `.reference/pi/packages/agent/docs/harness.md` (2941 lines — the canonical impl contract; we follow it directly).
 
@@ -415,41 +413,41 @@ Mirror `harness/agent-harness.ts` + `session/` + `compaction/`. Spec is in `.ref
 
 ### Why it's a separate crate
 
-The harness is genuinely complex (the 2941-line spec exists precisely because the state machine is subtle). Keeping it out of `pi-agent` means a user building a simple agent links only ~3 crates and gets the stateless loop. Only agents that need durable sessions, branching, or compaction pay for it.
+The harness is genuinely complex (the 2941-line spec exists precisely because the state machine is subtle). Keeping it out of `agent` means a user building a simple agent links only ~3 crates and gets the stateless loop. Only agents that need durable sessions, branching, or compaction pay for it.
 
-## 7. Telemetry (`pi-telemetry`)
+## 7. Telemetry (`telemetry`)
 
-Minimal: `TelemetryContext` trait with a `Noop` impl (mirrors `NOOP_TELEMETRY_CONTEXT`) and an `InMemory` impl for tests. `start_span`/`start_event` return RAII guards. The TS telemetry schemas (`AiSpan`, `HarnessSpan`) become typed newtypes in `pi-agent`/`pi-harness` that call into the context. Full OTLP export is out of scope.
+Minimal: `TelemetryContext` trait with a `Noop` impl (mirrors `NOOP_TELEMETRY_CONTEXT`) and an `InMemory` impl for tests. `start_span`/`start_event` return RAII guards. The TS telemetry schemas (`AiSpan`, `HarnessSpan`) become typed newtypes in `agent`/`harness` that call into the context. Full OTLP export is out of scope.
 
-## 8. `pi-cli` (future, reserved)
+## 8. `cli` (the `shob` binary)
 
-Empty crate with a `Cargo.toml` and a stub `main.rs` so the workspace compiles. When built, it will depend on `pi-harness` + `pi-tools` and provide the interactive coding agent. Library crates never depend on it.
+The binary crate depends on `harness` + `tools` + `tui` and provides the interactive coding agent, one-shot mode, and JSON event mode. Library crates never depend on it.
 
 ## 9. Build order
 
 **Phase 1 — minimal end-to-end (CRATE 1-3):**
-1. `pi-telemetry` noop.
-2. `pi-ai`: types, `Schema`, `validate_tool_arguments`+coerce, `AssistantMessageEventStream`, `faux` provider. No real network yet.
-3. `pi-agent`: `AgentTool` trait, `Agent`, loop, events, hooks, queues. All tests against faux.
+1. `telemetry` noop.
+2. `ai`: types, `Schema`, `validate_tool_arguments`+coerce, `AssistantMessageEventStream`, `faux` provider. No real network yet.
+3. `agent`: `AgentTool` trait, `Agent`, loop, events, hooks, queues. All tests against faux.
 
 → Deliverable: an agent that runs against a scripted provider, executes custom tools, streams events. This alone is "conveniently build your own agent."
 
 **Phase 2 — real provider (CRATE 2):**
-4. `pi-ai/providers/anthropic`: SSE streaming → `AssistantMessageEvent`, thinking/tool-use, `cache_control`, image input. Reqwest + `tokio` SSE.
+4. `ai`'s `providers/anthropic`: SSE streaming → `AssistantMessageEvent`, thinking/tool-use, `cache_control`, image input. Reqwest + `tokio` SSE.
 
 → Deliverable: real Claude agent with tools.
 
 **Phase 3 — built-in tools (CRATE 4):**
-5. `pi-tools`: `ExecutionEnv` + `NodejsEnv`, `read`/`write`/`edit`/`bash`. `InMemoryEnv` for tests.
+5. `tools`: `ExecutionEnv` + `NodejsEnv`, `read`/`write`/`edit`/`bash`. `InMemoryEnv` for tests.
 
 → Deliverable: coding-agent-capable library.
 
 **Phase 4 — harness + persistence (CRATE 5):**
-6. `pi-harness`: session tree, JSONL, compaction, `AgentHarness`. Follow `harness.md` spec directly.
+6. `harness`: session tree, JSONL, compaction, `AgentHarness`. Follow `harness.md` spec directly.
 
 **Phase 5 — more providers:** openai family, google, bedrock. Each is additive behind the `Provider` trait.
 
-**Phase 6 — `pi-cli`:** the interactive binary.
+**Phase 6 — `cli`:** the interactive `shob` binary.
 
 ## 10. Conventions
 

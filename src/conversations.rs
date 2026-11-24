@@ -412,9 +412,6 @@ pub fn legacy_conversation_key(model: Option<&AgentModel>) -> String {
         Some(model) if model.backend == ModelBackend::Shob => {
             sanitize(&format!("omp_{}_{}", model.provider, model.id))
         }
-        Some(model) if model.backend == ModelBackend::Embedded => {
-            sanitize(&format!("rpi_{}_{}", model.provider, model.id))
-        }
         _ => conversation_key(model),
     }
 }
@@ -914,7 +911,7 @@ mod tests {
         );
         assert_eq!(
             legacy_conversation_key(Some(&embedded)),
-            "rpi_google_antigravity_gemini_3.1"
+            "embedded_google_antigravity_gemini_3.1"
         );
     }
 

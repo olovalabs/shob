@@ -39,7 +39,7 @@
 //! An entry that no longer chains to the lane leaf (its parent was the other
 //! writer's leaf) is re-parented onto the current leaf. When any duplicate was
 //! dropped the file is atomically republished without it. The host additionally
-//! takes an OS advisory lock per session (see `pi-cli`'s `claim_session_lock`)
+//! takes an OS advisory lock per session (see `cli`'s `claim_session_lock`)
 //! so a second process is refused rather than allowed to write concurrently.
 //!
 //! ## Adaptation

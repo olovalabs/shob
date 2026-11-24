@@ -501,7 +501,6 @@ impl AgentBridge {
 
 pub(crate) fn rpc_backend_requested() -> bool {
     std::env::var("SHOB_AGENT_BACKEND")
-        .or_else(|_| std::env::var("SHOB_RPI_BACKEND"))
         .map(|backend| backend.eq_ignore_ascii_case("rpc"))
         .unwrap_or(false)
 }

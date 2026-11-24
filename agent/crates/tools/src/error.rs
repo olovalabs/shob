@@ -1,7 +1,7 @@
 //! Mirrors `packages/agent/src/harness/types.ts` — the `FileError` /
 //! `ExecutionError` shapes + their stable code enums used by the `ExecutionEnv`
 //! trait. Drops the TS `ok/err/getOrThrow` helpers (Rust has these natively) and
-//! the `CompactionError`/`BranchSummaryError` (those live in `pi-harness`).
+//! the `CompactionError`/`BranchSummaryError` (those live in `harness`).
 //!
 //! The stable code enums are backend-independent: `OsExecutionEnv` and
 //! `InMemoryExecutionEnv` both classify failures into the same codes so tool

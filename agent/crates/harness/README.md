@@ -1,9 +1,9 @@
 # harness
 
-[![crates.io](https://img.shields.io/crates/v/rpi-harness.svg)](https://crates.io/crates/rpi-harness)
-[![docs.rs](https://docs.rs/rpi-harness/badge.svg)](https://docs.rs/rpi-harness)
+[![crates.io](https://img.shields.io/crates/v/shob-harness.svg)](https://crates.io/crates/shob-harness)
+[![docs.rs](https://docs.rs/shob-harness/badge.svg)](https://docs.rs/shob-harness)
 
-Durable sessions and the run loop that drives [`agent`](https://crates.io/crates/rpi-agent).
+Durable sessions and the run loop that drives [`agent`](https://crates.io/crates/shob-agent).
 Where the agent crate gives you a loop over one prompt, the harness gives you
 a session tree that survives process death.
 
@@ -134,26 +134,26 @@ policy and the current tool declaration say the call is safe) or records the
 outcome as unknown. Retrying is bounded by a resume budget.
 
 The end-to-end expectations are pinned in
-[`crates/harness/tests/harness_run_e2e.rs`](https://github.com/bigfish1913/pi-rust/blob/main/crates/rpi-harness/tests/harness_run_e2e.rs),
+[`crates/harness/tests/harness_run_e2e.rs`](https://github.com/olovalabs/shob/blob/main/agent/crates/harness/tests/harness_run_e2e.rs),
 including one test per crash point.
 
 ## Related crates
 
 | Crate | Role |
 | ----- | ---- |
-| [`agent`](https://crates.io/crates/rpi-agent) | The loop this crate drives |
-| [`tools`](https://crates.io/crates/rpi-tools) | Built-in tools and execution environments |
-| [`cli`](https://crates.io/crates/rpi-cli) | The terminal agent built on the harness |
+| [`agent`](https://crates.io/crates/shob-agent) | The loop this crate drives |
+| [`tools`](https://crates.io/crates/shob-tools) | Built-in tools and execution environments |
+| [`cli`](https://crates.io/crates/shob-cli) | The terminal agent built on the harness |
 
 ## Documentation
 
-- Crate docs: <https://docs.rs/rpi-harness>
-- Design notes: [docs/architecture/overview.md](https://github.com/bigfish1913/pi-rust/blob/main/docs/architecture/overview.md)
+- Crate docs: <https://docs.rs/shob-harness>
+- Design notes: [docs/architecture/overview.md](https://github.com/olovalabs/shob/blob/main/docs/architecture/overview.md)
 
 ## License
 
-MIT. See [LICENSE](https://github.com/bigfish1913/pi-rust/blob/main/LICENSE)
-and [NOTICE](https://github.com/bigfish1913/pi-rust/blob/main/NOTICE).
+MIT. See [LICENSE](https://github.com/olovalabs/shob/blob/main/LICENSE)
+and [NOTICE](https://github.com/olovalabs/shob/blob/main/NOTICE).
 
 ## Native child journal and archival-body API
 

@@ -1,4 +1,4 @@
-//! Interactive mode for pi-cli.
+//! Interactive mode for cli.
 //!
 //! Full-screen terminal UI with a streaming transcript, an editor, a live
 //! status indicator, and tool-execution display. Mirrors the TypeScript

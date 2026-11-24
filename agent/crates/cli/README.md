@@ -1,19 +1,19 @@
 # cli
 
-[![crates.io](https://img.shields.io/crates/v/rpi-cli.svg)](https://crates.io/crates/rpi-cli)
-[![docs.rs](https://docs.rs/rpi-cli/badge.svg)](https://docs.rs/rpi-cli)
-[![CI](https://github.com/bigfish1913/pi-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/bigfish1913/pi-rust/actions)
+[![crates.io](https://img.shields.io/crates/v/shob-cli.svg)](https://crates.io/crates/shob-cli)
+[![docs.rs](https://docs.rs/shob-cli/badge.svg)](https://docs.rs/shob-cli)
+[![CI](https://github.com/olovalabs/shob/actions/workflows/ci.yml/badge.svg)](https://github.com/olovalabs/shob/actions)
 
 The terminal coding-agent CLI — the `shob` binary — built on the `shob-*` library
 crates. It is the ready-to-run surface of the
-[shob](https://github.com/bigfish1913/pi-rust) project: an interactive TUI, a
+[shob](https://github.com/olovalabs/shob) project: an interactive TUI, a
 one-shot `-p` mode, a JSON event mode, durable sessions, and Rust `cdylib`
 plugin loading.
 
 ## Install
 
 ```bash
-cargo install cli
+cargo install --path . --locked
 ```
 
 Requires Rust 1.88 or newer. Then point it at a provider and start it:
@@ -35,12 +35,13 @@ shob --mode json -p "list the crates"
 Credentials are resolved in priority order:
 
 1. `--api-key` on the command line
-2. `~/.shob/auth.json`, written by `shob auth login` (mode `0o600` on Unix)
+2. `~/.shob/agent/auth.json`, written by `shob auth login` (mode `0o600` on Unix)
 3. the `apiKey` field of a provider in `~/.shob/agent/models.json`
 4. provider environment variables: `OPENAI_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
    `ANTHROPIC_API_KEY`
 
-`~/.shob/` can be relocated with `SHOB_CODING_AGENT_DIR`.
+`~/.shob/` can be relocated with `SHOB_CODING_AGENT_DIR`, which points at the
+agent directory itself.
 
 ## Custom providers and gateways
 
@@ -105,13 +106,13 @@ shob --connect host:port --token T # zero-local-resource TUI client
 
 The client holds no local provider, tools, extensions or session files; all
 agent work happens on the server. See
-[docs/remote/user-guide.md](https://github.com/bigfish1913/pi-rust/blob/main/docs/remote/user-guide.md).
+[docs/remote/user-guide.md](https://github.com/olovalabs/shob/blob/main/docs/remote/user-guide.md).
 
 ## Default tools
 
 The CLI loads the Pi-compatible `read`, `write`, `edit` and `bash` tools.
 Additional implementations (`grep`, `find`, `ls`, `docs`, `powershell`) remain
-available in the [`tools`](https://crates.io/crates/rpi-tools) library and
+available in the [`tools`](https://crates.io/crates/shob-tools) library and
 through the `default_tools` setting.
 
 ## Library usage
@@ -124,9 +125,9 @@ cli = "0.3"
 ```
 
 For building your own agent, depend on
-[`agent`](https://crates.io/crates/rpi-agent) and
-[`harness`](https://crates.io/crates/rpi-harness) directly instead — see
-[docs/agent/project-structure.md](https://github.com/bigfish1913/pi-rust/blob/main/docs/agent/project-structure.md).
+[`agent`](https://crates.io/crates/shob-agent) and
+[`harness`](https://crates.io/crates/shob-harness) directly instead — see
+[docs/agent/project-structure.md](https://github.com/olovalabs/shob/blob/main/docs/agent/project-structure.md).
 
 ## RPC message identity, images and client text files
 
@@ -198,15 +199,15 @@ read-only child recovery but do not qualify the new live-proof path.
 
 ## Documentation
 
-- User guide: <https://rpi.bigfisharc.cn/docs.html>
-- Architecture: [docs/architecture/overview.md](https://github.com/bigfish1913/pi-rust/blob/main/docs/architecture/overview.md)
-- Extension authoring: [docs/extensions/authoring.md](https://github.com/bigfish1913/pi-rust/blob/main/docs/extensions/authoring.md)
-- Changelog: [CHANGELOG.md](https://github.com/bigfish1913/pi-rust/blob/main/CHANGELOG.md)
+- User guide: <https://github.com/olovalabs/shob/tree/main/docs>
+- Architecture: [docs/architecture/overview.md](https://github.com/olovalabs/shob/blob/main/docs/architecture/overview.md)
+- Extension authoring: [docs/extensions/authoring.md](https://github.com/olovalabs/shob/blob/main/docs/extensions/authoring.md)
+- Changelog: [CHANGELOG.md](https://github.com/olovalabs/shob/blob/main/CHANGELOG.md)
 
 ## License
 
-MIT. See [LICENSE](https://github.com/bigfish1913/pi-rust/blob/main/LICENSE)
-and [NOTICE](https://github.com/bigfish1913/pi-rust/blob/main/NOTICE).
+MIT. See [LICENSE](https://github.com/olovalabs/shob/blob/main/LICENSE)
+and [NOTICE](https://github.com/olovalabs/shob/blob/main/NOTICE).
 
 This crate is part of a Rust port of the MIT-licensed TypeScript `pi` SDK
 (© Mario Zechner).

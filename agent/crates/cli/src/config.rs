@@ -69,9 +69,7 @@ pub use runtime::config::DEFAULT_PROVIDER_ID;
 /// is `join(homedir(), CONFIG_DIR_NAME, "agent")`. The env override points at
 /// the agent dir itself.
 pub fn agent_dir() -> Result<PathBuf, ConfigError> {
-    if let Some(val) =
-        std::env::var_os(CONFIG_DIR_ENV).or_else(|| std::env::var_os("RPI_CODING_AGENT_DIR"))
-    {
+    if let Some(val) = std::env::var_os(CONFIG_DIR_ENV) {
         let p = PathBuf::from(&val);
         if !p.is_absolute() {
             return Err(ConfigError::RelativeOverride {
@@ -84,17 +82,11 @@ pub fn agent_dir() -> Result<PathBuf, ConfigError> {
     let home = dirs::home_dir().ok_or(ConfigError::NoHomeDir {
         env: CONFIG_DIR_ENV,
     })?;
-    Ok(default_agent_dir(&home))
+    Ok(agent_dir_in(&home))
 }
 
-fn default_agent_dir(home: &Path) -> PathBuf {
-    let preferred = home.join(CONFIG_DIR_NAME).join("agent");
-    let legacy = home.join(".rpi").join("agent");
-    if !preferred.exists() && legacy.is_dir() {
-        legacy
-    } else {
-        preferred
-    }
+fn agent_dir_in(home: &Path) -> PathBuf {
+    home.join(CONFIG_DIR_NAME).join("agent")
 }
 
 /// The config dir one level above the agent dir (`~/.shob`, or the parent of an
@@ -165,9 +157,7 @@ fn read_text_with_fallback(
 /// `app::run` ignores them so a migration hiccup never blocks startup.
 pub fn migrate_legacy_layout() -> Result<usize, ConfigError> {
     // Only migrate the default home-backed layout — never an env override.
-    if std::env::var_os(CONFIG_DIR_ENV).is_some()
-        || std::env::var_os("RPI_CODING_AGENT_DIR").is_some()
-    {
+    if std::env::var_os(CONFIG_DIR_ENV).is_some() {
         return Ok(0);
     }
     let root = match config_root_dir() {
@@ -1641,12 +1631,7 @@ mod tests {
     fn agent_dir_nests_under_agent_by_default() {
         let home = tempfile::tempdir().unwrap();
         let preferred = home.path().join(".shob/agent");
-        let legacy = home.path().join(".rpi/agent");
-        assert_eq!(default_agent_dir(home.path()), preferred);
-        std::fs::create_dir_all(&legacy).unwrap();
-        assert_eq!(default_agent_dir(home.path()), legacy);
-        std::fs::create_dir_all(&preferred).unwrap();
-        assert_eq!(default_agent_dir(home.path()), preferred);
+        assert_eq!(agent_dir_in(home.path()), preferred);
     }
 
     #[test]

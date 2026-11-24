@@ -10,7 +10,7 @@
 需要 Rust/Cargo：
 
 ```bash
-cargo install cli
+cargo install --path . --locked
 shob --version
 shob --help
 ```
@@ -18,9 +18,9 @@ shob --help
 从本仓库源码安装开发版本：
 
 ```bash
-git clone https://github.com/bigfish1913/pi-rust.git
-cd pi-rust
-cargo install --path crates/cli --force
+git clone https://github.com/olovalabs/shob.git
+cd shob
+cargo install --path . --locked --force
 ```
 
 `cargo install` 安装的是可执行文件；它不等同于 `shob install`。后者用于安装由 `plugin-sdk` 构建的 Rust 动态库扩展。
@@ -30,21 +30,21 @@ cargo install --path crates/cli --force
 本项目是 Rust Cargo workspace，不是 Node/npm 项目，根目录没有 `package.json`。在仓库根目录执行：
 
 ```bash
-# 直接启动 CLI
-cargo run -p cli
+# 直接启动 CLI（桌面默认；`tui` 显式进入终端界面）
+cargo run -- tui
 
 # 向 CLI 传递参数（`--` 后的内容属于 shob）
-cargo run -p cli -- -p "总结 README.md"
-cargo run -p cli -- --mode json -p "列出项目中的 crates"
+cargo run -- tui -- -p "总结 README.md"
+cargo run -- tui -- --mode json -p "列出项目中的 crates"
 
 # 构建 release 版本
-cargo build -p cli --release
+cargo build --release --locked
 ```
 
 构建完成后，Windows 可执行文件位于 `target/release/shob.exe`，Linux/macOS 下通常为 `target/release/shob`。也可以把本地 CLI 安装到 Cargo 的 bin 目录后直接使用：
 
 ```bash
-cargo install --path crates/cli --force
+cargo install --path . --locked --force
 shob
 ```
 
@@ -326,7 +326,7 @@ Rust 原生插件是 `cdylib`，只依赖 `plugin-sdk`，由 `extensions` 动态
 完整的“从零写插件”流程见 [`docs/extensions/authoring.md`](../extensions/authoring.md)，
 包括 Cargo 结构、`export_plugin!`、工具生命周期、能力检测、测试和 `shob dev`。
 如果插件项目还需要 Web/ACP 适配器共享的 session、workspace、RPC 或 durable 状态，
-可以额外复用 [`shob-extcore`](https://crates.io/crates/rpi-extcore)（`shob-extcore = "0.1"`）。
+可以额外复用 [`shob-extcore`](https://crates.io/crates/shob-extcore)（`shob-extcore = "0.1"`）。
 它是普通 Rust 库，不是 `cdylib` 入口，也不替代 `plugin-sdk`；只做普通 CLI 工具时
 不要为了 ABI 注册引入它。
 
@@ -389,13 +389,13 @@ shob dev
 # 只调试当前扩展：shob dev-local（隔离模式，不加载全局扩展）
 ```
 
-`shob dev` 会自动识别 Cargo `cdylib`、首次编译并从 `.shob/extensions/.dev` 加载版本化产物。源码变化会触发重新编译和热重载；手工执行 `/reload` 也会先重新编译。编译失败时继续保留当前已经加载的版本。完整模板和边界规则见在线扩展作者指南：<https://rpi.laofu.online/extension-authoring.md>，调试技巧见 `docs` 的 `debugging` 主题。
+`shob dev` 会自动识别 Cargo `cdylib`、首次编译并从 `.shob/extensions/.dev` 加载版本化产物。源码变化会触发重新编译和热重载；手工执行 `/reload` 也会先重新编译。编译失败时继续保留当前已经加载的版本。完整模板和边界规则见在线扩展作者指南：<https://github.com/olovalabs/shob/tree/main/docs/extension-authoring>，调试技巧见 `docs` 的 `debugging` 主题。
 
 安装后的动态库位于 `~/.shob/agent/extensions`（或 `SHOB_CODING_AGENT_DIR` 指定的目录），下次启动 shob 时加载。插件通过稳定 ABI 注册工具、Provider、事件处理器和资源处理器；不要直接依赖 `cli` 的私有模块。
 
 ### 网页搜索与抓取
 
-联网工具由独立的 [shob-package 扩展](https://github.com/pi-rust/rpi-package) 提供，
+联网工具由独立的 [shob-package 扩展](https://github.com/olovalabs/shob-package) 提供，
 不属于 CLI 默认内置工具。按需安装后重启 shob：
 
 ```bash
@@ -428,7 +428,7 @@ shob install shob-subagents
 宿主与扩展需同时支持对应协议；旧宿主明确要求升级，不回退到默认配置的子进程。
 SDK 提供 `AgentHarness::create_child`，扩展通过 `GetExecutionContext` 和 `ChildAgent`
 runtime actions 接入。完整协议见仓库 `docs/extensions/subagents.md`：
-<https://github.com/bigfish1913/pi-rust/blob/main/docs/extensions/subagents.md>。
+<https://github.com/olovalabs/shob/blob/main/docs/extensions/subagents.md>。
 
 ## 7. SDK 集成
 
@@ -508,7 +508,7 @@ Release PR；维护者需要在 `Actions → CI → Run workflow` 中选择 `mai
 `prepare_release`。只有合并符合条件的 Release PR 才会发布。发布记录统一维护在根目录
 `CHANGELOG.md`，不再新建 `docs/release-vX.Y.Z.md`。完整流程与纯文档不发布的处理方式
 见仓库 `docs/maintaining/releasing.md`：
-<https://github.com/bigfish1913/pi-rust/blob/main/docs/maintaining/releasing.md>。
+<https://github.com/olovalabs/shob/blob/main/docs/maintaining/releasing.md>。
 
 修改模型可读文档源 `docs/shob-tool/` 后运行 `sh scripts/sync-embedded-docs.sh` 并提交
 生成的文档快照。仅更新文档不需要 bump 版本或打 tag。官网仍需单独部署，提交或合并
@@ -516,11 +516,11 @@ Release PR；维护者需要在 `Actions → CI → Run workflow` 中选择 `mai
 
 ## 10. 文档查询入口
 
-- 在线文档：<https://rpi.laofu.online/docs.html>
-- 源码仓库：<https://github.com/bigfish1913/pi-rust>
-- Rust API：<https://docs.rs/rpi-agent>、<https://docs.rs/rpi-plugin-sdk>
+- 在线文档：<https://github.com/olovalabs/shob/tree/main/docs>
+- 源码仓库：<https://github.com/olovalabs/shob>
+- Rust API：<https://docs.rs/shob-agent>、<https://docs.rs/shob-plugin-sdk>
 
-- Package 与扩展作者指南：<https://rpi.laofu.online/extension-authoring.md>
+- Package 与扩展作者指南：<https://github.com/olovalabs/shob/tree/main/docs/extension-authoring>
 - 远程模式：<docs/remote/user-guide.md>
 - Rust 扩展与 agent 调试：`shob` 内 `docs` 工具的 `debugging` 主题
 

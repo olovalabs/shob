@@ -503,7 +503,7 @@ async fn run_inner(mut argv: Vec<String>) -> i32 {
         })
         .unwrap_or(false);
     if web_requested && (!web_registered || !stdio_claimed) {
-        eprintln!("error: --web requires the shob-web server extension; it is missing, disabled, or failed to load.\nInstall it with: {command} install shob-web --github pi-rust/shob-package\nThen restart with: {command} --web", command = crate::COMMAND);
+        eprintln!("error: --web requires the shob-web server extension; it is missing, disabled, or failed to load.\nInstall it with: {command} install shob-web --github olovalabs/shob-package\nThen restart with: {command} --web", command = crate::COMMAND);
         return EXIT_USAGE;
     }
     let stdio_lifecycle = reload_context

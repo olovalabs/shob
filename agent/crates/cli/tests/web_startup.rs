@@ -41,7 +41,7 @@ async fn missing_web_extension_reports_installation_without_waiting_for_stdin() 
             "{error}"
         );
         assert!(
-            error.contains("shob install shob-web --github pi-rust/shob-package"),
+            error.contains("shob install shob-web --github olovalabs/shob-package"),
             "{error}"
         );
         assert!(output.stdout.is_empty());

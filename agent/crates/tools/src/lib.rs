@@ -3,11 +3,11 @@
 //! M4 scope: `ExecutionEnv` trait + `OsExecutionEnv` + `InMemoryExecutionEnv` +
 //! file-mutation-queue + read/write/edit/bash tools + edit-diff + utils
 //! (truncate, shell-output, image, path-utils). Session/compaction arrive in M5
-//! (these live in `pi-harness`, not here).
+//! (these live in `harness`, not here).
 //!
-//! Workspace dep chain: `pi-telemetry → pi-ai → pi-agent → pi-tools →
-//! pi-harness → pi-cli`. `pi-tools` depends on `pi-agent` (for the `AgentTool`
-//! trait) and `pi-ai` (for `Tool`/content types).
+//! Workspace dep chain: `telemetry → ai → agent → tools →
+//! harness → cli`. `tools` depends on `agent` (for the `AgentTool`
+//! trait) and `ai` (for `Tool`/content types).
 
 #![forbid(unsafe_code)]
 

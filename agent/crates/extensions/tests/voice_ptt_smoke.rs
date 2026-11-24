@@ -89,7 +89,7 @@ fn locate_cdylib() -> Option<PathBuf> {
 
     // 2. The sibling repo's target dir, resolved relative to this crate.
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest.parent()?.parent()?; // <pi-rust>/crates/extensions -> <pi-rust>
+    let repo_root = manifest.parent()?.parent()?; // <shob>/crates/extensions -> <shob>
     let sibling = repo_root.parent()?.join("shob-package");
     for profile in ["release", "debug"] {
         let candidate = sibling.join("target").join(profile).join(name);

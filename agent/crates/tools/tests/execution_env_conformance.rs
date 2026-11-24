@@ -78,7 +78,7 @@ async fn run_suite(env: Arc<dyn ExecutionEnv>) {
 async fn in_memory_conforms() {
     // Use an OS-absolute root so `absolute_path(...).is_absolute()` holds on
     // Windows too (where `/tmp/work` is NOT absolute — it lacks a drive).
-    let root = std::env::temp_dir().join("pi-tools-im-conf");
+    let root = std::env::temp_dir().join("tools-im-conf");
     let _ = std::fs::create_dir_all(&root);
     let env: Arc<dyn ExecutionEnv> = Arc::new(InMemoryExecutionEnv::with_cwd(root.clone()));
     run_suite(env).await;
@@ -89,7 +89,7 @@ async fn in_memory_conforms() {
 async fn os_conforms_over_tempdir() {
     // Skip on systems without bash — the FileSystem suite itself is OS-agnostic,
     // but we only run the Os backend where a real shell exists.
-    let tmp = std::env::temp_dir().join(format!("pi-tools-conf-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("tools-conf-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&tmp);
     let env: Arc<dyn ExecutionEnv> = Arc::new(OsExecutionEnv::with_cwd(tmp.clone()));
     run_suite(env).await;
@@ -128,7 +128,7 @@ async fn truncate_file_only_shrinks_on_both_backends() {
 
 #[tokio::test]
 async fn os_cancel_interrupts_even_when_timeout_is_set() {
-    let tmp = std::env::temp_dir().join(format!("pi-tools-cancel-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("tools-cancel-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&tmp);
     let env = OsExecutionEnv::with_cwd(tmp.clone());
     let cancel = CancellationToken::new();

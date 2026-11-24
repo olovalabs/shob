@@ -82,7 +82,6 @@ impl SavedPaneNode {
 #[serde(default)]
 pub struct SavedModelChat {
     pub model: Option<AgentModel>,
-    #[serde(alias = "rpi_session_id")]
     pub shob_session_id: Option<String>,
     pub conversation: String,
     /// Conversation name reported by the agent for this model.
@@ -110,7 +109,6 @@ pub struct SavedChat {
     pub agent_title: Option<String>,
     /// Name derived from the first prompt, shown until the agent reports one.
     pub prompt_title: Option<String>,
-    #[serde(alias = "rpi_session_id")]
     pub shob_session_id: Option<String>,
     pub conversation_key: Option<String>,
     #[serde(default)]
@@ -884,16 +882,17 @@ mod tests {
         let text = serde_json::to_string(&workspace).unwrap();
         let restored = load_from_text(&text);
         assert_eq!(restored, workspace);
-        let legacy = text.replace("shob_session_id", "rpi_session_id");
-        assert_eq!(load_from_text(&legacy), workspace);
-        let legacy_chat = serde_json::json!({
-            "rpi_session_id": "existing-session",
-            "selected_model": {"provider": "anthropic", "id": "model", "backend": "Rpi"}
-        });
-        let chat: SavedChat = serde_json::from_value(legacy_chat).unwrap();
-        assert_eq!(chat.shob_session_id.as_deref(), Some("existing-session"));
+        let restored_chat: SavedChat = serde_json::from_value(serde_json::json!({
+            "shob_session_id": "existing-session",
+            "selected_model": {"provider": "anthropic", "id": "model", "backend": "LegacyName"}
+        }))
+        .unwrap();
         assert_eq!(
-            chat.selected_model.unwrap().backend,
+            restored_chat.shob_session_id.as_deref(),
+            Some("existing-session")
+        );
+        assert_eq!(
+            restored_chat.selected_model.unwrap().backend,
             crate::agent_auth::ModelBackend::Embedded
         );
     }

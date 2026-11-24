@@ -111,7 +111,7 @@ pub struct Settings {
     pub session_dir: Option<PathBuf>,
 
     /// Custom shell binary. upstream's `shellPath`. Parsed for fidelity, but
-    /// **not consumed yet**: nothing in pi-tools carries a shell binary, so
+    /// **not consumed yet**: nothing in tools carries a shell binary, so
     /// honouring it means plumbing one through `BashToolOptions` /
     /// `ShellCaptureOptions` first.
     #[serde(default)]
@@ -953,17 +953,17 @@ mod scoped_tests {
     fn cdn_base_url_setting_round_trips() {
         let (_tmp, _guard) = with_temp_env();
         let mut settings = Settings::default();
-        settings.cdn_base_url = Some("https://assets.bigfisharc.cn".into());
+        settings.cdn_base_url = Some("https://assets.example.test/shob".into());
         save_settings(&settings).unwrap();
 
         let raw: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(config::settings_path().unwrap()).unwrap(),
         )
         .unwrap();
-        assert_eq!(raw["cdnBaseUrl"], "https://assets.bigfisharc.cn");
+        assert_eq!(raw["cdnBaseUrl"], "https://assets.example.test/shob");
         assert_eq!(
             load_settings().unwrap().cdn_base_url.as_deref(),
-            Some("https://assets.bigfisharc.cn")
+            Some("https://assets.example.test/shob")
         );
 
         settings.cdn_base_url = None;

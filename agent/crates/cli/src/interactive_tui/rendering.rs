@@ -324,10 +324,7 @@ pub(super) fn add_version_message(container: &Arc<Container>) {
         0,
     )));
     container.add_child(Arc::new(Text::new(
-        format!(
-            "  {}",
-            c.dim.fg("Rust implementation of pi coding agent TUI")
-        ),
+        format!("  {}", c.dim.fg("Shob coding agent TUI")),
         1,
         0,
     )));

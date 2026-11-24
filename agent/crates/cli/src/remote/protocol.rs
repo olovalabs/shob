@@ -9,8 +9,8 @@
 //! - streams [`RemoteEvent`]s (`{"type":"agent_start"}`, `{"type":"message_update",…}`, …), and
 //! - answers each [`RemoteCommand`] with a [`RemoteResponse`] (`{"type":"response",…}`).
 //!
-//! These are intentionally **not** the core `pi-agent`/`pi-ai` types: `AgentEvent`
-//! is documented as process-local (see `pi-agent/src/events.rs`) and deliberately
+//! These are intentionally **not** the core `agent`/`ai` types: `AgentEvent`
+//! is documented as process-local (see `agent/src/events.rs`) and deliberately
 //! has no serde impl. This module projects the process-local events into a
 //! stable, wire-safe shape, and translates back only the subset the client needs.
 //! That keeps the core crates untouched and the client free of local resources.

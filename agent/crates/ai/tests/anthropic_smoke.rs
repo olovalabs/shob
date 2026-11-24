@@ -11,7 +11,7 @@
 //!   - the tool-call args parse as a JSON object with the expected `city`
 //!     field, and the call targets the declared tool name.
 //!
-//! Run with: `cargo test -p pi-ai --features smoke --test anthropic_smoke
+//! Run with: `cargo test -p ai --features smoke --test anthropic_smoke
 //! -- --nocapture --ignored` (or set `ANTHROPIC_API_KEY` and drop `--ignored`).
 //! The `#[ignore]` keeps it out of the default `cargo test` run so CI without
 //! a key doesn't even attempt the network call.

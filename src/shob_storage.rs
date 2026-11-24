@@ -1,4 +1,4 @@
-//! Session files owned by Shob's embedded SHOB conversations.
+//! Session files owned by Shob's native conversations.
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -25,7 +25,7 @@ fn session_file(name: &str, id: &str) -> bool {
         == Some(id)
 }
 
-/// Copy an old project-local session only when it has not already been copied.
+/// Copy a project-local session only when it has not already been copied.
 pub fn copy_legacy_session(cwd: &Path, id: &str) -> io::Result<()> {
     copy_legacy_session_to(cwd, id, &crate::paths::shob_sessions_dir())
 }
@@ -39,11 +39,6 @@ fn copy_legacy_session_to(cwd: &Path, id: &str, root: &Path) -> io::Result<()> {
     }
     let project = project_dir(cwd);
     let source = cwd.join(".shob/sessions").join(&project);
-    let source = if source.is_dir() {
-        source
-    } else {
-        cwd.join(".rpi/sessions").join(&project)
-    };
     let destination = root.join(project);
     let entries = match fs::read_dir(&source) {
         Ok(entries) => entries,
@@ -136,7 +131,7 @@ mod tests {
         let base = std::env::temp_dir().join(format!("shob-storage-{}", crate::paths::uid("test")));
         let project = base.join("project");
         let root = base.join("data/shob/sessions");
-        let old = project.join(".rpi/sessions").join(project_dir(&project));
+        let old = project.join(".shob/sessions").join(project_dir(&project));
         fs::create_dir_all(&old).unwrap();
         fs::write(old.join("date_abc.jsonl"), "old").unwrap();
         fs::write(old.join("date_abc.jsonl.progress.jsonl"), "progress").unwrap();
@@ -163,6 +158,23 @@ mod tests {
             fs::read_to_string(old.join("date_abc.jsonl")).unwrap(),
             "old"
         );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn project_local_sessions_are_read_from_the_shob_directory() {
+        let base = std::env::temp_dir().join(format!("shob-storage-{}", crate::paths::uid("test")));
+        let project = base.join("project");
+        let root = base.join("data/shob/sessions");
+        let dir = project
+            .join(".shob")
+            .join("sessions")
+            .join(project_dir(&project));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("date_abc.jsonl"), ".shob").unwrap();
+        copy_legacy_session_to(&project, "abc", &root).unwrap();
+        let copied = root.join(project_dir(&project)).join("date_abc.jsonl");
+        assert_eq!(fs::read_to_string(copied).unwrap(), ".shob");
         fs::remove_dir_all(base).unwrap();
     }
 }

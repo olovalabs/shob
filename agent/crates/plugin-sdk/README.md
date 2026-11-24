@@ -1,7 +1,7 @@
 # plugin-sdk
 
-[![crates.io](https://img.shields.io/crates/v/rpi-plugin-sdk.svg)](https://crates.io/crates/rpi-plugin-sdk)
-[![docs.rs](https://docs.rs/rpi-plugin-sdk/badge.svg)](https://docs.rs/rpi-plugin-sdk)
+[![crates.io](https://img.shields.io/crates/v/shob-plugin-sdk.svg)](https://crates.io/crates/shob-plugin-sdk)
+[![docs.rs](https://docs.rs/shob-plugin-sdk/badge.svg)](https://docs.rs/shob-plugin-sdk)
 
 The stable `#[repr(C)]` ABI contract for shob plugins. Depend on this crate, and
 nothing else, to build a Rust `cdylib` that extends the `shob` agent with tools,
@@ -155,8 +155,8 @@ Enable the optional `provider` feature when implementing an `ai::Provider`:
 
 ```toml
 [dependencies]
-plugin-sdk = { path = "/path/to/pi-rust/crates/plugin-sdk", features = ["provider"] }
-ai = { path = "/path/to/pi-rust/crates/ai", features = ["providers"] }
+plugin-sdk = { path = "/path/to/shob/crates/plugin-sdk", features = ["provider"] }
+ai = { path = "/path/to/shob/crates/ai", features = ["providers"] }
 serde_json = "1"
 ```
 
@@ -317,20 +317,20 @@ Rebuild extensions when the SDK contract they require changes.
 
 ## Examples and docs
 
-- [`examples/plugin-stub`](https://github.com/bigfish1913/pi-rust/tree/main/examples/plugin-stub) —
+- [`examples/plugin-stub`](https://github.com/olovalabs/shob/tree/main/examples/plugin-stub) —
   a complete plugin registering an `echo` tool with the full four-function
   lifecycle (`execute` → `poll` → `cancel` → `destroy`), an event handler, and a
   resource-discovery handler.
-- [Extension authoring guide](https://github.com/bigfish1913/pi-rust/blob/main/docs/extensions/authoring.md) —
+- [Extension authoring guide](https://github.com/olovalabs/shob/blob/main/docs/extensions/authoring.md) —
   templates, safety rules, testing and release checklist.
-- Host-side loader: [`extensions`](https://crates.io/crates/rpi-extensions).
+- Host-side loader: [`extensions`](https://crates.io/crates/shob-extensions).
 - Ready-to-install extensions:
-  [`pi-rust/shob-package`](https://github.com/pi-rust/rpi-package).
+  [`olovalabs/shob-package`](https://github.com/olovalabs/shob-package).
 
 ## License
 
-MIT. See [LICENSE](https://github.com/bigfish1913/pi-rust/blob/main/LICENSE)
-and [NOTICE](https://github.com/bigfish1913/pi-rust/blob/main/NOTICE).
+MIT. See [LICENSE](https://github.com/olovalabs/shob/blob/main/LICENSE)
+and [NOTICE](https://github.com/olovalabs/shob/blob/main/NOTICE).
 
 ## Exclusive stdio servers
 

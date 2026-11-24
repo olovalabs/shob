@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 /// `AgentMessage = Message | Custom`. The open-enum port of TS
 /// `AgentMessage = Message | CustomAgentMessages[keyof CustomAgentMessages]`.
 ///
-/// `PartialEq` is derived so `pi-harness` entry equality (and tests) can compare
+/// `PartialEq` is derived so `harness` entry equality (and tests) can compare
 /// persisted messages by value. `ai`'s base message types already implement
 /// `PartialEq`; `CustomMessage` does too, so the four-arm enum derives cleanly.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -139,10 +139,10 @@ impl AgentMessageRole {
 /// `"branchSummary"`); `content` is provider-content the renderer emits;
 /// `data` carries the role's structured payload; `timestamp` is ms-since-epoch.
 ///
-/// `pi-harness::messages` provides typed constructors per known role;
-/// `pi-agent` stays role-agnostic and only owns this shell.
+/// `harness::messages` provides typed constructors per known role;
+/// `agent` stays role-agnostic and only owns this shell.
 ///
-/// `PartialEq` is derived so `pi-harness` entry equality (and tests) can compare
+/// `PartialEq` is derived so `harness` entry equality (and tests) can compare
 /// persisted custom messages by value. `serde_json::Value` + `Content` both
 /// implement `PartialEq`, so the derive is sound.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

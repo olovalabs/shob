@@ -7,11 +7,11 @@
 //!
 //! v1 divergences from TS (recorded for review):
 //! - **`complete_simple` source.** TS `Models.completeSimple` is a higher-level
-//!   helper; pi-ai has only `Provider::stream_simple`. `complete_simple_with_ret
+//!   helper; ai has only `Provider::stream_simple`. `complete_simple_with_ret
 //!   ries` is built over `Provider::stream_simple` + `stream.result()` — the
 //!   faithful equivalent, one provider per call. The harness (M5f) resolves
 //!   which provider serves the summarization model and passes it in.
-//! - **`retry_assistant_call`.** pi-ai has only HTTP-level
+//! - **`retry_assistant_call`.** ai has only HTTP-level
 //!   `retry_provider_request` (anthropic). This module ports a compaction-local
 //!   AssistantMessage-level retry mirroring `retryAssistantCall`'s shape
 //!   (abort-terminal, success-fast, exponential backoff, sleep honors the

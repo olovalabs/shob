@@ -294,7 +294,7 @@ mod tests {
     }
 }
 
-/// The trait seam. The arrow `pi-agent → pi-ai` means the agent loop depends on
+/// The trait seam. The arrow `agent → ai` means the agent loop depends on
 /// this trait alone — provider crates are pluggable behind it.
 ///
 /// `stream_simple` returns synchronously (no `await`): it creates an
