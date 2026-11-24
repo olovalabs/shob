@@ -197,7 +197,6 @@ impl AppState {
     fn render_focused_agent_info(
         &self,
         pane: &TerminalPane,
-        wide: bool,
         has_usage: bool,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
@@ -229,369 +228,332 @@ impl AppState {
         let project = owner
             .map(|project| project.name.clone())
             .unwrap_or_else(|| SharedString::from("Environment"));
-        let expanded = wide || pane.chat.info_open;
         div()
             .id(("focused-agent-info", pane_id))
             .debug_selector(|| "focused-agent-info".into())
             .absolute()
-            .top(if has_usage { px(32.0) } else { px(12.0) })
+            .top(if has_usage { px(70.0) } else { px(46.0) })
             .right(px(16.0))
-            .w(if expanded { px(280.0) } else { px(36.0) })
+            .w(px(280.0))
+            .max_w(relative(0.9))
             .rounded(px(14.0))
             .border_1()
             .border_color(tokens.card_border)
             .bg(tokens.card_hover)
             .shadow_md()
             .overflow_hidden()
-            .when(!wide, |panel| {
-                panel.child(
-                    div()
-                        .id(("focused-agent-info-toggle", pane_id))
-                        .debug_selector(|| "focused-agent-info-toggle".into())
-                        .h(px(34.0))
-                        .flex()
-                        .items_center()
-                        .justify_end()
-                        .px(px(10.0))
-                        .cursor_pointer()
-                        .child(
-                            svg()
-                                .path("icons/info.svg")
-                                .size(px(15.0))
-                                .text_color(tokens.text_secondary),
-                        )
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.editor_picker_open = None;
-                                if let Some(pane) = this.pane_mut(pane_id) {
-                                    pane.chat.info_open = !pane.chat.info_open;
-                                    cx.notify();
-                                }
-                            }),
-                        ),
-                )
-            })
-            .when(expanded, |panel| {
-                panel.child(
-                    div()
-                        .id(("project-details-body", pane_id))
-                        .max_h(px(520.0))
-                        .overflow_y_scrollbar()
-                        .flex()
-                        .flex_col()
-                        .p(px(8.0))
-                        .gap(px(2.0))
-                        .child(
+            .child(
+                div()
+                    .id(("project-details-body", pane_id))
+                    .max_h(px(520.0))
+                    .overflow_y_scrollbar()
+                    .flex()
+                    .flex_col()
+                    .p(px(8.0))
+                    .gap(px(2.0))
+                    .child(
+                        div()
+                            .h(px(30.0))
+                            .px(px(6.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(10.0))
+                            .child(
+                                svg()
+                                    .path("icons/monitor.svg")
+                                    .size(px(15.0))
+                                    .text_color(tokens.text_secondary),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_size(px(13.0))
+                                    .text_color(tokens.text_secondary)
+                                    .truncate()
+                                    .child(project),
+                            )
+                            .child(
+                                div()
+                                    .id(("project-folder", pane_id))
+                                    .cursor_pointer()
+                                    .child(
+                                        svg()
+                                            .path("icons/folder.svg")
+                                            .size(px(15.0))
+                                            .text_color(tokens.text_secondary),
+                                    )
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            if let Some(&(project, _, _)) =
+                                                this.pane_index.get(&pane_id)
+                                            {
+                                                let path = this.projects[project].path.clone();
+                                                cx.background_executor()
+                                                    .spawn(async move {
+                                                        let _ = paths::open_in_file_manager(&path);
+                                                    })
+                                                    .detach();
+                                            }
+                                        }),
+                                    ),
+                            ),
+                    )
+                    .child(self.render_project_editor(pane, &tokens, cx))
+                    .children(scripts.into_iter().flatten().take(32).enumerate().map(
+                        |(index, script)| {
                             div()
-                                .h(px(30.0))
-                                .px(px(6.0))
                                 .flex()
                                 .items_center()
-                                .gap(px(10.0))
-                                .child(
-                                    svg()
-                                        .path("icons/monitor.svg")
-                                        .size(px(15.0))
-                                        .text_color(tokens.text_secondary),
-                                )
+                                .gap(px(8.0))
+                                .px(px(6.0))
+                                .h(px(30.0))
                                 .child(
                                     div()
+                                        .id(("run-project-script", index))
                                         .flex_1()
-                                        .text_size(px(13.0))
-                                        .text_color(tokens.text_secondary)
+                                        .min_w_0()
                                         .truncate()
-                                        .child(project),
+                                        .cursor_pointer()
+                                        .text_size(px(12.0))
+                                        .child(format!("▶  {}", script.name))
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(move |this, _, window, cx| {
+                                                cx.stop_propagation();
+                                                this.run_project_script(pane_id, index, window, cx);
+                                            }),
+                                        ),
                                 )
                                 .child(
                                     div()
-                                        .id(("project-folder", pane_id))
+                                        .id(("remove-project-script", index))
                                         .cursor_pointer()
-                                        .child(
-                                            svg()
-                                                .path("icons/folder.svg")
-                                                .size(px(15.0))
-                                                .text_color(tokens.text_secondary),
-                                        )
+                                        .text_color(tokens.text_muted)
+                                        .child("×")
                                         .on_mouse_down(
                                             MouseButton::Left,
                                             cx.listener(move |this, _, _, cx| {
                                                 cx.stop_propagation();
                                                 if let Some(&(project, _, _)) =
                                                     this.pane_index.get(&pane_id)
+                                                    && let Some(scripts) = this
+                                                        .settings
+                                                        .project_scripts
+                                                        .get_mut(&this.projects[project].path)
+                                                    && index < scripts.len()
                                                 {
-                                                    let path = this.projects[project].path.clone();
-                                                    cx.background_executor()
-                                                        .spawn(async move {
-                                                            let _ =
-                                                                paths::open_in_file_manager(&path);
-                                                        })
-                                                        .detach();
+                                                    scripts.remove(index);
                                                 }
+                                                this.schedule_workspace_save(cx);
+                                                cx.notify();
                                             }),
                                         ),
-                                ),
-                        )
-                        .child(self.render_project_editor(pane, &tokens, cx))
-                        .children(scripts.into_iter().flatten().take(32).enumerate().map(
-                            |(index, script)| {
+                                )
+                        },
+                    ))
+                    .child(
+                        div()
+                            .id(("add-project-script", pane_id))
+                            .h(px(30.0))
+                            .px(px(6.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(10.0))
+                            .cursor_pointer()
+                            .text_color(tokens.text_secondary)
+                            .text_size(px(12.0))
+                            .child("+   Add project script")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, window, cx| {
+                                    cx.stop_propagation();
+                                    this.open_project_script_form(pane_id, window, cx);
+                                }),
+                            ),
+                    )
+                    .when_some(
+                        self.project_script_form
+                            .as_ref()
+                            .filter(|(id, _, _)| *id == pane_id),
+                        |view, (_, name, command)| {
+                            view.child(
                                 div()
                                     .flex()
-                                    .items_center()
-                                    .gap(px(8.0))
-                                    .px(px(6.0))
-                                    .h(px(30.0))
+                                    .flex_col()
+                                    .gap(px(6.0))
+                                    .py(px(6.0))
+                                    .child(Input::new(name).appearance(true).bordered(true))
+                                    .child(Input::new(command).appearance(true).bordered(true))
                                     .child(
                                         div()
-                                            .id(("run-project-script", index))
-                                            .flex_1()
-                                            .min_w_0()
-                                            .truncate()
-                                            .cursor_pointer()
-                                            .text_size(px(12.0))
-                                            .child(format!("▶  {}", script.name))
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                cx.listener(move |this, _, window, cx| {
-                                                    cx.stop_propagation();
-                                                    this.run_project_script(
-                                                        pane_id, index, window, cx,
-                                                    );
-                                                }),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .id(("remove-project-script", index))
-                                            .cursor_pointer()
+                                            .text_size(px(10.0))
                                             .text_color(tokens.text_muted)
-                                            .child("×")
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                cx.listener(move |this, _, _, cx| {
-                                                    cx.stop_propagation();
-                                                    if let Some(&(project, _, _)) =
-                                                        this.pane_index.get(&pane_id)
-                                                        && let Some(scripts) = this
-                                                            .settings
-                                                            .project_scripts
-                                                            .get_mut(&this.projects[project].path)
-                                                        && index < scripts.len()
-                                                    {
-                                                        scripts.remove(index);
-                                                    }
-                                                    this.schedule_workspace_save(cx);
-                                                    cx.notify();
-                                                }),
-                                            ),
-                                    )
-                            },
-                        ))
-                        .child(
-                            div()
-                                .id(("add-project-script", pane_id))
-                                .h(px(30.0))
-                                .px(px(6.0))
-                                .flex()
-                                .items_center()
-                                .gap(px(10.0))
-                                .cursor_pointer()
-                                .text_color(tokens.text_secondary)
-                                .text_size(px(12.0))
-                                .child("+   Add project script")
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, _, window, cx| {
-                                        cx.stop_propagation();
-                                        this.open_project_script_form(pane_id, window, cx);
-                                    }),
-                                ),
-                        )
-                        .when_some(
-                            self.project_script_form
-                                .as_ref()
-                                .filter(|(id, _, _)| *id == pane_id),
-                            |view, (_, name, command)| {
-                                view.child(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .gap(px(6.0))
-                                        .py(px(6.0))
-                                        .child(Input::new(name).appearance(true).bordered(true))
-                                        .child(Input::new(command).appearance(true).bordered(true))
-                                        .child(
-                                            div()
-                                                .text_size(px(10.0))
-                                                .text_color(tokens.text_muted)
-                                                .child(
-                                                    "Runs in a new terminal tab in this project.",
-                                                ),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .gap(px(12.0))
-                                                .child(
-                                                    div()
-                                                        .id(("save-project-script", pane_id))
-                                                        .cursor_pointer()
-                                                        .child("Save")
-                                                        .on_mouse_down(
-                                                            MouseButton::Left,
-                                                            cx.listener(|this, _, _, cx| {
-                                                                cx.stop_propagation();
-                                                                this.save_project_script(cx);
-                                                            }),
-                                                        ),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .id(("cancel-project-script", pane_id))
-                                                        .cursor_pointer()
-                                                        .child("Cancel")
-                                                        .on_mouse_down(
-                                                            MouseButton::Left,
-                                                            cx.listener(|this, _, _, cx| {
-                                                                cx.stop_propagation();
-                                                                this.project_script_form = None;
-                                                                cx.notify();
-                                                            }),
-                                                        ),
-                                                ),
-                                        ),
-                                )
-                            },
-                        )
-                        .child(
-                            div()
-                                .mt(px(5.0))
-                                .pt(px(5.0))
-                                .border_t_1()
-                                .border_color(tokens.border_subtle)
-                                .child(
-                                    div()
-                                        .h(px(30.0))
-                                        .px(px(6.0))
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(10.0))
-                                        .child(
-                                            svg()
-                                                .path("icons/git-branch.svg")
-                                                .size(px(14.0))
-                                                .text_color(tokens.text_secondary),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .text_size(px(12.0))
-                                                .text_color(tokens.text_primary)
-                                                .truncate()
-                                                .child(branch.clone()),
-                                        ),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .id(("project-commit", pane_id))
-                                .h(px(30.0))
-                                .px(px(6.0))
-                                .flex()
-                                .items_center()
-                                .gap(px(10.0))
-                                .cursor_pointer()
-                                .hover(|style| style.bg(tokens.pane_header_btn_hover))
-                                .text_size(px(12.0))
-                                .child(
-                                    svg()
-                                        .path("icons/git-branch.svg")
-                                        .size(px(14.0))
-                                        .text_color(tokens.text_secondary),
-                                )
-                                .child(div().flex_1().child("Commit"))
-                                .child(
-                                    svg()
-                                        .path("icons/chevron-right.svg")
-                                        .size(px(12.0))
-                                        .text_color(tokens.text_secondary),
-                                )
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, _, window, cx| {
-                                        cx.stop_propagation();
-                                        this.open_files_surface(pane_id, window, cx);
-                                        if let Some(view) = this
-                                            .focused_pane_id
-                                            .and_then(|id| this.pane_ref(id))
-                                            .and_then(|p| p.files_surface.as_ref())
-                                            .map(|(view, _)| view.clone())
-                                        {
-                                            view.update(cx, |view, cx| view.show_git(cx));
-                                        }
-                                    }),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .id(("agent-changes", pane_id))
-                                .debug_selector(|| "agent-changes".into())
-                                .h(px(30.0))
-                                .px(px(6.0))
-                                .rounded(px(6.0))
-                                .flex()
-                                .items_center()
-                                .gap(px(7.0))
-                                .cursor_pointer()
-                                .hover(|style| style.bg(tokens.pane_header_btn_hover))
-                                .child(
-                                    svg()
-                                        .path("icons/status-check.svg")
-                                        .size(px(14.0))
-                                        .text_color(tokens.text_secondary),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(12.0))
-                                        .text_color(tokens.text_primary)
-                                        .child("Changes"),
-                                )
-                                .child(div().flex_1())
-                                .when_some(summary, |row, summary| {
-                                    row.child(
-                                        div()
-                                            .debug_selector(|| "agent-changes-added".into())
-                                            .text_size(px(11.0))
-                                            .text_color(if tokens.is_dark {
-                                                rgba(0x3fb950ff)
-                                            } else {
-                                                rgba(0x1a7f37ff)
-                                            })
-                                            .child(format!("+{}", summary.additions)),
+                                            .child("Runs in a new terminal tab in this project."),
                                     )
                                     .child(
                                         div()
-                                            .debug_selector(|| "agent-changes-removed".into())
-                                            .text_size(px(11.0))
-                                            .text_color(if tokens.is_dark {
-                                                rgba(0xf85149ff)
-                                            } else {
-                                                rgba(0xcf222eff)
-                                            })
-                                            .child(format!("-{}", summary.deletions)),
+                                            .flex()
+                                            .gap(px(12.0))
+                                            .child(
+                                                div()
+                                                    .id(("save-project-script", pane_id))
+                                                    .cursor_pointer()
+                                                    .child("Save")
+                                                    .on_mouse_down(
+                                                        MouseButton::Left,
+                                                        cx.listener(|this, _, _, cx| {
+                                                            cx.stop_propagation();
+                                                            this.save_project_script(cx);
+                                                        }),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id(("cancel-project-script", pane_id))
+                                                    .cursor_pointer()
+                                                    .child("Cancel")
+                                                    .on_mouse_down(
+                                                        MouseButton::Left,
+                                                        cx.listener(|this, _, _, cx| {
+                                                            cx.stop_propagation();
+                                                            this.project_script_form = None;
+                                                            cx.notify();
+                                                        }),
+                                                    ),
+                                            ),
+                                    ),
+                            )
+                        },
+                    )
+                    .child(
+                        div()
+                            .mt(px(5.0))
+                            .pt(px(5.0))
+                            .border_t_1()
+                            .border_color(tokens.border_subtle)
+                            .child(
+                                div()
+                                    .h(px(30.0))
+                                    .px(px(6.0))
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(10.0))
+                                    .child(
+                                        svg()
+                                            .path("icons/git-branch.svg")
+                                            .size(px(14.0))
+                                            .text_color(tokens.text_secondary),
                                     )
-                                })
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, _, window, cx| {
-                                        cx.stop_propagation();
-                                        this.open_project_diff(pane_id, window, cx);
-                                    }),
-                                ),
-                        ),
-                )
-            })
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .text_size(px(12.0))
+                                            .text_color(tokens.text_primary)
+                                            .truncate()
+                                            .child(branch.clone()),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id(("project-commit", pane_id))
+                            .h(px(30.0))
+                            .px(px(6.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(10.0))
+                            .cursor_pointer()
+                            .hover(|style| style.bg(tokens.pane_header_btn_hover))
+                            .text_size(px(12.0))
+                            .child(
+                                svg()
+                                    .path("icons/git-branch.svg")
+                                    .size(px(14.0))
+                                    .text_color(tokens.text_secondary),
+                            )
+                            .child(div().flex_1().child("Commit"))
+                            .child(
+                                svg()
+                                    .path("icons/chevron-right.svg")
+                                    .size(px(12.0))
+                                    .text_color(tokens.text_secondary),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, window, cx| {
+                                    cx.stop_propagation();
+                                    this.open_files_surface(pane_id, window, cx);
+                                    if let Some(view) = this
+                                        .focused_pane_id
+                                        .and_then(|id| this.pane_ref(id))
+                                        .and_then(|p| p.files_surface.as_ref())
+                                        .map(|(view, _)| view.clone())
+                                    {
+                                        view.update(cx, |view, cx| view.show_git(cx));
+                                    }
+                                }),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id(("agent-changes", pane_id))
+                            .debug_selector(|| "agent-changes".into())
+                            .h(px(30.0))
+                            .px(px(6.0))
+                            .rounded(px(6.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(7.0))
+                            .cursor_pointer()
+                            .hover(|style| style.bg(tokens.pane_header_btn_hover))
+                            .child(
+                                svg()
+                                    .path("icons/status-check.svg")
+                                    .size(px(14.0))
+                                    .text_color(tokens.text_secondary),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(tokens.text_primary)
+                                    .child("Changes"),
+                            )
+                            .child(div().flex_1())
+                            .when_some(summary, |row, summary| {
+                                row.child(
+                                    div()
+                                        .debug_selector(|| "agent-changes-added".into())
+                                        .text_size(px(11.0))
+                                        .text_color(if tokens.is_dark {
+                                            rgba(0x3fb950ff)
+                                        } else {
+                                            rgba(0x1a7f37ff)
+                                        })
+                                        .child(format!("+{}", summary.additions)),
+                                )
+                                .child(
+                                    div()
+                                        .debug_selector(|| "agent-changes-removed".into())
+                                        .text_size(px(11.0))
+                                        .text_color(if tokens.is_dark {
+                                            rgba(0xf85149ff)
+                                        } else {
+                                            rgba(0xcf222eff)
+                                        })
+                                        .child(format!("-{}", summary.deletions)),
+                                )
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, window, cx| {
+                                    cx.stop_propagation();
+                                    this.open_project_diff(pane_id, window, cx);
+                                }),
+                            ),
+                    ),
+            )
     }
 
     fn render_tool_panel_chooser(

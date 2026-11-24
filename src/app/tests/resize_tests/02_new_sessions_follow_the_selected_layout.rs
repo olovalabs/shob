@@ -404,6 +404,7 @@ fn one_view_completion_menu_is_centered_on_composer() {
             (menu.center().x - bar.center().x).abs() <= px(1.0),
             "menu {menu:?}, bar {bar:?}"
         );
+        assert!(menu.left() >= bar.left() && menu.right() <= bar.right(), "menu {menu:?}, bar {bar:?}");
         if let Some(path) = std::env::var_os("SHOB_BENCH_SCREENSHOT") {
             let path = PathBuf::from(path).with_file_name(format!("shob-completion-{width}.png"));
             cx.update(|window, _| window.render_to_image().unwrap().save(path).unwrap());

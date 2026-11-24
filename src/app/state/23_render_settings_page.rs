@@ -51,24 +51,8 @@ impl AppState {
                     .flex_1()
                     .items_center()
                     .gap(px(8.0))
+                    .when(!sidebar_docked, |row| row.pl(px(112.0)))
                     .child(settings_close)
-                    .when(!sidebar_docked, |row| {
-                        row.child(sidebar_icon_button(
-                            "settings-sidebar-toggle-btn",
-                            "icons/panel-left.svg",
-                            16.0,
-                            &tokens,
-                            cx.listener::<MouseDownEvent>(|this, _, window, cx| {
-                                if window.viewport_size().width < COMPACT_WINDOW_WIDTH {
-                                    this.compact_sidebar_open = true;
-                                } else {
-                                    this.sidebar_visible = true;
-                                    this.schedule_workspace_save(cx);
-                                }
-                                cx.notify();
-                            }),
-                        ))
-                    })
                     .child(
                         svg()
                             .path("icons/settings.svg")
@@ -223,9 +207,9 @@ impl AppState {
                 .id(id)
                 .flex()
                 .items_center()
-                .gap(px(10.0))
-                .px(px(12.0))
-                .py(px(9.0))
+                .gap(px(8.0))
+                .px(px(10.0))
+                .py(px(7.0))
                 .rounded(px(7.0))
                 .when(selected, |item| item.bg(tokens.card_hover))
                 .hover(move |item| item.bg(tokens.card_hover))
@@ -243,7 +227,7 @@ impl AppState {
                 )
                 .child(
                     div()
-                        .text_size(px(13.0))
+                        .text_size(px(12.0))
                         .text_color(tokens.text_primary)
                         .child(label),
                 )
@@ -296,11 +280,11 @@ impl AppState {
                     .when(narrow, |layout| layout.flex_col())
                     .child(
                         div()
-                            .when(!narrow, |nav| nav.w(px(210.0)).h_full().border_r_1())
+                            .when(!narrow, |nav| nav.w(px(168.0)).h_full().border_r_1())
                             .when(narrow, |nav| nav.w_full().border_b_1())
                             .border_color(tokens.card_border)
                             .bg(tokens.titlebar_bg)
-                            .p(px(12.0))
+                            .p(px(8.0))
                             .flex()
                             .when(!narrow, |nav| nav.flex_col())
                             .gap(px(2.0))

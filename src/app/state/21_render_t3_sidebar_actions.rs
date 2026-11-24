@@ -1,4 +1,81 @@
 impl AppState {
+    fn navigation_target(&self, backwards: bool) -> Option<(usize, usize, usize)> {
+        let len = self.navigation_history.len();
+        let mut positions = (0..len).filter_map(|offset| {
+            if backwards {
+                self.navigation_position.checked_sub(offset + 1)
+            } else {
+                self.navigation_position
+                    .checked_add(offset + 1)
+                    .filter(|&position| position < len)
+            }
+        });
+        positions.find_map(|position| {
+            let id = self.navigation_history[position];
+            self.projects
+                .iter()
+                .enumerate()
+                .find_map(|(project_idx, project)| {
+                    project
+                        .sessions
+                        .iter()
+                        .position(|session| session.id == id)
+                        .map(|session_idx| (position, project_idx, session_idx))
+                })
+        })
+    }
+
+    fn render_navigation_buttons(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let tokens = self.tokens(cx);
+        let mut buttons = div().flex().items_center().gap(px(4.0));
+        for (backwards, id, icon, title) in [
+            (true, "navigation-back", "icons/arrow-left.svg", "Go back"),
+            (
+                false,
+                "navigation-forward",
+                "icons/arrow-right.svg",
+                "Go forward",
+            ),
+        ] {
+            let target = self.navigation_target(backwards);
+            let mut button = div()
+                .id(id)
+                .size(px(24.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(4.0))
+                .child(
+                    svg()
+                        .path(icon)
+                        .size(px(15.0))
+                        .text_color(if target.is_some() {
+                            tokens.sidebar_icon
+                        } else {
+                            tokens.sidebar_muted
+                        }),
+                )
+                .tooltip(move |window, cx| {
+                    gpui_component::tooltip::Tooltip::new(title).build(window, cx)
+                });
+            if let Some((position, project_idx, session_idx)) = target {
+                button = button
+                    .cursor(CursorStyle::PointingHand)
+                    .hover(move |style| style.bg(tokens.sidebar_icon_btn_hover))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.navigation_position = position;
+                            this.select_session(project_idx, session_idx, window, cx);
+                        }),
+                    );
+            }
+            buttons = buttons.child(button);
+        }
+        buttons
+    }
+
     fn render_t3_sidebar_actions(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let tokens = self.tokens(cx);
         let picker_mode = self
@@ -47,12 +124,7 @@ impl AppState {
                             cx.notify();
                         }),
                     ))
-                    .child(
-                        div()
-                            .text_size(px(13.0))
-                            .text_color(tokens.sidebar_fg)
-                            .child("shobharness"),
-                    ),
+                    .child(self.render_navigation_buttons(cx)),
             )
             .child(
                 div()

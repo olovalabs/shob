@@ -709,7 +709,7 @@ fn agent_changes_indicator_opens_the_reusable_changes_pane() {
         state.settings.agent_layout = true;
         let pane = state.pane_mut(1).unwrap();
         pane.chat.active = true;
-        pane.chat.info_open = true;
+        pane.chat.info_open_compact = true;
         pane.chat
             .messages
             .push(Arc::new(ChatMessage::new(ChatRole::User, "Hello".into())));

@@ -128,13 +128,15 @@ impl AppState {
                             cx.stop_propagation();
                             this.close_agent_auth(pane_id, window, cx);
                         } else if let Some(pane) = this.pane_mut(pane_id)
-                            && (pane.chat.info_open
+                            && (pane.chat.info_open == Some(true)
+                                || pane.chat.info_open_compact
                                 || pane.workspace_menu_open
                                 || pane.project_menu_open
                                 || pane.branch_picker.is_some())
                         {
                             cx.stop_propagation();
-                            pane.chat.info_open = false;
+                            pane.chat.info_open = Some(false);
+                            pane.chat.info_open_compact = false;
                             pane.workspace_menu_open = false;
                             pane.project_menu_open = false;
                             pane.branch_picker = None;
@@ -177,7 +179,7 @@ impl AppState {
                 .into_any_element()
         };
 
-        let completion_menu = self.render_completion_menu(pane, &tokens, window, cx);
+        let completion_menu = self.render_completion_menu(pane, &tokens, cx);
 
         let plus_menu = if pane.plus_menu_open {
             Some(
@@ -347,18 +349,7 @@ impl AppState {
             .children(plus_menu)
             .child(
                 div().relative().w_full().h(px(0.0)).children(completion_menu.map(|menu| {
-                    div().absolute().top_0().w_full().h(px(0.0))
-                        .left(relative(if focused_composer { 0.5 } else { 0.0 }))
-                        .child(deferred(
-                            gpui::anchored()
-                                .anchor(if focused_composer {
-                                    gpui::Anchor::BottomCenter
-                                } else {
-                                    gpui::Anchor::BottomLeft
-                                })
-                                .offset(gpui::point(px(0.0), px(-6.0)))
-                                .child(menu),
-                        ))
+                    div().absolute().bottom(px(6.0)).left_0().w_full().child(menu)
                 })),
             )
             // Keep the same controls in both layouts, with the prompt first in agent layout.
@@ -544,7 +535,6 @@ impl AppState {
         &self,
         pane: &TerminalPane,
         tokens: &ThemeTokens,
-        window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
         let pane_id = pane.id;
@@ -682,23 +672,8 @@ impl AppState {
                 .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
                     this.close_completion_menu(pane_id, cx);
                 }))
-                .w(if pane.chat.active && self.settings.agent_layout {
-                    let sidebar =
-                        if Self::sidebar_docked(self.sidebar_visible, window.viewport_size().width)
-                        {
-                            self.sidebar_width
-                        } else {
-                            px(0.0)
-                        };
-                    (window.viewport_size().width - sidebar - px(58.0))
-                        .max(px(0.0))
-                        .min(px(726.0))
-                } else if pane.chat.active {
-                    px(736.0)
-                } else {
-                    px(440.0)
-                })
-                .max_w(relative(1.0))
+                .w_full()
+                .when(!pane.chat.active, |menu| menu.max_w(px(440.0)))
                 .max_h(if pane.chat.active {
                     px(320.0)
                 } else {

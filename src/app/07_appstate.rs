@@ -156,7 +156,12 @@ impl Render for AppState {
                             } else {
                                 px(0.0)
                             };
-                        let wide = workspace_width >= px(1360.0);
+                        let wide = workspace_width >= px(1360.0) && !self.tool_panel_is_open(pane);
+                        let info_visible = if wide {
+                            pane.chat.info_open.unwrap_or(!pane.chat.visible_messages().is_empty() || pane.chat.worker_view.is_some())
+                        } else {
+                            pane.chat.info_open_compact
+                        };
                         let ascii_welcome = self.palette_scheme == PaletteScheme::MidnightGarden
                             && tokens.is_dark
                             && pane.chat.visible_messages().is_empty()
@@ -169,6 +174,50 @@ impl Render for AppState {
                             .flex_col()
                             .items_center()
                             .bg(tokens.pane_bg)
+                            .child(
+                                div()
+                                    .id("agent-conversation-header")
+                                    .w_full()
+                                    .h(px(38.0))
+                                    .flex_shrink_0()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(10.0))
+                                    .px(px(16.0))
+                                    .border_b_1()
+                                    .border_color(tokens.border)
+                                    .text_size(px(13.0))
+                                    .text_color(tokens.text_primary)
+                                    .child(session_logo_icon(session.logo.clone(), tokens.text_muted))
+                                    .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().child(active_title.clone()))
+                                    .child({
+                                        let pane_id = pane.id;
+                                        div()
+                                                .id(("focused-agent-info-toggle", pane_id))
+                                                .debug_selector(|| "focused-agent-info-toggle".into())
+                                                .size(px(32.0))
+                                                .flex_shrink_0()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .rounded(px(6.0))
+                                                .cursor_pointer()
+                                                .hover(|style| style.bg(tokens.pane_header_btn_hover))
+                                                .child(svg().path("icons/info.svg").size(px(16.0)).text_color(tokens.text_secondary))
+                                                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                                    cx.stop_propagation();
+                                                    this.editor_picker_open = None;
+                                                    if let Some(pane) = this.pane_mut(pane_id) {
+                                                        if wide {
+                                                            pane.chat.info_open = Some(!info_visible);
+                                                        } else {
+                                                            pane.chat.info_open_compact = !info_visible;
+                                                        }
+                                                        cx.notify();
+                                                    }
+                                                }))
+                                    }),
+                            )
                             .when(ascii_welcome, |view| view.child(ascii_glow::render()))
                             .when(usage.is_some(), |view| {
                                 view.child(
@@ -255,12 +304,14 @@ impl Render for AppState {
                                 },
                             )
                             .when(
-                                !pane.chat.visible_messages().is_empty()
-                                    || pane.chat.worker_view.is_some(),
+                                info_visible
+                                    && (!pane.chat.visible_messages().is_empty()
+                                        || pane.chat.worker_view.is_some()
+                                        || pane.chat.info_open == Some(true)
+                                        || pane.chat.info_open_compact),
                                 |view| {
                                     view.child(self.render_focused_agent_info(
                                         pane,
-                                        wide,
                                         usage.is_some(),
                                         cx,
                                     ))
@@ -411,7 +462,11 @@ impl Render for AppState {
             self.render_empty_terminal(cx).into_any_element()
         };
         // Focused terminal's status and logo, mirrored in the title bar.
-        let titlebar_status = self.active_session().map(|s| s.status);
+        let agent_screen = self.settings.agent_layout
+            && self.active_session().and_then(|session| self.one_mode_pane(session))
+                .is_some_and(|pane| pane.chat.active && pane.diff_preview.is_none() && pane.markdown_preview.is_none());
+        let titlebar_status = self.active_session().map(|s| s.status)
+            .filter(|status| *status != SessionStatus::Active);
         let titlebar_logo = self.active_session().map(|s| s.logo.clone());
         let panel_source = self
             .settings
@@ -446,43 +501,10 @@ impl Render for AppState {
                             .flex_1()
                             .items_center()
                             .gap_2()
-                            .when(!sidebar_docked, |this| {
-                                this.child(
-                                    div()
-                                        .id("terminal-sidebar-toggle-btn")
-                                        .occlude()
-                                        .cursor(CursorStyle::PointingHand)
-                                        .mr_2()
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .child(
-                                            svg()
-                                                .path("icons/panel-left.svg")
-                                                .size(px(16.0))
-                                                .text_color(tokens.titlebar_fg)
-                                                .hover(move |s| s.text_color(tokens.text_primary)),
-                                        )
-                                        .on_mouse_down(
-                                            MouseButton::Left,
-                                            cx.listener(|this, _, window, cx| {
-                                                cx.stop_propagation();
-                                                if window.viewport_size().width
-                                                    < COMPACT_WINDOW_WIDTH
-                                                {
-                                                    this.compact_sidebar_open = true;
-                                                } else {
-                                                    this.sidebar_visible = true;
-                                                    this.schedule_workspace_save(cx);
-                                                }
-                                                cx.notify();
-                                            }),
-                                        ),
-                                )
-                            })
+                            .when(!sidebar_docked, |row| row.pl(px(112.0)))
                             .text_size(px(12.5))
                             .text_color(tokens.titlebar_fg)
-                            .children(titlebar_logo.map(|logo| {
+                            .children((!agent_screen).then_some(titlebar_logo).flatten().map(|logo| {
                                 div()
                                     .size(px(16.0))
                                     .flex()
@@ -491,13 +513,13 @@ impl Render for AppState {
                                     .flex_shrink_0()
                                     .child(session_logo_icon(logo, tokens.titlebar_fg))
                             }))
-                            .child(
+                            .when(!agent_screen, |row| row.child(
                                 div()
                                     .min_w_0()
                                     .overflow_hidden()
                                     .text_ellipsis()
                                     .child(format!("{active_project_name} — {active_title}")),
-                            )
+                            ))
                             .children(titlebar_status.map(|status| {
                                 let (dot_color, text_color, badge_bg) = status.colors();
                                 div()
@@ -763,6 +785,35 @@ impl Render for AppState {
                     .overflow_hidden()
                     .child(main_content),
             )
+            .when(!sidebar_docked && !self.compact_sidebar_open, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .h(px(48.0))
+                        .px(px(12.0))
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(sidebar_icon_button(
+                            "terminal-sidebar-toggle-btn",
+                            "icons/panel-left.svg",
+                            16.0,
+                            &tokens,
+                            cx.listener::<MouseDownEvent>(|this, _, window, cx| {
+                                if window.viewport_size().width < COMPACT_WINDOW_WIDTH {
+                                    this.compact_sidebar_open = true;
+                                } else {
+                                    this.sidebar_visible = true;
+                                    this.schedule_workspace_save(cx);
+                                }
+                                cx.notify();
+                            }),
+                        ))
+                        .child(self.render_navigation_buttons(cx)),
+                )
+            })
             .when(compact && self.compact_sidebar_open, |this| {
                 this.child(
                     div()
