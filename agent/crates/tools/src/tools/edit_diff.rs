@@ -198,43 +198,66 @@ pub fn apply_edits_to_normalized_content(
         }
     }
 
-    let initial_matches: Vec<FuzzyMatchResult> = normalized_edits
+    let exact_matches: Vec<Option<usize>> = normalized_edits
         .iter()
-        .map(|e| fuzzy_find_text(normalized_content, &e.old_text))
+        .map(|e| memchr::memmem::find(normalized_content.as_bytes(), e.old_text.as_bytes()))
         .collect();
-    let used_fuzzy_match = initial_matches.iter().any(|m| m.used_fuzzy_match);
+    let fuzzy_content = normalize_for_fuzzy_match(normalized_content);
+    let fuzzy_old: Vec<String> = normalized_edits
+        .iter()
+        .map(|e| normalize_for_fuzzy_match(&e.old_text))
+        .collect();
+    let used_fuzzy_match = exact_matches.iter().zip(&fuzzy_old).any(|(exact, old)| {
+        exact.is_none() && memchr::memmem::find(fuzzy_content.as_bytes(), old.as_bytes()).is_some()
+    });
     let replacement_base_content = if used_fuzzy_match {
-        normalize_for_fuzzy_match(normalized_content)
+        fuzzy_content.as_str()
     } else {
-        normalized_content.to_string()
+        normalized_content
     };
 
     let mut matched_edits: Vec<MatchedEdit> = Vec::new();
     for (i, e) in normalized_edits.iter().enumerate() {
-        let m = fuzzy_find_text(&replacement_base_content, &e.old_text);
-        if !m.found {
+        let exact = if used_fuzzy_match {
+            memchr::memmem::find(replacement_base_content.as_bytes(), e.old_text.as_bytes())
+        } else {
+            exact_matches[i]
+        };
+        let matched = exact.map(|index| (index, e.old_text.len())).or_else(|| {
+            memchr::memmem::find(fuzzy_content.as_bytes(), fuzzy_old[i].as_bytes())
+                .map(|index| (index, fuzzy_old[i].len()))
+        });
+        let Some((match_index, match_length)) = matched else {
             return Err(FileError::new(
                 crate::error::FileErrorCode::NotFound,
                 not_found_error(path, i, total),
             )
             .with_path(path));
-        }
-        let occurrences = count_occurrences(&replacement_base_content, &e.old_text);
+        };
+        let occurrences = if fuzzy_old[i].is_empty() {
+            0
+        } else {
+            memchr::memmem::find_iter(fuzzy_content.as_bytes(), fuzzy_old[i].as_bytes()).count()
+        };
         if occurrences > 1 {
             return Err(FileError::new(
                 crate::error::FileErrorCode::Invalid,
                 format!(
                     "{}{}",
                     duplicate_error(path, i, total, occurrences),
-                    duplicate_match_context(normalized_content, &e.old_text),
+                    duplicate_match_context_with_normalized(
+                        normalized_content,
+                        &fuzzy_content,
+                        &fuzzy_old[i]
+                    ),
                 ),
             )
             .with_path(path));
         }
         matched_edits.push(MatchedEdit {
             edit_index: i,
-            match_index: m.index,
-            match_length: m.match_length,
+            match_index,
+            match_length,
             new_text: e.new_text.clone(),
         });
     }
@@ -260,11 +283,11 @@ pub fn apply_edits_to_normalized_content(
     let new_content = if used_fuzzy_match {
         apply_replacements_preserving_unchanged_lines(
             normalized_content,
-            &replacement_base_content,
+            replacement_base_content,
             &matched_edits,
         )?
     } else {
-        apply_replacements(&replacement_base_content, &matched_edits)
+        apply_replacements(replacement_base_content, &matched_edits)
     };
 
     if base_content == new_content {
@@ -437,6 +460,15 @@ pub fn generate_diff_string(
     context_lines: usize,
 ) -> DiffResult {
     let parts = TextDiff::from_lines(old_content, new_content);
+    format_diff_string(&parts, old_content, new_content, context_lines)
+}
+
+fn format_diff_string(
+    parts: &TextDiff<'_, '_, '_, str>,
+    old_content: &str,
+    new_content: &str,
+    context_lines: usize,
+) -> DiffResult {
     let ops: Vec<_> = parts.ops().to_vec();
     let old_lines: Vec<&str> = old_content.split('\n').collect();
     let new_lines: Vec<&str> = new_content.split('\n').collect();
@@ -605,6 +637,21 @@ pub fn generate_diff_string(
     }
 }
 
+pub fn generate_edit_diffs(
+    path: &str,
+    old_content: &str,
+    new_content: &str,
+) -> (DiffResult, String) {
+    let parts = TextDiff::from_lines(old_content, new_content);
+    let diff = format_diff_string(&parts, old_content, new_content, 4);
+    let patch = parts
+        .unified_diff()
+        .context_radius(4)
+        .header(path, path)
+        .to_string();
+    (diff, patch)
+}
+
 /// A unified-diff patch with 4 lines of context, file headers only (no
 /// timestamps). Mirrors `generateUnifiedPatch` (via the `similar` crate, which
 /// is the Rust equivalent of the npm `diff` package).
@@ -649,11 +696,20 @@ fn duplicate_error(path: &str, i: usize, total: usize, occurrences: usize) -> St
 
 /// Show bounded diagnostics using the same normalization as duplicate detection.
 /// Line numbers refer to the original file, and snippets preserve its characters.
+#[cfg(test)]
 fn duplicate_match_context(content: &str, old_text: &str) -> String {
-    const MAX_MATCHES: usize = 5;
-    const MAX_LINE_CHARS: usize = 200;
     let normalized = normalize_for_fuzzy_match(content);
     let needle = normalize_for_fuzzy_match(old_text);
+    duplicate_match_context_with_normalized(content, &normalized, &needle)
+}
+
+fn duplicate_match_context_with_normalized(
+    content: &str,
+    normalized: &str,
+    needle: &str,
+) -> String {
+    const MAX_MATCHES: usize = 5;
+    const MAX_LINE_CHARS: usize = 200;
     if needle.is_empty() {
         return String::new();
     }
@@ -663,7 +719,7 @@ fn duplicate_match_context(content: &str, old_text: &str) -> String {
     let mut out = String::from(
         "\nMatching locations (line labels are diagnostic; do not include them in oldText):\n",
     );
-    for (number, (offset, _)) in normalized.match_indices(&needle).enumerate() {
+    for (number, (offset, _)) in normalized.match_indices(needle).enumerate() {
         if number == MAX_MATCHES {
             out.push_str("[More matches omitted; use read to inspect the intended region.]\n");
             break;
@@ -716,6 +772,19 @@ mod tests {
         let new = "keep\nnew\nkeep\n";
         let diff = generate_diff_string(old, new, 4).diff;
         assert_eq!(diff, " 1 keep\n-2 old one\n-3 old two\n+2 new\n 4 keep");
+        for (old, new) in [
+            (old, new),
+            ("a\nb", "a\nc"),
+            ("a\nb\n", "a\nc\n"),
+            ("", "new\n"),
+            ("same\n", "same\n"),
+        ] {
+            let expected = generate_diff_string(old, new, 4);
+            let (actual, patch) = generate_edit_diffs("/x", old, new);
+            assert_eq!(actual.diff, expected.diff);
+            assert_eq!(actual.first_changed_line, expected.first_changed_line);
+            assert_eq!(patch, generate_unified_patch("/x", old, new));
+        }
     }
 
     #[test]
@@ -738,6 +807,20 @@ mod tests {
         let m2 = fuzzy_find_text(content, "it\u{2019}s a test");
         assert!(m2.found);
         assert!(m2.used_fuzzy_match);
+        let edits = vec![
+            ReplaceEdit {
+                old_text: "first".into(),
+                new_text: "FIRST".into(),
+            },
+            ReplaceEdit {
+                old_text: "it's".into(),
+                new_text: "it is".into(),
+            },
+        ];
+        let result =
+            apply_edits_to_normalized_content("first\nit’s\nlast\n", &edits, "/x").unwrap();
+        assert!(result.used_fuzzy_match);
+        assert_eq!(result.new_content, "FIRST\nit is\nlast\n");
     }
 
     #[test]

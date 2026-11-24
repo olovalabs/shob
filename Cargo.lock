@@ -9639,6 +9639,7 @@ dependencies = [
  "ignore",
  "image",
  "jsonschema",
+ "memchr",
  "nix 0.29.0",
  "plugin-sdk",
  "regex",

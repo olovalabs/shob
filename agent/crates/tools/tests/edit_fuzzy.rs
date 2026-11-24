@@ -201,6 +201,23 @@ async fn preserves_bom_and_crlf() {
     .expect("edit ok");
 
     assert_eq!(read_back(&env, "edit.txt").await, "\u{FEFF}one\r\nTWO\r\n");
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("edit.txt");
+    std::fs::write(&path, body).unwrap();
+    let local = Arc::new(tools::OsExecutionEnv::with_cwd(dir.path().to_owned()));
+    let ctx = ExecutionToolContext::new(local.clone(), Some(local));
+    let result = run_edit(
+        tools::create_edit_tool(&ctx),
+        serde_json::json!({"path": "edit.txt", "edits": [{"oldText": "two", "newText": "TWO"}]}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(path).unwrap(),
+        "\u{FEFF}one\r\nTWO\r\n"
+    );
+    assert!(result.details["patch"].as_str().unwrap().contains("+TWO"));
 }
 
 #[tokio::test]

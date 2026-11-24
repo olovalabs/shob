@@ -383,12 +383,14 @@ async fn capabilities_four_combinations_keep_disk_and_buffer_separate() {
 async fn client_paths_never_probe_host_and_edit_preserves_bom_crlf() {
     let backend = Backend::text("\u{feff}one\r\ntwo\r\n");
     let (_, ctx) = client_context(backend.clone()).await;
-    run(
+    let result = run(
         create_edit_tool(&ctx),
         edit("absent/../unsaved.png", "one\ntwo", "ONE\nTWO"),
     )
     .await
     .unwrap();
+    assert!(result.details["diff"].as_str().unwrap().contains("ONE"));
+    assert!(result.details["patch"].as_str().unwrap().contains("+ONE"));
     assert_eq!(*backend.text.lock().await, "\u{feff}ONE\r\nTWO\r\n");
     let requests = backend.requests.lock().await.clone();
     assert!(

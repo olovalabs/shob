@@ -31,9 +31,8 @@ use crate::file_io::{
 use crate::file_mutation_queue::MutatingEnv;
 use crate::path_utils::resolve_tool_path;
 use crate::tools::edit_diff::{
-    apply_edits_to_normalized_content, detect_line_ending, generate_diff_string,
-    generate_unified_patch, normalize_to_lf, restore_line_endings, strip_bom, ApplyResult,
-    ReplaceEdit,
+    apply_edits_to_normalized_content, detect_line_ending, generate_edit_diffs, normalize_to_lf,
+    restore_line_endings, strip_bom, ApplyResult, ReplaceEdit,
 };
 use crate::tools::tool_context::ExecutionToolContext;
 
@@ -234,8 +233,8 @@ impl AgentTool for EditTool {
         .await;
 
         let apply = apply_result.map_err(file_err_to_agent)?;
-        let diff = generate_diff_string(&apply.base_content, &apply.new_content, 4);
-        let patch = generate_unified_patch(&path_for_msg, &apply.base_content, &apply.new_content);
+        let (diff, patch) =
+            generate_edit_diffs(&path_for_msg, &apply.base_content, &apply.new_content);
 
         let details = serde_json::to_value(EditToolDetails {
             diff: diff.diff,

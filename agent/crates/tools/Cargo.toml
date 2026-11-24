@@ -43,6 +43,7 @@ uuid = { workspace = true }
 
 # M4: path resolution, diff/patch, fuzzy-match normalization, shell detection
 dirs = "5"
+memchr = "2"
 similar = { version = "2", features = ["text"] }
 unicode-normalization = "0.1"
 # Shell output that is not UTF-8: the Windows console code page (GBK etc.).

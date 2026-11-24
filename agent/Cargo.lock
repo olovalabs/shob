@@ -4282,6 +4282,7 @@ dependencies = [
  "ignore",
  "image",
  "jsonschema",
+ "memchr",
  "nix",
  "plugin-sdk",
  "regex",
