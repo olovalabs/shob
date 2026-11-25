@@ -644,12 +644,13 @@ impl AppState {
     }
 
     fn close_sidebar_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let snapshot = self.sidebar_search.as_ref().map(|search| {
-            (
-                search.input.clone(),
-                search.previous_focus.clone(),
-                search.input.read(cx).focus_handle().is_focused(window),
-            )
+        let snapshot = self.sidebar_search.as_ref().and_then(|search| {
+            let input = search.input.read(cx);
+            let focused = input.focus_handle().is_focused(window);
+            if !focused && input.value().is_empty() {
+                return None;
+            }
+            Some((search.input.clone(), search.previous_focus.clone(), focused))
         });
         if let Some((input, previous_focus, focused)) = snapshot {
             input.update(cx, |state, cx| state.set_value("", window, cx));

@@ -7,7 +7,7 @@ impl AppState {
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let pane_id = pane.id;
-        let focused_composer = self.settings.agent_layout && pane.chat.active;
+        let focused_composer = pane.chat.active;
         let tokens = self.tokens(cx);
         let agent_cwd = pane.chat.active.then(|| self.agent_working_directory(pane));
         let cwd_display = agent_cwd
@@ -46,16 +46,8 @@ impl AppState {
         } else {
             tokens.pane_header_bg
         };
-        let mut focused_bar_bg = tokens.card_hover;
-        if tokens.is_dark {
-            focused_bar_bg.l = (focused_bar_bg.l + 0.04).min(1.0);
-        }
-        let mut focused_bar_border = focused_bar_bg;
-        focused_bar_border.l = if tokens.is_dark {
-            (focused_bar_bg.l + 0.09).min(1.0)
-        } else {
-            (focused_bar_bg.l - 0.10).max(0.0)
-        };
+        let focused_bar_bg = tokens.chat().composer;
+        let focused_bar_border = tokens.editor_bar_border;
         let badge_border: Hsla = if gradient_ascii {
             tokens.card_border
         } else if tokens.is_dark {
@@ -106,10 +98,10 @@ impl AppState {
                 .overflow_y_scrollbar()
                 .flex()
                 .items_start()
-                .font_family(if self.settings.agent_layout && pane.chat.active {
-                    assets::SANS_FONT
+                .font_family(if pane.chat.active {
+                    cx.theme().font_family.clone()
                 } else {
-                    MONO_FONT
+                    MONO_FONT.into()
                 })
                 .text_size(px(14.0))
                 .key_context(SHOB_INPUT_CONTEXT)
@@ -154,7 +146,7 @@ impl AppState {
                             .bordered(false)
                             .focus_bordered(false)
                             .cleanable(false)
-                            .when(focused_composer, |input| input.text_size(px(16.0)))
+                            .when(focused_composer, |input| input.text_size(agent_appearance::FONT_SIZE).font_family(cx.theme().font_family.clone()))
                             .px_0()
                             .py_0()
                             .when(browser_mentioned, |input| {
@@ -193,7 +185,7 @@ impl AppState {
                     .rounded(px(8.0))
                     .border_1()
                     .border_color(tokens.card_border)
-                    .bg(if gradient_ascii {
+                    .bg(if pane.chat.active || gradient_ascii {
                         tokens.card_bg
                     } else if tokens.is_dark {
                         rgba(0x1e1f22ff).into()
@@ -260,9 +252,44 @@ impl AppState {
             None
         };
 
+        let model_selector = pane.chat.active.then(|| {
+            let bounds = pane.model_picker_bounds.clone();
+                        div()
+                            .id(("select-agent-model", pane_id))
+                            .debug_selector(|| "select-agent-model-pill".to_string())
+                            .relative()
+                            .min_w_0()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.0))
+                            .h(px(28.0))
+                            .px(px(8.0))
+                            .rounded(px(7.0))
+                            .when(!self.settings.agent_layout, |pill| pill.bg(tokens.card_bg))
+                            .text_size(px(13.0))
+                            .text_color(tokens.text_primary)
+                            .cursor_pointer()
+                            .hover(|view| view.bg(tokens.sidebar_item_hover))
+                            .when_some(model_provider_icon, |pill, icon| {
+                                pill.child(svg().path(icon).size(px(15.0)).flex_shrink_0().text_color(tokens.text_primary))
+                            })
+                            .child(div().min_w_0().max_w(px(224.0)).truncate().child(model_pill))
+                            .when(focused_composer, |pill| pill.child(
+                                svg().path("icons/chevron-down.svg").size(px(12.0))
+                                    .flex_shrink_0().text_color(tokens.text_muted)
+                            ))
+                            .child(canvas(move |area, _, _| bounds.set(area), |_, _, _, _| {})
+                                .absolute().top_0().left_0().size_full())
+                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.open_agent_auth(pane_id, AgentDialogPage::Models, window, cx);
+                            }))
+        });
         let attachment_strip = self.render_attachment_strip(pane, &tokens, cx);
         let drop_hover_border: Hsla = tokens.ring;
-        let drop_hover_bg: Hsla = if tokens.is_dark {
+        let drop_hover_bg: Hsla = if pane.chat.active {
+            tokens.ring.opacity(0.08)
+        } else if tokens.is_dark {
             rgba(0x11251cff).into()
         } else {
             rgba(0x2d7a2d12).into()
@@ -270,6 +297,7 @@ impl AppState {
         div()
             .id(("shob-composer-stack", pane_id))
             .w_full()
+            .when(pane.chat.active, |stack| stack.font_family(cx.theme().font_family.clone()).text_color(tokens.chat().foreground).max_w(agent_appearance::COLUMN_WIDTH).mx_auto().px(agent_appearance::GUTTER).pb(px(8.0)))
             .flex()
             .flex_col()
             .children(pane.chat.active.then(|| self.render_agent_follow_ups(pane, &tokens, cx)).flatten())
@@ -290,28 +318,12 @@ impl AppState {
             .flex_col()
             .px(if focused_composer { px(16.0) } else { px(12.0) })
             .pt(px(11.0))
-            .pb(if focused_composer { px(5.0) } else { px(10.0) })
-            .when(self.settings.agent_layout && pane.chat.active, |bar| {
-                bar.rounded(px(28.0)).border_1().bg(focused_bar_bg)
-                    .shadow(vec![
-                        gpui::BoxShadow {
-                            color: tokens.card_border,
-                            blur_radius: px(0.0),
-                            spread_radius: px(6.0),
-                            offset: gpui::point(px(0.0), px(0.0)),
-                            inset: false,
-                        },
-                        gpui::BoxShadow {
-                            color: tokens.card_bg,
-                            blur_radius: px(0.0),
-                            spread_radius: px(5.0),
-                            offset: gpui::point(px(0.0), px(0.0)),
-                            inset: false,
-                        },
-                    ])
+            .pb(px(10.0))
+            .when(pane.chat.active, |bar| {
+                bar.rounded(px(20.0)).border_1().bg(focused_bar_bg)
             })
-            .when(!self.settings.agent_layout || !pane.chat.active, |bar| bar.border_t_1().bg(bar_bg))
-            .border_color(if self.settings.agent_layout && pane.chat.active { focused_bar_border } else { bar_border })
+            .when(!pane.chat.active, |bar| bar.border_t_1().bg(bar_bg))
+            .border_color(if pane.chat.active { focused_bar_border } else { bar_border })
             .can_drop(|value, _, _| {
                 value.downcast_ref::<ExternalPaths>().is_some_and(|paths| {
                     paths
@@ -355,7 +367,7 @@ impl AppState {
             // Keep the same controls in both layouts, with the prompt first in agent layout.
             .child(
                 div().flex().flex_col()
-                    .when(self.settings.agent_layout && pane.chat.active, |row| row.flex_col_reverse())
+                    .when(pane.chat.active, |row| row.flex_col_reverse())
                     .child(
                 div()
                     .flex()
@@ -378,41 +390,8 @@ impl AppState {
                     .when(pane.chat.active, |row| {
                         row.child(self.render_agent_permission(pane, false, window, cx))
                     })
-                    .when(pane.chat.active && self.settings.agent_layout, |row| row.child(div().flex_1().min_w_0()))
-                    .when(pane.chat.active, |row| {
-                        let bounds = pane.model_picker_bounds.clone();
-                        row.child(
-                        div()
-                            .id(("select-agent-model", pane_id))
-                            .debug_selector(|| "select-agent-model-pill".to_string())
-                            .relative()
-                            .min_w_0()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.0))
-                            .h(px(28.0))
-                            .px(px(8.0))
-                            .rounded(px(7.0))
-                            .when(!self.settings.agent_layout, |pill| pill.bg(tokens.card_bg))
-                            .text_size(px(13.0))
-                            .text_color(tokens.text_primary)
-                            .cursor_pointer()
-                            .hover(|view| view.bg(tokens.sidebar_item_hover))
-                            .when_some(model_provider_icon, |pill, icon| {
-                                pill.child(svg().path(icon).size(px(15.0)).flex_shrink_0().text_color(tokens.text_primary))
-                            })
-                            .child(div().min_w_0().max_w(px(224.0)).truncate().child(model_pill))
-                            .when(focused_composer, |pill| pill.child(
-                                svg().path("icons/chevron-down.svg").size(px(12.0))
-                                    .flex_shrink_0().text_color(tokens.text_muted)
-                            ))
-                            .child(canvas(move |area, _, _| bounds.set(area), |_, _, _, _| {})
-                                .absolute().top_0().left_0().size_full())
-                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
-                                cx.stop_propagation();
-                                this.open_agent_auth(pane_id, AgentDialogPage::Models, window, cx);
-                            })))
-                    })
+                    .when(pane.chat.active, |row| row.child(div().flex_1().min_w_0()))
+                    .children(model_selector)
                     .when(pane.chat.active && pane.chat.visible_running(), |row| row.child(
                         div().id(("agent-stop", pane_id))
                             .size(px(28.0)).flex_shrink_0().rounded_full()
@@ -505,8 +484,8 @@ impl AppState {
             .child(
                 div()
                     .w_full()
-                    .when(self.settings.agent_layout && pane.chat.active, |input| input.mb(px(16.0)))
-                    .when(!self.settings.agent_layout || !pane.chat.active, |input| input.mt(px(12.0)))
+                    .when(pane.chat.active, |input| input.mb(px(16.0)))
+                    .when(!pane.chat.active, |input| input.mt(px(12.0)))
                     .child(input_element),
             ))
             .when(!pane.chat.active, |bar| {

@@ -173,7 +173,8 @@ impl Render for AppState {
                             .flex()
                             .flex_col()
                             .items_center()
-                            .bg(tokens.pane_bg)
+                            .bg(tokens.chat().background)
+                            .font_family(cx.theme().font_family.clone())
                             .child(
                                 div()
                                     .id("agent-conversation-header")
@@ -264,10 +265,8 @@ impl Render for AppState {
                                                     .max_w(if ascii_welcome {
                                                         px(688.0)
                                                     } else {
-                                                        px(784.0)
+                                                        agent_appearance::COLUMN_WIDTH
                                                     })
-                                                    .px(px(16.0))
-                                                    .pb(px(8.0))
                                                     .child(self.render_shob_input_bar(
                                                         pane, true, _window, cx,
                                                     )),
@@ -292,9 +291,7 @@ impl Render for AppState {
                                             view.child(
                                                 div()
                                                     .w_full()
-                                                    .max_w(px(784.0))
-                                                    .px(px(16.0))
-                                                    .pb(px(8.0))
+                                                    .max_w(agent_appearance::COLUMN_WIDTH)
                                                     .child(self.render_shob_input_bar(
                                                         pane, false, _window, cx,
                                                     )),

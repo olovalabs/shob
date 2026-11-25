@@ -37,29 +37,10 @@ impl AppState {
         } else {
             "agent-permissions"
         };
-        let accent: Hsla = if tokens.is_dark {
-            rgba(0xf47b37ff)
-        } else {
-            rgba(0xc45113ff)
-        }
-        .into();
-        let composer_bg = if tokens.is_dark {
-            rgba(0x343434ff).into()
-        } else {
-            tokens.card_bg
-        };
-        let menu_bg = if in_picker {
-            tokens.model_picker_bg
-        } else if tokens.is_dark {
-            rgba(0x202020ff).into()
-        } else {
-            tokens.card_bg
-        };
-        let menu_border = if !in_picker && tokens.is_dark {
-            rgba(0x3d3d3dff).into()
-        } else {
-            tokens.card_border
-        };
+        let accent = tokens.block_warning;
+        let composer_bg = tokens.card_hover;
+        let menu_bg = if in_picker { tokens.model_picker_bg } else { tokens.card_bg };
+        let menu_border = tokens.card_border;
         let pill_color = if current == PermissionMode::Full {
             accent
         } else {

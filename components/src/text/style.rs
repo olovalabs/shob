@@ -6,6 +6,8 @@ use crate::highlighter::HighlightTheme;
 
 #[derive(Clone)]
 pub struct TextViewStyle {
+    pub agent_markdown: AgentMarkdown,
+    pub colors: Option<super::node::MarkdownColors>,
 
     pub paragraph_gap: Rems,
 
@@ -19,9 +21,19 @@ pub struct TextViewStyle {
     pub is_dark: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AgentMarkdown {
+    #[default]
+    Off,
+    Assistant,
+    User,
+}
+
 impl PartialEq for TextViewStyle {
     fn eq(&self, other: &Self) -> bool {
         self.paragraph_gap == other.paragraph_gap
+            && self.agent_markdown == other.agent_markdown
+            && self.colors == other.colors
             && self.heading_base_font_size == other.heading_base_font_size
             && self.highlight_theme == other.highlight_theme
     }
@@ -30,6 +42,8 @@ impl PartialEq for TextViewStyle {
 impl Default for TextViewStyle {
     fn default() -> Self {
         Self {
+            agent_markdown: AgentMarkdown::Off,
+            colors: None,
             paragraph_gap: rems(1.),
             heading_base_font_size: px(14.),
             heading_font_size: None,

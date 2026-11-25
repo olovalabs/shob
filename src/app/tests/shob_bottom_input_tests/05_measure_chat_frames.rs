@@ -644,3 +644,102 @@ fn loopback_gemini_tool_round_trip() {
         );
     }
 }
+
+#[test]
+#[ignore = "renders deterministic agent chat comparison images"]
+fn agent_chat_appearance_capture() {
+    let output = std::env::var("SHOB_CHAT_CAPTURE_DIR").expect("SHOB_CHAT_CAPTURE_DIR");
+    std::fs::create_dir_all(&output).unwrap();
+    for (width, height) in [(819., 684.), (955., 955.), (420., 800.)] {
+        for dark in [true, false] {
+            let mut app = TestAppContext::new();
+            let (mut cx, state) = open_app(&mut app);
+            cx.simulate_resize(gpui::size(px(width), px(height)));
+            let pane_id = state.read_with(&cx, |state, _| state.projects[0].sessions[0].panes[0].id);
+            cx.update_window_entity(&state, |state, window, cx| {
+                state.settings.agent_layout = true;
+                state.sidebar_visible = false;
+                state.theme_preference = if dark { ThemePreference::Dark } else { ThemePreference::Light };
+                theme::apply_component_theme(if dark { gpui_component::ThemeMode::Dark } else { gpui_component::ThemeMode::Light }, Some(window), cx);
+                state.set_chat_mode(pane_id, true, window, cx);
+                let chat = &mut state.pane_mut(pane_id).unwrap().chat;
+                chat.messages = vec![
+                    Arc::new(ChatMessage::new(ChatRole::User, "Make the agent chat readable and consistent.".into())),
+                    Arc::new(ChatMessage::new(ChatRole::Assistant, "Implemented a shared **Markdown appearance** with readable spacing and `inline code`. User messages preserve line breaks, paths, and ~~strikethrough~~.\n\n### How Shob runs\n\nThe renderer uses `with_frame_cell_geometry` and `request_render_using_scroll_content()` to keep updates responsive when a long inline code span wraps onto another line.\n\n- **Native text** keeps selection and copying.\n- Nested lists stay aligned:\n  - Links open [source files](src/main.rs) or [documentation](https://example.com).\n- [x] Keep completed messages stable\n\n```rust\nlet ready = true;\nprintln!(\"Shob is ready\");\n```\n\n> Background parsing keeps the interface responsive.\n\n| Surface | Result |\n| :--- | ---: |\n| Markdown | Ready |\n| Streaming | Ready |".into())),
+                ];
+                let mut answer = chat.messages.pop().unwrap();
+                Arc::make_mut(&mut answer).source_timestamp = Some(3_500);
+                push_chat_event_at(&mut chat.messages, agent_bridge::AgentEvent::Thinking("Checking the renderer and the composer layout.".into()), Some(1_000));
+                push_chat_event_at(&mut chat.messages, agent_bridge::AgentEvent::ToolStart { id: Some("appearance-read".into()), name: "read".into(), input: r#"{"path":"src/main.rs"}"#.into() }, Some(1_500));
+                push_chat_event_at(&mut chat.messages, agent_bridge::AgentEvent::ToolEnd { id: Some("appearance-read".into()), name: "read".into(), output: "Read the agent chat entry point.".into(), failed: false }, Some(2_000));
+                chat.messages.push(answer);
+                Arc::make_mut(&mut chat.messages[0]).source_timestamp = Some(1_000);
+                finish_worked_turn(&mut chat.messages, Some(861_000));
+                chat.info_open = Some(false);
+                chat.notify_content(cx);
+            });
+            for _ in 0..12 { cx.run_until_parked(); cx.draw_commands(); }
+            let path = PathBuf::from(&output).join(format!("chat-{}x{}-{}.png", width as u32, height as u32, if dark { "dark" } else { "light" }));
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                window.render_to_image().unwrap().save(&path).unwrap();
+                window.simulate_next_frame(cx);
+            });
+            println!("capture={}", path.display());
+        }
+    }
+}
+
+#[test]
+#[ignore = "renders the exact supplied Codex Markdown reference"]
+fn codex_markdown_reference_capture() {
+    struct ReferenceView { owner: Entity<AppState>, pane_id: usize }
+    impl Render for ReferenceView {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.owner.update(cx, |owner, cx| {
+                let pane = owner.pane_ref(self.pane_id).unwrap();
+                let tokens = owner.tokens(cx);
+                let rows = AppState::build_chat_rows(&pane.chat, false);
+                let count = rows.borrow().rows.len();
+                let snapshot = ChatSnapshot {
+                    focused_layout: true, pane_id: self.pane_id,
+                    conversation: pane.chat.conversation_key.clone().into(), tokens, rows,
+                    host: UiHost::new(cx.weak_entity()),
+                };
+                div().size_full().overflow_hidden().bg(tokens.chat().background)
+                    .font_family(cx.theme().font_family.clone()).pt(px(28.))
+                    .children((0..count).map(|index| AppState::render_chat_row(&snapshot, index, window, cx)).collect::<Vec<_>>())
+            })
+        }
+    }
+    let output = std::env::var("SHOB_CHAT_CAPTURE_DIR").expect("SHOB_CHAT_CAPTURE_DIR");
+    std::fs::create_dir_all(&output).unwrap();
+    let mut app = TestAppContext::new();
+    let (mut cx, state) = open_app(&mut app);
+    cx.simulate_resize(gpui::size(px(819.), px(684.)));
+    let pane_id = state.read_with(&cx, |state, _| state.projects[0].sessions[0].panes[0].id);
+    cx.update_window_entity(&state, |state, window, cx| {
+        state.theme_preference = ThemePreference::Dark;
+        state.apply_theme_preference(Some(window), cx);
+        state.set_chat_mode(pane_id, true, window, cx);
+        let chat = &mut state.pane_mut(pane_id).unwrap().chat;
+        let mut thinking = ChatMessage::new(ChatRole::Thinking, "Inspecting the formatter.".into());
+        thinking.source_timestamp = Some(1_000);
+        thinking.worked_ms = Some(279_000);
+        thinking.worked_end = 2;
+        thinking.worked_answer = Some(1);
+        let mut answer = ChatMessage::new(ChatRole::Assistant, "Implemented an initial agent Markdown formatter in [agent_markdown.rs](/home/nazmul/Desktop/shob/components/src/text/format/agent_markdown.rs) and connected it to the GPUI chat. User messages now render Markdown, preserve line breaks and literal HTML, and keep single tildes in paths while supporting `~~strikethrough~~`. Assistant messages use the new formatter entry point and retain the existing background streaming pipeline.\n\n**This is not yet a complete t3code port.** File-link chips, GitHub alerts, Mermaid, math, media interactions, and other t3code-specific behavior remain unimplemented.\n\n`cargo check --bin shob`, `cargo fmt --check`, and the focused streaming test passed. The new parser-specific test could not run: testing the component crate standalone resolves an incompatible GPUI version.".into());
+        answer.source_timestamp = Some(280_000);
+        chat.messages = vec![Arc::new(thinking), Arc::new(answer)];
+    });
+    let preview = cx.new(|_| ReferenceView { owner: state, pane_id });
+    cx.replace_root_view(|window, cx| Root::new(preview, window, cx));
+    for _ in 0..12 { cx.run_until_parked(); cx.draw_commands(); }
+    let path = PathBuf::from(output).join("codex-reference-shob.png");
+    cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+        window.render_to_image().unwrap().save(&path).unwrap();
+        window.simulate_next_frame(cx);
+    });
+    println!("capture={}", path.display());
+}

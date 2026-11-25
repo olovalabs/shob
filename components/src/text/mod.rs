@@ -8,6 +8,8 @@ mod utils;
 
 pub use flow::MarkdownBlocks;
 use gpui::App;
+pub use node::MarkdownColors;
+pub use style::AgentMarkdown;
 pub use style::*;
 pub use text_view::*;
 

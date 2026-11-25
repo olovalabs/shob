@@ -17,7 +17,7 @@ use gpui_component::input::{Input, InputEvent, InputState, RopeExt as _};
 use gpui_component::notification::{Notification, NotificationType};
 use gpui_component::resizable::{h_resizable, resizable_panel, v_resizable};
 use gpui_component::scroll::ScrollableElement as _;
-use gpui_component::text::{MarkdownBlocks, TextView, TextViewStyle};
+use gpui_component::text::{MarkdownBlocks, TextView};
 use gpui_component::{ActiveTheme as _, Root, Sizable as _};
 use gpui_kit::base::{Scrollbar as KitScrollbar, VirtualListScrollHandle, v_virtual_list};
 #[cfg(not(target_os = "linux"))]
@@ -34,6 +34,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use terminal::{ColorPalette, ShellEvent, TerminalConfig, TerminalView};
 
+mod agent_appearance;
 mod agent_auth;
 mod agent_bridge;
 mod agent_composer;

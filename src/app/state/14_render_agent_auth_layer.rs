@@ -13,6 +13,7 @@ impl AppState {
             return div().into_any_element();
         };
         let tokens = self.tokens(cx);
+        let backdrop = cx.theme().overlay;
         let page = auth.page;
         let pane = self.pane_ref(pane_id).unwrap();
         let trigger = pane.model_picker_bounds.get();
@@ -54,7 +55,7 @@ impl AppState {
                 .flex()
                 .items_center()
                 .justify_center()
-                .when(!anchored, |layer| layer.bg(rgba(0x000000a6)))
+                .when(!anchored, |layer| layer.bg(backdrop))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, _, window, cx| {

@@ -36,13 +36,17 @@ impl FlowFragment {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
-        let colors = MarkdownColors::for_theme(cx.theme().is_dark());
+        let colors = MarkdownColors::for_context(context, cx);
         let mut element = self.node.render_block(
             NodeRenderOptions {
                 ix,
                 is_first: is_first && self.wrappers.is_empty(),
                 is_last: self.continuation,
                 after_heading: after_heading && self.wrappers.is_empty(),
+                in_list: self
+                    .wrappers
+                    .iter()
+                    .any(|wrapper| matches!(wrapper, FlowWrapper::Item { .. })),
                 ..Default::default()
             },
             context,

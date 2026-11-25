@@ -836,3 +836,14 @@ fn sidebar_show_less_restores_five_after_partial_and_full_expansion() {
         assert_eq!(cx.debug_bounds("project-show-more").is_some(), limit < 17);
     }
 }
+
+#[test]
+fn empty_closed_sidebar_search_does_not_invalidate_the_root() {
+    let mut app = TestAppContext::new();
+    let (mut cx, state) = open_app(&mut app);
+    cx.draw_commands();
+    let before = APP_ROOT_RENDERS.with(|count| count.get());
+    cx.update_window_entity(&state, |state, window, cx| state.close_sidebar_search(window, cx));
+    cx.draw_commands();
+    assert_eq!(APP_ROOT_RENDERS.with(|count| count.get()), before);
+}

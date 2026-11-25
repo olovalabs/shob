@@ -28,14 +28,24 @@ fn temp_log(name: &str, max_bytes: u64) -> Log {
 
 #[test]
 fn entries_roundtrip_as_json() {
+    let Entry::Event { at_ms, .. } = serde_json::from_value::<Entry>(
+        serde_json::json!({"t": "event", "event": AgentEvent::Text("legacy".into())}),
+    )
+    .unwrap() else {
+        unreachable!()
+    };
+    assert_eq!(at_ms, None);
     let entries = vec![
         Entry::User {
+            at_ms: None,
             text: "hello".into(),
         },
         Entry::Event {
+            at_ms: Some(1234),
             event: AgentEvent::Text("hi".into()),
         },
         Entry::Event {
+            at_ms: Some(1234),
             event: AgentEvent::ToolStart {
                 id: Some("1".into()),
                 name: "read".into(),
@@ -50,6 +60,15 @@ fn entries_roundtrip_as_json() {
     for entry in entries {
         let text = serde_json::to_string(&entry).unwrap();
         let _: Entry = serde_json::from_str(&text).unwrap();
+        if let Entry::Event { at_ms, .. } = entry {
+            let Entry::Event {
+                at_ms: restored, ..
+            } = serde_json::from_str::<Entry>(&text).unwrap()
+            else {
+                unreachable!()
+            };
+            assert_eq!(restored, at_ms);
+        }
     }
 }
 
@@ -80,6 +99,7 @@ fn transcript_replays_user_and_agent_messages() {
     // Consecutive text deltas coalesce into one assistant message.
     assert_eq!(messages[1].role, ChatRole::Assistant);
     assert_eq!(messages[1].text, "looking now");
+    assert!(messages[1].source_timestamp.is_some());
     assert!(!messages[1].streaming);
     assert_eq!(messages[2].role, ChatRole::Tool);
     let tool = messages[2].tool.as_ref().unwrap();
@@ -196,6 +216,7 @@ fn usage_replay_skips_corrupt_lines_and_absent_usage() {
         cost: Some(0.0),
     };
     let entry = serde_json::to_string(&Entry::Event {
+        at_ms: None,
         event: AgentEvent::Usage(usage),
     })
     .unwrap();
@@ -232,6 +253,7 @@ fn usage_replay_uses_the_transcript_read_bound() {
         cost: Some(0.125),
     };
     let entry = serde_json::to_string(&Entry::Event {
+        at_ms: None,
         event: AgentEvent::Usage(usage),
     })
     .unwrap();
@@ -245,6 +267,7 @@ fn usage_replay_uses_the_transcript_read_bound() {
         file,
         "{}",
         serde_json::to_string(&Entry::User {
+            at_ms: None,
             text: "retained".into(),
         })
         .unwrap()
@@ -457,4 +480,66 @@ fn transcript_projection_benchmark() {
         "transcript projection: capped={capped:?}, full_clone={:?}, retained_prefix_limit={MAX_ENTRY_BYTES}",
         start.elapsed()
     );
+}
+
+#[test]
+fn worked_duration_covers_submission_through_completion_and_survives_replay() {
+    let mut log = temp_log("worked-duration", MAX_FILE_BYTES);
+    log.append_user_at("with tools", Some(1_000));
+    log.append_event_at(&AgentEvent::Thinking("checking".into()), Some(1_100));
+    log.append_event_at(
+        &AgentEvent::ToolStart {
+            id: Some("read".into()),
+            name: "read".into(),
+            input: "{}".into(),
+        },
+        Some(2_000),
+    );
+    log.append_event_at(
+        &AgentEvent::ToolEnd {
+            id: Some("read".into()),
+            name: "read".into(),
+            output: "ok".into(),
+            failed: false,
+        },
+        Some(3_000),
+    );
+    log.append_event_at(&AgentEvent::Text("a long answer".into()), Some(5_000));
+    log.append_event_at(&AgentEvent::Done, Some(61_500));
+    log.append_event_at(&AgentEvent::Closed, Some(90_000));
+    log.append_user_at("text only", Some(100_000));
+    log.append_event_at(&AgentEvent::Text("answer".into()), Some(100_100));
+    log.append_event_at(&AgentEvent::Closed, Some(101_500));
+    log.append_user_at("legacy", None);
+    log.append_event_at(&AgentEvent::Text("old answer".into()), None);
+    log.append_event_at(&AgentEvent::Done, None);
+    log.flush();
+    let messages = load(log.path());
+    assert_eq!(messages[1].worked_ms, Some(60_500));
+    assert_eq!(messages[1].worked_end, 4);
+    assert_eq!(messages[1].worked_answer, Some(3));
+    assert_eq!(messages[3].worked_ms, None);
+    assert_eq!(messages[5].worked_ms, Some(1_500));
+    assert_eq!(messages[7].worked_ms, None);
+    assert_eq!(messages[7].worked_end, 8);
+    assert_eq!(messages[7].worked_answer, Some(7));
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message.worked_ms.is_some())
+            .count(),
+        2
+    );
+    let mut live = vec![Arc::new(ChatMessage::new(ChatRole::User, "prompt".into()))];
+    Arc::make_mut(&mut live[0]).source_timestamp = Some(1_000);
+    crate::push_chat_event_at(&mut live, AgentEvent::Text("answer".into()), Some(5_000));
+    assert_eq!(live[1].worked_ms, None);
+    let mut skewed = live.clone();
+    assert_eq!(crate::finish_worked_turn(&mut skewed, Some(900)), Some(1));
+    assert_eq!(skewed[1].worked_ms, None);
+    assert_eq!(crate::finish_worked_turn(&mut live, Some(61_500)), Some(1));
+    assert_eq!(live[1].worked_ms, messages[1].worked_ms);
+    let path = log.path().to_path_buf();
+    drop(log);
+    let _ = fs::remove_file(path);
 }

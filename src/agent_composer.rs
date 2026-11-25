@@ -894,6 +894,26 @@ impl AppState {
     }
 
     fn reveal_agent_activity(&mut self, pane_id: usize, index: usize, cx: &mut Context<Self>) {
+        let folded_turn = self.pane_ref(pane_id).and_then(|pane| {
+            pane.chat
+                .visible_messages()
+                .iter()
+                .enumerate()
+                .take(index + 1)
+                .rev()
+                .find(|(_, message)| message.worked_end > index)
+                .map(|(start, _)| start)
+                .filter(|start| {
+                    !pane
+                        .chat
+                        .expanded_turns
+                        .get(&pane.chat.conversation_key)
+                        .is_some_and(|turns| turns.contains(start))
+                })
+        });
+        if let Some(start) = folded_turn {
+            self.toggle_worked_turn(pane_id, start, cx);
+        }
         let Some(pane) = self.pane_mut(pane_id) else {
             return;
         };

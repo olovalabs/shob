@@ -21,7 +21,17 @@ pub(crate) fn parse(
     cx: &mut NodeContext,
     highlight_theme: &HighlightTheme,
 ) -> Result<node::Node, SharedString> {
-    markdown::to_mdast(raw, &ParseOptions::gfm())
+    parse_with_options(raw, style, cx, highlight_theme, &ParseOptions::gfm())
+}
+
+pub(super) fn parse_with_options(
+    raw: &str,
+    style: &TextViewStyle,
+    cx: &mut NodeContext,
+    highlight_theme: &HighlightTheme,
+    options: &ParseOptions,
+) -> Result<node::Node, SharedString> {
+    markdown::to_mdast(raw, options)
         .map(|root| {
             collect_definitions(&root, cx);
             ast_to_node(root, style, cx, highlight_theme)
@@ -112,7 +122,9 @@ fn parse_inline(
             }
         }
         Node::Text(val) => {
-            if val.value.contains('\n') {
+            if cx.style.agent_markdown == crate::text::AgentMarkdown::User {
+                push_inline(paragraph, &val.value, inherited);
+            } else if val.value.contains('\n') {
                 push_inline(paragraph, &val.value.replace('\n', " "), inherited);
             } else {
                 push_inline(paragraph, &val.value, inherited);

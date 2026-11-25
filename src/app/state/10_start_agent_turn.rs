@@ -81,6 +81,7 @@ impl AppState {
                 .iter()
                 .any(|message| message.role == ChatRole::User);
         let bridge = pane.chat.bridge.as_mut().unwrap();
+        let submitted_at = chat_timestamp_ms();
         let sent = if needs_title {
             bridge.send_first_prompt(
                 &prompt,
@@ -99,11 +100,11 @@ impl AppState {
                 }
                 pane.chat.bridge_needs_context = false;
                 if let Some(log) = pane.chat.conversation.as_mut() {
-                    log.append_user(&prompt);
+                    log.append_user_at(&prompt, submitted_at);
                 }
-                pane.chat
-                    .messages
-                    .push(Arc::new(ChatMessage::new(ChatRole::User, prompt)));
+                let mut message = ChatMessage::new(ChatRole::User, prompt);
+                message.source_timestamp = submitted_at;
+                pane.chat.messages.push(Arc::new(message));
                 pane.chat.checklist = AgentChecklist::default();
                 pane.chat.running = true;
                 pane.chat.status = SessionStatus::Working;

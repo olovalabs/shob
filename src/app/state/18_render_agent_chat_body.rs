@@ -155,6 +155,7 @@ impl AppState {
             .id(("agent-chat", pane_id))
             .debug_selector(|| "agent-chat".to_string())
             .size_full()
+            .bg(tokens.chat().background)
             .flex()
             .justify_center()
             .child(
@@ -162,7 +163,7 @@ impl AppState {
                     Self::render_chat_row(&row_snapshot, index, window, cx)
                 })
                 .size_full()
-                .px(px(24.0))
+                .px(px(0.0))
                 .pt(px(8.0))
                 .pb(px(20.0)),
             );
@@ -336,6 +337,7 @@ impl AppState {
             mut turn_start,
             mut last_assistant_row,
             mut active_row,
+            mut worked,
         } = *state;
         let mut worker_index = workers.partition_point(|worker| worker.index < cursor);
         while cursor < visible.len() {
@@ -344,8 +346,22 @@ impl AppState {
                 turn_start,
                 last_assistant_row,
                 active_row,
+                worked,
             };
+            if worked.is_some_and(|range| cursor >= range.end) { worked = None; }
             let message = &visible[cursor];
+            if message.worked_end > cursor && worked.is_none_or(|range| range.start != cursor) {
+                let open = chat.expanded_turns.get(chat.conversation_key.as_str()).is_some_and(|turns| turns.contains(&cursor));
+                checkpoints.push(checkpoint);
+                rows.push(ChatRow::Worked { start: cursor, elapsed_ms: message.worked_ms, open, has_details: message.worked_end - cursor > usize::from(message.worked_answer.is_some()) });
+                worked = Some(WorkedRange { start: cursor, end: message.worked_end, answer: message.worked_answer, open });
+                continue;
+            }
+            if let Some(range) = worked.filter(|range| !range.open && range.answer != Some(cursor)) {
+                cursor = range.answer.filter(|answer| *answer > cursor).unwrap_or(range.end);
+                worker_index = workers.partition_point(|worker| worker.index < cursor);
+                continue;
+            }
             if message
                 .tool
                 .as_ref()
@@ -377,23 +393,19 @@ impl AppState {
                 }
                 continue;
             }
-            if message.role == ChatRole::Tool
-                && message
-                    .tool
-                    .as_ref()
-                    .is_some_and(|tool| !chat_batch::is_batch(&tool.name))
+            if message.role == ChatRole::Thinking || (message.role == ChatRole::Tool
+                && message.tool.as_ref().is_some_and(|tool| !chat_batch::is_batch(&tool.name)))
             {
                 let start = cursor;
                 let mut has_running_call = false;
                 while let Some(message) = visible.get(cursor) {
-                    let Some(tool) = message.tool.as_ref().filter(|tool| {
-                        message.role == ChatRole::Tool
-                            && tool.workers.is_empty()
-                            && !chat_batch::is_batch(&tool.name)
-                    }) else {
-                        break;
-                    };
-                    has_running_call |= tool.state == ToolState::Running;
+                    if message.role == ChatRole::Thinking {
+                        has_running_call |= message.streaming;
+                    } else if let Some(tool) = message.tool.as_ref().filter(|tool| {
+                        message.role == ChatRole::Tool && tool.workers.is_empty() && !chat_batch::is_batch(&tool.name)
+                    }) {
+                        has_running_call |= tool.state == ToolState::Running;
+                    } else { break; }
                     cursor += 1;
                 }
                 let live = has_running_call || (running && cursor == visible.len());
@@ -452,6 +464,7 @@ impl AppState {
             turn_start,
             last_assistant_row,
             active_row,
+            worked,
         };
         if running {
             if let Some(previous) = last_assistant_row
@@ -491,6 +504,19 @@ impl AppState {
         };
         let tokens = snapshot.tokens;
         let inner: AnyElement = match row {
+            ChatRow::Worked { start, elapsed_ms, open, has_details, .. } => {
+                let start = *start;
+                let pane_id = snapshot.pane_id;
+                div().id(("worked-turn", start)).debug_selector(move || format!("worked-turn-{start}"))
+                    .w_full().h(px(32.)).flex().items_center().gap(px(7.))
+                    .border_b_1().border_color(tokens.border_subtle).text_size(px(14.)).text_color(tokens.text_muted)
+                    .when(*has_details, |header| header.tab_index(0).cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, snapshot.host.listener(move |this, _: &MouseDownEvent, _, cx| { cx.stop_propagation(); this.toggle_worked_turn(pane_id, start, cx); }))
+                        .on_key_down(snapshot.host.listener(move |this, event: &KeyDownEvent, _, cx| { if matches!(event.keystroke.key.as_str(), "enter" | "space") { cx.stop_propagation(); this.toggle_worked_turn(pane_id, start, cx); } })))
+                    .child(elapsed_ms.map_or_else(|| "Worked".to_string(), agent_appearance::worked_label))
+                    .when(*has_details, |header| header.child(svg().path(if *open { "icons/chevron-down.svg" } else { "icons/chevron-right.svg" }).size(px(12.)).text_color(tokens.text_muted)))
+                    .into_any_element()
+            }
             ChatRow::Subagents { start, rows } => {
                 let rendered = rows
                     .iter()
@@ -531,34 +557,46 @@ impl AppState {
                 if !live {
                     let mut titles = Vec::new();
                     let mut failed = 0;
+                    let mut count = 0usize;
                     for tool in messages.iter().filter_map(|message| message.tool.as_ref()) {
                         if let Some(id) = tool.id.as_deref() {
                             crate::stream_timing::tool_card_painted(id);
                         }
+                        count += 1;
                         failed += usize::from(tool.state == ToolState::Failed);
                         let title = tool.display.view.title.as_str();
                         if !titles.contains(&title) {
                             titles.push(title);
                         }
                     }
-                    let count = messages.len();
-                    let mut label = format!("Used {count} {}", titles.join(", "));
+                    let mut label = if titles.is_empty() { "Reasoning".to_string() } else { format!("Used {count} {}", titles.join(", ")) };
                     if failed > 0 {
                         label.push_str(&format!(" ({failed} failed)"));
                     }
+                    let detail = titles.join(", ");
                     let pane_id = snapshot.pane_id;
                     group = group.child(
                         div()
                             .id(SharedString::from(format!("tool-group-{pane_id}-{start}")))
                             .debug_selector(move || format!("tool-group-{start}"))
-                            .h(px(24.0))
+                            .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(detail.clone()).build(window, cx))
+                            .tab_index(0)
+                            .h(px(32.0))
+                            .border_b_1()
+                            .border_color(tokens.chat().border)
                             .flex()
                             .items_center()
                             .gap(px(7.0))
                             .text_size(px(14.0))
-                            .text_color(tokens.text_secondary)
+                            .text_color(tokens.chat().muted)
                             .hover(move |style| style.text_color(tokens.text_primary))
                             .cursor(CursorStyle::PointingHand)
+                            .on_key_down(snapshot.host.listener(move |this, event: &KeyDownEvent, _, cx| {
+                                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                    cx.stop_propagation();
+                                    this.toggle_chat_tool_group(pane_id, start, cx);
+                                }
+                            }))
                             .on_mouse_down(
                                 MouseButton::Left,
                                 snapshot
@@ -569,7 +607,6 @@ impl AppState {
                                     }),
                             )
                             .child(div().min_w_0().truncate().child(label))
-                            .child(div().flex_1())
                             .child(
                                 svg()
                                     .path(if *open {
@@ -650,19 +687,24 @@ impl AppState {
                 .into_any_element(),
         };
         let live_tools = matches!(row, ChatRow::ToolGroup { live: true, .. });
+        let row_gap = if live_tools { 0.0 } else if matches!(row, ChatRow::Worked { .. } | ChatRow::ToolGroup { .. }) { 14.0 } else { 12.0 };
         let content = div()
             .debug_selector(|| "agent-chat-row".to_string())
             .w_full()
             .min_w_0()
-            .max_w(px(784.0))
-            .px(px(16.0))
+            .max_w(agent_appearance::COLUMN_WIDTH)
+            .px(agent_appearance::GUTTER)
+            .font_family(cx.theme().font_family.clone())
+            .text_size(agent_appearance::FONT_SIZE)
+            .line_height(agent_appearance::LINE_HEIGHT)
+            .text_color(tokens.chat().foreground)
             .when(
                 snapshot.focused_layout && matches!(row, ChatRow::Message { message, .. } if message.role == ChatRole::User),
                 |row| row.pt(px(24.0)).pb(px(24.0)),
             )
             .when(
                 !snapshot.focused_layout || !matches!(row, ChatRow::Message { message, .. } if message.role == ChatRole::User),
-                |row| row.pb(px(if live_tools { 0.0 } else { 12.0 })),
+                |row| row.pb(px(row_gap)),
             )
             .child(inner);
         div()

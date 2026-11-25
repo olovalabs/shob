@@ -91,14 +91,15 @@ version = "0.4.38"
 version = "2.1.0"
 
 [dependencies.gpui]
-version = "0.1.13"
+version = "=0.1.16"
 package = "gpui-fast"
 
 [dependencies.gpui-component-macros]
 version = "0.5.1"
+path = "macros"
 
 [dependencies.gpui-macros]
-version = "0.1.13"
+version = "=0.1.16"
 package = "gpui-fast-macros"
 
 [dependencies.html5ever]
@@ -301,7 +302,7 @@ optional = true
 package = "lb-wry"
 
 [dev-dependencies.gpui]
-version = "0.1.13"
+version = "=0.1.16"
 package = "gpui-fast"
 features = ["test-support"]
 

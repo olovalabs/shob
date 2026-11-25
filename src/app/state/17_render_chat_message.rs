@@ -61,16 +61,16 @@ impl AppState {
                     .items_end()
                     .child(
                         div()
-                            .max_w(relative(0.82))
+                            .max_w(relative(0.70))
                             .min_w_0()
-                            .px(px(12.0))
-                            .py(px(8.0))
-                            .rounded(px(10.0))
-                            .bg(tokens.card_bg)
+                            .px(px(16.0))
+                            .py(px(10.0))
+                            .rounded(px(18.0))
+                            .bg(tokens.chat().user_background)
                             .text_size(px(14.0))
-                            .line_height(relative(1.6))
+                            .line_height(agent_appearance::LINE_HEIGHT)
                             .child(
-                                TextView::plain(
+                                TextView::markdown(
                                     SharedString::from(format!(
                                         "agent-user-{pane_id}-{conversation}-{index}"
                                     )),
@@ -78,13 +78,18 @@ impl AppState {
                                     window,
                                     cx,
                                 )
+                                .style(tokens.chat().markdown(cx.theme().is_dark(), true, cx.theme().highlight_theme.clone()))
                                 .selectable(true)
                                 .text_size(px(14.0))
-                                .text_color(tokens.text_primary),
+                                .text_color(tokens.chat().user_foreground),
                             ),
                     )
                     .child(
                         div()
+                            .id(("user-message-actions", index))
+                            .opacity(0.)
+                            .group_hover("chat-message", |style| style.opacity(1.))
+                            .in_focus(|style| style.opacity(1.))
                             .flex()
                             .items_center()
                             .justify_end()
@@ -101,6 +106,7 @@ impl AppState {
                                     .id(SharedString::from(format!(
                                         "chat-edit-user-{pane_id}-{index}"
                                     )))
+                                    .tab_index(0)
                                     .size(px(22.0))
                                     .flex()
                                     .items_center()
@@ -144,11 +150,7 @@ impl AppState {
             ChatRole::Assistant => {
                 let id =
                     SharedString::from(format!("agent-markdown-{pane_id}-{conversation}-{index}"));
-                let markdown_text_color: Hsla = if cx.theme().is_dark() {
-                    gpui::rgb(0xf2f2f2).into()
-                } else {
-                    gpui::rgb(0x161616).into()
-                };
+                let markdown_text_color = tokens.chat().foreground;
                 let mut body = div()
                     .w_full()
                     .min_w_0()
@@ -156,7 +158,7 @@ impl AppState {
                     .flex_col()
                     .gap(px(12.0))
                     .text_size(px(14.0))
-                    .line_height(relative(1.6))
+                    .line_height(agent_appearance::LINE_HEIGHT)
                     .text_color(markdown_text_color);
 
                 if let Some(view) = message.stream.as_ref().filter(|_| message.streaming) {
@@ -165,7 +167,7 @@ impl AppState {
                             id.clone(),
                             view.settled.clone(),
                             px(14.0),
-                            rems(0.75),
+                            rems(1.0),
                             markdown_text_color,
                             ChatRenderContext { tokens, window, cx },
                         ));
@@ -177,7 +179,7 @@ impl AppState {
                             )),
                             view,
                             px(14.0),
-                            rems(0.75),
+                            rems(1.0),
                             markdown_text_color,
                             ChatRenderContext { tokens, window, cx },
                         ));
@@ -190,7 +192,7 @@ impl AppState {
                         id,
                         message.markdown(),
                         px(14.0),
-                        rems(0.75),
+                        rems(1.0),
                         markdown_text_color,
                         ChatRenderContext { tokens, window, cx },
                     ));
@@ -333,7 +335,7 @@ impl AppState {
                         .whitespace_normal()
                         .font_family(MONO_FONT)
                         .text_size(px(11.5))
-                        .line_height(relative(1.6))
+                        .line_height(agent_appearance::LINE_HEIGHT)
                         .text_color(tokens.block_failure)
                         .child(message.text.clone()),
                 )
@@ -342,6 +344,8 @@ impl AppState {
 
         if let Some(marker) = paint_marker {
             div()
+                .group("chat-message")
+                .debug_selector(move || format!("chat-message-{index}"))
                 .w_full()
                 .min_w_0()
                 .relative()
@@ -349,7 +353,7 @@ impl AppState {
                 .child(inner)
                 .into_any_element()
         } else {
-            div().w_full().min_w_0().child(inner).into_any_element()
+            div().group("chat-message").debug_selector(move || format!("chat-message-{index}")).w_full().min_w_0().child(inner).into_any_element()
         }
     }
 

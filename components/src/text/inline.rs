@@ -18,6 +18,7 @@ pub(super) struct Inline {
     links: Rc<Vec<(Range<usize>, LinkMark)>>,
     highlights: Vec<(Range<usize>, HighlightStyle)>,
     code_ranges: Vec<Range<usize>>,
+    code_background: gpui::Hsla,
     styled_text: StyledText,
 
     state: Arc<Mutex<InlineState>>,
@@ -50,14 +51,16 @@ impl Inline {
             links: Rc::new(links),
             highlights,
             code_ranges: Vec::new(),
+            code_background: gpui::transparent_black(),
             text: text.clone(),
             styled_text: StyledText::new(text),
             state,
         }
     }
 
-    pub(super) fn code_ranges(mut self, ranges: Vec<Range<usize>>) -> Self {
+    pub(super) fn code_ranges(mut self, ranges: Vec<Range<usize>>, background: gpui::Hsla) -> Self {
         self.code_ranges = ranges;
+        self.code_background = background;
         self
     }
 
@@ -300,71 +303,53 @@ impl Element for Inline {
 
         let text_layout = self.styled_text.layout().clone();
         if !self.code_ranges.is_empty() {
-            let code_bg: gpui::Hsla = if cx.theme().is_dark() {
-                gpui::rgba(0xf2f2f214).into()
-            } else {
-                gpui::rgba(0x16161614).into()
-            };
             let line_height = text_layout.line_height();
-            let radius = px(4.);
-            let pad_x = px(2.);
-            let pad_y = px(1.);
-            for range in &self.code_ranges {
-                let (Some(start_pos), Some(end_pos)) = (
-                    text_layout.position_for_index(range.start),
-                    text_layout.position_for_index(range.end),
-                ) else {
-                    continue;
-                };
-                if start_pos.y == end_pos.y {
-                    window.paint_quad(quad(
-                        Bounds::from_corners(
-                            point(start_pos.x - pad_x, start_pos.y + pad_y),
-                            point(end_pos.x + pad_x, start_pos.y + line_height - pad_y),
-                        ),
-                        radius,
-                        code_bg,
-                        Edges::default(),
-                        gpui::transparent_black(),
-                        BorderStyle::default(),
-                    ));
-                } else {
-                    window.paint_quad(quad(
-                        Bounds::from_corners(
-                            point(start_pos.x - pad_x, start_pos.y + pad_y),
-                            point(bounds.right(), start_pos.y + line_height - pad_y),
-                        ),
-                        radius,
-                        code_bg,
-                        Edges::default(),
-                        gpui::transparent_black(),
-                        BorderStyle::default(),
-                    ));
-                    if end_pos.y > start_pos.y + line_height {
+            let mut origin = bounds.origin;
+            let mut offset = 0;
+            let mut ranges = self.code_ranges.iter().peekable();
+            for line in text_layout.line_layouts() {
+                let layout = &line.unwrapped_layout;
+                let mut start = 0;
+                for end in line
+                    .wrap_boundaries()
+                    .iter()
+                    .map(|boundary| layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index)
+                    .chain(std::iter::once(line.len()))
+                {
+                    while ranges
+                        .peek()
+                        .is_some_and(|range| range.end <= offset + start)
+                    {
+                        ranges.next();
+                    }
+                    let line_x = layout.x_for_index(start);
+                    for range in ranges
+                        .clone()
+                        .take_while(|range| range.start < offset + end)
+                    {
+                        let from = range.start.max(offset + start) - offset;
+                        let to = range.end.min(offset + end) - offset;
+                        if from >= to {
+                            continue;
+                        }
+                        let left = origin.x + layout.x_for_index(from) - line_x;
+                        let right = origin.x + layout.x_for_index(to) - line_x;
                         window.paint_quad(quad(
                             Bounds::from_corners(
-                                point(bounds.left(), start_pos.y + line_height + pad_y),
-                                point(bounds.right(), end_pos.y - pad_y),
+                                point(left - px(2.), origin.y + px(3.)),
+                                point(right + px(2.), origin.y + line_height - px(3.)),
                             ),
-                            radius,
-                            code_bg,
+                            px(3.),
+                            self.code_background,
                             Edges::default(),
                             gpui::transparent_black(),
                             BorderStyle::default(),
                         ));
                     }
-                    window.paint_quad(quad(
-                        Bounds::from_corners(
-                            point(bounds.left(), end_pos.y + pad_y),
-                            point(end_pos.x + pad_x, end_pos.y + line_height - pad_y),
-                        ),
-                        radius,
-                        code_bg,
-                        Edges::default(),
-                        gpui::transparent_black(),
-                        BorderStyle::default(),
-                    ));
+                    origin.y += line_height;
+                    start = end;
                 }
+                offset += line.len() + 1;
             }
         }
         self.styled_text

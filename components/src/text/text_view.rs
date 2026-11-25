@@ -1230,7 +1230,11 @@ fn parse_content(
 
     let res = match type_ {
         TextViewType::Markdown => {
-            super::format::markdown::parse(text, &style, &mut node_cx, highlight_theme)
+            if style.agent_markdown == super::AgentMarkdown::Off {
+                super::format::markdown::parse(text, &style, &mut node_cx, highlight_theme)
+            } else {
+                super::format::agent_markdown::parse(text, &style, &mut node_cx, highlight_theme)
+            }
         }
         TextViewType::Html => super::format::html::parse(text, &mut node_cx),
     };

@@ -91,8 +91,8 @@ fn live_reasoning_and_tool_calls_are_both_visible() {
     });
     cx.draw_frame().expect("draw completed section");
     let group = cx
-        .debug_bounds("tool-group-1")
-        .expect("folded tool section");
+        .debug_bounds("tool-group-0")
+        .expect("folded activity section");
     assert!(cx.debug_bounds("tool-row-1").is_none());
     assert!(cx.debug_bounds("tool-row-2").is_none());
 
@@ -147,6 +147,9 @@ fn reasoning_starts_folded_and_can_be_expanded_live_and_after_completion() {
     });
     cx.draw_frame().expect("draw completed reasoning header");
     assert!(cx.debug_bounds("thinking-body-0").is_none());
+    let activity = cx.debug_bounds("tool-group-0").expect("completed activity");
+    cx.simulate_click(activity.center(), Modifiers::default());
+    cx.draw_frame().expect("open completed activity");
     let row = cx.debug_bounds("thinking-row-0").expect("thinking row");
     cx.simulate_click(row.origin + point(px(20.0), px(10.0)), Modifiers::default());
     cx.draw_frame().expect("expand completed reasoning");
@@ -735,4 +738,59 @@ fn model_favorites_filter_the_list_without_hiding_models() {
     cx.simulate_click(favorites.center(), Modifiers::default());
     cx.draw_frame().unwrap();
     assert!(cx.debug_bounds("agent-model-0").is_some());
+}
+
+#[test]
+fn worked_header_toggles_progress_and_keeps_the_answer_visible() {
+    fn capture(cx: &mut gpui::VisualTestContext, name: &str) {
+        if let Ok(folder) = std::env::var("SHOB_CHAT_CAPTURE_DIR") {
+            for _ in 0..8 { cx.run_until_parked(); cx.draw_commands(); }
+            std::fs::create_dir_all(&folder).unwrap();
+            let path = PathBuf::from(folder).join(name);
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                window.render_to_image().unwrap().save(path).unwrap();
+                window.simulate_next_frame(cx);
+            });
+        }
+    }
+    let mut app = TestAppContext::new();
+    let (mut cx, state) = open_app(&mut app);
+    let pane_id = state.read_with(&cx, |state, _| state.projects[0].sessions[0].panes[0].id);
+    cx.update_window_entity(&state, |state, window, cx| {
+        state.settings.agent_layout = true;
+        state.sidebar_visible = false;
+        state.theme_preference = ThemePreference::Dark;
+        state.apply_theme_preference(Some(window), cx);
+        state.set_chat_mode(pane_id, true, window, cx);
+        let chat = &mut state.pane_mut(pane_id).unwrap().chat;
+        let mut user = ChatMessage::new(ChatRole::User, "prompt".into());
+        user.source_timestamp = Some(1_000);
+        chat.messages.push(Arc::new(user));
+        push_chat_event(&mut chat.messages, agent_bridge::AgentEvent::Text("I will inspect the files.".into()));
+        push_chat_event(&mut chat.messages, agent_bridge::AgentEvent::ToolStart { id: Some("read".into()), name: "read".into(), input: "{}".into() });
+        push_chat_event(&mut chat.messages, agent_bridge::AgentEvent::ToolEnd { id: Some("read".into()), name: "read".into(), output: "contents".into(), failed: false });
+        push_chat_event(&mut chat.messages, agent_bridge::AgentEvent::Text("The final answer.".into()));
+        finish_chat_streaming(&mut chat.messages);
+        finish_worked_turn(&mut chat.messages, Some(10_000));
+        chat.mark_active_dirty();
+        cx.notify();
+    });
+    cx.draw_frame().unwrap();
+    assert!(cx.debug_bounds("chat-message-1").is_none());
+    assert!(cx.debug_bounds("chat-message-3").is_some());
+    capture(&mut cx, "worked-collapsed.png");
+    let header = cx.debug_bounds("worked-turn-1").expect("completed turn header");
+    cx.simulate_click(header.center(), Modifiers::default());
+    cx.draw_frame().unwrap();
+    assert!(cx.debug_bounds("chat-message-1").is_some());
+    assert!(cx.debug_bounds("tool-group-2").is_some());
+    assert!(cx.debug_bounds("chat-message-3").is_some());
+    capture(&mut cx, "worked-expanded.png");
+    let header = cx.debug_bounds("worked-turn-1").unwrap();
+    cx.simulate_click(header.center(), Modifiers::default());
+    cx.draw_frame().unwrap();
+    assert!(cx.debug_bounds("chat-message-1").is_none());
+    assert!(cx.debug_bounds("tool-group-2").is_none());
+    assert!(cx.debug_bounds("chat-message-3").is_some());
 }

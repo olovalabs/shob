@@ -536,6 +536,7 @@ fn streaming_hot_path_microbench() {
         paths::uid("b")
     ));
     let entry = conversations::Entry::Event {
+        at_ms: None,
         event: AgentEvent::Text("x".repeat(120)),
     };
     let encoded = serde_json::to_vec(&entry).unwrap();
@@ -557,7 +558,7 @@ fn streaming_hot_path_microbench() {
     let _ = std::fs::remove_file(&path);
 
     let mut log = conversations::Log::at_path(path.clone(), u64::MAX);
-    let conversations::Entry::Event { event } = &entry else {
+    let conversations::Entry::Event { event, .. } = &entry else {
         unreachable!()
     };
     let start = Instant::now();

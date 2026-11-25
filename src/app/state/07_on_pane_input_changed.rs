@@ -584,6 +584,25 @@ impl AppState {
         }
     }
 
+    fn toggle_worked_turn(&mut self, pane_id: usize, start: usize, cx: &mut Context<Self>) {
+        let Some(pane) = self.pane_mut(pane_id) else { return; };
+        let first_row = pane.chat.row_cache.borrow().rows.iter().position(|row| matches!(row, ChatRow::Worked { start: index, .. } if *index == start)).unwrap_or(0);
+        let turns = pane.chat.expanded_turns.entry(pane.chat.conversation_key.clone()).or_default();
+        if !turns.remove(&start) { turns.insert(start); }
+        pane.chat.invalidate_message_row(start);
+        let new_count = Self::build_chat_rows(&pane.chat, pane.chat.visible_running()).borrow().rows.len();
+        let old_count = pane.chat.list_rows.get();
+        let anchor = pane.chat.list_state.logical_scroll_top();
+        pane.chat.autoscroll = false;
+        pane.chat.list_state.set_follow_mode(FollowMode::Normal);
+        if first_row <= old_count {
+            pane.chat.list_state.splice(first_row..old_count, new_count.saturating_sub(first_row));
+            pane.chat.list_rows.set(new_count);
+            pane.chat.list_state.scroll_to(anchor);
+        }
+        cx.notify();
+    }
+
     fn toggle_chat_tool_group(&mut self, pane_id: usize, start: usize, cx: &mut Context<Self>) {
         let Some(pane) = self.pane_mut(pane_id) else {
             return;

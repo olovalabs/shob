@@ -490,6 +490,10 @@ impl ThemeColors {
 }
 
 impl ThemeTokens {
+    pub fn chat(&self) -> crate::agent_appearance::ChatAppearance {
+        crate::agent_appearance::ChatAppearance::from_theme(self)
+    }
+
     /// Build tokens for a mode and palette scheme. The Warp scheme reproduces
     /// Warp's default terminal chrome: near-black surfaces, white text, a cyan
     /// accent and block colors derived from Warp's ANSI palette.

@@ -40,21 +40,29 @@ fn is_shell_language(lang: Option<&str>) -> bool {
     )
 }
 
-#[derive(Clone, Copy)]
-struct MarkdownColors {
-    text_base: Hsla,
-    text_muted: Hsla,
-    link: Hsla,
-    border_base: Hsla,
-    border_muted: Hsla,
-    code_bg: Hsla,
-    shell_code_bg: Hsla,
-    table_frame_bg: Hsla,
-    table_body_bg: Hsla,
-    table_body_border: Hsla,
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MarkdownColors {
+    pub text_base: Hsla,
+    pub text_muted: Hsla,
+    pub link: Hsla,
+    pub border_base: Hsla,
+    pub border_muted: Hsla,
+    pub code_bg: Hsla,
+    pub inline_code_bg: Hsla,
+    pub shell_code_bg: Hsla,
+    pub table_frame_bg: Hsla,
+    pub table_body_bg: Hsla,
+    pub table_body_border: Hsla,
 }
 
 impl MarkdownColors {
+    fn for_context(context: &NodeContext, cx: &App) -> Self {
+        context
+            .style
+            .colors
+            .unwrap_or_else(|| Self::for_theme(cx.theme().is_dark()))
+    }
+
     fn for_theme(is_dark: bool) -> Self {
         if is_dark {
             Self {
@@ -64,6 +72,7 @@ impl MarkdownColors {
                 border_base: rgba(0xffffff1a).into(),
                 border_muted: rgba(0xffffff14).into(),
                 code_bg: rgb(0x151515).into(),
+                inline_code_bg: rgba(0xf2f2f214).into(),
                 shell_code_bg: rgb(0x3a3a3a).into(),
                 table_frame_bg: rgb(0x2e2e2e).into(),
                 table_body_bg: rgb(0x242424).into(),
@@ -77,6 +86,7 @@ impl MarkdownColors {
                 border_base: rgba(0x0000001a).into(),
                 border_muted: rgba(0x00000014).into(),
                 code_bg: rgb(0xfcfcfc).into(),
+                inline_code_bg: rgba(0x16161614).into(),
                 shell_code_bg: rgb(0xf2f2f2).into(),
                 table_frame_bg: rgb(0xfafafa).into(),
                 table_body_bg: rgb(0xffffff).into(),
@@ -457,8 +467,9 @@ impl CodeBlock {
         cx: &mut App,
     ) -> AnyElement {
         let style = &node_cx.style;
-        let colors = MarkdownColors::for_theme(cx.theme().is_dark());
-        let is_shell = is_shell_language(self.lang.as_deref());
+        let colors = MarkdownColors::for_context(node_cx, cx);
+        let is_shell = style.agent_markdown == super::AgentMarkdown::Off
+            && is_shell_language(self.lang.as_deref());
         let (code_bg, border_color, text_color, code_styles) = if is_shell {
             (
                 colors.shell_code_bg,
@@ -470,17 +481,12 @@ impl CodeBlock {
             (
                 colors.code_bg,
                 colors.border_base,
-                if cx.theme().is_dark() {
-                    rgba(0xffffff9e).into()
-                } else {
-                    rgb(0x6f6f6f).into()
-                },
+                colors.text_base,
                 self.styles.clone(),
             )
         };
         let is_first_fragment = self.flow_edges.is_none_or(|(first, _)| first);
         let is_last_fragment = self.flow_edges.is_none_or(|(_, last)| last);
-        let group_name: SharedString = format!("markdown-code-{}", options.ix).into();
 
         div()
             .w_full()
@@ -494,12 +500,11 @@ impl CodeBlock {
             )
             .when(
                 is_last_fragment && !options.is_last && !options.in_list,
-                |this| this.pb(px(24.)),
+                |this| this.pb(px(12.)),
             )
             .child(
                 div()
                     .id(("codeblock", options.ix))
-                    .group(group_name.clone())
                     .w_full()
                     .min_w_0()
                     .p(px(12.))
@@ -510,6 +515,7 @@ impl CodeBlock {
                     .text_color(text_color)
                     .font_family(cx.theme().mono_font_family.clone())
                     .text_size(px(13.))
+                    .overflow_x_scroll()
                     .line_height(px(20.))
                     .relative()
                     .refine_style(&style.code_block)
@@ -533,20 +539,27 @@ impl CodeBlock {
                             this
                         },
                     )
-                    .child(Inline::new("code", self.state.clone(), vec![], code_styles))
-                    .when_some(node_cx.code_block_actions.clone(), |this, actions| {
-                        this.child(
-                            div()
-                                .absolute()
-                                .top(px(4.))
-                                .right(px(4.))
-                                .opacity(0.)
-                                .group_hover(group_name, |this| this.opacity(1.))
-                                .bg(code_bg)
-                                .rounded(px(4.))
-                                .child(actions(&self, window, cx)),
-                        )
-                    }),
+                    .when_some(
+                        node_cx
+                            .code_block_actions
+                            .clone()
+                            .filter(|_| is_first_fragment),
+                        |this, actions| {
+                            this.child(
+                                div()
+                                    .flex()
+                                    .justify_end()
+                                    .mb(px(8.))
+                                    .child(actions(&self, window, cx)),
+                            )
+                        },
+                    )
+                    .child(div().whitespace_nowrap().child(Inline::new(
+                        "code",
+                        self.state.clone(),
+                        vec![],
+                        code_styles,
+                    ))),
             )
             .into_any_element()
     }
@@ -747,7 +760,10 @@ impl Paragraph {
                             std::mem::take(&mut links),
                             gpui::combine_highlights(std::mem::take(&mut highlights), []).collect(),
                         )
-                        .code_ranges(std::mem::take(&mut code_ranges))
+                        .code_ranges(
+                            std::mem::take(&mut code_ranges),
+                            MarkdownColors::for_context(node_cx, cx).inline_code_bg,
+                        )
                         .into_any_element(),
                     );
                 }
@@ -787,7 +803,7 @@ impl Paragraph {
                 for (range, style) in &inline_node.marks {
                     let inner_range = (offset + range.start)..(offset + range.end);
 
-                    let colors = MarkdownColors::for_theme(cx.theme().is_dark());
+                    let colors = MarkdownColors::for_context(node_cx, cx);
                     let mut highlight = HighlightStyle::default();
                     if style.bold {
                         highlight.font_weight = Some(FontWeight::BOLD);
@@ -802,8 +818,8 @@ impl Paragraph {
                         });
                     }
                     if style.code {
+                        code_ranges.push(inner_range.clone());
                         if style.link.is_none() {
-                            code_ranges.push(inner_range.clone());
                             highlight.color = Some(colors.text_base);
                         }
                         if !style.bold {
@@ -842,7 +858,10 @@ impl Paragraph {
                     links,
                     gpui::combine_highlights(highlights, []).collect(),
                 )
-                .code_ranges(code_ranges)
+                .code_ranges(
+                    code_ranges,
+                    MarkdownColors::for_context(node_cx, cx).inline_code_bg,
+                )
                 .into_any_element(),
             );
         }
@@ -1253,7 +1272,7 @@ impl Node {
             _ => table_column_fractions(&col_lens),
         };
 
-        let colors = MarkdownColors::for_theme(cx.theme().is_dark());
+        let colors = MarkdownColors::for_context(node_cx, cx);
 
         match item {
             Node::Table(table) => {
@@ -1269,7 +1288,7 @@ impl Node {
                         .id(("row", row_ix))
                         .w_full()
                         .min_w_0()
-                        .when(!is_header && !is_body_last, |this| {
+                        .when(is_header || !is_body_last, |this| {
                             this.border_b(px(0.5)).border_color(colors.border_muted)
                         })
                         .flex()
@@ -1343,7 +1362,6 @@ impl Node {
                             .id("table")
                             .w_full()
                             .min_w_0()
-                            .p(px(2.))
                             .bg(colors.table_frame_bg)
                             .border(px(0.5))
                             .border_color(colors.border_muted)
@@ -1376,11 +1394,7 @@ impl Node {
                                     div()
                                         .w_full()
                                         .min_w_0()
-                                        .rounded(px(4.))
                                         .bg(colors.table_body_bg)
-                                        .border(px(0.5))
-                                        .border_color(colors.table_body_border)
-                                        .shadow_xs()
                                         .overflow_hidden()
                                         .children(body_rows.into_iter().enumerate().map(
                                             |(body_ix, (row_ix, row))| {
@@ -1463,9 +1477,11 @@ impl Node {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
-        let colors = MarkdownColors::for_theme(cx.theme().is_dark());
+        let colors = MarkdownColors::for_context(node_cx, cx);
         let mb = if options.in_list || options.is_last {
             px(0.)
+        } else if node_cx.style.agent_markdown != super::AgentMarkdown::Off {
+            node_cx.style.paragraph_gap.to_pixels(window.rem_size())
         } else {
             px(12.)
         };
@@ -1493,16 +1509,16 @@ impl Node {
                 .id(("p", options.ix))
                 .w_full()
                 .min_w_0()
-                .line_height(relative(1.6))
+                .line_height(relative(if node_cx.style.agent_markdown == super::AgentMarkdown::Off { 1.6 } else { 23. / 14. }))
                 .pb(mb)
                 .child(paragraph.render(node_cx, window, cx))
                 .into_any_element(),
             Node::Heading { level, children } => {
                 let (default_size, font_weight, top_margin, bottom_margin, is_muted) = match level {
-                    1 => (px(17.), FontWeight::SEMIBOLD, px(28.), px(12.), false),
-                    2 => (px(15.), FontWeight::SEMIBOLD, px(24.), px(10.), false),
+                    1 => (px(17.), FontWeight::SEMIBOLD, px(24.), px(8.), false),
+                    2 => (px(15.), FontWeight::SEMIBOLD, px(24.), px(8.), false),
                     3 => (px(14.), FontWeight::BOLD, px(20.), px(8.), false),
-                    4 | 5 | 6 => (px(14.), FontWeight::MEDIUM, px(20.), px(8.), true),
+                    4 | 5 | 6 => (px(14.), FontWeight::SEMIBOLD, px(20.), px(8.), false),
                     _ => (px(14.), FontWeight::NORMAL, px(20.), px(8.), false),
                 };
 

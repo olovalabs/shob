@@ -41,6 +41,9 @@ fn chat_tool_card(
         return calls;
     }
     let mut card = div()
+        .when(matches!(tool.name.as_str(), "edit" | "write" | "apply_patch" | "str_replace_editor"), |card| {
+            card.bg(tokens.card_bg).border_1().border_color(tokens.card_border).rounded(px(8.)).p(px(8.))
+        })
         .w_full()
         .min_w_0()
         .flex()
@@ -285,6 +288,9 @@ fn update_chat_tool(
             literal: std::sync::OnceLock::new(),
             turn: None,
             source_timestamp: None,
+            worked_ms: None,
+            worked_end: 0,
+            worked_answer: None,
         }));
     }
 }
@@ -500,6 +506,25 @@ fn refresh_stream_view(message: &mut ChatMessage, scan: bool) {
     }
 }
 
+fn chat_timestamp_ms() -> Option<u64> {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+}
+
+fn finish_worked_turn(messages: &mut [Arc<ChatMessage>], completed_at: Option<u64>) -> Option<usize> {
+    let user = messages.iter().rposition(|message| message.role == ChatRole::User)?;
+    let first = user + 1;
+    if first == messages.len() || messages[first].worked_end != 0 { return None; }
+    let elapsed = completed_at.zip(messages[user].source_timestamp).and_then(|(end, start)| end.checked_sub(start));
+    let answer = messages[first..].iter().rposition(|message| matches!(message.role, ChatRole::Assistant | ChatRole::Error) && !message.text.is_empty()).map(|index| first + index);
+    let end = messages.len();
+    let message = Arc::make_mut(&mut messages[first]);
+    message.worked_ms = elapsed;
+    message.worked_end = end;
+    message.worked_answer = answer;
+    Some(first)
+}
+
 fn finish_chat_tools(messages: &mut [Arc<ChatMessage>]) {
     for message in messages
         .iter_mut()
@@ -560,6 +585,19 @@ fn task_list_completed(list: &embedded::task_list::TaskList) -> bool {
 }
 
 fn push_chat_event(messages: &mut Vec<Arc<ChatMessage>>, event: agent_bridge::AgentEvent) {
+    let at_ms = chat_timestamp_ms();
+    push_chat_event_at(messages, event, at_ms);
+}
+
+fn push_chat_event_at(messages: &mut Vec<Arc<ChatMessage>>, event: agent_bridge::AgentEvent, at_ms: Option<u64>) {
+    let previous = messages.len();
+    push_chat_event_inner(messages, event);
+    for message in &mut messages[previous..] {
+        Arc::make_mut(message).source_timestamp = at_ms;
+    }
+}
+
+fn push_chat_event_inner(messages: &mut Vec<Arc<ChatMessage>>, event: agent_bridge::AgentEvent) {
     if is_task_list_event(&event) {
         return;
     }
@@ -611,6 +649,9 @@ fn push_chat_event(messages: &mut Vec<Arc<ChatMessage>>, event: agent_bridge::Ag
                 literal: std::sync::OnceLock::new(),
                 turn: None,
                 source_timestamp: None,
+                worked_ms: None,
+            worked_end: 0,
+            worked_answer: None,
             }));
             return;
         }
@@ -798,6 +839,7 @@ struct WorkerRowSnapshot {
 /// One virtualized transcript unit. Settled history stays measured and is not
 /// rebuilt when the active reply grows.
 enum ChatRow {
+    Worked { start: usize, elapsed_ms: Option<u64>, open: bool, has_details: bool },
     Subagents {
         start: usize,
         rows: Vec<WorkerRowSnapshot>,
@@ -826,7 +868,11 @@ struct ChatRowCheckpoint {
     turn_start: usize,
     last_assistant_row: Option<usize>,
     active_row: Option<usize>,
+    worked: Option<WorkedRange>,
 }
+
+#[derive(Clone, Copy)]
+struct WorkedRange { start: usize, end: usize, answer: Option<usize>, open: bool }
 
 #[derive(Default)]
 struct ChatRowCache {
@@ -850,10 +896,13 @@ impl ChatRowCache {
         if self.dirty && index >= self.state.cursor {
             return;
         }
-        let row = self
+        let mut row = self
             .checkpoints
             .partition_point(|checkpoint| checkpoint.cursor <= index)
             .saturating_sub(1);
+        while row > 0 && self.checkpoints[row - 1].cursor == self.checkpoints[row].cursor {
+            row -= 1;
+        }
         if let Some(checkpoint) = self.checkpoints.get(row).copied() {
             self.state = checkpoint;
             self.rows.truncate(row);

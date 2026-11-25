@@ -19,6 +19,42 @@ mod chat_row_cache_tests {
     }
 
     #[test]
+    fn completed_turn_disclosure_hides_progress_and_keeps_final_answer() {
+        let mut chat = PaneChat { running: true, ..Default::default() };
+        let mut user = ChatMessage::new(ChatRole::User, "prompt".into());
+        user.source_timestamp = Some(1_000);
+        chat.messages.push(Arc::new(user));
+        apply(&mut chat, AgentEvent::Text("progress".into()));
+        apply(&mut chat, AgentEvent::ToolStart { id: Some("read".into()), name: "read".into(), input: "{}".into() });
+        apply(&mut chat, AgentEvent::ToolEnd { id: Some("read".into()), name: "read".into(), output: "contents".into(), failed: false });
+        apply(&mut chat, AgentEvent::Text("final answer".into()));
+        let cache = build(&chat);
+        assert!(cache.borrow().rows.iter().any(|row| matches!(row, ChatRow::Message { message, .. } if message.text == "progress")));
+        finish_worked_turn(&mut chat.messages, Some(10_000));
+        apply(&mut chat, AgentEvent::Done);
+        build(&chat);
+        assert_eq!(cache.borrow().rows.len(), 3);
+        assert!(matches!(&cache.borrow().rows[1], ChatRow::Worked { open: false, has_details: true, elapsed_ms: Some(9_000), .. }));
+        assert!(matches!(&cache.borrow().rows[2], ChatRow::Message { index: 3, message, .. } if message.text == "final answer"));
+        chat.expanded_turns.entry(chat.conversation_key.clone()).or_default().insert(1);
+        chat.invalidate_message_row(1);
+        build(&chat);
+        assert_eq!(cache.borrow().rows.len(), 5);
+        assert!(matches!(&cache.borrow().rows[2], ChatRow::Message { message, .. } if message.text == "progress"));
+        assert!(matches!(&cache.borrow().rows[3], ChatRow::ToolGroup { .. }));
+        let built = cache.borrow().built_rows;
+        build(&chat);
+        assert_eq!(cache.borrow().built_rows, built);
+        chat.expanded_turns.get_mut(&chat.conversation_key).unwrap().remove(&1);
+        chat.invalidate_message_row(1);
+        build(&chat);
+        assert_eq!(cache.borrow().rows.len(), 3);
+        assert_eq!(chat.messages[1].text, "progress");
+        chat.conversation_key = "another-conversation".into();
+        assert!(matches!(&build(&chat).borrow().rows[1], ChatRow::Worked { open: false, .. }));
+    }
+
+    #[test]
     fn unchanged_frames_and_bursty_deltas_reuse_history_without_cloning_live_text() {
         let mut chat = PaneChat::default();
         for _ in 0..200 {
@@ -293,6 +329,7 @@ fn worker_status_label(label: &str) -> &'static str {
 
 fn chat_row_contains(row: &ChatRow, message_index: usize) -> bool {
     match row {
+        ChatRow::Worked { start, .. } => *start == message_index,
         ChatRow::Subagents { start, .. } => *start == message_index,
         ChatRow::ToolGroup {
             start, messages, ..
@@ -583,6 +620,8 @@ struct PaneChat {
     thinking_by_model: HashMap<String, String>,
     pub autoscroll: bool,
     expanded_tool_groups: HashMap<String, HashSet<usize>>,
+    // Restored completed turns start collapsed; expansion is transient view state.
+    expanded_turns: HashMap<String, HashSet<usize>>,
     shob_session_id: Option<String>,
     conversation: Option<conversations::Log>,
     startup_error: Option<String>,
@@ -648,6 +687,7 @@ impl Default for PaneChat {
             thinking_by_model: HashMap::new(),
             autoscroll: true,
             expanded_tool_groups: HashMap::new(),
+            expanded_turns: HashMap::new(),
             shob_session_id: None,
             conversation: None,
             startup_error: None,

@@ -148,6 +148,9 @@ struct ChatMessage {
     /// Metadata-only turn identity for opt-in paint timings.
     turn: Option<(u64, std::time::Instant)>,
     source_timestamp: Option<u64>,
+    worked_ms: Option<u64>,
+    worked_end: usize,
+    worked_answer: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -204,6 +207,9 @@ impl ChatMessage {
             literal: std::sync::OnceLock::new(),
             turn: None,
             source_timestamp: None,
+            worked_ms: None,
+            worked_end: 0,
+            worked_answer: None,
         }
     }
 
@@ -422,22 +428,14 @@ fn chat_markdown(
         ChatMarkdown::Blocks(blocks) => TextView::markdown_blocks(themed_id, blocks, window, cx),
     }
     .style(
-        TextViewStyle {
-            heading_base_font_size: base,
-            paragraph_gap,
-            is_dark: dark,
-            highlight_theme: if dark {
-                HighlightTheme::opencode_dark()
-            } else {
-                HighlightTheme::opencode_light()
-            },
-            ..Default::default()
-        }
-        .heading_font_size(|level, base| match level {
-            1 => base * (17.0 / 14.0),
-            2 => base * (15.0 / 14.0),
-            _ => base,
-        }),
+        tokens.chat().markdown(dark, false, cx.theme().highlight_theme.clone())
+            .heading_font_size(move |level, _| base * match level {
+                1 => 20.0 / 14.0,
+                2 => 18.0 / 14.0,
+                3 => 16.0 / 14.0,
+                _ => 1.0,
+            })
+            .paragraph_gap(paragraph_gap),
     )
     .code_block_actions(move |block, _window, _cx| {
         let code = block.code();
@@ -447,28 +445,17 @@ fn chat_markdown(
             .gap(px(6.0))
             .px(px(6.0))
             .text_size(px(11.0))
-            .text_color(tokens.text_muted)
+            .text_color(tokens.chat().muted)
             .when_some(block.lang(), |actions, lang| actions.child(lang))
             .child(
-                div()
-                    .id("chat-code-copy")
-                    .debug_selector(|| "chat-code-copy".to_string())
-                    .size(px(20.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(4.0))
-                    .cursor(CursorStyle::PointingHand)
-                    .hover(move |style| style.bg(tokens.sidebar_item_hover))
-                    .on_click(move |_, _, cx| {
-                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(code.to_string()));
-                    })
-                    .child(
-                        svg()
-                            .path("icons/copy.svg")
-                            .size(px(12.0))
-                            .text_color(tokens.text_muted),
-                    ),
+                div().debug_selector(|| "chat-code-copy".to_string()).child(
+                    Button::new("chat-code-copy")
+                        .icon(gpui_component::IconName::Copy)
+                        .small()
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(code.to_string()));
+                        })
+                ),
             )
             .into_any_element()
     })
@@ -814,8 +801,10 @@ fn chat_copy_button(
     tip: SharedString,
     tokens: ThemeTokens,
 ) -> impl IntoElement {
+    let keyboard_text = text.clone();
     div()
         .id(id)
+        .tab_index(0)
         .size(px(22.0))
         .flex()
         .items_center()
@@ -830,6 +819,12 @@ fn chat_copy_button(
         })
         .tooltip(move |window, cx| {
             gpui_component::tooltip::Tooltip::new(tip.clone()).build(window, cx)
+        })
+        .on_key_down(move |event, _, cx| {
+            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                cx.stop_propagation();
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(keyboard_text.to_string()));
+            }
         })
         .on_click(move |_, _, cx| {
             cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.to_string()));

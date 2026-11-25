@@ -154,6 +154,7 @@ impl AppState {
                             }
                         }
                         for event in drained {
+                            let event_at = chat_timestamp_ms();
                             if is_task_list_event(&event) {
                                 if let Some(list) = task_list_update(&event)
                                     && Self::apply_task_list(pane, list, cx)
@@ -162,7 +163,7 @@ impl AppState {
                                     if save_history
                                         && let Some(log) = pane.chat.conversation.as_mut()
                                     {
-                                        log.append_event(&event);
+                                        log.append_event_at(&event, event_at);
                                     }
                                 }
                                 continue;
@@ -207,13 +208,16 @@ impl AppState {
                                         | agent_bridge::AgentEvent::Closed
                                 )
                             {
-                                log.append_event(&event);
+                                log.append_event_at(&event, event_at);
                             }
                             match event {
                                 agent_bridge::AgentEvent::Done => {
                                     pane.chat.completed_turns =
                                         pane.chat.completed_turns.saturating_add(1);
                                     crate::stream_timing::turn_settled(trace);
+                                    if let Some(index) = finish_worked_turn(&mut pane.chat.messages, event_at) {
+                                        pane.chat.invalidate_message_row(index);
+                                    }
                                     finish_chat_tools(&mut pane.chat.messages);
                                     finish_chat_streaming(&mut pane.chat.messages);
                                     done_panes.push(pane.id);
@@ -227,6 +231,9 @@ impl AppState {
                                             Some("The agent session closed unexpectedly.".into());
                                     }
                                     crate::stream_timing::turn_settled(trace);
+                                    if let Some(index) = finish_worked_turn(&mut pane.chat.messages, event_at) {
+                                        pane.chat.invalidate_message_row(index);
+                                    }
                                     finish_chat_tools(&mut pane.chat.messages);
                                     finish_chat_streaming(&mut pane.chat.messages);
                                     closed = true;

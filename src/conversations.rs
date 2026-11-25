@@ -9,7 +9,7 @@
 use crate::agent_auth::{AgentModel, ModelBackend};
 use crate::agent_bridge::AgentEvent;
 use crate::paths;
-use crate::{ChatMessage, ChatRole, ToolState, push_chat_event, task_list_update};
+use crate::{ChatMessage, ChatRole, ToolState, task_list_update};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
@@ -201,9 +201,20 @@ fn write_line(
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum Entry {
-    User { text: String },
-    Event { event: AgentEvent },
-    Local { role: ChatRole, text: String },
+    User {
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at_ms: Option<u64>,
+    },
+    Event {
+        event: AgentEvent,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at_ms: Option<u64>,
+    },
+    Local {
+        role: ChatRole,
+        text: String,
+    },
 }
 
 /// One append-only conversation file.
@@ -240,9 +251,15 @@ impl Log {
         &self.path
     }
 
+    #[cfg(test)]
     pub fn append_user(&mut self, text: &str) {
+        self.append_user_at(text, crate::chat_timestamp_ms());
+    }
+
+    pub fn append_user_at(&mut self, text: &str, at_ms: Option<u64>) {
         self.append(Entry::User {
             text: capped(text, MAX_ENTRY_BYTES),
+            at_ms,
         });
     }
 
@@ -253,9 +270,15 @@ impl Log {
         });
     }
 
+    #[cfg(test)]
     pub fn append_event(&mut self, event: &AgentEvent) {
+        self.append_event_at(event, crate::chat_timestamp_ms());
+    }
+
+    pub fn append_event_at(&mut self, event: &AgentEvent, at_ms: Option<u64>) {
         self.append(Entry::Event {
             event: project_event(event),
+            at_ms,
         });
     }
 
@@ -386,8 +409,8 @@ fn entry_bytes(entry: &Entry) -> usize {
     use embedded::QueuedEvent;
     std::mem::size_of::<Entry>()
         + match entry {
-            Entry::User { text } | Entry::Local { text, .. } => text.capacity(),
-            Entry::Event { event } => event.queued_bytes(),
+            Entry::User { text, .. } | Entry::Local { text, .. } => text.capacity(),
+            Entry::Event { event, .. } => event.queued_bytes(),
         }
 }
 
@@ -458,20 +481,24 @@ pub(crate) fn restore(path: &Path) -> RestoredConversation {
             continue;
         };
         match entry {
-            Entry::User { text } => {
+            Entry::User { text, at_ms } => {
                 restored.checklist = None;
-                messages.push(Arc::new(ChatMessage::new(ChatRole::User, text)));
+                let mut message = ChatMessage::new(ChatRole::User, text);
+                message.source_timestamp = at_ms;
+                messages.push(Arc::new(message));
             }
             Entry::Local { role, text } => {
                 messages.push(std::sync::Arc::new(ChatMessage::new(role, text)))
             }
-            Entry::Event { event } => match event {
-                AgentEvent::Done | AgentEvent::Closed => {}
+            Entry::Event { event, at_ms } => match event {
+                AgentEvent::Done | AgentEvent::Closed => {
+                    crate::finish_worked_turn(messages, at_ms);
+                }
                 event => {
                     if let Some(list) = task_list_update(&event) {
                         restored.checklist = Some(list);
                     } else {
-                        push_chat_event(messages, event);
+                        crate::push_chat_event_at(messages, event, at_ms);
                     }
                 }
             },
@@ -489,6 +516,7 @@ pub fn load_usage(path: &Path) -> Option<embedded::AgentUsage> {
     for line in text.lines() {
         let Ok(Entry::Event {
             event: AgentEvent::Usage(usage),
+            ..
         }) = serde_json::from_str::<Entry>(line.trim())
         else {
             continue;

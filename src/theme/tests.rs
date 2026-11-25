@@ -89,13 +89,18 @@ fn generated_defaults_match_built_in_and_keep_customizations_on_scheme_change() 
 fn overrides_apply_per_mode_and_preserve_palette_defaults() {
     let colors: ThemeColors = serde_json::from_str(
         r##"{
-            "dark": {"ui": {"window_bg": "#12345680"},
+            "dark": {"ui": {"window_bg": "#12345680", "pane.bg": "#182838", "text.primary": "#abcdef", "editor.bar.bg": "#234567", "primary.btn.bg": "#456789", "ring": "#6789ab"},
                      "terminal": {"red": "#abcdef"}}
         }"##,
     )
     .unwrap();
     let dark = colors.tokens(gpui_component::ThemeMode::Dark, PaletteScheme::Warp);
     assert_eq!(dark.window_bg, rgba(0x12345680).into());
+    assert_eq!(dark.chat().background, rgba(0x182838ff).into());
+    assert_eq!(dark.chat().foreground, rgba(0xabcdefff).into());
+    assert_eq!(dark.chat().composer, rgba(0x234567ff).into());
+    assert_eq!(dark.chat().user_background, rgba(0x456789ff).into());
+    assert_eq!(dark.chat().link, rgba(0x6789abff).into());
     let light = colors.tokens(gpui_component::ThemeMode::Light, PaletteScheme::Warp);
     assert_eq!(
         light.window_bg,
