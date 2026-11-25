@@ -164,6 +164,7 @@ fn tool_panel_switches_tabs_without_replacing_terminals() {
     click(&mut cx, "open-tool-panel");
     cx.draw_frame().unwrap();
     assert!(cx.debug_bounds("tool-panel-chooser").is_some());
+    assert!(cx.debug_bounds("tool-panel-choose-browser").is_none());
     app_state.read_with(&cx, |state, _| {
         assert_eq!(state.active_session().unwrap().panes.len(), 2)
     });
@@ -193,7 +194,7 @@ fn tool_panel_switches_tabs_without_replacing_terminals() {
     click(&mut cx, "hide-tool-panel");
     cx.draw_frame().unwrap();
     assert!(cx.debug_bounds("tool-panel-tabs").is_none());
-    let workspace = app_state.read_with(&cx, |state, cx| {
+    let mut workspace: workspace_state::SavedWorkspace = app_state.read_with(&cx, |state, cx| {
         let saved = state.saved_workspace(cx);
         let panes = &saved.projects[0].sessions[0].panes;
         let saved_owner = panes.iter().find(|pane| pane.id == owner).unwrap();
@@ -211,6 +212,16 @@ fn tool_panel_switches_tabs_without_replacing_terminals() {
         }
         serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap()
     });
+    let legacy_browser = workspace.projects[0].sessions[0]
+        .panes
+        .iter_mut()
+        .find(|pane| pane.id == second)
+        .unwrap();
+    legacy_browser.browser = Some(workspace_state::SavedBrowser {
+        tabs: vec!["https://example.com".into()],
+        active: 0,
+    });
+    legacy_browser.display_title = "Browser".into();
     cx.update_window_entity(&app_state, |state, window, cx| {
         state.startup_loaded = false;
         state.settings.restore.agent_history = false;
@@ -224,6 +235,20 @@ fn tool_panel_switches_tabs_without_replacing_terminals() {
             cx,
         );
         state.ensure_panes_input_state(window, cx);
+        assert_eq!(
+            state.pane_ref(second).unwrap().display_title.as_ref(),
+            "Terminal"
+        );
+        let saved = state.saved_workspace(cx);
+        assert!(
+            saved.projects[0].sessions[0]
+                .panes
+                .iter()
+                .find(|pane| pane.id == second)
+                .unwrap()
+                .browser
+                .is_none()
+        );
     });
     cx.draw_frame().unwrap();
     assert!(cx.debug_bounds("tool-panel-tabs").is_none());

@@ -586,13 +586,6 @@ impl AppState {
                 "D",
                 Self::open_project_diff,
             ),
-            (
-                "tool-panel-choose-browser",
-                "Browser",
-                "icons/browser-color.svg",
-                "B",
-                Self::new_tool_panel_browser,
-            ),
         ];
         let click_focus = focus.clone();
         div()
@@ -696,9 +689,7 @@ impl AppState {
             .children(self.tool_panel_panes(owner_id).map(|pane| {
                 let id = pane.id;
                 let selected = Some(id) == active;
-                let icon = if pane.browser.is_some() {
-                    "icons/browser-color.svg"
-                } else if pane.files_active
+                let icon = if pane.files_active
                     || pane.diff_preview.is_some()
                     || pane.markdown_preview.is_some()
                 {

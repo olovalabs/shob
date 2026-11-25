@@ -233,7 +233,6 @@ impl AppState {
                         cx.listener(move |this, event: &MouseDownEvent, window, cx| {
                             if this.pane_ref(pane_id).is_some_and(|pane| {
                                 !pane.files_active
-                                    && pane.browser.is_none()
                                     && pane.diff_preview.is_none()
                                     && pane.markdown_preview.is_none()
                             }) {
@@ -247,9 +246,7 @@ impl AppState {
                             }
                         }),
                     )
-                    .child(if let Some(surface) = pane.browser.clone() {
-                        surface.into_any_element()
-                    } else if pane.files_active {
+                    .child(if pane.files_active {
                         div()
                             .size_full()
                             .capture_any_mouse_down(cx.listener(
@@ -288,7 +285,6 @@ impl AppState {
             )
             .when(
                 !pane.files_active
-                    && pane.browser.is_none()
                     && pane.markdown_preview.is_none()
                     && pane.diff_preview.is_none()
                     && pane.should_show_bottom_input(cx)

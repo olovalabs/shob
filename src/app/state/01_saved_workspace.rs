@@ -105,11 +105,7 @@ impl AppState {
                                             saved
                                         })
                                         .or_else(|| pane.files_restore.clone()),
-                                    browser: pane
-                                        .browser
-                                        .as_ref()
-                                        .map(|surface| surface.read(cx).snapshot())
-                                        .or_else(|| pane.browser_restore.clone()),
+                                    browser: None,
                                     chat: workspace_state::SavedChat {
                                         fast_mode: pane.chat.fast_mode,
                                         thinking_override: pane.chat.thinking_override.clone(),
@@ -398,13 +394,17 @@ impl AppState {
                         continue;
                     };
 
-                    let title = SharedString::from(if saved_pane.title.is_empty() {
+                    let title = SharedString::from(if saved_pane.browser.is_some()
+                        || saved_pane.title.is_empty()
+                    {
                         "terminal".to_string()
                     } else {
                         saved_pane.title.clone()
                     });
                     let display_title =
-                        SharedString::from(if saved_pane.display_title.is_empty() {
+                        SharedString::from(if saved_pane.browser.is_some() {
+                            "Terminal".to_string()
+                        } else if saved_pane.display_title.is_empty() {
                             title.to_string()
                         } else {
                             saved_pane.display_title.clone()
@@ -453,9 +453,6 @@ impl AppState {
                     if let Some(saved) = saved_pane.files {
                         pane.files_active = saved.active;
                         pane.files_restore = Some(saved);
-                    }
-                    if let Some(saved) = saved_pane.browser {
-                        pane.browser_restore = Some(saved);
                     }
                     pane.command_history = saved_pane.command_history;
                     pane.restore_draft = Some(saved_pane.draft.clone());

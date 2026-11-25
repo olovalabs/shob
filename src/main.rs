@@ -45,7 +45,6 @@ mod ascii_glow;
 mod assets;
 mod attachments;
 mod attention;
-mod browser;
 mod chat_batch;
 mod cli;
 mod completion;

@@ -715,7 +715,7 @@ impl AppState {
                 if let Some(session) = p.sessions.get_mut(s_idx)
                     && let Some(pane) = session.panes.iter_mut().find(|p| p.id == pane_id)
                 {
-                    if pane.chat.auth.is_some() || pane.files_active || pane.browser.is_some() {
+                    if pane.chat.auth.is_some() || pane.files_active {
                         return;
                     }
                     if let Some(ReadOnlyFile {
