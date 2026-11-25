@@ -951,6 +951,19 @@ async fn build_prepared_with_tool_hook_full(
         ExecutionToolContext::new(env_dyn.clone(), Some(mut_env)).with_file_io(file_io.clone());
 
     let mut tools = build_tools(&ctx, args);
+    if args.host_subagents
+        && !args.no_tools
+        && !args.no_builtin_tools
+        && tool_name_allowed(crate::subagent_tool::NAME, args)
+    {
+        tools.push(HarnessTool::new(
+            crate::subagent_tool::SubagentTool::create(
+                Arc::clone(&harness_cell),
+                cwd.to_path_buf(),
+                Some(session_dir.clone()),
+            ),
+        ));
+    }
 
     // ---- Extensions (Part B2) ----
     // Load cdylib plugins from the resolved extension dirs, merge their tools
@@ -1022,7 +1035,15 @@ async fn build_prepared_with_tool_hook_full(
     // working-state rule is worded (see `default_system_prompt`).
     let prior_reasoning_replayed = ai::model::prior_reasoning_is_replayed(&model);
     let prompt_tools = active.clone();
-    let prompt_metadata = extension_tool_prompt_metadata(&extension_session);
+    let mut prompt_metadata = extension_tool_prompt_metadata(&extension_session);
+    if args.host_subagents
+        && !args.no_builtin_tools
+        && active.iter().any(|name| name == crate::subagent_tool::NAME)
+    {
+        prompt_metadata
+            .entry(crate::subagent_tool::NAME.to_owned())
+            .or_insert_with(crate::subagent_tool::prompt_metadata);
+    }
     let default_prompt = || {
         default_system_prompt_with_tool_prompts(
             &cwd_str,

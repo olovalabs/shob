@@ -216,3 +216,10 @@ fn unidentified_snapshots_and_structural_boundaries_are_lossless() {
     assert!(matches!(&out[6], AgentEvent::ToolEnd { output, .. } if output == "final"));
     assert!(matches!(out.last(), Some(AgentEvent::Done)));
 }
+
+#[test]
+fn composer_tool_hook_auto_allows_subagent_calls() {
+    assert!(auto_allowed_tool(embedded::subagent_tool::NAME));
+    assert!(auto_allowed_tool(embedded::task_list::NAME));
+    assert!(!auto_allowed_tool("bash"));
+}

@@ -131,6 +131,89 @@ async fn children_cannot_expand_tools_or_create_grandchildren() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delegation_tools_are_stripped_from_child_harnesses() {
+    struct NamedDummy(&'static str, ai::types::Tool);
+    #[async_trait::async_trait]
+    impl agent::AgentTool for NamedDummy {
+        fn schema(&self) -> &ai::types::Tool {
+            &self.1
+        }
+        fn label(&self) -> &str {
+            self.0
+        }
+        async fn execute(
+            &self,
+            _id: &str,
+            _params: serde_json::Value,
+            _signal: CancellationToken,
+            _update: Arc<dyn Fn(agent::ToolResultPartial) + Send + Sync>,
+        ) -> Result<agent::AgentToolResult, agent::AgentError> {
+            Ok(agent::AgentToolResult::text("ok"))
+        }
+    }
+
+    let provider = FauxProvider::new(FauxScript::new());
+    let env = Arc::new(tools::InMemoryExecutionEnv::new());
+    let ctx = tools::ExecutionToolContext::new(env.clone(), Some(env));
+    let dummy = |name: &'static str| {
+        HarnessTool::new(Arc::new(NamedDummy(
+            name,
+            ai::types::Tool {
+                name: name.into(),
+                description: name.into(),
+                parameters: ai::types::Schema::new(serde_json::json!({"type": "object"})),
+                constrained_sampling: None,
+            },
+        )))
+    };
+    let parent = AgentHarness::create(AgentHarnessOptions {
+        model: provider.default_model().clone(),
+        models: vec![provider],
+        tools: vec![
+            HarnessTool::new(tools::create_read_tool(&ctx, None)),
+            dummy("subagent"),
+            dummy("delegate_task"),
+        ],
+        session: session("parent-delegation"),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+
+    let child = parent
+        .create_child(session("child-delegation"), emitter(), 1, None)
+        .await
+        .unwrap();
+    let child_tools: Vec<_> = child
+        .harness
+        .get_tools()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|tool| tool.tool.schema().name.clone())
+        .collect();
+    assert_eq!(child_tools, vec!["read".to_string()]);
+    assert!(parent
+        .create_child(
+            session("bad-subagent"),
+            emitter(),
+            1,
+            Some(vec!["subagent".into()])
+        )
+        .await
+        .is_err());
+    assert!(parent
+        .create_child(
+            session("bad-delegate"),
+            emitter(),
+            1,
+            Some(vec!["delegate_task".into()]),
+        )
+        .await
+        .is_err());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn child_turn_budget_is_per_instance_and_does_not_change_parent_or_environment() {
     let _env_guard = crate::run_budget::MAX_TURNS_ENV_TEST_LOCK.lock().await;
     let script = FauxScript::new();

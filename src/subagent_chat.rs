@@ -157,7 +157,11 @@ pub fn structured(name: &str, details: &Value, session: Option<&Path>) -> Vec<Wo
                         }
                     })
                     .to_owned(),
-                transcript: session.and_then(|path| transcript_path(path, id)),
+                transcript: entry["transcript"]
+                    .as_str()
+                    .filter(|path| !path.is_empty())
+                    .map(PathBuf::from)
+                    .or_else(|| session.and_then(|path| transcript_path(path, id))),
                 result: entry["resultText"]
                     .as_str()
                     .or_else(|| entry["output"].as_str())
@@ -497,5 +501,29 @@ mod tests {
         assert_eq!(messages[1].text, "private");
         assert!(!messages[1].expanded);
         assert_eq!(messages[2].text, "### Report");
+    }
+
+    #[test]
+    fn structured_subagent_preserves_explicit_transcript_and_label() {
+        let transcript = Path::new("/tmp/shob/sessions/subagents/parent-1/child-1.jsonl");
+        let workers = structured(
+            "subagent",
+            &json!({
+                "progress": [{
+                    "id": "child-1",
+                    "label": "Researcher",
+                    "status": "completed",
+                    "transcript": transcript.to_string_lossy(),
+                    "resultText": "Found the bug"
+                }]
+            }),
+            None,
+        );
+        assert_eq!(workers.len(), 1);
+        assert_eq!(workers[0].id, "child-1");
+        assert_eq!(workers[0].title, "Researcher");
+        assert_eq!(workers[0].status_label(), "Completed");
+        assert_eq!(workers[0].transcript.as_deref(), Some(transcript));
+        assert_eq!(workers[0].result.as_deref(), Some("Found the bug"));
     }
 }
