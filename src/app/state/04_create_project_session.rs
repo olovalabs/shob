@@ -365,34 +365,9 @@ impl AppState {
                     session_idx,
                     section,
                     pinned: state.pinned,
-                    revealed_active: self.sidebar_active_thread_key()
-                        == Some((project_idx, session_idx)),
+                    revealed_active: active_key == Some((project_idx, session_idx)),
                 });
             }
-        }
-        if let Some(key) = active_key
-            && self
-                .projects
-                .get(key.0)
-                .and_then(|project| project.sessions.get(key.1))
-                .is_some_and(|session| self.sidebar_session_has_title(session))
-            && !rows.iter().any(|row| self.sidebar_thread_is(*row, key))
-        {
-            let state = self
-                .projects
-                .get(key.0)
-                .and_then(|project| project.sessions.get(key.1))
-                .map(|session| self.sidebar_thread_state(&session.uid))
-                .unwrap_or_default();
-            // The active route is always reachable, even when its metadata
-            // would otherwise hide it from the inbox.
-            rows.push(SidebarThreadRef {
-                project_idx: key.0,
-                session_idx: key.1,
-                section: SidebarSection::Active,
-                pinned: state.pinned,
-                revealed_active: true,
-            });
         }
         rows.sort_by_key(|row| std::cmp::Reverse(self.sidebar_thread_id(*row)));
         rows

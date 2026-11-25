@@ -243,6 +243,17 @@ fn usage_replay_skips_corrupt_lines_and_absent_usage() {
 }
 
 #[test]
+fn transcript_snapshot_excludes_later_appends_and_keeps_complete_boundary_lines() {
+    let mut file = tempfile::tempfile().unwrap();
+    file.write_all(b"old\nretained\nlater\n").unwrap();
+    file.rewind().unwrap();
+    assert_eq!(read_snapshot(&mut file, 4, 12).unwrap(), "old\n");
+    assert_eq!(read_snapshot(&mut file, 13, 9).unwrap(), "retained\n");
+    assert_eq!(read_snapshot(&mut file, 13, 10).unwrap(), "retained\n");
+    assert_eq!(read_snapshot(&mut file, 13, 8).unwrap(), "");
+}
+
+#[test]
 fn usage_replay_uses_the_transcript_read_bound() {
     let log = temp_log("usage-bounded", MAX_FILE_BYTES);
     let usage = embedded::AgentUsage {

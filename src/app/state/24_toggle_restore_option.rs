@@ -11,9 +11,11 @@ impl AppState {
             _ => return,
         }
         self.clear_data_confirm = false;
-        if let Err(error) = settings::save_preserving_theme(&self.settings) {
+        self.save_generation.fetch_add(1, Ordering::SeqCst);
+        if let Err(error) = settings::save_preserving_theme(&self.saved_settings()) {
             eprintln!("failed to save settings: {error}");
         }
+        self.schedule_workspace_save(cx);
         cx.notify();
     }
 

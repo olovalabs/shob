@@ -3,24 +3,22 @@ fn running_sidebar_card_disappears_when_session_finishes() {
     let mut cx = TestAppContext::new();
     let (mut cx, app_state) = open_app(&mut cx);
     cx.draw_frame().expect("initial frame");
-    assert!(cx.debug_bounds("sidebar-running-sessions").is_none());
+    assert!(cx.debug_bounds("sidebar-working-toggle").is_none());
 
     cx.update_window_entity(&app_state, |state, _, cx| {
-        let project = &mut state.projects[0];
-        project.expanded = false;
-        let session = &mut project.sessions[0];
-        session.panes[0].status = SessionStatus::Working;
+        state.projects[0].sessions[0].status = SessionStatus::Working;
         cx.notify();
     });
     cx.draw_frame().expect("running frame");
-    assert!(cx.debug_bounds("sidebar-running-sessions").is_some());
+    assert!(cx.debug_bounds("sidebar-working-toggle").is_some());
 
     cx.update_window_entity(&app_state, |state, _, cx| {
-        state.projects[0].sessions[0].panes[0].status = SessionStatus::Done;
+        state.projects[0].sessions[0].status = SessionStatus::Done;
         cx.notify();
     });
     cx.draw_frame().expect("completed frame");
-    assert!(cx.debug_bounds("sidebar-running-sessions").is_none());
+    assert!(cx.debug_bounds("sidebar-working-toggle").is_none());
+    assert!(cx.debug_bounds("session-row-1").is_some());
 }
 
 #[test]
@@ -97,37 +95,18 @@ fn sidebar_renders_with_agent_and_worker() {
 }
 
 #[test]
-fn sidebar_new_session_and_remove_session_icons_align() {
+fn sidebar_thread_menu_exposes_delete_for_the_selected_thread() {
     let mut cx = TestAppContext::new();
     let (mut cx, _) = open_app(&mut cx);
-    cx.draw_frame()
-        .expect("initial frame with project and session");
-
-    let new_session_bounds = cx
-        .debug_bounds("project-new-session")
-        .expect("project-new-session button bounds");
-    let remove_session_bounds = cx
-        .debug_bounds("session-close")
-        .expect("session-close button bounds");
-    let new_session_right = new_session_bounds.origin.x + new_session_bounds.size.width;
-    let remove_session_right = remove_session_bounds.origin.x + remove_session_bounds.size.width;
-    assert_eq!(
-        new_session_right, remove_session_right,
-        "create new session icon and remove session icon must have the same right alignment"
-    );
-    assert_eq!(
-        new_session_bounds.origin.x, remove_session_bounds.origin.x,
-        "create new session icon and remove session icon must have the same horizontal start"
-    );
-    assert_eq!(
-        new_session_bounds.size.width, remove_session_bounds.size.width,
-        "create new session icon and remove session icon must have the same width"
-    );
-    assert_eq!(new_session_bounds.size.width, px(20.0));
-    assert_eq!(new_session_right, px(249.0));
-    assert_eq!(remove_session_right, px(249.0));
-    assert_eq!(new_session_bounds.origin.x, px(229.0));
-    assert_eq!(remove_session_bounds.origin.x, px(229.0));
+    cx.draw_frame().unwrap();
+    let row = cx.debug_bounds("session-row-1").unwrap();
+    cx.simulate_mouse_move(row.center(), None, Modifiers::none());
+    cx.draw_frame().unwrap();
+    let menu = cx.debug_bounds("sidebar-thread-menu").unwrap();
+    cx.simulate_click(menu.center(), Modifiers::none());
+    cx.draw_frame().unwrap();
+    assert!(cx.debug_bounds("sidebar-thread-menu-popover").is_some());
+    assert!(cx.debug_bounds("session-close").is_some());
 }
 
 #[test]
@@ -185,55 +164,26 @@ fn new_sidebar_session_renders_first_and_stays_on_the_first_page() {
         state.rebuild_session_index();
         cx.notify();
     });
-    cx.draw_frame().expect("sidebar with New chat");
+    cx.draw_frame().expect("sidebar with New thread");
     let new_thread = cx.debug_bounds("sidebar-new-thread").unwrap();
-    cx.simulate_click(new_thread.center(), Modifiers::default());
-    app_state.read_with(&cx, |state, _| {
-        let chat = state.active_session().unwrap();
-        assert!(chat.panes.iter().any(|pane| pane.chat.active));
-        assert_eq!(chat.id, 7);
-    });
-    cx.draw_frame().expect("first fresh chat");
-    let new_thread = cx.debug_bounds("sidebar-new-thread").unwrap();
-    cx.simulate_click(new_thread.center(), Modifiers::default());
-    app_state.read_with(&cx, |state, _| {
-        assert_eq!(state.active_session().unwrap().id, 7);
-        assert_eq!(state.active_project().unwrap().sessions.len(), 7);
-    });
-    let project_plus = cx.debug_bounds("project-new-session").unwrap().center();
-    cx.simulate_mouse_move(project_plus, None, Modifiers::default());
+    cx.simulate_click(new_thread.center(), Modifiers::none());
     cx.draw_frame().unwrap();
-    cx.simulate_click(project_plus, Modifiers::default());
-    app_state.read_with(&cx, |state, _| {
-        assert_eq!(state.active_session().unwrap().id, 7);
-        assert_eq!(state.active_project().unwrap().sessions.len(), 7);
-    });
+    cx.simulate_keystrokes("enter");
     cx.update_window_entity(&app_state, |state, _, cx| {
-        let pane_id = state.focused_pane_id.unwrap();
-        state
-            .pane_mut(pane_id)
-            .unwrap()
-            .chat
-            .messages
-            .push(Arc::new(ChatMessage::new(ChatRole::User, "Hello".into())));
+        assert_eq!(state.active_session().unwrap().id, 7);
+        let pane = state.pane_mut(state.focused_pane_id.unwrap()).unwrap();
+        assert!(pane.chat.active);
+        pane.chat.agent_title = Some("Newest thread".into());
         cx.notify();
-    });
-    cx.draw_frame().expect("chat with a message");
-    let new_thread = cx.debug_bounds("sidebar-new-thread").unwrap();
-    cx.simulate_click(new_thread.center(), Modifiers::default());
-    app_state.read_with(&cx, |state, _| {
-        let chat = state.active_session().unwrap();
-        assert_eq!(chat.id, 10);
-        assert!(chat.panes.iter().any(|pane| pane.chat.active));
     });
     cx.draw_frame()
         .expect("sidebar with the newest session first");
 
     let newest = cx
-        .debug_bounds("session-row-10")
+        .debug_bounds("session-row-7")
         .expect("newest session row");
     let previous = cx
-        .debug_bounds("session-row-7")
+        .debug_bounds("session-row-6")
         .expect("previous session row");
     assert!(
         newest.top() < previous.top(),
@@ -246,15 +196,16 @@ fn new_sidebar_session_renders_first_and_stays_on_the_first_page() {
 }
 
 #[test]
-fn sidebar_search_opens_a_match_from_a_collapsed_project() {
+fn sidebar_search_opens_a_match_outside_the_inbox_scope() {
     let mut cx = TestAppContext::new();
     let (mut cx, app_state) = open_app(&mut cx);
     cx.update_window_entity(&app_state, |state, _, cx| {
         let title = SharedString::from(format!("{} Release Notes", "Long title ".repeat(16)));
+        state.settings.sidebar.project_scope = Some(state.projects[0].path.clone());
         state.projects.push(Project {
             id: 2,
             name: "Other project".into(),
-            path: state.projects[0].path.clone(),
+            path: state.projects[0].path.join("other-project"),
             sessions: vec![Session {
                 id: 3,
                 uid: paths::uid("s"),
@@ -274,14 +225,9 @@ fn sidebar_search_opens_a_match_from_a_collapsed_project() {
         cx.notify();
     });
     cx.draw_frame().unwrap();
-    let search = cx.debug_bounds("sidebar-search").unwrap();
+    let search = cx.debug_bounds("sidebar-search-field").unwrap();
     assert!(cx.debug_bounds("session-row-3").is_none());
     cx.simulate_click(search.center(), Modifiers::default());
-    cx.draw_frame().unwrap();
-    assert_eq!(
-        cx.debug_bounds("sidebar-search-field").unwrap().top(),
-        search.top()
-    );
 
     cx.simulate_input("NOTESz");
     cx.draw_frame().unwrap();
@@ -292,8 +238,8 @@ fn sidebar_search_opens_a_match_from_a_collapsed_project() {
     assert!(cx.debug_bounds("session-row-1").is_none());
     cx.simulate_click(result.center(), Modifiers::default());
     cx.draw_frame().unwrap();
-    assert!(cx.debug_bounds("sidebar-search-field").is_none());
-    app_state.read_with(&cx, |state, _| {
+    app_state.read_with(&cx, |state, cx| {
+        assert!(state.sidebar_search_query(cx).is_empty());
         assert_eq!(state.active_session().unwrap().id, 3);
     });
 }

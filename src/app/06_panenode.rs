@@ -467,6 +467,7 @@ struct AppState {
     sidebar_resizing: bool,
     persistence_path: Option<PathBuf>,
     save_generation: Arc<AtomicU64>,
+    workspace_save_task: Option<gpui::Task<()>>,
     startup_loaded: bool,
     quit_subscription: Option<gpui::Subscription>,
     /// Whether the OS considers this window focused, mirrored from the render

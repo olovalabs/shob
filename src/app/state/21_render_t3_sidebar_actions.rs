@@ -261,19 +261,6 @@ impl AppState {
                 }),
         );
         sidebar = sidebar.child(self.render_t3_sidebar_footer(cx));
-        if matches!(picker_mode, Some(SidebarProjectPickerMode::Scope)) {
-            sidebar = sidebar.child(
-                div()
-                    .id("sidebar-toggle-projects-active")
-                    .debug_selector(|| "sidebar-toggle-projects".into()),
-            );
-        } else if self.settings.sidebar.snoozed_expanded || self.settings.sidebar.settled_expanded {
-            sidebar = sidebar.child(
-                div()
-                    .id("sidebar-running-sessions")
-                    .debug_selector(|| "sidebar-running-sessions".into()),
-            );
-        }
         if self.system_monitor_open {
             sidebar = sidebar.child(deferred(self.render_system_monitor(cx)).priority(101));
         }
@@ -654,7 +641,7 @@ impl AppState {
             list = list.child(
                 div()
                     .id("sidebar-active-show-more")
-                    .debug_selector(|| "project-show-more".into())
+                    .debug_selector(|| "sidebar-active-show-more".into())
                     .h(px(30.0))
                     .w_full()
                     .flex()

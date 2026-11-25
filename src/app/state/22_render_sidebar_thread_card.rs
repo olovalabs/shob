@@ -322,7 +322,7 @@ impl AppState {
     ) -> gpui::Stateful<gpui::Div> {
         div()
             .id(id)
-            .debug_selector(|| "sidebar-thread-menu-row".into())
+            .debug_selector(move || id.to_string())
             .h(px(30.0))
             .w_full()
             .flex()
@@ -699,35 +699,9 @@ impl AppState {
             .border_r_1()
             .border_color(tokens.sidebar_border)
             .child(self.render_t3_sidebar_actions(cx))
-            .child(self.render_t3_sidebar_compat_selectors())
             .when(self.integration_panel_visible, |this| {
                 this.child(self.render_integrations_panel(cx))
             })
     }
 
-    /// Stable test hooks for navigation controls that the compact T3 header
-    /// does not show. They are zero-impact and keep existing visual tests
-    /// independent of the selected sidebar style.
-    fn render_t3_sidebar_compat_selectors(&self) -> gpui::Stateful<gpui::Div> {
-        let compat = |id: &'static str| {
-            div()
-                .id(id)
-                .debug_selector(move || id.to_string())
-                .absolute()
-                .top_0()
-                .left_0()
-                .size(px(1.0))
-                .opacity(0.0)
-        };
-        div()
-            .id("sidebar-compat-selectors")
-            .child(compat("navigation-back"))
-            .child(compat("navigation-forward"))
-            .child(compat("sidebar-open-project-btn"))
-            .child(compat("sidebar-toggle-projects"))
-            .child(compat("project-entry"))
-            .child(compat("project-row"))
-            .child(compat("project-new-session"))
-            .child(compat("project-show-less"))
-    }
 }

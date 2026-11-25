@@ -543,19 +543,30 @@ pub fn load_usage(path: &Path) -> Option<embedded::AgentUsage> {
 fn read_bounded(path: &Path) -> Option<String> {
     let mut file = File::open(path).ok()?;
     let len = file.metadata().ok()?.len();
-    if len > MAX_FILE_BYTES {
-        file.seek(SeekFrom::Start(len - MAX_FILE_BYTES)).ok()?;
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes).ok()?;
-        let text = String::from_utf8_lossy(&bytes).into_owned();
-        // Drop the partial first line after seeking into the middle of a file.
-        let start = text.find('\n').map(|index| index + 1).unwrap_or(text.len());
-        Some(text[start..].to_string())
-    } else {
+    read_snapshot(&mut file, len, MAX_FILE_BYTES).ok()
+}
+
+fn read_snapshot(file: &mut File, len: u64, max_bytes: u64) -> io::Result<String> {
+    if len <= max_bytes {
         let mut text = String::new();
-        file.read_to_string(&mut text).ok()?;
-        Some(text)
+        file.take(len).read_to_string(&mut text)?;
+        return Ok(text);
     }
+
+    file.seek(SeekFrom::Start(len - max_bytes - 1))?;
+    let mut preceding = [0];
+    file.read_exact(&mut preceding)?;
+    let mut bytes = Vec::new();
+    file.take(max_bytes).read_to_end(&mut bytes)?;
+    let start = if preceding[0] == b'\n' {
+        0
+    } else {
+        bytes
+            .iter()
+            .position(|&byte| byte == b'\n')
+            .map_or(bytes.len(), |index| index + 1)
+    };
+    Ok(String::from_utf8_lossy(&bytes[start..]).into_owned())
 }
 
 /// State that was mid-flight when the app quit must not look live after a

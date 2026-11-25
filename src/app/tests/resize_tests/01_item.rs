@@ -153,6 +153,7 @@ fn build_app_state(cx: &mut Context<AppState>) -> AppState {
         sidebar_resizing: false,
         persistence_path: None,
         save_generation: Arc::new(AtomicU64::new(0)),
+        workspace_save_task: None,
         startup_loaded: true,
         quit_subscription: None,
         window_active: true,
@@ -984,7 +985,7 @@ fn split_view_keeps_legacy_chat_and_shell_drafts_separate() {
     });
     for one in [false, true, false, true] {
         cx.draw_frame().unwrap();
-        assert_eq!(cx.debug_bounds("sidebar-new-thread").is_some(), one);
+        assert!(cx.debug_bounds("sidebar-new-thread").is_some());
         assert_eq!(cx.debug_bounds("agent-attach-file").is_some(), one);
         assert!(cx.debug_bounds("input-mode-agent-pill").is_none());
         state.read_with(&cx, |s, cx| {
@@ -1001,7 +1002,7 @@ fn split_view_keeps_legacy_chat_and_shell_drafts_separate() {
 }
 
 #[test]
-fn sidebar_show_less_restores_five_after_partial_and_full_expansion() {
+fn sidebar_show_more_reveals_the_rest_of_the_active_threads() {
     let mut app = TestAppContext::new();
     let (mut cx, state) = open_app(&mut app);
     cx.update_window_entity(&state, |s, window, cx| {
@@ -1027,28 +1028,16 @@ fn sidebar_show_less_restores_five_after_partial_and_full_expansion() {
     cx.simulate_mouse_move(point(px(600.0), px(400.0)), None, Modifiers::none());
     cx.run_until_parked();
     cx.draw_frame().unwrap();
-    assert!(cx.debug_bounds("project-show-less").is_none());
-    for (selector, limit) in [
-        ("project-show-more", 15),
-        ("project-show-more", 25),
-        ("project-show-less", 5),
-        ("project-show-more", 15),
-        ("project-show-less", 5),
-    ] {
-        let bounds = cx.debug_bounds(selector).expect("pagination control");
-        let center = point(
-            bounds.origin.x + px(40.0),
-            bounds.origin.y + bounds.size.height / 2.0,
-        );
-        cx.simulate_mouse_move(center, None, Modifiers::none());
-        cx.simulate_click(center, Modifiers::none());
-        cx.draw_frame().unwrap();
-        state.read_with(&cx, |s, _| {
-            assert_eq!(s.projects[0].visible_session_count, limit);
-        });
-        assert_eq!(cx.debug_bounds("project-show-less").is_some(), limit > 5);
-        assert_eq!(cx.debug_bounds("project-show-more").is_some(), limit < 17);
-    }
+    let more = cx.debug_bounds("sidebar-active-show-more").unwrap();
+    assert!(cx.debug_bounds("session-row-2").is_none());
+    cx.simulate_click(more.center(), Modifiers::none());
+    cx.draw_frame().unwrap();
+    assert!(cx.debug_bounds("sidebar-active-show-more").is_none());
+    state.read_with(&cx, |s, _| {
+        let groups = s.sidebar_thread_groups();
+        assert_eq!(groups.active.len(), 17);
+        assert_eq!(groups.hidden_active, 0);
+    });
 }
 
 #[test]

@@ -391,6 +391,7 @@ fn run_gui() -> Result<()> {
                         sidebar_resizing: false,
                         persistence_path: persistence_path.clone(),
                         save_generation: Arc::new(AtomicU64::new(0)),
+                        workspace_save_task: None,
                         startup_loaded: false,
                         quit_subscription: None,
                         window_active: true,

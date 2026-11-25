@@ -197,32 +197,38 @@ impl AppState {
         let Some(path) = self.persistence_path.clone() else {
             return;
         };
-        let workspace = self.saved_workspace(cx);
-        let settings = self.saved_settings();
         let generation = self.save_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let generation_counter = self.save_generation.clone();
-        let executor = cx.background_executor().clone();
-        executor
-            .clone()
-            .spawn(async move {
-                executor.timer(std::time::Duration::from_millis(300)).await;
-                match workspace_state::save_if_current(
-                    &path,
-                    &workspace,
-                    &generation_counter,
-                    generation,
-                ) {
-                    Ok(true) => {}
-                    // A newer snapshot superseded this one; do not write the
-                    // settings that belong to this stale generation.
-                    Ok(false) => return,
-                    Err(error) => eprintln!("failed to save workspace state: {error}"),
-                }
-                if let Err(error) = settings::save_preserving_theme(&settings) {
-                    eprintln!("failed to save settings: {error}");
-                }
-            })
-            .detach();
+        self.workspace_save_task = Some(cx.spawn(async move |this, cx| {
+            let executor = cx.background_executor().clone();
+            executor.timer(std::time::Duration::from_millis(300)).await;
+            let Ok((workspace, settings)) = this.update(cx, |state, cx| {
+                (state.saved_workspace(cx), state.saved_settings())
+            }) else {
+                return;
+            };
+            executor
+                .spawn(async move {
+                    match workspace_state::save_if_current(
+                        &path,
+                        &workspace,
+                        &generation_counter,
+                        generation,
+                    ) {
+                        Ok(true) => {}
+                        Ok(false) => return,
+                        Err(error) => eprintln!("failed to save workspace state: {error}"),
+                    }
+                    if let Err(error) = settings::save_preserving_theme_if_current(
+                        &settings,
+                        &generation_counter,
+                        generation,
+                    ) {
+                        eprintln!("failed to save settings: {error}");
+                    }
+                })
+                .await;
+        }));
     }
 
     fn capture_window_bounds(&mut self, cx: &mut App) {
@@ -256,6 +262,7 @@ impl AppState {
             return;
         }
         self.save_generation.fetch_add(1, Ordering::SeqCst);
+        self.workspace_save_task = None;
         if let Some(window) = window {
             self.last_window_bounds =
                 Some(settings::SavedWindow::from_bounds(window.window_bounds()));

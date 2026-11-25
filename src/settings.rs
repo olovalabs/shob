@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -338,18 +339,17 @@ pub fn save_atomic(settings: &AppSettings) -> io::Result<()> {
         .get_or_init(|| Mutex::new(()))
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    save_unlocked(settings)
+    save_unlocked(&paths::settings_path(), settings)
 }
 
-fn save_unlocked(settings: &AppSettings) -> io::Result<()> {
-    let path = paths::settings_path();
+fn save_unlocked(path: &Path, settings: &AppSettings) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     let bytes = serde_json::to_vec_pretty(settings).map_err(io::Error::other)?;
     let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
     fs::write(&temp, bytes)?;
-    if let Err(error) = paths::atomic_replace(&temp, &path) {
+    if let Err(error) = paths::atomic_replace(&temp, path) {
         let _ = fs::remove_file(&temp);
         return Err(error);
     }
@@ -358,20 +358,44 @@ fn save_unlocked(settings: &AppSettings) -> io::Result<()> {
 
 /// Preserve theme edits made by an external editor during routine autosaves.
 pub fn save_preserving_theme(settings: &AppSettings) -> io::Result<()> {
+    save_preserving_theme_in(&paths::settings_path(), settings, None)
+}
+
+pub fn save_preserving_theme_if_current(
+    settings: &AppSettings,
+    generation: &AtomicU64,
+    expected: u64,
+) -> io::Result<()> {
+    save_preserving_theme_in(
+        &paths::settings_path(),
+        settings,
+        Some((generation, expected)),
+    )
+}
+
+fn save_preserving_theme_in(
+    path: &Path,
+    settings: &AppSettings,
+    generation: Option<(&AtomicU64, u64)>,
+) -> io::Result<()> {
     let _guard = WRITE_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let path = paths::settings_path();
+    if let Some((generation, expected)) = generation
+        && generation.load(Ordering::SeqCst) != expected
+    {
+        return Ok(());
+    }
     let mut merged = settings.clone();
     if path.exists() {
-        let text = fs::read_to_string(&path)?;
+        let text = fs::read_to_string(path)?;
         let disk: AppSettings = parse_jsonc(&text).map_err(io::Error::other)?;
         merged.theme_colors = disk.theme_colors;
         merged.theme = disk.theme;
         merged.palette_scheme = disk.palette_scheme;
     }
-    save_unlocked(&merged)
+    save_unlocked(path, &merged)
 }
 
 /// Read the user's file without silently replacing invalid settings with defaults.
@@ -467,6 +491,28 @@ mod tests {
         let text = serde_json::to_string(&settings).unwrap();
         let restored: AppSettings = serde_json::from_str(&text).unwrap();
         assert_eq!(settings, restored);
+    }
+
+    #[test]
+    fn superseded_snapshot_cannot_overwrite_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let current = AppSettings {
+            theme: ThemePreference::Dark,
+            restore: RestoreOptions {
+                sessions: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let stale = AppSettings::default();
+        let generation = AtomicU64::new(2);
+        save_preserving_theme_in(&path, &current, None).unwrap();
+        save_preserving_theme_in(&path, &stale, Some((&generation, 1))).unwrap();
+        assert_eq!(load_from(&path), Some(current));
+        save_preserving_theme_in(&path, &stale, Some((&generation, 2))).unwrap();
+        assert_eq!(load_from(&path).unwrap().theme, ThemePreference::Dark);
+        assert_eq!(load_from(&path).unwrap().restore, stale.restore);
     }
 
     #[test]

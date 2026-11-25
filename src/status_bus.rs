@@ -11,11 +11,39 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_EVENT_BYTES: usize = 16 * 1024;
 const MAX_QUEUED_EVENTS: usize = 4096;
+const MAX_CONNECTIONS: usize = 128;
+
+struct ConnectionSlot(Arc<AtomicUsize>);
+
+impl ConnectionSlot {
+    fn acquire(active: &Arc<AtomicUsize>) -> Option<Self> {
+        let mut count = active.load(Ordering::Relaxed);
+        while count < MAX_CONNECTIONS {
+            match active.compare_exchange_weak(
+                count,
+                count + 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return Some(Self(Arc::clone(active))),
+                Err(current) => count = current,
+            }
+        }
+        None
+    }
+}
+
+impl Drop for ConnectionSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusEvent {
@@ -111,15 +139,20 @@ pub fn start() -> std::io::Result<BusIdentity> {
     std::thread::Builder::new()
         .name("shob-status-socket".into())
         .spawn(move || {
+            let active = Arc::new(AtomicUsize::new(0));
             for connection in listener.incoming() {
                 let Ok(stream) = connection else { continue };
                 if !peer_is_same_user(&stream) {
                     continue;
                 }
+                let Some(slot) = ConnectionSlot::acquire(&active) else {
+                    continue;
+                };
                 let queue = Arc::clone(&queue);
                 let _ = std::thread::Builder::new()
                     .name("shob-status-event".into())
                     .spawn(move || {
+                        let _slot = slot;
                         read_events(stream, queue);
                     });
             }
@@ -300,6 +333,17 @@ mod tests {
         crate::shob_compat::unregister(token);
         drop(client);
         worker.join().unwrap();
+    }
+
+    #[test]
+    fn connection_slots_are_bounded_and_reusable() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let mut slots: Vec<_> = (0..MAX_CONNECTIONS)
+            .map(|_| ConnectionSlot::acquire(&active).unwrap())
+            .collect();
+        assert!(ConnectionSlot::acquire(&active).is_none());
+        drop(slots.pop());
+        assert!(ConnectionSlot::acquire(&active).is_some());
     }
 
     fn valid_event() -> StatusEvent {
