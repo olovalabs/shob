@@ -89,17 +89,20 @@ fn generated_defaults_match_built_in_and_keep_customizations_on_scheme_change() 
 fn overrides_apply_per_mode_and_preserve_palette_defaults() {
     let colors: ThemeColors = serde_json::from_str(
         r##"{
-            "dark": {"ui": {"window_bg": "#12345680", "pane.bg": "#182838", "text.primary": "#abcdef", "editor.bar.bg": "#234567", "primary.btn.bg": "#456789", "ring": "#6789ab"},
+            "dark": {"ui": {"window_bg": "#12345680", "pane.bg": "#182838", "text.primary": "#abcdef", "editor.bar.bg": "#234567", "primary.btn.bg": "#456789", "chat.user.bg": "#1c1c1c", "chat.user.fg": "#fafafa", "chat.user.border": "#333333", "ring": "#6789ab"},
                      "terminal": {"red": "#abcdef"}}
         }"##,
     )
     .unwrap();
     let dark = colors.tokens(gpui_component::ThemeMode::Dark, PaletteScheme::Warp);
     assert_eq!(dark.window_bg, rgba(0x12345680).into());
+    assert_eq!(dark.primary_btn_bg, rgba(0x456789ff).into());
     assert_eq!(dark.chat().background, rgba(0x182838ff).into());
     assert_eq!(dark.chat().foreground, rgba(0xabcdefff).into());
     assert_eq!(dark.chat().composer, rgba(0x234567ff).into());
-    assert_eq!(dark.chat().user_background, rgba(0x456789ff).into());
+    assert_eq!(dark.chat().user_background, rgba(0x1c1c1cff).into());
+    assert_eq!(dark.chat().user_foreground, rgba(0xfafafaff).into());
+    assert_eq!(dark.chat().user_border, rgba(0x333333ff).into());
     assert_eq!(dark.chat().link, rgba(0x6789abff).into());
     let light = colors.tokens(gpui_component::ThemeMode::Light, PaletteScheme::Warp);
     assert_eq!(
@@ -112,6 +115,42 @@ fn overrides_apply_per_mode_and_preserve_palette_defaults() {
     assert_eq!((red.r, red.g, red.b), (0xab, 0xcd, 0xef));
     assert_eq!(palette.background(), load_warp_palette(true).background());
     assert_eq!(palette.extended_colors()[1], palette.ansi_colors()[1]);
+}
+
+#[test]
+fn user_prompt_bubble_colors_follow_theme_mode_and_scheme() {
+    let warp_dark =
+        ThemeTokens::from_mode_with_scheme(gpui_component::ThemeMode::Dark, PaletteScheme::Warp);
+    assert_eq!(warp_dark.chat().user_background, rgba(0x141414ff).into());
+    assert_eq!(warp_dark.chat().user_foreground, rgba(0xffffffff).into());
+    assert_eq!(warp_dark.chat().user_border, rgba(0xffffff1a).into());
+
+    let warp_light =
+        ThemeTokens::from_mode_with_scheme(gpui_component::ThemeMode::Light, PaletteScheme::Warp);
+    assert_eq!(warp_light.chat().user_background, rgba(0xefefefff).into());
+    assert_eq!(warp_light.chat().user_foreground, rgba(0x111111ff).into());
+    assert_eq!(warp_light.chat().user_border, rgba(0x1111111a).into());
+
+    let github_dark =
+        ThemeTokens::from_mode_with_scheme(gpui_component::ThemeMode::Dark, PaletteScheme::Github);
+    assert!(github_dark.chat().user_background.l < 0.2);
+    assert!(github_dark.chat().user_foreground.l > 0.8);
+
+    let github_light =
+        ThemeTokens::from_mode_with_scheme(gpui_component::ThemeMode::Light, PaletteScheme::Github);
+    assert!(github_light.chat().user_background.l > 0.8);
+    assert!(github_light.chat().user_foreground.l < 0.2);
+
+    let mut colors = ThemeColors::complete_defaults(PaletteScheme::Warp);
+    assert_eq!(colors.dark.style["chat.user.bg"], "#141414ff");
+    assert_eq!(colors.light.style["chat.user.bg"], "#efefefff");
+    colors.change_scheme(PaletteScheme::Warp, PaletteScheme::MidnightGarden);
+    assert_eq!(
+        colors.dark.style["chat.user.bg"],
+        ThemeColors::complete_defaults(PaletteScheme::MidnightGarden)
+            .dark
+            .style["chat.user.bg"]
+    );
 }
 
 #[test]

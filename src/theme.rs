@@ -148,6 +148,11 @@ pub struct ThemeTokens {
     pub block_status_bg: Hsla,
     pub editor_bar_bg: Hsla,
     pub editor_bar_border: Hsla,
+
+    // Chat user prompt bubble
+    pub chat_user_bg: Hsla,
+    pub chat_user_fg: Hsla,
+    pub chat_user_border: Hsla,
 }
 
 /// Per-appearance overrides. Colors use #RRGGBB or #RRGGBBAA.
@@ -283,6 +288,9 @@ impl ThemeColors {
             style.insert("block.status.bg".into(), hex(tokens.block_status_bg));
             style.insert("editor.bar.bg".into(), hex(tokens.editor_bar_bg));
             style.insert("editor.bar.border".into(), hex(tokens.editor_bar_border));
+            style.insert("chat.user.bg".into(), hex(tokens.chat_user_bg));
+            style.insert("chat.user.fg".into(), hex(tokens.chat_user_fg));
+            style.insert("chat.user.border".into(), hex(tokens.chat_user_border));
             style.insert("terminal.background".into(), hex(palette.background()));
             style.insert("terminal.foreground".into(), hex(palette.foreground()));
             style.insert("terminal.cursor".into(), hex(palette.cursor()));
@@ -436,6 +444,9 @@ impl ThemeColors {
                 "block_status_bg" => tokens.block_status_bg = rgba(color).into(),
                 "editor_bar_bg" => tokens.editor_bar_bg = rgba(color).into(),
                 "editor_bar_border" => tokens.editor_bar_border = rgba(color).into(),
+                "chat_user_bg" => tokens.chat_user_bg = rgba(color).into(),
+                "chat_user_fg" => tokens.chat_user_fg = rgba(color).into(),
+                "chat_user_border" => tokens.chat_user_border = rgba(color).into(),
                 _ => eprintln!("unknown UI theme token: {name}"),
             }
         }
@@ -557,6 +568,9 @@ impl ThemeTokens {
         self.block_border_selected = self.ring;
         self.editor_bar_bg = self.card_bg;
         self.editor_bar_border = self.card_border;
+        self.chat_user_bg = self.card_hover;
+        self.chat_user_fg = self.text_primary;
+        self.chat_user_border = self.card_border;
     }
 
     /// Override surfaces, accents and block chrome with Warp's default theme.
@@ -646,6 +660,9 @@ impl ThemeTokens {
             self.block_status_bg = rgba(0x00000000).into();
             self.editor_bar_bg = bg.into();
             self.editor_bar_border = outline.into();
+            self.chat_user_bg = surface_3.into();
+            self.chat_user_fg = fg.into();
+            self.chat_user_border = outline.into();
         } else {
             let bg = rgba(0xffffffff);
             let fg = rgba(0x111111ff);
@@ -719,6 +736,9 @@ impl ThemeTokens {
             self.block_status_bg = rgba(0x00000000).into();
             self.editor_bar_bg = bg.into();
             self.editor_bar_border = outline.into();
+            self.chat_user_bg = surface_2.into();
+            self.chat_user_fg = fg.into();
+            self.chat_user_border = outline.into();
         }
     }
 
@@ -791,6 +811,9 @@ impl ThemeTokens {
             block_status_bg: rgba(0x0d1116ff).into(),
             editor_bar_bg: rgba(0x0d1014ff).into(),
             editor_bar_border: rgba(0x1f242bff).into(),
+            chat_user_bg: rgba(0x1a1b24ff).into(),
+            chat_user_fg: rgba(0xe6edf3ff).into(),
+            chat_user_border: rgba(0x2b2c3cff).into(),
         }
     }
 
@@ -863,6 +886,9 @@ impl ThemeTokens {
             block_status_bg: rgba(0xf6f8faff).into(),
             editor_bar_bg: rgba(0xffffffff).into(),
             editor_bar_border: rgba(0xd1d9e0ff).into(),
+            chat_user_bg: rgba(0xf6f8faff).into(),
+            chat_user_fg: rgba(0x1f2328ff).into(),
+            chat_user_border: rgba(0xd1d9e0ff).into(),
         }
     }
 }

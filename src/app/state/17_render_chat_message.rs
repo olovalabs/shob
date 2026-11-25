@@ -67,6 +67,8 @@ impl AppState {
                             .py(px(10.0))
                             .rounded(px(18.0))
                             .bg(tokens.chat().user_background)
+                            .border_1()
+                            .border_color(tokens.chat().user_border)
                             .text_size(px(14.0))
                             .line_height(agent_appearance::LINE_HEIGHT)
                             .child(

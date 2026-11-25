@@ -17,6 +17,7 @@ pub struct ChatAppearance {
     pub composer: Hsla,
     pub user_background: Hsla,
     pub user_foreground: Hsla,
+    pub user_border: Hsla,
     pub link: Hsla,
     pub inline_code: Hsla,
 }
@@ -30,8 +31,9 @@ impl ChatAppearance {
             border: theme.border_subtle,
             surface: theme.card_bg,
             composer: theme.editor_bar_bg,
-            user_background: theme.primary_btn_bg,
-            user_foreground: theme.primary_btn_fg,
+            user_background: theme.chat_user_bg,
+            user_foreground: theme.chat_user_fg,
+            user_border: theme.chat_user_border,
             link: theme.ring,
             inline_code: theme.card_hover,
         }
