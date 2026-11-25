@@ -260,8 +260,10 @@ AWS SDK credentials or Google ADC at request time, not during local discovery.
   implementations alone do not isolate GPUI-fast's update dependencies.
 - Settled Markdown appends immutable source chunks; the parser processes only
   new chunks. Completion parses the canonical document once to resolve
-  cross-block references. Measured block heights and an ancestor-viewport flow
-  index virtualize long messages without introducing a nested scroll region.
+  cross-block references. An ancestor-viewport flow index virtualizes long
+  messages without a nested vertical scroll region. The document keeps its
+  measured block heights across unmounts; corrections above the viewport
+  adjust the outer list's logical anchor.
 - `components/src/text/text_view.rs` parses Markdown/HTML and highlights code
   on the background executor, including the first parse. Initial Markdown has
   an immediate selectable native-text view. One desired document, one active

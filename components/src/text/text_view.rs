@@ -118,6 +118,8 @@ pub(crate) fn init(cx: &mut App) {
 #[derive(IntoElement, Clone)]
 struct TextViewElement {
     list_state: Option<ListState>,
+    enclosing_list_row: Option<(ListState, usize)>,
+    estimated_height: Pixels,
     state: Entity<TextViewState>,
 }
 
@@ -132,6 +134,7 @@ impl RenderOnce for TextViewElement {
                             this.child(FlowElement {
                                 flow: flow.clone(),
                                 context: content.node_cx.clone(),
+                                list_row: self.enclosing_list_row.clone(),
                             })
                         } else {
                             this.child(content.root_node.render_root(
@@ -148,7 +151,7 @@ impl RenderOnce for TextViewElement {
                             .child("Failed to parse content")
                             .child(err.to_string()),
                     ),
-                    None => this,
+                    None => this.child(div().h(self.estimated_height)),
                 })
         })
     }
@@ -185,6 +188,7 @@ pub struct TextView {
     scrollable: bool,
     code_block_actions: Option<Arc<CodeBlockActionsFn>>,
     blocks: Option<MarkdownBlocks>,
+    enclosing_list_row: Option<(ListState, usize)>,
 }
 
 pub(crate) struct ParsedContent {
@@ -416,8 +420,9 @@ async fn parse_updates(
                     &None,
                 )
                 .map(|content| {
-                    let final_flow = Arc::new(Mutex::new(Flow::default()));
-                    final_flow.lock().unwrap().append(content);
+                    let mut final_flow = Flow::for_completed_document(blocks);
+                    final_flow.append(content);
+                    let final_flow = Arc::new(Mutex::new(final_flow));
                     *flow = final_flow;
                     *finalized = true;
                     blocks.release_chunks();
@@ -732,6 +737,7 @@ impl TextView {
             scrollable: false,
             code_block_actions: None,
             blocks: None,
+            enclosing_list_row: None,
         }
     }
 
@@ -768,6 +774,7 @@ impl TextView {
             scrollable: false,
             code_block_actions: None,
             blocks: None,
+            enclosing_list_row: None,
         }
     }
 
@@ -816,6 +823,7 @@ impl TextView {
             scrollable: false,
             code_block_actions: None,
             blocks: None,
+            enclosing_list_row: None,
         }
     }
 
@@ -847,6 +855,24 @@ impl TextView {
             }
         }
         self
+    }
+
+    /// Anchor virtualized Markdown blocks to the enclosing list without adding a nested vertical scroll.
+    pub fn anchor_to_list_row(mut self, list: &ListState, row: usize) -> Self {
+        self.enclosing_list_row = Some((list.clone(), row));
+        self
+    }
+
+    /// Whether a virtualized parent may commit this view's current height.
+    pub fn is_measurement_ready(&self) -> bool {
+        match &self.init_state {
+            Some(InitState::Initializing { .. }) => false,
+            Some(InitState::Initialized { tx }) => tx
+                .mailbox
+                .try_lock()
+                .is_ok_and(|mailbox| mailbox.last_applied == Some(mailbox.generation)),
+            _ => true,
+        }
     }
 
     pub fn selectable(mut self, selectable: bool) -> Self {
@@ -1000,7 +1026,9 @@ impl Element for TextView {
             self.init_state = Some(InitState::Initialized { tx });
         }
 
+        let parent = window.current_view();
         self.state.update(cx, |state, _| {
+            state.parent_entity = Some(parent);
             if let Some(tx) = &state.tx {
                 let mut mailbox = tx.mailbox.lock().unwrap_or_else(|error| error.into_inner());
                 mailbox.code_block_actions = self.code_block_actions.clone();
@@ -1012,14 +1040,14 @@ impl Element for TextView {
             }
         });
 
-        let list_state = &self.state.read(cx).list_state;
-
-        let focus_handle = self
-            .state
-            .read(cx)
-            .focus_handle
-            .as_ref()
-            .expect("focus_handle should init by TextViewState::new");
+        let state = self.state.read(cx);
+        let list_state = &state.list_state;
+        let estimated_height = if state.parsed_result.is_none() {
+            self.blocks.as_ref().map_or(px(0.), MarkdownBlocks::cached_height)
+        } else {
+            px(0.)
+        };
+        let focus_handle = state.focus_handle.as_ref().expect("focus_handle should init by TextViewState::new");
 
         let el = div()
             .key_context(CONTEXT)
@@ -1038,6 +1066,8 @@ impl Element for TextView {
                 } else {
                     None
                 },
+                enclosing_list_row: self.enclosing_list_row.clone(),
+                estimated_height,
                 state: self.state.clone(),
             })
             .refine_style(&self.style)
@@ -1101,7 +1131,6 @@ impl Element for TextView {
         let is_selectable = self.selectable;
 
         self.state.update(cx, |state, _| {
-            state.parent_entity = Some(entity_id);
             state.update_bounds(bounds);
             state.is_selectable = is_selectable;
         });

@@ -517,10 +517,10 @@ impl AppState {
                     && (msg.tool.is_some() || msg.role == ChatRole::Thinking)
                 {
                     let msg = Arc::make_mut(msg);
-                    if let Some(tool) = &mut msg.tool {
-                        tool.expanded = !tool.expanded;
-                    } else {
-                        msg.expanded = !msg.expanded;
+                    let expanded = msg.tool.as_mut().map_or(&mut msg.expanded, |tool| &mut tool.expanded);
+                    *expanded = !*expanded;
+                    if *expanded {
+                        view.list_state.pause_following_tail();
                     }
                 }
                 view.invalidate_message_row(index);
@@ -533,10 +533,10 @@ impl AppState {
                 && (msg.tool.is_some() || msg.role == ChatRole::Thinking)
             {
                 let msg = Arc::make_mut(msg);
-                if let Some(tool) = &mut msg.tool {
-                    tool.expanded = !tool.expanded;
-                } else {
-                    msg.expanded = !msg.expanded;
+                let expanded = msg.tool.as_mut().map_or(&mut msg.expanded, |tool| &mut tool.expanded);
+                *expanded = !*expanded;
+                if *expanded {
+                    pane.chat.list_state.pause_following_tail();
                 }
                 pane.chat.invalidate_message_row(index);
                 cx.notify();
@@ -570,10 +570,17 @@ impl AppState {
             return;
         };
         *expanded = !*expanded;
+        let opened = *expanded;
         if let Some(view) = &pane.chat.worker_view {
+            if opened {
+                view.list_state.pause_following_tail();
+            }
             view.invalidate_message_row(index);
             pane.chat.notify_worker_view(cx);
         } else if !in_worker {
+            if opened {
+                pane.chat.list_state.pause_following_tail();
+            }
             pane.chat.invalidate_message_row(index);
         }
         cx.notify();
@@ -591,6 +598,9 @@ impl AppState {
                     let message = Arc::make_mut(message);
                     if let Some(tool) = message.tool.as_mut() {
                         tool.show_full = !tool.show_full;
+                        if tool.show_full {
+                            view.list_state.pause_following_tail();
+                        }
                     }
                 }
                 view.invalidate_message_row(index);
@@ -605,6 +615,9 @@ impl AppState {
                 let message = Arc::make_mut(message);
                 if let Some(tool) = message.tool.as_mut() {
                     tool.show_full = !tool.show_full;
+                    if tool.show_full {
+                        pane.chat.list_state.pause_following_tail();
+                    }
                     pane.chat.invalidate_message_row(index);
                     cx.notify();
                 }
@@ -615,39 +628,23 @@ impl AppState {
     fn toggle_worked_turn(&mut self, pane_id: usize, start: usize, cx: &mut Context<Self>) {
         let Some(pane) = self.pane_mut(pane_id) else { return; };
         if let Some(view) = &mut pane.chat.worker_view {
-            let first_row = view.row_cache.borrow().rows.iter().position(|row| matches!(row, ChatRow::Worked { start: index, .. } if *index == start)).unwrap_or(0);
+            let first_row = view.row_cache.borrow().rows.iter().position(|row| matches!(row, ChatRow::Worked { start: index, .. } if *index == start));
             let turns = view.expanded_turns.entry(view.conversation_key.clone()).or_default();
             if !turns.remove(&start) { turns.insert(start); }
             view.invalidate_message_row(start);
             let running = Self::worker_running(&pane.chat.messages, view);
             let new_count = Self::build_chat_rows_from(&view.list_source(running)).borrow().rows.len();
-            let old_count = view.list_rows.get();
-            let anchor = view.list_state.logical_scroll_top();
-            view.autoscroll = false;
-            view.list_state.set_follow_mode(FollowMode::Normal);
-            if first_row <= old_count {
-                view.list_state.splice(first_row..old_count, new_count.saturating_sub(first_row));
-                view.list_rows.set(new_count);
-                view.list_state.scroll_to(anchor);
-            }
+            update_worked_turn_rows(&view.list_state, &view.list_rows, first_row, new_count);
             pane.chat.notify_worker_view(cx);
             cx.notify();
             return;
         }
-        let first_row = pane.chat.row_cache.borrow().rows.iter().position(|row| matches!(row, ChatRow::Worked { start: index, .. } if *index == start)).unwrap_or(0);
+        let first_row = pane.chat.row_cache.borrow().rows.iter().position(|row| matches!(row, ChatRow::Worked { start: index, .. } if *index == start));
         let turns = pane.chat.expanded_turns.entry(pane.chat.conversation_key.clone()).or_default();
         if !turns.remove(&start) { turns.insert(start); }
         pane.chat.invalidate_message_row(start);
         let new_count = Self::build_chat_rows(&pane.chat, pane.chat.visible_running()).borrow().rows.len();
-        let old_count = pane.chat.list_rows.get();
-        let anchor = pane.chat.list_state.logical_scroll_top();
-        pane.chat.autoscroll = false;
-        pane.chat.list_state.set_follow_mode(FollowMode::Normal);
-        if first_row <= old_count {
-            pane.chat.list_state.splice(first_row..old_count, new_count.saturating_sub(first_row));
-            pane.chat.list_rows.set(new_count);
-            pane.chat.list_state.scroll_to(anchor);
-        }
+        update_worked_turn_rows(&pane.chat.list_state, &pane.chat.list_rows, first_row, new_count);
         cx.notify();
     }
 
@@ -662,6 +659,7 @@ impl AppState {
                 .or_default();
             if !groups.remove(&start) {
                 groups.insert(start);
+                view.list_state.pause_following_tail();
             }
             view.invalidate_message_row(start);
             pane.chat.notify_worker_view(cx);
@@ -675,6 +673,7 @@ impl AppState {
             .or_default();
         if !groups.remove(&start) {
             groups.insert(start);
+            pane.chat.list_state.pause_following_tail();
         }
         pane.chat.invalidate_message_row(start);
         cx.notify();

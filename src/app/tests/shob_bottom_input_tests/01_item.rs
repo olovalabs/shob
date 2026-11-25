@@ -255,7 +255,6 @@ fn oversized_live_preview_copies_full_message_and_finalizes_to_markdown() {
     cx.draw_frame().unwrap();
     cx.update_window_entity(&state, |state, _, cx| {
         let chat = &mut state.pane_mut(pane_id).unwrap().chat;
-        chat.autoscroll = false;
         chat.list_state.scroll_to(gpui::ListOffset {
             item_ix: 0,
             offset_in_item: px(0.0),
@@ -303,7 +302,6 @@ fn completed_long_message_virtualizes_blocks_in_the_outer_chat_scroll() {
             ChatRole::Assistant,
             text.clone(),
         )));
-        chat.autoscroll = false;
         chat.notify_content(cx);
         cx.notify();
     });
@@ -333,6 +331,83 @@ fn completed_long_message_virtualizes_blocks_in_the_outer_chat_scroll() {
         );
         assert_eq!(chat.messages[0].text, text);
     });
+
+    let old_estimate = px(16_000.0);
+    cx.update_window_entity(&state, |state, _, cx| {
+        let chat = &state.pane_ref(pane_id).unwrap().chat;
+        chat.list_state.scroll_to(gpui::ListOffset { item_ix: 0, offset_in_item: old_estimate });
+        chat.notify_content(cx);
+    });
+    cx.draw_frame().unwrap();
+    let viewport = cx.debug_bounds("agent-chat").unwrap();
+    let (key, y) = [
+        "markdown-flow-block-496",
+        "markdown-flow-block-504",
+        "markdown-flow-block-512",
+        "markdown-flow-block-520",
+        "markdown-flow-block-528",
+    ]
+        .into_iter()
+        .find_map(|key| {
+            let bounds = cx.debug_bounds(key)?;
+            (bounds.bottom() > viewport.top() && bounds.top() < viewport.bottom())
+                .then_some((key, bounds.top()))
+        })
+        .expect("a block intersects the viewport after a jump into unmeasured Markdown");
+    state.read_with(&cx, |state, _| {
+        let list = &state.pane_ref(pane_id).unwrap().chat.list_state;
+        assert_ne!(list.logical_scroll_top().offset_in_item, old_estimate, "height deltas above the anchor must reach the outer list");
+    });
+    cx.draw_frame().unwrap();
+    assert!((cx.debug_bounds(key).unwrap().top() - y).abs() <= px(1.0));
+}
+
+#[test]
+fn wide_markdown_table_scrolls_without_moving_the_transcript() {
+    let mut app = TestAppContext::new();
+    let (mut cx, state) = open_app(&mut app);
+    let pane = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
+    let headings = (0..12).map(|i| format!("Column {i}")).collect::<Vec<_>>().join(" | ");
+    let row = (0..12).map(|i| format!("`very_long_unbroken_identifier_in_cell_{i:02}`")).collect::<Vec<_>>().join(" | ");
+    let markdown = format!("| {headings} |\n| {} |\n| {row} |\n", ["---"; 12].join(" | "));
+    cx.update_window_entity(&state, |s, window, cx| {
+        s.set_chat_mode(pane, true, window, cx);
+        s.pane_mut(pane).unwrap().chat.messages.push(Arc::new(ChatMessage::new(ChatRole::Assistant, markdown)));
+        cx.notify();
+    });
+    cx.draw_frame().unwrap();
+    cx.run_until_parked();
+    cx.draw_frame().unwrap();
+
+    let viewport = cx.debug_bounds("markdown-table-scroll").expect("table scroll viewport");
+    let first = cx.debug_bounds("markdown-table-column-0").unwrap();
+    let second = cx.debug_bounds("markdown-table-column-1").unwrap();
+    let right = cx.debug_bounds("markdown-table-column-11").unwrap();
+    assert!(first.size.width >= px(96.0));
+    assert!(first.right() <= second.left());
+    assert!(first.size.height >= px(48.0), "the identifier wraps within its cell");
+    assert!(right.right() > viewport.right());
+    cx.simulate_event(gpui::ScrollEvent {
+        position: viewport.center(),
+        delta: gpui::ScrollDelta::Pixels(point(px(-8_000.0), px(0.0))),
+        ..Default::default()
+    });
+    cx.draw_frame().unwrap();
+    let revealed = cx.debug_bounds("markdown-table-column-11").unwrap();
+    let header = cx.debug_bounds("markdown-table-header-11").unwrap();
+    assert!(revealed.right() <= viewport.right());
+    assert!(revealed.left() >= viewport.left());
+    assert_eq!(revealed.left(), header.left(), "header and body must scroll together");
+    assert_eq!(revealed.top(), right.top());
+
+    cx.simulate_event(gpui::ScrollEvent {
+        position: viewport.center(),
+        delta: gpui::ScrollDelta::Pixels(point(px(0.0), px(8_000.0))),
+        modifiers: gpui::Modifiers { shift: true, ..Default::default() },
+        ..Default::default()
+    });
+    cx.draw_frame().unwrap();
+    assert_eq!(cx.debug_bounds("markdown-table-column-0"), Some(first));
 }
 
 #[test]
@@ -874,5 +949,45 @@ fn subagent_view_matches_main_chat_column_width_and_row_grouping() {
         cx.debug_bounds("tool-row-3").is_some(),
         "live running tool should stay visible like main agent UI"
     );
+
+    cx.update_window_entity(&state, |state, _, cx| {
+        let chat = &mut state.pane_mut(pane_id).unwrap().chat;
+        let worker = chat.worker_view.as_mut().unwrap();
+        for index in 0..40 {
+            worker.messages.push(Arc::new(ChatMessage::new(
+                ChatRole::Assistant,
+                format!("Worker update {index}"),
+            )));
+        }
+        chat.notify_worker_view(cx);
+    });
+    cx.draw_frame().unwrap();
+    let follows = |cx: &gpui::VisualTestContext| {
+        state.read_with(cx, |state, _| {
+            let chat = &state.pane_ref(pane_id).unwrap().chat;
+            assert!(
+                chat.list_state.is_following_tail(),
+                "worker scrolling must not move the parent"
+            );
+            chat.worker_view
+                .as_ref()
+                .unwrap()
+                .list_state
+                .is_following_tail()
+        })
+    };
+    assert!(follows(&cx));
+    for (delta, following) in [(300.0, false), (-10_000.0, true)] {
+        cx.simulate_event(gpui::ScrollEvent {
+            position: transcript.center(),
+            delta: gpui::ScrollDelta::Pixels(point(px(0.0), px(delta))),
+            ..Default::default()
+        });
+        cx.draw_frame().unwrap();
+        cx.run_until_parked();
+        cx.draw_frame().unwrap();
+        assert_eq!(follows(&cx), following);
+        assert_eq!(cx.debug_bounds("scroll-to-bottom-btn").is_none(), following);
+    }
 }
 

@@ -435,6 +435,12 @@ struct ChatRenderContext<'a> {
     tokens: ThemeTokens,
     window: &'a mut Window,
     cx: &'a mut App,
+    measurement_ready: Option<&'a ChatRowMeasurement<'a>>,
+}
+
+struct ChatRowMeasurement<'a> {
+    ready: std::cell::Cell<bool>,
+    list_row: Option<(&'a ListState, usize)>,
 }
 
 struct ChatMessageOptions<'a> {
@@ -453,11 +459,11 @@ fn chat_markdown(
     color: Hsla,
     render: ChatRenderContext<'_>,
 ) -> TextView {
-    let ChatRenderContext { tokens, window, cx } = render;
+    let ChatRenderContext { tokens, window, cx, measurement_ready } = render;
     let dark = cx.theme().is_dark();
     let themed_id: SharedString = format!("{id}-{}", if dark { "dark" } else { "light" }).into();
 
-    match text.into() {
+    let mut view = match text.into() {
         ChatMarkdown::Text(text) => TextView::markdown(themed_id, text, window, cx),
         ChatMarkdown::Blocks(blocks) => TextView::markdown_blocks(themed_id, blocks, window, cx),
     }
@@ -496,7 +502,14 @@ fn chat_markdown(
     .selectable(true)
     .w_full()
     .text_size(base)
-    .text_color(color)
+    .text_color(color);
+    if let Some(row) = measurement_ready {
+        row.ready.set(row.ready.get() && view.is_measurement_ready());
+        if let Some((list, index)) = row.list_row {
+            view = view.anchor_to_list_row(list, index);
+        }
+    }
+    view
 }
 
 fn chat_stream_tail(
@@ -507,7 +520,7 @@ fn chat_stream_tail(
     color: Hsla,
     render: ChatRenderContext<'_>,
 ) -> AnyElement {
-    let ChatRenderContext { tokens, window, cx } = render;
+    let ChatRenderContext { tokens, window, cx, measurement_ready } = render;
     if !view.plain_tail {
         return chat_markdown(
             id,
@@ -515,7 +528,7 @@ fn chat_stream_tail(
             base,
             paragraph_gap,
             color,
-            ChatRenderContext { tokens, window, cx },
+            ChatRenderContext { tokens, window, cx, measurement_ready },
         )
         .into_any_element();
     }

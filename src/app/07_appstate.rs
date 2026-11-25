@@ -319,10 +319,15 @@ impl Render for AppState {
                                 pane.chat.worker_view.is_none()
                                     && !pane.chat.visible_messages().is_empty(),
                                 |view| {
+                                    let transcript = pane.chat.view.borrow();
+                                    let Some(transcript) = transcript.as_ref() else {
+                                        return view;
+                                    };
                                     let mut scrollbar = pane.chat.focused_scrollbar.borrow_mut();
                                     let scrollbar = scrollbar.get_or_insert_with(|| {
                                         cx.new(|_| FocusedChatScrollbar {
                                             pane_id: pane.id,
+                                            transcript_view: transcript.entity_id(),
                                             list: pane.chat.list_state.clone(),
                                             height: Rc::new(std::cell::Cell::new(px(0.0))),
                                         })

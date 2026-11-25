@@ -74,7 +74,7 @@ fn chat_thinking_row(
     render: ChatRenderContext<'_>,
     on_toggle: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
 ) -> Div {
-    let ChatRenderContext { tokens, window, cx } = render;
+    let ChatRenderContext { tokens, window, cx, measurement_ready } = render;
     let expanded = message.expanded;
     let running = running && message.streaming;
     let heading_end = message
@@ -152,7 +152,7 @@ fn chat_thinking_row(
                     px(12.5),
                     rems(0.4),
                     tokens.text_muted,
-                    ChatRenderContext { tokens, window, cx },
+                    ChatRenderContext { tokens, window, cx, measurement_ready },
                 ));
             }
             if !view.tail.is_empty() {
@@ -162,7 +162,7 @@ fn chat_thinking_row(
                     px(12.5),
                     rems(0.4),
                     tokens.text_muted,
-                    ChatRenderContext { tokens, window, cx },
+                    ChatRenderContext { tokens, window, cx, measurement_ready },
                 ));
             }
         } else {
@@ -172,7 +172,7 @@ fn chat_thinking_row(
                 px(12.5),
                 rems(0.4),
                 tokens.text_muted,
-                ChatRenderContext { tokens, window, cx },
+                ChatRenderContext { tokens, window, cx, measurement_ready },
             ));
         }
         row = row.child(
@@ -845,9 +845,6 @@ struct WorkerView {
     active_dirty: std::cell::Cell<bool>,
     activity_dirty: std::cell::Cell<bool>,
     dirty_messages: std::cell::RefCell<HashSet<usize>>,
-    scroll_handler_installed: std::cell::Cell<bool>,
-    autoscroll: bool,
-    focused_scrollbar: std::cell::RefCell<Option<Entity<FocusedChatScrollbar>>>,
     _load: Option<gpui::Task<()>>,
 }
 
@@ -855,7 +852,6 @@ struct ChatListSource<'a> {
     conversation_key: &'a str,
     messages: &'a [Arc<ChatMessage>],
     running: bool,
-    autoscroll: bool,
     list_state: &'a ListState,
     list_rows: &'a std::cell::Cell<usize>,
     list_key: &'a std::cell::Cell<u64>,
@@ -863,10 +859,8 @@ struct ChatListSource<'a> {
     active_dirty: &'a std::cell::Cell<bool>,
     activity_dirty: &'a std::cell::Cell<bool>,
     dirty_messages: &'a std::cell::RefCell<HashSet<usize>>,
-    scroll_handler_installed: &'a std::cell::Cell<bool>,
     expanded_tool_groups: &'a HashMap<String, HashSet<usize>>,
     expanded_turns: &'a HashMap<String, HashSet<usize>>,
-    focused_scrollbar: &'a std::cell::RefCell<Option<Entity<FocusedChatScrollbar>>>,
 }
 
 /// Owned worker display data, refreshed only when worker activity changes.
@@ -978,5 +972,7 @@ struct ChatSnapshot {
     conversation: SharedString,
     tokens: ThemeTokens,
     rows: std::rc::Rc<std::cell::RefCell<ChatRowCache>>,
+    unready_row: std::cell::Cell<Option<usize>>,
+    list_state: Option<ListState>,
     host: UiHost,
 }

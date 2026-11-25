@@ -10,7 +10,7 @@ use crate::{ActiveTheme, AxisExt};
 use gpui::{
     App, Axis, BorderStyle, Bounds, ContentMask, Anchor, CursorStyle, Edges, Element, ElementId,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IsZero,
-    LayoutId, ListState, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
+    LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
     Position, ScrollEvent, ScrollHandle, Size, Style, UniformListScrollHandle, Window,
     fill, point, px, relative, size,
 };
@@ -60,6 +60,18 @@ pub trait ScrollbarHandle: 'static {
     fn set_offset(&self, offset: Point<Pixels>);
     /// The full size of the content, including padding.
     fn content_size(&self) -> Size<Pixels>;
+    /// Move the thumb during a drag. Distances are positive, in the range captured at grab time.
+    fn drag_to(&self, axis: Axis, _previous: Pixels, target: Pixels, _range: Pixels) {
+        let mut offset = self.offset();
+        if axis.is_vertical() {
+            offset.y = -target;
+        } else {
+            offset.x = -target;
+        }
+        self.set_offset(offset);
+    }
+    /// Called after a track click or drag changes the offset.
+    fn on_scroll(&self, _cx: &mut App) {}
     /// Called when start dragging the scrollbar thumb.
     fn start_drag(&self) {}
     /// Called when end dragging the scrollbar thumb.
@@ -126,8 +138,7 @@ struct ScrollbarState(Rc<Cell<ScrollbarStateInner>>);
 struct ScrollbarStateInner {
     hovered_axis: Option<Axis>,
     hovered_on_thumb: Option<Axis>,
-    dragged_axis: Option<Axis>,
-    drag_pos: Point<Pixels>,
+    drag: Option<ScrollbarDrag>,
     last_scroll_offset: Point<Pixels>,
     last_scroll_time: Option<Instant>,
     // Last update offset
@@ -135,13 +146,22 @@ struct ScrollbarStateInner {
     idle_timer_scheduled: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ScrollbarDrag {
+    axis: Axis,
+    grab_offset: Pixels,
+    last_pointer: Pixels,
+    offset: Pixels,
+    range: Pixels,
+    thumb_length: Pixels,
+}
+
 impl Default for ScrollbarState {
     fn default() -> Self {
         Self(Rc::new(Cell::new(ScrollbarStateInner {
             hovered_axis: None,
             hovered_on_thumb: None,
-            dragged_axis: None,
-            drag_pos: point(px(0.), px(0.)),
+            drag: None,
             last_scroll_offset: point(px(0.), px(0.)),
             last_scroll_time: None,
             last_update: Instant::now(),
@@ -159,24 +179,6 @@ impl Deref for ScrollbarState {
 }
 
 impl ScrollbarStateInner {
-    fn with_drag_pos(&self, axis: Axis, pos: Point<Pixels>) -> Self {
-        let mut state = *self;
-        if axis.is_vertical() {
-            state.drag_pos.y = pos.y;
-        } else {
-            state.drag_pos.x = pos.x;
-        }
-
-        state.dragged_axis = Some(axis);
-        state
-    }
-
-    fn with_unset_drag_pos(&self) -> Self {
-        let mut state = *self;
-        state.dragged_axis = None;
-        state
-    }
-
     fn with_hovered(&self, axis: Option<Axis>) -> Self {
         let mut state = *self;
         state.hovered_axis = axis;
@@ -228,7 +230,7 @@ impl ScrollbarStateInner {
 
     fn is_scrollbar_visible(&self) -> bool {
         // On drag
-        if self.dragged_axis.is_some() {
+        if self.drag.is_some() {
             return true;
         }
 
@@ -312,11 +314,8 @@ pub struct Scrollbar {
     scroll_handle: Rc<dyn ScrollbarHandle>,
     scroll_size: Option<Size<Pixels>>,
     thumb_geometry: Option<(Pixels, Pixels)>,
-    /// Maximum frames per second for scrolling by drag. Default is 120 FPS.
-    ///
-    /// This is used to limit the update rate of the scrollbar when it is
-    /// being dragged for some complex interactions for reducing CPU usage.
-    max_fps: usize,
+    /// Optional rate limit for expensive scroll targets.
+    max_fps: Option<usize>,
 }
 
 impl Scrollbar {
@@ -331,7 +330,7 @@ impl Scrollbar {
             axis: ScrollbarAxis::Both,
             scrollbar_show: None,
             scroll_handle: Rc::new(scroll_handle.clone()),
-            max_fps: 120,
+            max_fps: Some(120),
             scroll_size: None,
             thumb_geometry: None,
         }
@@ -378,8 +377,14 @@ impl Scrollbar {
         self
     }
 
+    /// Apply every pointer update without a wall-clock throttle.
+    pub fn unthrottled_drag(mut self) -> Self {
+        self.max_fps = None;
+        self
+    }
+
     pub(crate) fn max_fps(mut self, max_fps: usize) -> Self {
-        self.max_fps = max_fps.clamp(30, 120);
+        self.max_fps = Some(max_fps.clamp(30, 120));
         self
     }
 
@@ -474,10 +479,46 @@ pub struct AxisPrepaintState {
 
     thumb_fill_bounds: Bounds<Pixels>,
     thumb_bg: Hsla,
-    scroll_size: Pixels,
-    container_size: Pixels,
-    thumb_size: Pixels,
-    margin_end: Pixels,
+    range: Pixels,
+    offset: Pixels,
+    thumb_length: Pixels,
+    thumb_start: Pixels,
+    travel: Pixels,
+}
+
+fn scrollbar_pointer(axis: Axis, track: Bounds<Pixels>, position: Point<Pixels>) -> Pixels {
+    if axis.is_vertical() {
+        position.y - track.top()
+    } else {
+        position.x - track.left()
+    }
+}
+
+fn move_scrollbar_thumb(
+    state: &ScrollbarState,
+    handle: &dyn ScrollbarHandle,
+    mut drag: ScrollbarDrag,
+    track: Bounds<Pixels>,
+    travel: Pixels,
+    position: Point<Pixels>,
+    cx: &mut App,
+) -> bool {
+    let pointer = scrollbar_pointer(drag.axis, track, position);
+    if travel <= px(0.) || pointer == drag.last_pointer {
+        return false;
+    }
+    let offset = drag.range * ((pointer - drag.grab_offset) / travel).clamp(0., 1.);
+    if offset == drag.offset {
+        return false;
+    }
+    handle.drag_to(drag.axis, drag.offset, offset, drag.range);
+    handle.on_scroll(cx);
+    drag.offset = offset;
+    drag.last_pointer = pointer;
+    let mut current = state.get().with_last_update(Instant::now());
+    current.drag = Some(drag);
+    state.set(current);
+    true
 }
 
 impl Element for Scrollbar {
@@ -555,16 +596,23 @@ impl Element for Scrollbar {
                 px(0.)
             };
 
-            if scroll_area_size <= container_size {
+            let drag = state.get().drag.filter(|drag| drag.axis == axis);
+            let track_length = (container_size - margin_end).max(px(0.));
+            let range = drag.map_or(scroll_area_size - container_size, |drag| drag.range);
+            if range <= px(0.) || track_length <= px(0.) {
                 has_both = false;
                 continue;
             }
 
-            let thumb_length =
-                (container_size / scroll_area_size * container_size).max(px(MIN_THUMB_SIZE));
-            let thumb_start = -(scroll_position / (scroll_area_size - container_size)
-                * (container_size - margin_end - thumb_length));
-            let thumb_end = (thumb_start + thumb_length).min(container_size - margin_end);
+            let thumb_length = drag
+                .map_or_else(
+                    || (container_size / scroll_area_size * track_length).max(px(MIN_THUMB_SIZE)),
+                    |drag| drag.thumb_length,
+                )
+                .min(track_length);
+            let travel = track_length - thumb_length;
+            let offset = drag.map_or(-scroll_position, |drag| drag.offset).clamp(px(0.), range);
+            let thumb_start = travel * (offset / range);
 
             let bounds = Bounds {
                 origin: if is_vertical {
@@ -597,7 +645,7 @@ impl Element for Scrollbar {
             let is_offset_changed = state.get().last_scroll_offset != self.scroll_handle.offset();
 
             let (thumb_bg, bar_bg, bar_border, thumb_width, inset, radius) =
-                if state.get().dragged_axis == Some(axis) {
+                if drag.is_some() {
                     Self::style_for_active(cx)
                 } else if is_hover_to_show && (is_hovered_on_bar || is_hovered_on_thumb) {
                     if is_hovered_on_thumb {
@@ -655,18 +703,19 @@ impl Element for Scrollbar {
             let (thumb_width, inset, radius) = self.thumb_geometry
                 .map(|(width, inset)| (width, inset, width / 2.0))
                 .unwrap_or((thumb_width, inset, radius));
-            let thumb_length = thumb_end - thumb_start - inset * 2;
+            let inset = inset.clamp(px(0.), (WIDTH / 2.).min((thumb_length - px(1.)).max(px(0.)) / 2.));
+            let painted_length = thumb_length - inset * 2;
             let thumb_bounds = if is_vertical {
                 Bounds::from_anchor_and_size(
                     Anchor::TopRight,
                     bounds.top_right() + point(-inset, inset + thumb_start),
-                    size(WIDTH, thumb_length),
+                    size(WIDTH - inset, painted_length),
                 )
             } else {
                 Bounds::from_anchor_and_size(
                     Anchor::BottomLeft,
                     bounds.bottom_left() + point(inset + thumb_start, -inset),
-                    size(thumb_length, WIDTH),
+                    size(painted_length, WIDTH - inset),
                 )
             };
 
@@ -674,13 +723,13 @@ impl Element for Scrollbar {
                 Bounds::from_anchor_and_size(
                     Anchor::TopRight,
                     bounds.top_right() + point(-inset, inset + thumb_start),
-                    size(thumb_width, thumb_length),
+                    size(thumb_width, painted_length),
                 )
             } else {
                 Bounds::from_anchor_and_size(
                     Anchor::BottomLeft,
                     bounds.bottom_left() + point(inset + thumb_start, -inset),
-                    size(thumb_length, thumb_width),
+                    size(painted_length, thumb_width),
                 )
             };
 
@@ -698,10 +747,11 @@ impl Element for Scrollbar {
                 thumb_bounds,
                 thumb_fill_bounds,
                 thumb_bg,
-                scroll_size: scroll_area_size,
-                container_size,
-                thumb_size: thumb_length,
-                margin_end,
+                range,
+                offset,
+                thumb_length,
+                thumb_start,
+                travel,
             })
         }
 
@@ -751,10 +801,11 @@ impl Element for Scrollbar {
                     }
                     let bounds = state.bounds;
                     let thumb_bounds = state.thumb_bounds;
-                    let scroll_area_size = state.scroll_size;
-                    let container_size = state.container_size;
-                    let thumb_size = state.thumb_size;
-                    let margin_end = state.margin_end;
+                    let range = state.range;
+                    let offset = state.offset;
+                    let thumb_length = state.thumb_length;
+                    let thumb_start = state.thumb_start;
+                    let travel = state.travel;
                     let is_vertical = axis.is_vertical();
 
                     window.set_cursor_style(CursorStyle::default(), &state.bar_hitbox);
@@ -807,52 +858,45 @@ impl Element for Scrollbar {
                         }
                     });
 
-                    let safe_range = (-scroll_area_size + container_size)..px(0.);
-
                     if is_hover_to_show || is_visible {
                         window.on_mouse_event({
                             let state = scrollbar_state.clone();
                             let scroll_handle = self.scroll_handle.clone();
 
                             move |event: &MouseDownEvent, phase, _, cx| {
-                                if phase.bubble() && bounds.contains(&event.position) {
-                                    cx.stop_propagation();
-
-                                    if thumb_bounds.contains(&event.position) {
-
-                                        let pos = event.position - thumb_bounds.origin;
-
-                                        scroll_handle.start_drag();
-                                        state.set(state.get().with_drag_pos(axis, pos));
-
-                                        cx.notify(view_id);
-                                    } else {
-
-                                        let offset = scroll_handle.offset();
-                                        let percentage = if is_vertical {
-                                            (event.position.y - thumb_size / 2. - bounds.origin.y)
-                                                / (bounds.size.height - thumb_size)
-                                        } else {
-                                            (event.position.x - thumb_size / 2. - bounds.origin.x)
-                                                / (bounds.size.width - thumb_size)
-                                        }
-                                        .min(1.);
-
-                                        if is_vertical {
-                                            scroll_handle.set_offset(point(
-                                                offset.x,
-                                                (-scroll_area_size * percentage)
-                                                    .clamp(safe_range.start, safe_range.end),
-                                            ));
-                                        } else {
-                                            scroll_handle.set_offset(point(
-                                                (-scroll_area_size * percentage)
-                                                    .clamp(safe_range.start, safe_range.end),
-                                                offset.y,
-                                            ));
-                                        }
-                                    }
+                                if !phase.bubble()
+                                    || event.button != MouseButton::Left
+                                    || !bounds.contains(&event.position)
+                                    || travel <= px(0.)
+                                {
+                                    return;
                                 }
+                                cx.stop_propagation();
+                                let position = scrollbar_pointer(axis, bounds, event.position);
+                                if thumb_bounds.contains(&event.position) {
+                                    scroll_handle.start_drag();
+                                    let mut current = state.get();
+                                    current.drag = Some(ScrollbarDrag {
+                                        axis,
+                                        grab_offset: position - thumb_start,
+                                        last_pointer: position,
+                                        offset,
+                                        range,
+                                        thumb_length,
+                                    });
+                                    state.set(current);
+                                } else {
+                                    let offset = scroll_handle.offset();
+                                    let percentage = ((position - thumb_length / 2.) / travel).clamp(0., 1.);
+                                    let destination = -range * percentage;
+                                    scroll_handle.set_offset(if is_vertical {
+                                        point(offset.x, destination)
+                                    } else {
+                                        point(destination, offset.y)
+                                    });
+                                    scroll_handle.on_scroll(cx);
+                                }
+                                cx.notify(view_id);
                             }
                         });
                     }
@@ -860,26 +904,30 @@ impl Element for Scrollbar {
                     window.on_mouse_event({
                         let scroll_handle = self.scroll_handle.clone();
                         let state = scrollbar_state.clone();
-                        let max_fps_duration = Duration::from_millis((1000 / self.max_fps) as u64);
+                        let min_interval = self.max_fps.map(|fps| Duration::from_secs_f64(1. / fps as f64));
 
-                        move |event: &MouseMoveEvent, _, _, cx| {
+                        move |event: &MouseMoveEvent, phase, _, cx| {
+                            if !phase.bubble() {
+                                if event.dragging()
+                                    && let Some(drag) = state.get().drag.filter(|drag| drag.axis == axis)
+                                {
+                                    cx.stop_propagation();
+                                    if min_interval.is_none_or(|interval| state.get().last_update.elapsed() >= interval)
+                                        && move_scrollbar_thumb(&state, &*scroll_handle, drag, bounds, travel, event.position, cx)
+                                    {
+                                        cx.notify(view_id);
+                                    }
+                                }
+                                return;
+                            }
                             let mut notify = false;
 
                             let need_hover_to_update = is_hover_to_show || is_visible;
 
-                            if bounds.contains(&event.position) && need_hover_to_update {
-                                state.set(state.get().with_hovered(Some(axis)));
-
-                                if state.get().hovered_axis != Some(axis) {
-                                    notify = true;
-                                }
-                            } else {
-                                if state.get().hovered_axis == Some(axis) {
-                                    if state.get().hovered_axis.is_some() {
-                                        state.set(state.get().with_hovered(None));
-                                        notify = true;
-                                    }
-                                }
+                            let hovered = bounds.contains(&event.position) && need_hover_to_update;
+                            if hovered != (state.get().hovered_axis == Some(axis)) {
+                                state.set(state.get().with_hovered(hovered.then_some(axis)));
+                                notify = true;
                             }
 
                             if thumb_bounds.contains(&event.position) {
@@ -894,47 +942,6 @@ impl Element for Scrollbar {
                                 }
                             }
 
-                            if state.get().dragged_axis == Some(axis) && event.dragging() {
-
-                                cx.stop_propagation();
-
-                                let drag_pos = state.get().drag_pos;
-
-                                let percentage = (if is_vertical {
-                                    (event.position.y - drag_pos.y - bounds.origin.y)
-                                        / (bounds.size.height - thumb_size)
-                                } else {
-                                    (event.position.x - drag_pos.x - bounds.origin.x)
-                                        / (bounds.size.width - thumb_size - margin_end)
-                                })
-                                .clamp(0., 1.);
-
-                                let offset = if is_vertical {
-                                    point(
-                                        scroll_handle.offset().x,
-                                        (-(scroll_area_size - container_size) * percentage)
-                                            .clamp(safe_range.start, safe_range.end),
-                                    )
-                                } else {
-                                    point(
-                                        (-(scroll_area_size - container_size) * percentage)
-                                            .clamp(safe_range.start, safe_range.end),
-                                        scroll_handle.offset().y,
-                                    )
-                                };
-
-                                if (scroll_handle.offset().y - offset.y).abs() > px(1.)
-                                    || (scroll_handle.offset().x - offset.x).abs() > px(1.)
-                                {
-
-                                    if state.get().last_update.elapsed() > max_fps_duration {
-                                        scroll_handle.set_offset(offset);
-                                        state.set(state.get().with_last_update(Instant::now()));
-                                        notify = true;
-                                    }
-                                }
-                            }
-
                             if notify {
                                 cx.notify(view_id);
                             }
@@ -945,10 +952,17 @@ impl Element for Scrollbar {
                         let state = scrollbar_state.clone();
                         let scroll_handle = self.scroll_handle.clone();
 
-                        move |_event: &MouseUpEvent, phase, _, cx| {
-                            if phase.bubble() {
+                        move |event: &MouseUpEvent, phase, _, cx| {
+                            if !phase.bubble()
+                                && event.button == MouseButton::Left
+                                && let Some(drag) = state.get().drag.filter(|drag| drag.axis == axis)
+                            {
+                                cx.stop_propagation();
+                                move_scrollbar_thumb(&state, &*scroll_handle, drag, bounds, travel, event.position, cx);
                                 scroll_handle.end_drag();
-                                state.set(state.get().with_unset_drag_pos());
+                                let mut current = state.get();
+                                current.drag = None;
+                                state.set(current);
                                 cx.notify(view_id);
                             }
                         }

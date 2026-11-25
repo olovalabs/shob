@@ -19,8 +19,7 @@ impl AppState {
             return false;
         }
         // A submitted turn (including a startup error) belongs at the live end.
-        pane.chat.autoscroll = true;
-        pane.chat.scroll_to_end();
+        pane.chat.list_state.set_follow_mode(FollowMode::Tail);
         pane.chat.startup_error = None;
         if save_history && pane.chat.conversation.is_none() {
             pane.chat.conversation = Some(conversations::Log::open(
@@ -121,8 +120,6 @@ impl AppState {
                 false
             }
         };
-        pane.chat.autoscroll = true;
-        pane.chat.scroll_to_end();
         cx.notify();
         sent
     }

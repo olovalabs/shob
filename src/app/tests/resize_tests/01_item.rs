@@ -617,6 +617,87 @@ fn focused_chat_scrolls_from_both_side_margins() {
     cx.simulate_click(button.center(), Modifiers::none());
     cx.draw_frame().unwrap();
     assert!(cx.debug_bounds("scroll-to-bottom-btn").is_none());
+
+    for resize in [false, true] {
+        if resize {
+            cx.simulate_resize(gpui::size(px(1050.0), px(800.0)));
+            cx.draw_frame().unwrap();
+        }
+        let track = cx.debug_bounds("focused-chat-scrollbar-track").unwrap();
+        cx.simulate_click(
+            point(track.center().x, track.top() + px(2.0)),
+            Modifiers::none(),
+        );
+        cx.draw_frame().unwrap();
+        assert_eq!(
+            scroll_top(&cx),
+            0,
+            "track must reach unmeasured rows (after resize: {resize})"
+        );
+        assert!(cx.debug_bounds("scroll-to-bottom-btn").is_some());
+
+        cx.simulate_click(
+            point(track.center().x, track.bottom() - px(2.0)),
+            Modifiers::none(),
+        );
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("scroll-to-bottom-btn").is_none());
+    }
+
+    let track = cx.debug_bounds("focused-chat-scrollbar-track").unwrap();
+    let thumb = |cx: &mut VisualTestContext| {
+        cx.update(|window, _| {
+            let scale = window.scale_factor();
+            let track = track.scale(scale);
+            window
+                .painted_quads()
+                .into_iter()
+                .find(|quad| {
+                    quad.bounds.size.width == px(7.0).scale(scale)
+                        && track.contains(&quad.bounds.center())
+                })
+                .expect("chat scrollbar should have a 7 px thumb")
+                .bounds
+        })
+    };
+    let initial_thumb = thumb(&mut cx);
+    let scale = cx.update(|window, _| window.scale_factor());
+    let grab = point(
+        track.center().x,
+        px(initial_thumb.center().y.0 / scale),
+    );
+    cx.simulate_mouse_down(grab, MouseButton::Left, Modifiers::none());
+    let mut previous = scroll_top(&cx);
+    for fraction in [0.75, 0.6, 0.45] {
+        cx.simulate_mouse_move(
+            point(grab.x, track.top() + track.size.height * fraction),
+            Some(MouseButton::Left),
+            Modifiers::none(),
+        );
+        cx.draw_frame().unwrap();
+        let current = scroll_top(&cx);
+        assert!(
+            current > 0 && current < previous,
+            "drag should stay in history and move monotonically"
+        );
+        previous = current;
+        let height = thumb(&mut cx).size.height.0;
+        assert!(
+            (height - initial_thumb.size.height.0).abs() <= 1.0,
+            "thumb height changed beyond device-pixel rounding"
+        );
+    }
+    cx.simulate_mouse_up(
+        point(grab.x, track.top()),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.draw_frame().unwrap();
+    assert_eq!(
+        scroll_top(&cx),
+        0,
+        "release must use the final pointer position"
+    );
 }
 
 #[test]
@@ -642,6 +723,8 @@ fn focused_layout_places_usage_above_the_composer() {
     assert!(cx.debug_bounds("input-mode-terminal-pill").is_none());
     assert!(cx.debug_bounds("input-mode-agent-pill").is_none());
     let chat = cx.debug_bounds("agent-chat").unwrap();
+    let first_row = cx.debug_bounds("agent-chat-row").unwrap();
+    assert_eq!(first_row.top(), chat.top() + px(8.0), "short transcripts start at the top");
     let track = cx.debug_bounds("focused-chat-scrollbar-track").unwrap();
     assert!(track.bottom() >= composer.bottom());
     assert_eq!(track.right(), chat.right());

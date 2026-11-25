@@ -114,8 +114,8 @@ fn reasoning_starts_folded_and_can_be_expanded_live_and_after_completion() {
         s.set_chat_mode(pane_id, true, window, cx);
         let pane = s.pane_mut(pane_id).unwrap();
         pane.chat.running = true;
-        let reasoning = (0..20)
-            .map(|line| format!("reasoning line {line}\n"))
+        let reasoning = (0..120)
+            .map(|line| format!("Reasoning paragraph {line}.\n\n"))
             .collect::<String>();
         push_chat_event(
             &mut pane.chat.messages,
@@ -127,7 +127,14 @@ fn reasoning_starts_folded_and_can_be_expanded_live_and_after_completion() {
     let row = cx.debug_bounds("thinking-row-0").expect("thinking row");
     cx.simulate_click(row.origin + point(px(20.0), px(10.0)), Modifiers::default());
     cx.draw_frame().expect("expand live reasoning");
+    cx.run_until_parked();
+    cx.draw_frame().expect("draw parsed reasoning");
     assert!(cx.debug_bounds("thinking-body-0").is_some());
+    assert_eq!(cx.debug_bounds("thinking-row-0").unwrap().top(), row.top());
+    state.read_with(&cx, |s, _| {
+        let list = &s.pane_ref(pane_id).unwrap().chat.list_state;
+        assert!(!list.is_following_tail(), "opening tall output must not jump to its end");
+    });
     cx.update_window_entity(&state, |s, _, cx| {
         let pane = s.pane_mut(pane_id).unwrap();
         let event = agent_bridge::AgentEvent::Thinking("another reasoning line\n".into());
@@ -334,7 +341,7 @@ fn agent_dynamic_autoscroll_and_user_lock() {
         s.set_theme_preference(ThemePreference::Dark, Some(window), cx);
         s.set_chat_mode(id, true, window, cx);
         let pane = s.pane_mut(id).unwrap();
-        assert!(pane.chat.autoscroll, "autoscroll must be true by default");
+        assert!(pane.chat.list_state.is_following_tail());
         // Add several messages so the container has scrollable content
         for i in 0..15 {
             pane.chat.messages.push(Arc::new(ChatMessage::new(
@@ -392,7 +399,7 @@ fn agent_dynamic_autoscroll_and_user_lock() {
         .expect("draw chat frame with autoscroll unpinned");
     state.read_with(&cx, |s, _| {
         let pane = s.pane_ref(id).unwrap();
-        assert!(!pane.chat.autoscroll, "autoscroll should be unpinned");
+        assert!(!pane.chat.list_state.is_following_tail());
     });
 
     // Streaming must preserve the reader's position until they return to the end.
@@ -410,7 +417,7 @@ fn agent_dynamic_autoscroll_and_user_lock() {
     cx.draw_frame().unwrap();
     state.read_with(&cx, |s, _| {
         let chat = &s.pane_ref(id).unwrap().chat;
-        assert!(!chat.autoscroll);
+        assert!(!chat.list_state.is_following_tail());
         assert_eq!(chat.list_state.logical_scroll_top(), anchor);
     });
 
@@ -422,20 +429,29 @@ fn agent_dynamic_autoscroll_and_user_lock() {
         source: gpui::ScrollSource::Pointer,
     });
     cx.draw_frame().unwrap();
+    cx.run_until_parked();
+    cx.draw_frame().unwrap();
     state.read_with(&cx, |s, _| {
         assert!(
-            s.pane_ref(id).unwrap().chat.autoscroll,
+            s.pane_ref(id).unwrap().chat.list_state.is_following_tail(),
             "scrolling to the end resumes following"
         );
     });
-    cx.simulate_event(gpui::ScrollEvent {
-        position: bounds.center(),
-        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(300.0))),
-        modifiers: Default::default(),
-        touch_phase: gpui::TouchPhase::Moved,
-        source: gpui::ScrollSource::Pointer,
+
+    // Scrollbar moves must follow the same rules as wheel gestures.
+    cx.update_window_entity(&state, |s, _, cx| {
+        let list = &s.pane_ref(id).unwrap().chat.list_state;
+        list.scrollbar_drag_started();
+        list.set_offset_from_scrollbar(gpui::point(px(0.0), px(0.0)));
+        list.scrollbar_drag_ended();
+        cx.notify();
     });
     cx.draw_frame().unwrap();
+    state.read_with(&cx, |s, _| {
+        let list = &s.pane_ref(id).unwrap().chat.list_state;
+        assert_eq!(list.logical_scroll_top().item_ix, 0);
+        assert!(!list.is_following_tail());
+    });
 
     // The jump button restores following, even after content has grown.
     let button = cx
@@ -445,15 +461,27 @@ fn agent_dynamic_autoscroll_and_user_lock() {
     state.read_with(&cx, |s, _| {
         let pane = s.pane_ref(id).unwrap();
         assert!(
-            pane.chat.autoscroll,
-            "jumping to the bottom must re-pin autoscroll"
-        );
-        assert!(
             pane.chat.list_state.is_following_tail(),
             "the list must resume following the tail"
         );
     });
     cx.draw_frame().unwrap();
+    assert!(cx.debug_bounds("scroll-to-bottom-btn").is_none());
+
+    cx.update_window_entity(&state, |s, _, cx| {
+        let list = &s.pane_ref(id).unwrap().chat.list_state;
+        list.scrollbar_drag_started();
+        list.set_offset_from_scrollbar(gpui::point(px(0.0), px(0.0)));
+        list.set_offset_from_scrollbar(-list.max_offset_for_scrollbar());
+        list.scrollbar_drag_ended();
+        cx.notify();
+    });
+    cx.draw_frame().unwrap();
+    state.read_with(&cx, |s, _| {
+        let list = &s.pane_ref(id).unwrap().chat.list_state;
+        assert!(list.is_following_tail(), "the bottom of the track must resume following");
+    });
+    assert!(cx.debug_bounds("scroll-to-bottom-btn").is_none());
 }
 
 #[test]
@@ -478,7 +506,6 @@ fn streaming_remeasure_preserves_offset_inside_message() {
     cx.draw_frame().unwrap();
     cx.update_window_entity(&state, |s, _, cx| {
         let chat = &mut s.pane_mut(id).unwrap().chat;
-        chat.autoscroll = false;
         chat.list_state.scroll_to(gpui::ListOffset {
             item_ix: 0,
             offset_in_item: px(200.0),
@@ -503,7 +530,7 @@ fn streaming_remeasure_preserves_offset_inside_message() {
     cx.draw_frame().unwrap();
     state.read_with(&cx, |s, _| {
         let chat = &s.pane_ref(id).unwrap().chat;
-        assert!(!chat.autoscroll);
+        assert!(!chat.list_state.is_following_tail());
         assert_eq!(chat.list_state.logical_scroll_top(), anchor);
     });
 }
@@ -793,4 +820,24 @@ fn worked_header_toggles_progress_and_keeps_the_answer_visible() {
     assert!(cx.debug_bounds("chat-message-1").is_none());
     assert!(cx.debug_bounds("tool-group-2").is_none());
     assert!(cx.debug_bounds("chat-message-3").is_some());
+
+    cx.update_window_entity(&state, |state, _, cx| {
+        let chat = &mut state.pane_mut(pane_id).unwrap().chat;
+        for index in 0..160 {
+            chat.messages.push(Arc::new(ChatMessage::new(ChatRole::Assistant, format!("Later message {index}"))));
+        }
+        chat.list_state.scroll_to(gpui::ListOffset { item_ix: 1, offset_in_item: px(0.0) });
+        cx.notify();
+    });
+    cx.draw_frame().unwrap();
+    for _ in 0..2 {
+        let header = cx.debug_bounds("worked-turn-1").unwrap();
+        cx.simulate_click(header.center(), Modifiers::default());
+        cx.draw_frame().unwrap();
+        state.read_with(&cx, |state, _| {
+            let list = &state.pane_ref(pane_id).unwrap().chat.list_state;
+            assert_eq!(list.logical_scroll_top().item_ix, 1);
+            assert_eq!(list.is_scrolled_to_end(), Some(false), "folding history must not discard the following rows' height map");
+        });
+    }
 }

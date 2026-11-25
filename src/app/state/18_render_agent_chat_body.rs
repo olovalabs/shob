@@ -1,3 +1,8 @@
+fn chat_needs_scroll_to_bottom(list: &ListState) -> bool {
+    let at_end = list.is_scrolled_to_end();
+    !list.is_following_tail() && at_end != Some(true)
+}
+
 impl AppState {
     fn render_agent_chat_body(
         &self,
@@ -76,11 +81,6 @@ impl AppState {
         let render_start = std::time::Instant::now();
         let tokens = self.tokens(cx);
         let conversation = source.conversation_key;
-        let is_autoscroll = source.autoscroll;
-        if is_autoscroll && !source.list_state.is_following_tail() {
-            source.list_state.set_follow_mode(FollowMode::Tail);
-        }
-
         let row_start = std::time::Instant::now();
         let row_cache = Self::build_chat_rows_from(&source);
         let cached = row_cache.borrow();
@@ -92,25 +92,6 @@ impl AppState {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         std::hash::Hash::hash(conversation, &mut hasher);
         source.sync_rows(row_count, std::hash::Hasher::finish(&hasher));
-        // Markdown parsing and virtual block measurements can finish without
-        // another transcript event. Refresh only previously measured viewport
-        // rows on this child notification, preserving the list's scroll anchor.
-        let first_visible = source.list_state.logical_scroll_top().item_ix;
-        let mut visible_end = first_visible;
-        while visible_end < row_count {
-            let Some(bounds) = source.list_state.bounds_for_item(visible_end) else {
-                break;
-            };
-            if bounds.top() >= window.viewport_size().height {
-                break;
-            }
-            visible_end += 1;
-        }
-        if visible_end > first_visible {
-            source
-                .list_state
-                .remeasure_items(first_visible..visible_end);
-        }
         for index in source.dirty_messages.take() {
             if let Some(row) = rows.iter().position(|row| chat_row_contains(row, index)) {
                 source.remeasure_row(row);
@@ -141,35 +122,6 @@ impl AppState {
             }
         }
         drop(cached);
-        if !source.scroll_handler_installed.get() {
-            let weak = cx.weak_entity();
-            let id = pane_id;
-            source
-                .list_state
-                .set_scroll_handler(move |event, _, cx| {
-                    let _ = weak.update(cx, |this, cx| {
-                        if let Some(pane) = this.pane_mut(id) {
-                            // Bottom-aligned lists report their end with no scroll
-                            // anchor; tail-follow itself is re-armed during layout,
-                            // after this callback has run.
-                            let following = event.is_following_tail || !event.is_scrolled;
-                            if worker {
-                                if let Some(view) = &mut pane.chat.worker_view
-                                    && view.autoscroll != following
-                                {
-                                    view.autoscroll = following;
-                                    pane.chat.notify_worker_view(cx);
-                                }
-                            } else if pane.chat.autoscroll != following {
-                                pane.chat.autoscroll = following;
-                                pane.chat.notify_content(cx);
-                            }
-                        }
-                    });
-                });
-            source.scroll_handler_installed.set(true);
-        }
-
         let host = UiHost::new(cx.weak_entity());
         let snapshot = Rc::new(ChatSnapshot {
             focused_layout: self.settings.agent_layout,
@@ -177,10 +129,16 @@ impl AppState {
             conversation: conversation.into(),
             tokens,
             rows: row_cache,
-            host: host.clone(),
+            unready_row: std::cell::Cell::new(None),
+            list_state: Some(source.list_state.clone()),
+            host,
         });
-        let row_snapshot = Rc::clone(&snapshot);
         let list_state = source.list_state.clone();
+        let measurement = Rc::downgrade(&snapshot);
+        list_state.set_item_measurement_readiness(move |index, _| {
+            measurement.upgrade().is_none_or(|snapshot| snapshot.unready_row.get() != Some(index))
+        });
+        let view = window.current_view();
         let chat_view = div()
             .id(id)
             .debug_selector(move || debug_name.to_string())
@@ -188,17 +146,30 @@ impl AppState {
             .bg(tokens.chat().background)
             .flex()
             .justify_center()
+            .on_scroll({
+                let list = list_state.clone();
+                move |event, _, cx| {
+                    // The list consumes the wheel delta first. Keep an explicit move to the
+                    // end pinned even if provisional Markdown grows on the next layout.
+                    if event.delta.pixel_delta(px(20.0)).y < px(0.0)
+                        && !list.is_following_tail()
+                        && list.is_scrolled_to_end() == Some(true)
+                    {
+                        list.scroll_to_end();
+                        cx.notify(view);
+                    }
+                }
+            })
             .child(
                 list(list_state.clone(), move |index, window, cx| {
-                    Self::render_chat_row(&row_snapshot, index, window, cx)
+                    Self::render_chat_row(&snapshot, index, window, cx)
                 })
-                .size_full()
-                .px(px(0.0))
-                .pt(px(8.0))
-                .pb(px(20.0)),
+                .size_full(),
             );
 
-        let scroll_to_bottom_btn = if !is_autoscroll {
+        let previous_width = list_state.viewport_bounds().size.width;
+        let show_jump = chat_needs_scroll_to_bottom(&list_state);
+        let scroll_to_bottom_btn = if show_jump {
             let btn_id = if worker {
                 ("subagent-scroll-to-bottom-btn", pane_id)
             } else {
@@ -258,69 +229,67 @@ impl AppState {
                     })
                     .on_mouse_down(
                         MouseButton::Left,
-                        host.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            if let Some(pane) = this.pane_mut(pane_id) {
-                                if worker {
-                                    if let Some(view) = &mut pane.chat.worker_view {
-                                        view.autoscroll = true;
-                                        view.scroll_to_end();
-                                    }
-                                    pane.chat.notify_worker_view(cx);
-                                } else {
-                                    pane.chat.autoscroll = true;
-                                    pane.chat.scroll_to_end();
-                                }
-                                cx.notify();
+                        {
+                            let list = list_state.clone();
+                            move |_, _, cx| {
+                                cx.stop_propagation();
+                                list.set_follow_mode(FollowMode::Tail);
+                                cx.notify(view);
                             }
-                        }),
+                        },
                     ),
             )
         } else {
             None
         };
 
-        let scrollbar = if !self.settings.agent_layout {
-            Some(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .right_0()
-                    .bottom_0()
-                    .child(
-                        gpui_component::scroll::Scrollbar::vertical(&list_state).id(if worker {
-                            ("subagent-chat-scrollbar", pane_id)
-                        } else {
-                            ("agent-chat-scrollbar", pane_id)
-                        }),
-                    )
-                    .into_any_element(),
-            )
-        } else if worker {
-            let mut scrollbar = source.focused_scrollbar.borrow_mut();
-            let scrollbar = scrollbar.get_or_insert_with(|| {
-                cx.new(|_| FocusedChatScrollbar {
-                    pane_id,
-                    list: list_state.clone(),
-                    height: Rc::new(std::cell::Cell::new(px(0.0))),
-                })
+        let scrollbar = (!self.settings.agent_layout || worker).then(|| {
+            let scrollbar = ChatScrollbarHandle {
+                list: list_state.clone(),
+                focused_track: None,
+            }
+            .element()
+            .id(if worker {
+                ("subagent-chat-scrollbar", pane_id)
+            } else {
+                ("agent-chat-scrollbar", pane_id)
             });
-            Some(
+            let scrollbar = if self.settings.agent_layout {
+                scrollbar.scrollbar_show(gpui_component::scroll::ScrollbarShow::Always)
+            } else {
                 scrollbar
-                    .clone()
-                    .cached(StyleRefinement::default().absolute().size_full())
-                    .into_any_element(),
-            )
-        } else {
-            None
-        };
+            };
+            div().absolute().inset_0().child(scrollbar)
+        });
 
         crate::stream_timing::record_since("ui.render_chat", render_start);
         div()
             .relative()
             .size_full()
             .child(chat_view)
+            .child(
+                canvas(
+                    move |_, window, cx| {
+                        let width = list_state.viewport_bounds().size.width;
+                        // GPUI discards offscreen height hints on the first layout and after a reflow.
+                        let restore_hints = width > px(0.0)
+                            && width != previous_width
+                            && row_count > 0
+                            && list_state.is_scrolled_to_end().is_none();
+                        if restore_hints || chat_needs_scroll_to_bottom(&list_state) != show_jump {
+                            window.defer(cx, move |_, cx| {
+                                if restore_hints {
+                                    list_state.with_uniform_item_height(CHAT_ROW_HEIGHT_HINT);
+                                }
+                                cx.notify(view);
+                            });
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
             .children(scrollbar)
             .children(scroll_to_bottom_btn)
             .into_any_element()
@@ -575,6 +544,11 @@ impl AppState {
             return div().into_any_element();
         };
         let tokens = snapshot.tokens;
+        let measurement = ChatRowMeasurement {
+            ready: std::cell::Cell::new(true),
+            list_row: snapshot.list_state.as_ref().map(|list| (list, index)),
+        };
+        let measurement_ready = Some(&measurement);
         let inner: AnyElement = match row {
             ChatRow::Worked { start, elapsed_ms, open, has_details, .. } => {
                 let start = *start;
@@ -704,7 +678,7 @@ impl AppState {
                                 copy_range: None,
                             },
                             &snapshot.host,
-                            ChatRenderContext { tokens, window, cx },
+                            ChatRenderContext { tokens, window, cx, measurement_ready },
                         )
                     }));
                 }
@@ -725,7 +699,7 @@ impl AppState {
                     copy_range: *copy_range,
                 },
                 &snapshot.host,
-                ChatRenderContext { tokens, window, cx },
+                ChatRenderContext { tokens, window, cx, measurement_ready },
             ),
             ChatRow::Running { label, tooltip } => div()
                 .flex()
@@ -756,6 +730,7 @@ impl AppState {
                 )
                 .into_any_element(),
         };
+        snapshot.unready_row.set((!measurement.ready.get()).then_some(index));
         let live_tools = matches!(row, ChatRow::ToolGroup { live: true, .. });
         let row_gap = if live_tools { 0.0 } else if matches!(row, ChatRow::Worked { .. } | ChatRow::ToolGroup { .. }) { 14.0 } else { 12.0 };
         let content = div()
@@ -781,6 +756,9 @@ impl AppState {
             .w_full()
             .flex()
             .justify_center()
+            // Keep the insets in the measured content so the scrollbar and wheel share endpoints.
+            .when(index == 0, |row| row.pt(px(8.0)))
+            .when(index + 1 == cached.rows.len(), |row| row.pb(px(20.0)))
             .child(content)
             .into_any_element()
     }

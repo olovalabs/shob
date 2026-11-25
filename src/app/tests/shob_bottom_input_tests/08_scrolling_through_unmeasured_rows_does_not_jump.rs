@@ -25,10 +25,13 @@ fn scrolling_through_unmeasured_rows_does_not_jump_to_top_or_bottom() {
     cx.update_window_entity(&state, |s, _, cx| {
         let pane = s.pane_mut(pane_id).unwrap();
         for i in 40..220 {
-            pane.chat.messages.push(Arc::new(ChatMessage::new(
-                ChatRole::Assistant,
-                format!("Stretch message {i} sits in the unmeasured region."),
-            )));
+            let mut text = format!("Stretch message {i} sits in the unmeasured region.");
+            if i % 5 == 0 {
+                for _ in 0..16 {
+                    text.push_str("\n\n- A nested list\n  - A child item\n\n```rust\nlet value = 1;\n```\n\n| Name | Value |\n| --- | --- |\n| Long identifier | `example_value` |\n");
+                }
+            }
+            pane.chat.messages.push(Arc::new(ChatMessage::new(ChatRole::Assistant, text)));
         }
         cx.notify();
     });
@@ -54,11 +57,12 @@ fn scrolling_through_unmeasured_rows_does_not_jump_to_top_or_bottom() {
         "a fast scroll through unmeasured rows must land mid-transcript, not snap to row 0 or the tail (anchor {anchor:?} of {count})"
     );
     assert!(
-        !state.read_with(&cx, |s, _| s.pane_ref(pane_id).unwrap().chat.autoscroll),
+        !state.read_with(&cx, |s, _| s.pane_ref(pane_id).unwrap().chat.list_state.is_following_tail()),
         "the upward fling must detach from tail-following"
     );
 
-    // Small follow-up ticks keep moving gradually in the same direction.
+    // Small follow-up ticks keep moving in the same direction even as uneven rows are measured.
+    let mut moved = anchor;
     for _ in 0..4 {
         cx.simulate_event(gpui::ScrollEvent {
             position: bounds.center(),
@@ -67,36 +71,41 @@ fn scrolling_through_unmeasured_rows_does_not_jump_to_top_or_bottom() {
             touch_phase: gpui::TouchPhase::Moved,
             source: gpui::ScrollSource::Pointer,
         });
+        cx.draw_frame().expect("layout after an upward tick");
+        let current = state.read_with(&cx, |s, _| {
+            s.pane_ref(pane_id).unwrap().chat.list_state.logical_scroll_top()
+        });
+        assert!(
+            (current.item_ix, current.offset_in_item) < (moved.item_ix, moved.offset_in_item),
+            "an upward tick must not bounce back down (from {moved:?} to {current:?})"
+        );
+        assert!(current.item_ix > 0, "small ticks must not collapse to the top");
+        moved = current;
     }
-    cx.draw_frame().expect("layout after follow-up ticks");
-    let moved = state.read_with(&cx, |s, _| {
-        s.pane_ref(pane_id).unwrap().chat.list_state.logical_scroll_top()
-    });
-    assert!(
-        moved.item_ix <= anchor.item_ix,
-        "continued upward scrolls must not bounce back down (from {anchor:?} to {moved:?})"
-    );
-    assert!(
-        moved.item_ix > 0,
-        "small ticks inside the unmeasured stretch must not collapse to the top"
-    );
 
     // Scroll back down a little: it must move down a bounded amount and
     // never overshoot into the tail on hinted rows.
-    cx.simulate_event(gpui::ScrollEvent {
-        position: bounds.center(),
-        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-600.0))),
-        modifiers: Default::default(),
-        touch_phase: gpui::TouchPhase::Moved,
-        source: gpui::ScrollSource::Pointer,
-    });
-    cx.draw_frame().expect("layout after scrolling back down");
-    state.read_with(&cx, |s, _| {
-        let chat = &s.pane_ref(pane_id).unwrap().chat;
-        let anchor = chat.list_state.logical_scroll_top();
+    for delta in [-80.0, -600.0, -1400.0, 80.0, 1400.0] {
+        cx.simulate_event(gpui::ScrollEvent {
+            position: bounds.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(delta))),
+            modifiers: Default::default(),
+            touch_phase: gpui::TouchPhase::Moved,
+            source: gpui::ScrollSource::Pointer,
+        });
+        cx.draw_frame().expect("layout after changing scroll speed or direction");
+        let current = state.read_with(&cx, |s, _| {
+            let list = &s.pane_ref(pane_id).unwrap().chat.list_state;
+            assert!(!list.is_following_tail());
+            list.logical_scroll_top()
+        });
+        let previous = (moved.item_ix, moved.offset_in_item);
+        let next = (current.item_ix, current.offset_in_item);
+        assert!(current.item_ix > 0 && current.item_ix < count);
         assert!(
-            anchor.item_ix > moved.item_ix && anchor.item_ix < chat.list_state.item_count(),
-            "a small downward tick must move a bounded amount, not snap to the tail (from {moved:?} to {anchor:?})"
+            if delta < 0.0 { next > previous } else { next < previous },
+            "wheel motion must not reverse when measuring Markdown (delta {delta}, from {moved:?} to {current:?})"
         );
-    });
+        moved = current;
+    }
 }

@@ -1,13 +1,13 @@
 use std::{
     collections::HashMap,
     ops::Range,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}},
 };
 
 use gpui::{
     AnyElement, App, DefiniteLength, Div, Element, ElementId, FontStyle, FontWeight, Half,
-    HighlightStyle, Hsla, InteractiveElement as _, IntoElement, Length, ListState, ObjectFit,
-    ParentElement, SharedString, SharedUri, StatefulInteractiveElement, Styled, StyledImage as _,
+    HighlightStyle, Hsla, InteractiveElement as _, IntoElement, ListState, ObjectFit,
+    ParentElement, ScrollHandle, SharedString, SharedUri, StatefulInteractiveElement, Styled, StyledImage as _,
     Window, div, img, prelude::FluentBuilder as _, px, relative, rems, rgb, rgba,
 };
 use markdown::mdast;
@@ -16,6 +16,7 @@ use ropey::Rope;
 use crate::{
     ActiveTheme as _, Icon, IconName, StyledExt, h_flex,
     highlighter::{HighlightTheme, SyntaxHighlighter},
+    scroll::ScrollableElement as _,
     text::{
         CodeBlockActionsFn,
         inline::{Inline, InlineState},
@@ -298,12 +299,26 @@ impl Paragraph {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Table {
     pub children: Vec<TableRow>,
     pub column_aligns: Vec<ColumnumnAlign>,
     pub column_fractions: Option<Vec<f32>>,
     pub flow_edges: Option<(bool, bool)>,
+    pub scroll_group: usize,
+}
+
+impl Default for Table {
+    fn default() -> Self {
+        static NEXT_GROUP: AtomicUsize = AtomicUsize::new(0);
+        Self {
+            children: Vec::new(),
+            column_aligns: Vec::new(),
+            column_fractions: None,
+            flow_edges: None,
+            scroll_group: NEXT_GROUP.fetch_add(1, Ordering::Relaxed),
+        }
+    }
 }
 
 impl Table {
@@ -1243,39 +1258,26 @@ impl Node {
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
-        const DEFAULT_LENGTH: usize = 5;
-        let col_lens = match item {
-            Node::Table(table) => {
-                let mut col_lens = vec![];
-                for row in table.children.iter() {
-                    for (ix, cell) in row.children.iter().enumerate() {
-                        if col_lens.len() <= ix {
-                            col_lens.push(DEFAULT_LENGTH);
-                        }
-
-                        let len = cell.children.text_len();
-                        if len > col_lens[ix] {
-                            col_lens[ix] = len;
-                        }
-                    }
-                }
-                col_lens
-            }
-            _ => vec![],
-        };
-
-        let column_fractions = match item {
-            Node::Table(table) => table
-                .column_fractions
-                .clone()
-                .unwrap_or_else(|| table_column_fractions(&col_lens)),
-            _ => table_column_fractions(&col_lens),
-        };
-
-        let colors = MarkdownColors::for_context(node_cx, cx);
-
+        const MIN_COLUMN: f32 = 96.0;
         match item {
             Node::Table(table) => {
+                let computed;
+                let column_fractions = if let Some(fractions) = table.column_fractions.as_deref() {
+                    fractions
+                } else {
+                    let mut lengths = Vec::new();
+                    for row in &table.children {
+                        for (index, cell) in row.children.iter().enumerate() {
+                            if lengths.len() <= index {
+                                lengths.push(5);
+                            }
+                            lengths[index] = lengths[index].max(cell.children.text_len());
+                        }
+                    }
+                    computed = table_column_fractions(&lengths);
+                    &computed
+                };
+                let colors = MarkdownColors::for_context(node_cx, cx);
                 let is_first_fragment = table.flow_edges.is_none_or(|(first, _)| first);
                 let is_last_fragment = table.flow_edges.is_none_or(|(_, last)| last);
                 let render_row_cells = |row_ix: usize,
@@ -1304,27 +1306,31 @@ impl Node {
                                 .font_weight(FontWeight::NORMAL)
                         })
                         .children({
-                            let mut cells = Vec::with_capacity(row.children.len());
-                            for (ix, cell) in row.children.iter().enumerate() {
+                            let mut cells = Vec::with_capacity(column_fractions.len());
+                            for (ix, weight) in column_fractions.iter().copied().enumerate() {
                                 let align = table.column_align(ix);
-                                let width = column_fractions.get(ix).copied().unwrap_or(0.0);
 
                                 cells.push(
                                     div()
-                                        .id(("cell", row_ix * 64 + ix))
+                                        .id(("cell", ix))
+                                        .debug_selector(move || if is_header {
+                                            format!("markdown-table-header-{ix}")
+                                        } else {
+                                            format!("markdown-table-column-{ix}")
+                                        })
                                         .flex()
-                                        .min_w_0()
+                                        .flex_col()
+                                        .min_w(px(MIN_COLUMN))
+                                        .flex_basis(px(MIN_COLUMN))
+                                        .flex_grow(weight)
+                                        .flex_shrink_0()
+                                        .overflow_hidden()
                                         .whitespace_normal()
-                                        .when(align == ColumnumnAlign::Center, |this| {
-                                            this.justify_center().text_center()
-                                        })
-                                        .when(align == ColumnumnAlign::Right, |this| {
-                                            this.justify_end().text_right()
-                                        })
-                                        .w(Length::Definite(relative(width)))
+                                        .when(align == ColumnumnAlign::Center, |this| this.text_center())
+                                        .when(align == ColumnumnAlign::Right, |this| this.text_right())
                                         .px(px(12.))
                                         .py(if is_header { px(8.) } else { px(10.) })
-                                        .child(cell.children.render(node_cx, window, cx)),
+                                        .children(row.children.get(ix).map(|cell| cell.children.render(node_cx, window, cx))),
                                 )
                             }
                             cells
@@ -1344,72 +1350,81 @@ impl Node {
                     .filter(|(_, row)| !row.header)
                     .collect();
 
+                // Every virtualized row of this table shares one horizontal offset.
+                let scroll = window.use_keyed_state(("markdown-table", table.scroll_group), cx, |_, _| ScrollHandle::new());
+                let scroll = scroll.read(cx).clone();
+                let view = window.current_view();
+                let content = div()
+                    .id("table")
+                    .w_full()
+                    .min_w(px(MIN_COLUMN * column_fractions.len() as f32 + 1.))
+                    .flex_shrink_0()
+                    .bg(colors.table_frame_bg)
+                    .border(px(0.5))
+                    .border_color(colors.border_muted)
+                    .rounded(px(6.))
+                    .when(!is_first_fragment, |mut this| {
+                        this.style().border_widths.top = Some(px(0.).into());
+                        this.style().corner_radii.top_left = Some(px(0.).into());
+                        this.style().corner_radii.top_right = Some(px(0.).into());
+                        this
+                    })
+                    .when(!is_last_fragment, |mut this| {
+                        this.style().border_widths.bottom = Some(px(0.).into());
+                        this.style().corner_radii.bottom_left = Some(px(0.).into());
+                        this.style().corner_radii.bottom_right = Some(px(0.).into());
+                        this
+                    })
+                    .children(header_rows.into_iter().map(|(row_ix, row)| {
+                        render_row_cells(row_ix, row, false, true, window, cx)
+                    }))
+                    .when(!body_rows.is_empty(), |this| {
+                        let body_len = body_rows.len();
+                        this.child(
+                            div().w_full().min_w_0().bg(colors.table_body_bg).children(
+                                body_rows.into_iter().enumerate().map(|(body_ix, (row_ix, row))| {
+                                    render_row_cells(row_ix, row, body_ix + 1 == body_len, false, window, cx)
+                                }),
+                            ),
+                        )
+                    });
                 div()
+                    .min_w_0()
                     .when(
-                        is_first_fragment
-                            && !options.is_first
-                            && !options.after_heading
-                            && !options.in_list,
+                        is_first_fragment && !options.is_first && !options.after_heading && !options.in_list,
                         |this| this.pt(px(16.)),
                     )
-                    .when(
-                        is_last_fragment && !options.is_last && !options.in_list,
-                        |this| this.pb(px(16.)),
-                    )
+                    .when(is_last_fragment && !options.is_last && !options.in_list, |this| this.pb(px(16.)))
                     .w_full()
                     .child(
-                        div()
-                            .id("table")
-                            .w_full()
-                            .min_w_0()
-                            .bg(colors.table_frame_bg)
-                            .border(px(0.5))
-                            .border_color(colors.border_muted)
-                            .rounded(px(6.))
-                            .when(
-                                table.flow_edges.is_some_and(|(first, _)| !first),
-                                |mut this| {
-                                    this.style().border_widths.top = Some(px(0.).into());
-                                    this.style().corner_radii.top_left = Some(px(0.).into());
-                                    this.style().corner_radii.top_right = Some(px(0.).into());
-                                    this
-                                },
+                        div().relative().w_full().min_w_0()
+                            .child(
+                                div().id("table-scroll")
+                                    .debug_selector(|| "markdown-table-scroll".into())
+                                    .w_full().min_w_0()
+                                    .overflow_x_scroll()
+                                    .restrict_scroll_to_axis()
+                                    .track_scroll(&scroll)
+                                    .on_scroll({
+                                        let scroll = scroll.clone();
+                                        move |event, window, cx| {
+                                            if !event.modifiers.shift {
+                                                return;
+                                            }
+                                            let delta = event.delta.pixel_delta(window.line_height());
+                                            let max = scroll.max_offset().x;
+                                            if delta.x == px(0.) && delta.y != px(0.) && max > px(0.) {
+                                                let mut offset = scroll.offset();
+                                                offset.x = (offset.x + delta.y).clamp(-max, px(0.));
+                                                scroll.set_offset(offset);
+                                                cx.stop_propagation();
+                                                cx.notify(view);
+                                            }
+                                        }
+                                    })
+                                    .child(content),
                             )
-                            .when(
-                                table.flow_edges.is_some_and(|(_, last)| !last),
-                                |mut this| {
-                                    this.style().border_widths.bottom = Some(px(0.).into());
-                                    this.style().corner_radii.bottom_left = Some(px(0.).into());
-                                    this.style().corner_radii.bottom_right = Some(px(0.).into());
-                                    this
-                                },
-                            )
-                            .overflow_hidden()
-                            .children(header_rows.into_iter().map(|(row_ix, row)| {
-                                render_row_cells(row_ix, row, false, true, window, cx)
-                            }))
-                            .when(!body_rows.is_empty(), |this| {
-                                let body_len = body_rows.len();
-                                this.child(
-                                    div()
-                                        .w_full()
-                                        .min_w_0()
-                                        .bg(colors.table_body_bg)
-                                        .overflow_hidden()
-                                        .children(body_rows.into_iter().enumerate().map(
-                                            |(body_ix, (row_ix, row))| {
-                                                render_row_cells(
-                                                    row_ix,
-                                                    row,
-                                                    body_ix + 1 == body_len,
-                                                    false,
-                                                    window,
-                                                    cx,
-                                                )
-                                            },
-                                        )),
-                                )
-                            }),
+                            .when(is_last_fragment, |this| this.horizontal_scrollbar(&scroll)),
                     )
                     .into_any_element()
             }

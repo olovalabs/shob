@@ -704,6 +704,8 @@ fn codex_markdown_reference_capture() {
                 let snapshot = ChatSnapshot {
                     focused_layout: true, pane_id: self.pane_id,
                     conversation: pane.chat.conversation_key.clone().into(), tokens, rows,
+                    unready_row: Default::default(),
+                    list_state: None,
                     host: UiHost::new(cx.weak_entity()),
                 };
                 div().size_full().overflow_hidden().bg(tokens.chat().background)

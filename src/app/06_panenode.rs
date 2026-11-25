@@ -317,14 +317,24 @@ fn sidebar_matches(query: &str, text: &str) -> bool {
     query.is_empty() || text.to_lowercase().contains(query)
 }
 
+const CHAT_SCROLLBAR_THUMB_WIDTH: Pixels = px(7.0);
+const CHAT_SCROLLBAR_THUMB_INSET: Pixels = px(2.0);
+
 #[derive(Clone)]
-struct FocusedChatScrollbar {
-    pane_id: usize,
+struct ChatScrollbarHandle {
     list: ListState,
-    height: Rc<std::cell::Cell<Pixels>>,
+    focused_track: Option<(gpui::EntityId, Rc<std::cell::Cell<Pixels>>)>,
 }
 
-impl gpui_component::scroll::ScrollbarHandle for FocusedChatScrollbar {
+impl ChatScrollbarHandle {
+    fn element(&self) -> gpui_component::scroll::Scrollbar {
+        gpui_component::scroll::Scrollbar::vertical(self)
+            .thumb_geometry(CHAT_SCROLLBAR_THUMB_WIDTH, CHAT_SCROLLBAR_THUMB_INSET)
+            .unthrottled_drag()
+    }
+}
+
+impl gpui_component::scroll::ScrollbarHandle for ChatScrollbarHandle {
     fn offset(&self) -> Point<Pixels> {
         self.list.scroll_px_offset_for_scrollbar()
     }
@@ -333,25 +343,53 @@ impl gpui_component::scroll::ScrollbarHandle for FocusedChatScrollbar {
         self.list.set_offset_from_scrollbar(offset);
     }
 
-    fn content_size(&self) -> gpui::Size<Pixels> {
-        let max = self.list.max_offset_for_scrollbar();
-        size(
-            self.list.viewport_bounds().size.width,
-            self.height.get() + max.y,
-        )
+    fn drag_to(&self, _: gpui::Axis, previous: Pixels, target: Pixels, range: Pixels) {
+        if target == range {
+            self.list.set_follow_mode(FollowMode::Tail);
+            return;
+        }
+        let max = self.list.max_offset_for_scrollbar().y;
+        let current = (-self.offset().y).clamp(px(0.), max);
+        // The thumb's range is frozen, but measuring history changes the pixel map under it.
+        let offset = if target < previous {
+            current * (target / previous)
+        } else {
+            current + (max - current) * ((target - previous) / (range - previous))
+        };
+        self.set_offset(gpui::point(px(0.), -offset));
     }
 
-    fn start_drag(&self) {
-        self.list.scrollbar_drag_started();
+    fn on_scroll(&self, cx: &mut App) {
+        if let Some((transcript, _)) = &self.focused_track {
+            cx.notify(*transcript);
+        }
     }
-    fn end_drag(&self) {
-        self.list.scrollbar_drag_ended();
+
+    fn content_size(&self) -> gpui::Size<Pixels> {
+        let viewport = self.list.viewport_bounds().size;
+        let height = self
+            .focused_track
+            .as_ref()
+            .map_or(viewport.height, |(_, height)| height.get());
+        size(viewport.width, height + self.list.max_offset_for_scrollbar().y)
     }
+}
+
+struct FocusedChatScrollbar {
+    pane_id: usize,
+    transcript_view: gpui::EntityId,
+    list: ListState,
+    height: Rc<std::cell::Cell<Pixels>>,
 }
 
 impl Render for FocusedChatScrollbar {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let height = self.height.clone();
+        let scrollbar = ChatScrollbarHandle {
+            list: self.list.clone(),
+            focused_track: Some((self.transcript_view, height.clone())),
+        }
+        .element();
         div()
             .relative()
             .size_full()
@@ -373,9 +411,7 @@ impl Render for FocusedChatScrollbar {
                     .right_0()
                     .w(px(16.0))
                     .child(
-                        gpui_component::scroll::Scrollbar::vertical(self)
-                            .id(("agent-chat-scrollbar", self.pane_id))
-                            .thumb_geometry(px(4.0), px(0.0))
+                        scrollbar.id(("agent-chat-scrollbar", self.pane_id))
                             .scrollbar_show(gpui_component::scroll::ScrollbarShow::Always),
                     ),
             )

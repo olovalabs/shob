@@ -604,7 +604,6 @@ struct PaneChat {
     active_dirty: std::cell::Cell<bool>,
     activity_dirty: std::cell::Cell<bool>,
     dirty_messages: std::cell::RefCell<HashSet<usize>>,
-    scroll_handler_installed: std::cell::Cell<bool>,
     auth_refresh_pending: bool,
     auth: Option<AuthModal>,
     selected_model: Option<agent_auth::AgentModel>,
@@ -619,7 +618,6 @@ struct PaneChat {
     fast_mode: bool,
     thinking_override: Option<String>,
     thinking_by_model: HashMap<String, String>,
-    pub autoscroll: bool,
     expanded_tool_groups: HashMap<String, HashSet<usize>>,
     // Restored completed turns start collapsed; expansion is transient view state.
     expanded_turns: HashMap<String, HashSet<usize>>,
@@ -661,18 +659,13 @@ impl Default for PaneChat {
             usage_detail: "Conversation usage appears after a model response completes.".into(),
             terminal_draft: String::new(),
             agent_draft: String::new(),
-            list_state: {
-                let state = ListState::new(0, ListAlignment::Bottom, px(600.0));
-                state.set_follow_mode(FollowMode::Tail);
-                state
-            },
+            list_state: new_chat_list(),
             list_rows: std::cell::Cell::new(0),
             list_key: std::cell::Cell::new(0),
             row_cache: Default::default(),
             active_dirty: std::cell::Cell::new(false),
             activity_dirty: std::cell::Cell::new(false),
             dirty_messages: std::cell::RefCell::new(HashSet::new()),
-            scroll_handler_installed: std::cell::Cell::new(false),
             auth_refresh_pending: false,
             auth: None,
             selected_model: None,
@@ -686,7 +679,6 @@ impl Default for PaneChat {
             fast_mode: true,
             thinking_override: None,
             thinking_by_model: HashMap::new(),
-            autoscroll: true,
             expanded_tool_groups: HashMap::new(),
             expanded_turns: HashMap::new(),
             shob_session_id: None,

@@ -270,6 +270,7 @@ impl Node {
                     }
                 }
                 let fractions = table_column_fractions(&lengths);
+                let scroll_group = table.scroll_group;
                 let mut rows = Vec::new();
                 for row in table.children {
                     let mut cells: Vec<_> = row
@@ -314,6 +315,7 @@ impl Node {
                             column_aligns: table.column_aligns.clone(),
                             column_fractions: Some(fractions.clone()),
                             flow_edges: Some((index == 0, index + 1 == count)),
+                            scroll_group,
                         })
                     })
                     .collect()

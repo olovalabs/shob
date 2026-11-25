@@ -12,7 +12,7 @@ impl AppState {
             running,
             copy_range,
         } = options;
-        let ChatRenderContext { tokens, window, cx } = render;
+        let ChatRenderContext { tokens, window, cx, measurement_ready } = render;
         let mut paint_marker = None;
         if !message.text.is_empty()
             && let Some((turn, started)) = message.turn
@@ -173,7 +173,7 @@ impl AppState {
                             px(14.0),
                             rems(1.0),
                             markdown_text_color,
-                            ChatRenderContext { tokens, window, cx },
+                            ChatRenderContext { tokens, window, cx, measurement_ready },
                         ));
                     }
                     if !view.tail.is_empty() {
@@ -185,7 +185,7 @@ impl AppState {
                             px(14.0),
                             rems(1.0),
                             markdown_text_color,
-                            ChatRenderContext { tokens, window, cx },
+                            ChatRenderContext { tokens, window, cx, measurement_ready },
                         ));
                     }
                     if view.plain_tail {
@@ -198,7 +198,7 @@ impl AppState {
                         px(14.0),
                         rems(1.0),
                         markdown_text_color,
-                        ChatRenderContext { tokens, window, cx },
+                        ChatRenderContext { tokens, window, cx, measurement_ready },
                     ));
                 }
 
@@ -268,7 +268,7 @@ impl AppState {
                     index,
                     message,
                     running,
-                    ChatRenderContext { tokens, window, cx },
+                    ChatRenderContext { tokens, window, cx, measurement_ready },
                     on_toggle,
                 );
                 if message.expanded && message.stream.as_ref().is_some_and(|view| view.plain_tail) {
@@ -689,7 +689,7 @@ impl AppState {
                                 copy_range: None,
                             },
                             &host,
-                            ChatRenderContext { tokens, window, cx },
+                            ChatRenderContext { tokens, window, cx, measurement_ready: None },
                         )),
                 );
             }
@@ -700,7 +700,7 @@ impl AppState {
                     agent_appearance::FONT_SIZE,
                     rems(1.0),
                     tokens.chat().foreground,
-                    ChatRenderContext { tokens, window, cx },
+                    ChatRenderContext { tokens, window, cx, measurement_ready: None },
                 ));
             } else if view.messages.is_empty() {
                 let text = if running {

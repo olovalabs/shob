@@ -1,8 +1,8 @@
-use std::sync::{Arc, Mutex};
+use std::{collections::HashMap, sync::{Arc, Mutex}};
 
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, Element, ElementId, GlobalElementId,
-    InspectorElementId, LayoutId, Pixels, Size, Style, Window, point, px, size,
+    InspectorElementId, LayoutId, ListState, Pixels, Size, Style, Window, point, px, size,
 };
 
 use super::{
@@ -20,6 +20,15 @@ struct Source {
     chunks: Vec<gpui::SharedString>,
     bytes: usize,
     complete: Option<gpui::SharedString>,
+    layout: Arc<Mutex<FlowLayoutCache>>,
+}
+
+/// Session-local geometry belongs to the document, not the mounted text view.
+#[derive(Default)]
+struct FlowLayoutCache {
+    width: Option<Pixels>,
+    heights: HashMap<usize, f32>,
+    total: f32,
 }
 
 impl MarkdownBlocks {
@@ -44,6 +53,11 @@ impl MarkdownBlocks {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    pub(crate) fn cached_height(&self) -> Pixels {
+        let layout = self.0.lock().unwrap().layout.clone();
+        px(layout.lock().unwrap().total)
+    }
+
     pub(crate) fn same(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
@@ -98,11 +112,41 @@ struct Block {
 pub(crate) struct Flow {
     blocks: Vec<Arc<Block>>,
     heights: Vec<f32>,
+    measured: Vec<bool>,
     sums: Vec<f32>,
     width: Option<Pixels>,
+    retained: Option<Arc<Mutex<FlowLayoutCache>>>,
 }
 
 impl Flow {
+    pub(crate) fn for_completed_document(document: &MarkdownBlocks) -> Self {
+        let retained = document.0.lock().unwrap().layout.clone();
+        let width = retained.lock().unwrap().width;
+        Self { width, retained: Some(retained), ..Self::default() }
+    }
+
+    fn layout_height(&mut self, width: Pixels) -> Pixels {
+        if self.width.is_some_and(|old| old != width) {
+            self.heights.fill(32.);
+            self.measured.fill(false);
+            for (index, sum) in self.sums.iter_mut().enumerate() {
+                let position = index + 1;
+                *sum = 32. * (position & position.wrapping_neg()) as f32;
+            }
+        }
+        self.width = Some(width);
+        let total = self.prefix(self.blocks.len());
+        if let Some(retained) = &self.retained {
+            let mut cache = retained.lock().unwrap();
+            if cache.width != Some(width) {
+                cache.width = Some(width);
+                cache.heights.clear();
+            }
+            cache.total = total;
+        }
+        px(total)
+    }
+
     fn prefix(&self, mut count: usize) -> f32 {
         let mut sum = 0.;
         while count > 0 {
@@ -114,18 +158,31 @@ impl Flow {
     fn push(&mut self, block: Block) {
         let count = self.blocks.len() + 1;
         let start = count & (count - 1);
-        let height = 32.;
+        let cached_height = self.retained.as_ref().and_then(|retained| {
+            let cache = retained.lock().unwrap();
+            (cache.width == self.width).then(|| cache.heights.get(&(count - 1)).copied()).flatten()
+        });
+        let height = cached_height.unwrap_or(32.);
         let sum = self.prefix(count - 1) - self.prefix(start) + height;
         self.blocks.push(Arc::new(block));
         self.heights.push(height);
+        self.measured.push(cached_height.is_some());
         self.sums.push(sum);
     }
     fn update(&mut self, index: usize, height: f32) -> bool {
+        self.measured[index] = true;
         let delta = height - self.heights[index];
         if delta.abs() < 0.5 {
             return false;
         }
         self.heights[index] = height;
+        if let Some(retained) = &self.retained {
+            let mut cache = retained.lock().unwrap();
+            if cache.width == self.width {
+                cache.heights.insert(index, height);
+                cache.total += delta;
+            }
+        }
         let mut i = index + 1;
         while i <= self.sums.len() {
             self.sums[i - 1] += delta;
@@ -167,6 +224,7 @@ impl Flow {
 pub(crate) struct FlowElement {
     pub(crate) flow: Arc<Mutex<Flow>>,
     pub(crate) context: NodeContext,
+    pub(crate) list_row: Option<(ListState, usize)>,
 }
 
 impl Element for FlowElement {
@@ -192,18 +250,7 @@ impl Element for FlowElement {
                     AvailableSpace::Definite(width) => width,
                     _ => px(640.),
                 });
-                let mut flow = flow.lock().unwrap();
-                if flow.width.is_some_and(|old| old != width) {
-                    // Resize is a layout-context change, not a streaming update.
-                    // Invalidate measured heights once without copying any nodes.
-                    flow.heights.fill(32.);
-                    for (index, sum) in flow.sums.iter_mut().enumerate() {
-                        let position = index + 1;
-                        *sum = 32. * (position & position.wrapping_neg()) as f32;
-                    }
-                }
-                flow.width = Some(width);
-                size(width, px(flow.prefix(flow.blocks.len())))
+                size(width, flow.lock().unwrap().layout_height(width))
             }),
             (),
         )
@@ -223,32 +270,36 @@ impl Element for FlowElement {
         if bottom <= 0. || mask.top() >= bounds.bottom() {
             return Vec::new();
         }
-        let mut index = self.flow.lock().unwrap().at(top);
-        let mut elements = Vec::new();
+        let (anchor_index, anchor_offset) = {
+            let flow = self.flow.lock().unwrap();
+            let index = flow.at(top);
+            (index, top - flow.prefix(index))
+        };
+        let anchored = top > 0. && self.list_row.is_some();
+        let mut index = if anchored { anchor_index.saturating_sub(2) } else { anchor_index };
+        let mut measured_rows = Vec::new();
         let mut changed = false;
+        let mut correction = 0.;
         loop {
             let (block, prev_is_heading, offset) = {
                 let flow = self.flow.lock().unwrap();
                 let Some(block) = flow.blocks.get(index) else {
                     break;
                 };
-                let prev_is_heading = index > 0
-                    && flow
-                        .blocks
-                        .get(index - 1)
-                        .is_some_and(|prev| prev.node.is_heading());
+                if index < anchor_index && flow.measured[index] {
+                    index += 1;
+                    continue;
+                }
+                let prev_is_heading = index > 0 && flow.blocks[index - 1].node.is_heading();
                 (block.clone(), prev_is_heading, flow.prefix(index))
             };
-            if offset > bottom {
+            if index > anchor_index && offset > bottom + correction {
                 break;
             }
             let mut context = (*block.context).clone();
             context.code_block_actions = self.context.code_block_actions.clone();
             context.style.heading_font_size = self.context.style.heading_font_size.clone();
-            let mut element =
-                block
-                    .node
-                    .render(index, index == 0, prev_is_heading, &context, window, cx);
+            let mut element = block.node.render(index, index == 0, prev_is_heading, &context, window, cx);
             let measured = element.layout_as_root(
                 Size {
                     width: AvailableSpace::Definite(bounds.size.width),
@@ -257,19 +308,40 @@ impl Element for FlowElement {
                 window,
                 cx,
             );
-            changed |= self
-                .flow
-                .lock()
-                .unwrap()
-                .update(index, measured.height.as_f32().max(1.));
-            element.prepaint_at(bounds.origin + point(px(0.), px(offset)), window, cx);
-            elements.push(element);
+            let mut flow = self.flow.lock().unwrap();
+            changed |= flow.update(index, measured.height.as_f32().max(1.));
+            if anchored && index == anchor_index {
+                let inset = anchor_offset.min((flow.heights[index] - 1.).max(0.));
+                correction = offset + inset - top;
+            }
+            if index >= anchor_index {
+                measured_rows.push((offset, element));
+            }
             index += 1;
         }
-        if changed {
-            cx.notify(window.current_view());
+        let view = window.current_view();
+        if let Some((list, row)) = &self.list_row
+            && correction.abs() >= 0.5
+        {
+            let list = list.clone();
+            let row = *row;
+            // The owning ListState is mutably borrowed while it prepaints its items.
+            window.defer(cx, move |_, cx| {
+                let mut anchor = list.logical_scroll_top();
+                if anchor.item_ix == row && !list.is_following_tail() {
+                    anchor.offset_in_item = (anchor.offset_in_item + px(correction)).max(px(0.));
+                    list.scroll_to(anchor);
+                    cx.notify(view);
+                }
+            });
         }
-        elements
+        if changed {
+            cx.notify(view);
+        }
+        measured_rows.into_iter().map(|(offset, mut element)| {
+            element.prepaint_at(bounds.origin + point(px(0.), px(offset - correction)), window, cx);
+            element
+        }).collect()
     }
     fn paint(
         &mut self,
@@ -325,6 +397,21 @@ mod tests {
         assert_eq!(flow.at(90.), 0);
         assert_eq!(flow.at(91.), 1);
         assert_eq!(flow.prefix(flow.blocks.len()), 91. + 4_000. * 32.);
+
+        let document = MarkdownBlocks::default();
+        let mut original = Flow::for_completed_document(&document);
+        original.append(parsed("first\n\nsecond\n\nthird"));
+        original.layout_height(px(500.));
+        original.update(0, 91.);
+        original.update(1, 12.);
+        drop(original);
+        assert_eq!(document.cached_height(), px(135.));
+
+        let mut remounted = Flow::for_completed_document(&document);
+        remounted.append(parsed("first\n\nsecond\n\nthird"));
+        assert_eq!(remounted.layout_height(px(500.)), px(135.));
+        assert_eq!(remounted.at(95.), 1);
+        assert_eq!(remounted.layout_height(px(350.)), px(96.));
     }
 
     #[test]
