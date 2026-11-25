@@ -119,6 +119,13 @@ fn delete_sessions_in(root: &Path, ids: &[String]) -> io::Result<()> {
             }
         }
     }
+    let subagents = root.join("subagents");
+    for id in ids {
+        match fs::remove_dir_all(subagents.join(id)) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+            _ => {}
+        }
+    }
     Ok(())
 }
 
@@ -143,6 +150,12 @@ mod tests {
         );
         fs::write(new.join("date_other.jsonl"), "unrelated").unwrap();
         fs::write(new.join("date_other_abc.jsonl"), "unrelated").unwrap();
+        let subagent_abc = root.join("subagents/abc");
+        let subagent_other = root.join("subagents/other");
+        fs::create_dir_all(&subagent_abc).unwrap();
+        fs::create_dir_all(&subagent_other).unwrap();
+        fs::write(subagent_abc.join("child.jsonl"), "child").unwrap();
+        fs::write(subagent_other.join("child.jsonl"), "other-child").unwrap();
         fs::write(new.join("date_abc.jsonl"), "updated").unwrap();
         copy_legacy_session_to(&project, "abc", &root).unwrap();
         assert_eq!(
@@ -152,6 +165,8 @@ mod tests {
         delete_sessions_in(&root, &["abc".into()]).unwrap();
         assert!(!new.join("date_abc.jsonl").exists());
         assert!(!new.join("date_abc.jsonl.progress.jsonl").exists());
+        assert!(!subagent_abc.exists());
+        assert!(subagent_other.join("child.jsonl").exists());
         assert!(new.join("date_other.jsonl").exists());
         assert!(new.join("date_other_abc.jsonl").exists());
         assert_eq!(

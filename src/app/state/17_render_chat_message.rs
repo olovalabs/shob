@@ -441,12 +441,11 @@ impl AppState {
         else {
             return;
         };
-        let session_root = crate::paths::data_dir().join("provider/agent/sessions");
-        let path = row
-            .worker
-            .transcript
-            .clone()
-            .filter(|path| path.starts_with(&session_root));
+        let shob_session_root = crate::paths::shob_sessions_dir();
+        let legacy_session_root = crate::paths::data_dir().join("provider/agent/sessions");
+        let path = row.worker.transcript.clone().filter(|path| {
+            path.starts_with(&shob_session_root) || path.starts_with(&legacy_session_root)
+        });
         let tool_id = pane.chat.visible_messages()[index]
             .tool
             .as_ref()

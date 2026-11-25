@@ -202,6 +202,8 @@ pub struct Args {
     pub host_task_list: bool,
     /// Register tools that await responses from the host composer.
     pub host_user_input: bool,
+    /// Enable the built-in subagent delegation tool in host/embedded sessions.
+    pub host_subagents: bool,
     /// `--no-themes`: disable custom theme discovery and loading.
     /// Built-in presets remain available unless a custom `--theme` is given.
     pub no_themes: bool,

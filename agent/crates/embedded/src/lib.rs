@@ -44,6 +44,7 @@ mod antigravity;
 pub const ANTIGRAVITY: &str = ai::providers::antigravity::ID;
 pub use cli::native_auth::{AuthMethod, AuthMethods};
 pub use cli::session::{task_list, user_input, MAX_BATCH_CALLS, MAX_BATCH_OUTPUT_BYTES};
+pub use cli::subagent_tool;
 
 static EXTENSION_OAUTH_METHODS: std::sync::LazyLock<
     std::sync::RwLock<std::collections::BTreeMap<PathBuf, Arc<std::collections::BTreeSet<String>>>>,
@@ -417,6 +418,11 @@ pub enum SessionEvent {
         output: String,
         failed: bool,
     },
+    ToolDetails {
+        id: String,
+        name: String,
+        details: serde_json::Value,
+    },
     Error(String),
     Done,
     Closed,
@@ -742,6 +748,7 @@ impl QueuedEvent for SessionEvent {
             | Self::ToolEnd {
                 id, name, output, ..
             } => id.as_ref().map_or(0, String::len) + name.len() + output.len(),
+            Self::ToolDetails { id, name, details } => id.len() + name.len() + json_bytes(details),
             Self::Usage(_) => std::mem::size_of::<AgentUsage>(),
             Self::Done | Self::Closed => 0,
         }
@@ -829,30 +836,66 @@ fn json_bytes(value: &serde_json::Value) -> usize {
     }
 }
 
+fn has_subagent_details(name: &str, details: &serde_json::Value) -> bool {
+    !details.is_null()
+        && (details.get("progress").is_some()
+            || details.get("results").is_some()
+            || (name.eq_ignore_ascii_case("wait") && details.get("jobs").is_some()))
+}
+
 impl PendingEvent {
-    fn into_session(self) -> SessionEvent {
+    fn into_sessions(self) -> (SessionEvent, Option<SessionEvent>) {
         match self {
-            Self::Ready(event) => event,
+            Self::Ready(event) => (event, None),
             Self::Update {
                 id, name, result, ..
-            } => SessionEvent::ToolUpdate {
-                id: Some(id),
-                name,
-                output: tool_result_text(&result),
-            },
+            } => {
+                let details = has_subagent_details(&name, &result.details).then(|| {
+                    SessionEvent::ToolDetails {
+                        id: id.clone(),
+                        name: name.clone(),
+                        details: result.details.clone(),
+                    }
+                });
+                (
+                    SessionEvent::ToolUpdate {
+                        id: Some(id),
+                        name,
+                        output: tool_result_text(&result),
+                    },
+                    details,
+                )
+            }
             Self::End {
                 id,
                 name,
                 result,
                 failed,
                 ..
-            } => SessionEvent::ToolEnd {
-                id: Some(id),
-                name,
-                output: tool_result_text(&result),
-                failed,
-            },
+            } => {
+                let details = has_subagent_details(&name, &result.details).then(|| {
+                    SessionEvent::ToolDetails {
+                        id: id.clone(),
+                        name: name.clone(),
+                        details: result.details.clone(),
+                    }
+                });
+                (
+                    SessionEvent::ToolEnd {
+                        id: Some(id),
+                        name,
+                        output: tool_result_text(&result),
+                        failed,
+                    },
+                    details,
+                )
+            }
         }
+    }
+
+    #[cfg(test)]
+    fn into_session(self) -> SessionEvent {
+        self.into_sessions().0
     }
 }
 
@@ -933,6 +976,7 @@ pub struct SessionOptions {
     /// token-reduction layer needs it (read dedupe, output minimization).
     pub after_tool_call: Option<agent::AfterToolCall>,
     pub user_input: bool,
+    pub subagents: bool,
 }
 
 impl SessionOptions {
@@ -950,6 +994,7 @@ impl SessionOptions {
             before_tool_call: None,
             after_tool_call: None,
             user_input: false,
+            subagents: true,
         }
     }
 
@@ -1367,6 +1412,7 @@ async fn run_session(
         before_tool_call,
         after_tool_call,
         user_input,
+        subagents,
     } = options;
     let trusted = project_trusted(&cwd);
     let started = std::time::Instant::now();
@@ -1417,6 +1463,7 @@ async fn run_session(
     args.offline = true;
     args.host_task_list = true;
     args.host_user_input = user_input;
+    args.host_subagents = subagents;
     args.provider = provider.clone();
     args.model = model.clone();
     args.session = resume.clone();
@@ -1534,13 +1581,19 @@ async fn run_session(
                 biased;
                 Some(event) = forward_pending.recv() => {
                     let started = forward_timing.as_ref().map(|_| std::time::Instant::now());
-                    let event = event.into_session();
+                    let (primary, extra) = event.into_sessions();
                     if let (Some(hook), Some(started)) = (&forward_timing, started) {
                         hook("bridge.embedded.project", started.elapsed());
                     }
-                    if forward_tx.send(event).await.is_err() {
+                    if forward_tx.send(primary).await.is_err() {
                         forward_pending.close();
                         break;
+                    }
+                    if let Some(extra) = extra {
+                        if forward_tx.send(extra).await.is_err() {
+                            forward_pending.close();
+                            break;
+                        }
                     }
                     forward_wake.signal();
                 },
@@ -1843,7 +1896,16 @@ async fn forward_event(event: ShobEvent, events: &EventQueue<SessionEvent>) -> b
         false
     };
     match pending_event(event) {
-        Some(event) => events.send(event.into_session()).await.is_ok(),
+        Some(event) => {
+            let (primary, extra) = event.into_sessions();
+            if events.send(primary).await.is_err() {
+                return false;
+            }
+            if let Some(extra) = extra {
+                return events.send(extra).await.is_ok();
+            }
+            true
+        }
         None => sent_usage,
     }
 }
@@ -3165,6 +3227,7 @@ mod tests {
             before_tool_call: None,
             after_tool_call: None,
             user_input: false,
+            subagents: false,
         })
         .expect("worker starts");
 
@@ -3192,5 +3255,120 @@ mod tests {
         assert!(events
             .iter()
             .any(|event| matches!(event, SessionEvent::Closed)));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn host_subagents_runs_child_and_forwards_tool_details() {
+        use ai::providers::faux::{FauxProvider, FauxScript, FauxStep};
+        use ai::{Api, Model};
+        use harness::agent_harness::AgentLane;
+        use runtime::{ModelRequest, ProviderDeclaration, ProviderRegistry, RuntimeConfig};
+        use std::collections::BTreeMap;
+
+        let script = FauxScript::new();
+        script.set_responses(vec![
+            FauxStep::tool_call(
+                "subagent",
+                serde_json::json!({"role": "Explorer", "task": "Check workspace"}),
+            ),
+            FauxStep::text("Explorer found nothing wrong."),
+            FauxStep::text("All clear from parent."),
+        ]);
+        let model = Model::new(
+            "embedded-subagent",
+            "Embedded Subagent",
+            Api::Faux,
+            "faux",
+            "http://localhost:0",
+        );
+        let mut providers = ProviderRegistry::default();
+        providers.declare(ProviderDeclaration {
+            id: "faux".into(),
+            models: vec![model.clone()],
+            api_key_env: None,
+            requires_auth: false,
+        });
+        providers.register(FauxProvider::with_models(script, vec![model]), Api::Faux);
+        let resolved = RuntimeConfig::default()
+            .resolve(
+                &ModelRequest {
+                    provider: Some("faux"),
+                    model: Some("embedded-subagent"),
+                    ..Default::default()
+                },
+                &providers,
+                &BTreeMap::<String, String>::new(),
+            )
+            .expect("faux model resolves");
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let session_dir = dir.path().join("sessions");
+        let mut args = Args::default();
+        args.mode = Mode::Rpc;
+        args.no_extensions = true;
+        args.host_subagents = true;
+        args.offline = true;
+        args.no_skills = true;
+        args.no_prompt_templates = true;
+        args.no_context_files = true;
+        args.session_dir = Some(session_dir);
+        let (harness, mut event_rx, _reload) =
+            cli::session::build(&resolved, &args, dir.path(), true)
+                .await
+                .expect("faux harness builds");
+        let system_prompt = harness
+            .get_system_prompt()
+            .await
+            .unwrap()
+            .expect("system prompt");
+        assert!(
+            system_prompt.contains("- subagent"),
+            "expected subagent in system prompt: {system_prompt}"
+        );
+        let lane: Arc<dyn AgentLane> = Arc::new(harness);
+        let prompt_lane = Arc::clone(&lane);
+        let prompt = tokio::spawn(async move {
+            prompt_lane
+                .prompt_text("Delegate workspace check", Vec::new())
+                .await
+        });
+
+        let mapped_tx = EventQueue::default();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            match tokio::time::timeout(remaining, event_rx.recv()).await {
+                Ok(Ok(event)) => {
+                    let end = matches!(event, ShobEvent::AgentEnd { .. });
+                    forward_event(event, &mapped_tx).await;
+                    if end {
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+        let outcome = prompt.await.expect("prompt joins").expect("prompt ok");
+        assert!(matches!(
+            outcome.outcome,
+            harness::agent_harness::HarnessRunOutcome::Completed { .. }
+        ));
+        let (events, _) = mapped_tx.drain();
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                SessionEvent::ToolDetails { name, details, .. }
+                    if name == "subagent" && details["progress"][0]["status"] == "running"
+            )),
+            "expected live running ToolDetails, got {events:?}"
+        );
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                SessionEvent::ToolDetails { name, details, .. }
+                    if name == "subagent" && details["progress"][0]["status"] == "completed"
+            )),
+            "expected final completed ToolDetails, got {events:?}"
+        );
     }
 }

@@ -476,6 +476,17 @@ impl AppState {
         (view, subscription)
     }
 
+    fn build_browser_surface(
+        &self,
+        pane_id: usize,
+        saved: workspace_state::SavedBrowser,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<browser::BrowserSurface> {
+        let owner = cx.entity().downgrade();
+        cx.new(|cx| browser::BrowserSurface::new(owner, pane_id, saved, window, cx))
+    }
+
     fn open_files_surface(&mut self, source: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(&(project, _, _)) = self.pane_index.get(&source) else {
             return;
@@ -646,6 +657,44 @@ impl AppState {
             }
             self.select_tool_panel_tab(owner, id, window, cx);
         }
+    }
+
+    /// Open the Browser surface: reuse an existing browser tab for this owner,
+    /// or create one. The surface owns its own Chrome-style page tabs.
+    fn new_tool_panel_browser(
+        &mut self,
+        owner: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let existing = self
+            .tool_panel_panes(owner)
+            .find(|pane| pane.browser.is_some() || pane.browser_restore.is_some())
+            .map(|pane| pane.id);
+        let Some(id) = existing.or_else(|| self.create_tool_panel_tab(owner, window, cx)) else {
+            return;
+        };
+        if self
+            .pane_ref(id)
+            .is_some_and(|pane| pane.browser.is_none() && pane.browser_restore.is_none())
+        {
+            let surface =
+                self.build_browser_surface(id, workspace_state::SavedBrowser::default(), window, cx);
+            if let Some(pane) = self.pane_mut(id) {
+                pane.browser = Some(surface);
+            }
+        }
+        if let Some(pane) = self.pane_mut(id) {
+            if pane.diff_preview.is_some() || pane.markdown_preview.is_some() {
+                pane.preview_generation = pane.preview_generation.wrapping_add(1);
+                pane.diff_preview = None;
+                pane.markdown_preview = None;
+            }
+            pane.display_title = "Browser".into();
+        }
+        self.select_tool_panel_tab(owner, id, window, cx);
+        self.schedule_workspace_save(cx);
+        cx.notify();
     }
 
     fn open_tool_panel(&mut self, owner: usize, window: &mut Window, cx: &mut Context<Self>) {

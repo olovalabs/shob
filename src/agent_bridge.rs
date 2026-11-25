@@ -543,6 +543,7 @@ impl EmbeddedBridge {
             ));
         let (request_tx, requests) = smol::channel::bounded(16);
         options.user_input = true;
+        options.subagents = true;
         let permission = Arc::new(AtomicU8::new(PermissionMode::Ask.value()));
         options.before_tool_call = Some(composer_tool_hook(
             request_tx,
@@ -673,6 +674,15 @@ impl EmbeddedBridge {
                         failed,
                     });
                 }
+                SessionEvent::ToolDetails { id, name, details } => {
+                    let workers = crate::subagent_chat::structured(&name, &details, None);
+                    if !workers.is_empty() {
+                        events.push(AgentEvent::Subagents {
+                            tool_id: id,
+                            workers,
+                        });
+                    }
+                }
                 SessionEvent::Error(text) => events.push(AgentEvent::Error(text)),
                 SessionEvent::Done => events.push(AgentEvent::Done),
                 SessionEvent::Closed => {
@@ -709,6 +719,20 @@ fn workspace_edit(name: &str, args: &serde_json::Value, cwd: &Path) -> bool {
     target.starts_with(root) && target.is_file()
 }
 
+fn auto_allowed_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "read"
+            | "find"
+            | "grep"
+            | "ls"
+            | "output"
+            | "batch"
+            | embedded::task_list::NAME
+            | embedded::subagent_tool::NAME
+    )
+}
+
 fn composer_tool_hook(
     sender: smol::channel::Sender<Request>,
     permission: Arc<AtomicU8>,
@@ -723,16 +747,7 @@ fn composer_tool_hook(
             && (permission.load(Ordering::Relaxed) == PermissionMode::Full.value()
                 || (permission.load(Ordering::Relaxed) == PermissionMode::Auto.value()
                     && workspace_edit(name, call.args, &cwd))
-                || matches!(
-                    name,
-                    "read"
-                        | "find"
-                        | "grep"
-                        | "ls"
-                        | "output"
-                        | "batch"
-                        | embedded::task_list::NAME
-                ))
+                || auto_allowed_tool(name))
         {
             return Box::pin(async { None });
         }

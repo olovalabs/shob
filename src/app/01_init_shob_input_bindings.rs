@@ -547,7 +547,13 @@ fn title_case(value: &str) -> String {
 fn is_agent_tool(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
-        "task" | "subagent" | "agent" | "delegate" | "spawn_agent" | "spawn_subagent"
+        "task"
+            | "subagent"
+            | "agent"
+            | "delegate"
+            | "delegate_task"
+            | "spawn_agent"
+            | "spawn_subagent"
     )
 }
 
@@ -580,9 +586,8 @@ fn tool_title(name: &str) -> String {
         "edit" | "str_replace" | "str_replace_editor" | "apply_patch" => "Edit".into(),
         "write" | "write_file" | "create_file" => "Write".into(),
         "patch" => "Patch".into(),
-        "task" | "subagent" | "agent" | "delegate" | "spawn_agent" | "spawn_subagent" => {
-            "Agent".into()
-        }
+        "task" | "subagent" | "agent" | "delegate" | "delegate_task" | "spawn_agent"
+        | "spawn_subagent" => "Agent".into(),
         "question" | "ask" | "questions" => "Questions".into(),
         "skill" => "Skill".into(),
         "todowrite" | "todo_write" | "todos" => "Todos".into(),
@@ -710,6 +715,7 @@ fn tool_view(name: &str, input: &str, parsed: Option<&serde_json::Value>) -> Too
 
     if is_agent_tool(name) {
         if let Some(agent) = field("agent")
+            .or_else(|| field("role"))
             .or_else(|| field("subagent_type"))
             .or_else(|| field("subagentType"))
             .or_else(|| field("type"))
@@ -717,6 +723,7 @@ fn tool_view(name: &str, input: &str, parsed: Option<&serde_json::Value>) -> Too
             title = format!("{} Agent", title_case(agent));
         }
         subtitle = field("description")
+            .or_else(|| field("task"))
             .or_else(|| field("prompt"))
             .map(|value| clip(first_line(value), 80))
             .unwrap_or_default();

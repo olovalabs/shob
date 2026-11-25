@@ -105,6 +105,11 @@ impl AppState {
                                             saved
                                         })
                                         .or_else(|| pane.files_restore.clone()),
+                                    browser: pane
+                                        .browser
+                                        .as_ref()
+                                        .map(|surface| surface.read(cx).snapshot())
+                                        .or_else(|| pane.browser_restore.clone()),
                                     chat: workspace_state::SavedChat {
                                         fast_mode: pane.chat.fast_mode,
                                         thinking_override: pane.chat.thinking_override.clone(),
@@ -448,6 +453,9 @@ impl AppState {
                     if let Some(saved) = saved_pane.files {
                         pane.files_active = saved.active;
                         pane.files_restore = Some(saved);
+                    }
+                    if let Some(saved) = saved_pane.browser {
+                        pane.browser_restore = Some(saved);
                     }
                     pane.command_history = saved_pane.command_history;
                     pane.restore_draft = Some(saved_pane.draft.clone());

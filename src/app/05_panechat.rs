@@ -531,6 +531,10 @@ pub struct TerminalPane {
     files_surface: Option<(Entity<files_surface::FilesSurface>, gpui::Subscription)>,
     files_active: bool,
     files_restore: Option<files_surface::SavedFiles>,
+    /// The browser surface when this pane is a Browser tool-panel tab.
+    browser: Option<Entity<browser::BrowserSurface>>,
+    /// Browser state waiting to be rebuilt on the next render pass.
+    browser_restore: Option<workspace_state::SavedBrowser>,
     /// Agent pane that owns this reusable preview. Preview panes reuse themselves.
     preview_owner: Option<usize>,
     one_mode: bool,
@@ -712,6 +716,8 @@ impl TerminalPane {
             files_surface: None,
             files_active: false,
             files_restore: None,
+            browser: None,
+            browser_restore: None,
             preview_owner: None,
             legacy_chat: false,
             one_mode: false,

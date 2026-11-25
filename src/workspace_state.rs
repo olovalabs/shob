@@ -148,6 +148,15 @@ impl Default for SavedChat {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
+pub struct SavedBrowser {
+    /// Page-tab URLs in order; an empty string is a tab that never loaded.
+    pub tabs: Vec<String>,
+    /// Index of the visible page tab.
+    pub active: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SavedPane {
     pub id: usize,
     pub uid: String,
@@ -169,6 +178,7 @@ pub struct SavedPane {
     pub tool_panel_file: Option<PathBuf>,
     pub tool_panel_chat_ratio: Option<f32>,
     pub files: Option<crate::files_surface::SavedFiles>,
+    pub browser: Option<SavedBrowser>,
     pub chat: SavedChat,
 }
 
