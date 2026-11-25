@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `shob` opens the coding-agent TUI from the current terminal; `shob gui` opens the desktop workspace. Both ship in one executable, including the optional RPC backend. From source, `cargo run` opens the desktop and `cargo run -- tui` opens the TUI.
 
 ### Fixed
+- Fix erratic agent-chat scrolling. Rows that had never been laid out were treated as zero-height in the scroll map, so a fast wheel fling or scrollbar drag across a long restored transcript could snap the view to the very top or bottom. Unmeasured rows now carry a height hint that real layout replaces as each row is drawn.
 - The terminal UI checks Shob releases and points to `shob update`, not the upstream engine's updater.
 - **New chat** and the active project’s **+** button focus the current empty chat instead of creating a duplicate session.
 - Show the workspace, branch, and project controls under the focused Agent composer only on the welcome screen.

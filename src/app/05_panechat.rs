@@ -461,6 +461,12 @@ fn remeasure_list_row(list_state: &ListState, row: usize) {
     }
 }
 
+/// Height guess for transcript rows that have never been laid out. The list
+/// treats unknown rows as zero height, so a long unmeasured stretch collapses
+/// the pixel space and one wheel tick can snap the transcript to its top or
+/// bottom. Real measurements replace the hint as rows materialize.
+const CHAT_ROW_HEIGHT_HINT: Pixels = px(96.0);
+
 /// Keep the list's item count in step with the transcript. Appending and
 /// truncating preserve the reader's scroll anchor; a conversation switch
 /// resets measurements.
@@ -472,7 +478,7 @@ fn sync_list_rows(
     key: u64,
 ) {
     if key != list_key.get() {
-        list_state.reset(count);
+        list_state.reset_with_uniform_height(count, CHAT_ROW_HEIGHT_HINT);
         list_state.set_follow_mode(FollowMode::Tail);
         list_key.set(key);
         list_rows.set(count);
@@ -487,6 +493,13 @@ fn sync_list_rows(
         if old > 0 {
             remeasure_list_row(list_state, old - 1);
         }
+        // Appended rows stay zero-height until they are laid out. A fast
+        // wheel fling from the tail outpaces the measuring window, and its
+        // wheel deltas are mapped against zero heights, so backfill the hints
+        // to keep wheel scrolling and scrollbar drags in a working pixel map.
+        // Rows already measured keep their real heights; layout replaces the
+        // hint as each row is laid out again.
+        list_state.clone().with_uniform_item_height(CHAT_ROW_HEIGHT_HINT);
     } else if count < old {
         list_state.splice(count..old, 0);
     }
