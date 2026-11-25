@@ -345,8 +345,12 @@ fn provider_icon_stem(id: &str) -> &str {
     }
 }
 
-/// Monochrome OpenCode provider mark. Unknown ids use the generic sparkle.
+/// Providers added through the OpenAI-compatible API form (or hand-added to
+/// `models.json`) get the OpenAI-compatible logo; the rest get monochrome stems.
 fn provider_icon_path(id: &str) -> SharedString {
+    if is_custom_provider(id) {
+        return SharedString::from("logos/openai-compatible.svg");
+    }
     let stem = provider_icon_stem(id);
     let stem = if provider_icon_stems().contains(stem) {
         stem
@@ -354,6 +358,12 @@ fn provider_icon_path(id: &str) -> SharedString {
         "synthetic"
     };
     SharedString::from(format!("icons/provider/{stem}.svg"))
+}
+
+fn is_custom_provider(id: &str) -> bool {
+    agent_cli::config::load_models_config()
+        .map(|config| config.providers.contains_key(id))
+        .unwrap_or(false)
 }
 
 /// Human-readable provider title and optional descriptive subtitle.
