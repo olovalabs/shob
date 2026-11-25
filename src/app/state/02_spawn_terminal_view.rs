@@ -216,6 +216,7 @@ impl AppState {
             return;
         };
         if pane.files_active
+            || pane.browser.is_some()
             || pane.markdown_preview.is_some()
             || pane.diff_preview.is_some()
             || pane.title == trimmed

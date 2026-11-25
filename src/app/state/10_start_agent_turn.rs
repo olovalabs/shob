@@ -749,6 +749,7 @@ impl AppState {
     fn ensure_panes_input_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mut files = Vec::new();
         let mut previews = Vec::new();
+        let mut browsers = Vec::new();
         for project in &mut self.projects {
             for session in &mut project.sessions {
                 for pane in &mut session.panes {
@@ -758,7 +759,16 @@ impl AppState {
                     if let Some(saved) = pane.files_restore.take() {
                         files.push((pane.id, project.path.clone(), saved));
                     }
+                    if let Some(saved) = pane.browser_restore.take() {
+                        browsers.push((pane.id, saved));
+                    }
                 }
+            }
+        }
+        for (id, saved) in browsers {
+            let surface = self.build_browser_surface(id, saved, window, cx);
+            if let Some(pane) = self.pane_mut(id) {
+                pane.browser = Some(surface);
             }
         }
         for (id, root, saved) in files {

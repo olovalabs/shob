@@ -74,6 +74,7 @@ impl AppState {
                         let title = terminal.title().unwrap_or("");
                         let trimmed = title.trim();
                         if !pane.files_active
+                            && pane.browser.is_none()
                             && pane.markdown_preview.is_none()
                             && pane.diff_preview.is_none()
                             && !trimmed.is_empty()
