@@ -18,27 +18,89 @@ pub(crate) fn apply_component_theme(
     gpui_kit::component::Theme::change(kit_mode, None, cx);
 }
 
-/// Which terminal color palette / block chrome to use.
-///
-/// `Warp` reproduces the default theme of the Warp terminal (near-black
-/// background, white foreground, cyan accent and Warp's ANSI palette) and is
-/// the default. `GitHub` keeps the previous GitHub Dark / Light palette.
+pub(crate) fn sync_imported_components(scheme: PaletteScheme, tokens: ThemeTokens, cx: &mut App) {
+    if !scheme.is_imported() {
+        return;
+    }
+    let colors = &mut gpui_component::Theme::global_mut(cx).colors;
+    colors.background = tokens.pane_bg;
+    colors.foreground = tokens.text_primary;
+    colors.muted = tokens.card_hover;
+    colors.muted_foreground = tokens.text_secondary;
+    colors.popover = tokens.card_bg;
+    colors.popover_foreground = tokens.text_primary;
+    colors.border = tokens.card_border;
+    colors.input = tokens.card_border;
+    colors.caret = tokens.ring;
+    colors.ring = tokens.ring;
+    colors.link = tokens.ring;
+    colors.selection = tokens.ring.opacity(0.25);
+    colors.accent = tokens.sidebar_item_active;
+    colors.accent_foreground = tokens.text_primary;
+    colors.list_hover = tokens.card_hover;
+    colors.list_active = tokens.sidebar_item_active;
+    colors.primary = tokens.primary_btn_bg;
+    colors.primary_foreground = tokens.primary_btn_fg;
+    colors.primary_hover = tokens.primary_btn_hover;
+    colors.scrollbar_thumb = tokens.text_secondary.opacity(0.35);
+    colors.scrollbar_thumb_hover = tokens.text_secondary.opacity(0.65);
+}
+
+/// Built-in desktop chrome and terminal palettes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PaletteScheme {
     #[default]
-    Warp,
+    #[serde(alias = "warp")]
+    Shob,
     Github,
+    Cursor,
+    Nord,
+    TokyoNight,
+    Vercel,
+    Dracula,
+    Matrix,
+    NightOwl,
+    Orng,
+    Vesper,
     MidnightGarden,
 }
 
 impl PaletteScheme {
-    pub fn label(&self) -> &'static str {
+    pub const ALL: [Self; 12] = [
+        Self::Shob,
+        Self::Github,
+        Self::Cursor,
+        Self::Nord,
+        Self::TokyoNight,
+        Self::Vercel,
+        Self::Dracula,
+        Self::Matrix,
+        Self::NightOwl,
+        Self::Orng,
+        Self::Vesper,
+        Self::MidnightGarden,
+    ];
+
+    pub fn label(self) -> &'static str {
         match self {
-            Self::Warp => "Warp",
+            Self::Shob => "Shob",
             Self::Github => "GitHub",
+            Self::Cursor => "Cursor",
+            Self::Nord => "Nord",
+            Self::TokyoNight => "Tokyo Night",
+            Self::Vercel => "Vercel",
+            Self::Dracula => "Dracula",
+            Self::Matrix => "Matrix",
+            Self::NightOwl => "Night Owl",
+            Self::Orng => "Orng",
+            Self::Vesper => "Vesper",
             Self::MidnightGarden => "Gradient ASCII",
         }
+    }
+
+    pub fn is_imported(self) -> bool {
+        !matches!(self, Self::Shob | Self::Github | Self::MidnightGarden)
     }
 }
 
@@ -174,7 +236,7 @@ pub struct AppearanceColors {
 }
 
 impl ThemeColors {
-    /// A complete editable copy of Shob's built-in Warp colors.
+    /// An editable copy of the selected built-in palette.
     pub fn complete_defaults(scheme: PaletteScheme) -> Self {
         fn hex(color: Hsla) -> String {
             let rgb = terminal::hsla_to_rgb(color);
@@ -535,20 +597,20 @@ impl ThemeTokens {
         crate::agent_appearance::ChatAppearance::from_theme(self)
     }
 
-    /// Build tokens for a mode and palette scheme. The Warp scheme reproduces
-    /// Warp's default terminal chrome: near-black surfaces, white text, a cyan
-    /// accent and block colors derived from Warp's ANSI palette.
     pub fn from_mode_with_scheme(mode: gpui_component::ThemeMode, scheme: PaletteScheme) -> Self {
         let mut tokens = if mode.is_dark() {
             Self::dark()
         } else {
             Self::light()
         };
-        if scheme == PaletteScheme::Warp {
-            tokens.apply_warp(mode.is_dark());
-        }
-        if scheme == PaletteScheme::MidnightGarden && mode.is_dark() {
-            tokens.apply_midnight_garden();
+        match scheme {
+            PaletteScheme::Shob => tokens.apply_warp(mode.is_dark()),
+            PaletteScheme::MidnightGarden if mode.is_dark() => tokens.apply_midnight_garden(),
+            _ => {
+                if let Some(palette) = imported::lookup(scheme, mode.is_dark()) {
+                    palette.apply(&mut tokens);
+                }
+            }
         }
         tokens.model_picker_bg = tokens.card_bg;
         tokens.model_picker_accent = rgba(if mode.is_dark() {
@@ -928,6 +990,7 @@ impl ThemeTokens {
     }
 }
 
+mod imported;
 mod palette;
 pub use palette::{hex_to_rgb, load_palette, parse_hex};
 #[cfg(test)]

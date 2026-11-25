@@ -425,7 +425,7 @@ mod pane_tests;
 #[cfg(test)]
 mod settings_and_theme_tests {
     use super::*;
-    use gpui::{KeyDownEvent, Modifiers, VisualContext, point};
+    use gpui::{Modifiers, VisualContext, point};
     use resize_tests::{DrawFrame, TestAppContext, open_app};
 
     #[test]
@@ -489,40 +489,20 @@ mod settings_and_theme_tests {
         let mut cx = TestAppContext::new();
         let (mut cx, app_state) = open_app(&mut cx);
 
-        // Ctrl+, opens settings
+        cx.draw_frame().unwrap();
         cx.update_window_entity(&app_state, |state, window, cx| {
-            let ev = KeyDownEvent {
-                keystroke: gpui::Keystroke {
-                    modifiers: Modifiers {
-                        control: true,
-                        ..Default::default()
-                    },
-                    key: ",".to_string(),
-                    key_char: Some(",".to_string()),
-                },
-                is_held: false,
-                prefer_character_input: false,
-            };
-            state.on_key_down(&ev, window, cx);
+            state.focus_pane(1, window, cx);
         });
-        let view = app_state.read_with(&cx, |state, _| state.active_view);
-        assert_eq!(view, ActiveView::Settings);
+        let shortcut = if cfg!(target_os = "macos") { "cmd-," } else { "ctrl-," };
+        for close in ["escape", shortcut] {
+            cx.simulate_keystrokes(shortcut);
+            cx.draw_frame().unwrap();
+            assert_eq!(app_state.read_with(&cx, |s, _| s.active_view), ActiveView::Settings);
 
-        // Escape closes settings
-        cx.update_window_entity(&app_state, |state, window, cx| {
-            let ev = KeyDownEvent {
-                keystroke: gpui::Keystroke {
-                    modifiers: Modifiers::default(),
-                    key: "escape".to_string(),
-                    key_char: None,
-                },
-                is_held: false,
-                prefer_character_input: false,
-            };
-            state.on_key_down(&ev, window, cx);
-        });
-        let view = app_state.read_with(&cx, |state, _| state.active_view);
-        assert_eq!(view, ActiveView::Workspace);
+            cx.simulate_keystrokes(close);
+            cx.draw_frame().unwrap();
+            assert_eq!(app_state.read_with(&cx, |s, _| s.active_view), ActiveView::Workspace);
+        }
     }
 
     #[test]

@@ -448,24 +448,6 @@ impl AppState {
             }
         }
 
-        if keystroke.key == "escape" && self.active_view == ActiveView::Settings {
-            self.active_view = ActiveView::Workspace;
-            cx.stop_propagation();
-            cx.notify();
-            return;
-        }
-
-        if keystroke.modifiers.control && keystroke.key == "," {
-            self.active_view = if self.active_view == ActiveView::Settings {
-                ActiveView::Workspace
-            } else {
-                ActiveView::Settings
-            };
-            cx.stop_propagation();
-            cx.notify();
-            return;
-        }
-
         if keystroke.modifiers.control && (keystroke.key == "+" || keystroke.key == "=") {
             if let Some(entity) = self.active_pane_terminal() {
                 entity.update(cx, |terminal, cx| {

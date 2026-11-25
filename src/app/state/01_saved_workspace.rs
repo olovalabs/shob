@@ -327,6 +327,7 @@ impl AppState {
             .palette(self.palette_scheme, mode.is_dark());
         theme::apply_component_theme(mode, None, cx);
         sync_component_fonts(cx);
+        theme::sync_imported_components(self.palette_scheme, self.tokens(cx), cx);
 
         let RestoreData {
             workspace,
@@ -729,7 +730,7 @@ impl AppState {
         self.settings.theme_colors.tokens(mode, self.palette_scheme)
     }
 
-    /// Switch the terminal palette / block chrome scheme (Warp / GitHub).
+    /// Switch the desktop and terminal palette.
     pub fn set_palette_scheme(
         &mut self,
         scheme: PaletteScheme,
@@ -746,7 +747,9 @@ impl AppState {
         if scheme == PaletteScheme::MidnightGarden {
             self.theme_preference = ThemePreference::Dark;
         }
-        if let Err(error) = settings::save_atomic(&self.saved_settings()) {
+        if self.persistence_path.is_some()
+            && let Err(error) = settings::save_atomic(&self.saved_settings())
+        {
             eprintln!("failed to save theme: {error}");
         }
         self.apply_theme_preference(window, cx);
@@ -792,6 +795,7 @@ impl AppState {
             .palette(self.palette_scheme, is_dark);
         theme::apply_component_theme(mode, window, cx);
         sync_component_fonts(cx);
+        theme::sync_imported_components(self.palette_scheme, self.tokens(cx), cx);
 
         for project in &mut self.projects {
             for session in &mut project.sessions {

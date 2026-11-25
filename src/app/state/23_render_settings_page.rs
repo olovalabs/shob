@@ -1,91 +1,30 @@
 impl AppState {
-    fn render_settings_page(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
+    fn render_appearance_section(&self, narrow: bool, cx: &mut Context<Self>) -> gpui::Div {
         let tokens = self.tokens(cx);
         let current_pref = self.theme_preference;
-        let sidebar_docked =
-            Self::sidebar_docked(self.sidebar_visible, window.viewport_size().width);
-        let content_width = window.viewport_size().width
-            - if sidebar_docked {
-                self.sidebar_width
-            } else {
-                px(0.0)
-            };
-        let narrow = content_width < px(520.0);
-        let settings_close = div()
-            .id("settings-close-btn")
-            .debug_selector(|| "settings-close-btn".to_string())
-            .w(px(36.0))
-            .h_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .occlude()
-            .cursor(CursorStyle::PointingHand)
-            .hover(move |style| style.bg(tokens.titlebar_btn_hover))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.active_view = ActiveView::Workspace;
-                    cx.notify();
-                }),
-            )
-            .child(
-                svg()
-                    .path("icons/arrow-left.svg")
-                    .size(px(14.0))
-                    .text_color(tokens.titlebar_fg),
-            );
 
-        let titlebar = self
-            .desktop_titlebar(cx)
-            .h(px(38.0))
-            .bg(tokens.titlebar_bg)
-            .border_color(tokens.titlebar_border)
-            .when(cfg!(target_os = "macos") && sidebar_docked, |bar| {
-                bar.pl_3()
-            })
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .items_center()
-                    .gap(px(8.0))
-                    .when(!sidebar_docked, |row| row.pl(px(112.0)))
-                    .child(settings_close)
-                    .child(
-                        svg()
-                            .path("icons/settings.svg")
-                            .size(px(14.0))
-                            .text_color(tokens.titlebar_fg),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(12.5))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(tokens.titlebar_fg)
-                            .child("Settings"),
-                    ),
-            );
-
-        // Small, self-contained previews make each appearance recognizable before
-        // it is selected, including the split light/dark system preview.
-        let preview_half = |dark: bool| {
-            let background = rgba(if dark { 0x111113ff } else { 0xfafafaff });
-            let sidebar = rgba(if dark { 0x171719ff } else { 0xf4f4f5ff });
-            let line = rgba(if dark { 0x303034ff } else { 0xdcdcdfff });
+        let light = self
+            .settings
+            .theme_colors
+            .tokens(gpui_component::ThemeMode::Light, self.palette_scheme);
+        let dark = self
+            .settings
+            .theme_colors
+            .tokens(gpui_component::ThemeMode::Dark, self.palette_scheme);
+        let preview_half = |preview: ThemeTokens| {
+            let line = preview.text_primary.opacity(0.12);
             div()
                 .flex_1()
                 .h_full()
                 .flex()
-                .bg(background)
+                .bg(preview.pane_bg)
                 .overflow_hidden()
                 .child(
                     div()
-                        .w(px(37.0))
+                        .w(px(if narrow { 18.0 } else { 37.0 }))
                         .h_full()
                         .p(px(7.0))
-                        .bg(sidebar)
+                        .bg(preview.sidebar_bg)
                         .flex()
                         .flex_col()
                         .gap(px(5.0))
@@ -115,7 +54,12 @@ impl AppState {
                                 .items_center()
                                 .justify_end()
                                 .pr(px(3.0))
-                                .child(div().size(px(8.0)).rounded_full().bg(rgba(0x818cf8ff))),
+                                .child(
+                                    div()
+                                        .size(px(8.0))
+                                        .rounded_full()
+                                        .bg(preview.model_picker_accent),
+                                ),
                         ),
                 )
         };
@@ -130,18 +74,20 @@ impl AppState {
                 let selected = current_pref == preference;
                 let preview = div()
                     .w_full()
-                    .h(px(112.0))
+                    .h(px(if narrow { 72.0 } else { 112.0 }))
                     .flex()
                     .rounded(px(6.0))
                     .overflow_hidden()
                     .when(preference != ThemePreference::Dark, |el| {
-                        el.child(preview_half(false))
+                        el.child(preview_half(light))
                     })
                     .when(preference != ThemePreference::Light, |el| {
-                        el.child(preview_half(true))
+                        el.child(preview_half(dark))
                     });
                 div()
                     .id(id)
+                    .debug_selector(move || id.into())
+                    .tab_index(0)
                     .flex_1()
                     .min_w(px(0.0))
                     .p(px(7.0))
@@ -155,13 +101,9 @@ impl AppState {
                     .bg(tokens.card_bg)
                     .cursor(CursorStyle::PointingHand)
                     .hover(move |style| style.bg(tokens.card_hover))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, _, window, cx| {
-                            cx.stop_propagation();
-                            this.set_theme_preference(preference, Some(window), cx);
-                        }),
-                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.set_theme_preference(preference, Some(window), cx);
+                    }))
                     .child(preview)
                     .child(
                         div()
@@ -180,146 +122,16 @@ impl AppState {
             })
             .collect::<Vec<_>>();
 
-        let navigation = [
-            (
-                SettingsSection::Appearance,
-                "settings-nav-appearance",
-                "icons/settings.svg",
-                "Appearance",
-            ),
-            (
-                SettingsSection::Data,
-                "settings-nav-data",
-                "icons/folder.svg",
-                "Data & sessions",
-            ),
-            (
-                SettingsSection::Updates,
-                "settings-nav-updates",
-                "icons/settings.svg",
-                "Updates",
-            ),
-        ]
-        .into_iter()
-        .map(|(section, id, icon, label)| {
-            let selected = self.settings_section == section;
-            div()
-                .id(id)
-                .flex()
-                .items_center()
-                .gap(px(8.0))
-                .px(px(10.0))
-                .py(px(7.0))
-                .rounded(px(7.0))
-                .when(selected, |item| item.bg(tokens.card_hover))
-                .hover(move |item| item.bg(tokens.card_hover))
-                .cursor(CursorStyle::PointingHand)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.settings_section = section;
-                    this.clear_data_confirm = false;
-                    cx.notify();
-                }))
-                .child(
-                    svg()
-                        .path(icon)
-                        .size(px(15.0))
-                        .text_color(tokens.text_secondary),
-                )
-                .child(
-                    div()
-                        .text_size(px(12.0))
-                        .text_color(tokens.text_primary)
-                        .child(label),
-                )
-        })
-        .collect::<Vec<_>>();
+        div().flex().gap(px(10.0)).children(cards)
+    }
 
-        let content = match self.settings_section {
-            SettingsSection::Appearance => div()
-                .flex()
-                .flex_col()
-                .gap(px(16.0))
-                .child(
-                    div()
-                        .text_size(px(13.0))
-                        .text_color(tokens.text_secondary)
-                        .child("Choose how Shob looks across your workspace."),
-                )
-                .child(
-                    div()
-                        .pt(px(12.0))
-                        .text_size(px(14.0))
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(tokens.text_primary)
-                        .child("Color scheme"),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .when(narrow, |row| row.flex_col())
-                        .gap(px(12.0))
-                        .children(cards),
-                )
-                .child(self.render_palette_scheme_picker(narrow, cx))
-                .child(self.render_theme_file_section(cx)),
-            SettingsSection::Data => self.render_data_section(cx),
-            SettingsSection::Updates => self.render_updates(cx),
-        };
-
+    fn render_themes_section(&self, narrow: bool, cx: &mut Context<Self>) -> gpui::Div {
         div()
             .flex()
             .flex_col()
-            .size_full()
-            .bg(tokens.window_bg)
-            .child(titlebar)
-            .child(
-                div()
-                    .flex_1()
-                    .min_h(px(0.0))
-                    .flex()
-                    .when(narrow, |layout| layout.flex_col())
-                    .child(
-                        div()
-                            .when(!narrow, |nav| nav.w(px(168.0)).h_full().border_r_1())
-                            .when(narrow, |nav| nav.w_full().border_b_1())
-                            .border_color(tokens.card_border)
-                            .bg(tokens.titlebar_bg)
-                            .p(px(8.0))
-                            .flex()
-                            .when(!narrow, |nav| nav.flex_col())
-                            .gap(px(2.0))
-                            .children(navigation),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .overflow_y_scrollbar()
-                            .px(if narrow { px(20.0) } else { px(40.0) })
-                            .py(px(32.0))
-                            .child(
-                                div()
-                                    .w_full()
-                                    .max_w(px(728.0))
-                                    .mx_auto()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(20.0))
-                                    .child(
-                                        div()
-                                            .text_size(px(26.0))
-                                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .text_color(tokens.text_primary)
-                                            .child(match self.settings_section {
-                                                SettingsSection::Appearance => "Appearance",
-                                                SettingsSection::Data => "Data & sessions",
-                                                SettingsSection::Updates => "Updates",
-                                            }),
-                                    )
-                                    .child(content),
-                            ),
-                    ),
-            )
+            .gap(px(18.0))
+            .child(self.render_palette_scheme_picker(narrow, cx))
+            .child(self.render_theme_file_section(cx))
     }
 
     fn check_for_updates(&mut self, cx: &mut Context<Self>) {
@@ -540,8 +352,7 @@ impl AppState {
             )
     }
 
-    /// Data directory, restore toggles and the "clear saved sessions" action.
-    fn render_data_section(&self, cx: &mut Context<Self>) -> gpui::Div {
+    fn render_restore_section(&self, cx: &mut Context<Self>) -> gpui::Div {
         let tokens = self.tokens(cx);
         let restore = self.settings.restore.clone();
         let toggles = [
@@ -569,6 +380,8 @@ impl AppState {
             .map(|(id, title, subtitle, on)| {
                 div()
                     .id(id)
+                    .debug_selector(move || id.into())
+                    .tab_index(0)
                     .flex()
                     .items_center()
                     .justify_between()
@@ -620,7 +433,19 @@ impl AppState {
             })
             .collect::<Vec<_>>();
 
+        div()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(tokens.card_border)
+            .bg(tokens.card_bg)
+            .overflow_hidden()
+            .children(toggle_rows)
+    }
+
+    fn render_archive_section(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let tokens = self.tokens(cx);
         let archived_threads = self.sidebar_archived_thread_refs();
+        let empty = archived_threads.is_empty();
         let archived_rows = archived_threads
             .into_iter()
             .map(|(project_idx, session_idx, title)| {
@@ -651,6 +476,7 @@ impl AppState {
                             .id(ElementId::Name(
                                 format!("restore-thread-{project_idx}-{session_idx}").into(),
                             ))
+                            .tab_index(0)
                             .px(px(8.0))
                             .py(px(4.0))
                             .rounded(px(6.0))
@@ -666,26 +492,33 @@ impl AppState {
                     )
             })
             .collect::<Vec<_>>();
-        let has_archived_rows = !archived_rows.is_empty();
+        div()
+            .debug_selector(|| "archived-threads".into())
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(tokens.card_border)
+            .bg(tokens.card_bg)
+            .overflow_hidden()
+            .when(empty, |card| {
+                card.child(
+                    div()
+                        .p(px(16.0))
+                        .text_size(px(13.0))
+                        .text_color(tokens.text_secondary)
+                        .child("No archived threads yet."),
+                )
+            })
+            .children(archived_rows)
+    }
 
+    fn render_storage_section(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let tokens = self.tokens(cx);
         let confirm = self.clear_data_confirm;
         let data_dir = paths::data_dir();
         div()
             .flex()
             .flex_col()
             .gap(px(10.0))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.0))
-                    .child(
-                        div()
-                            .text_size(px(12.5))
-                            .text_color(tokens.text_secondary)
-                            .child("Shob data and SHOB sessions are stored in this folder."),
-                    ),
-            )
             .child(
                 div()
                     .flex()
@@ -714,12 +547,16 @@ impl AppState {
                                 div()
                                     .text_size(px(12.0))
                                     .text_color(tokens.text_primary)
+                                    .truncate()
                                     .child(data_dir.display().to_string()),
                             ),
                     )
                     .child(
                         div()
                             .id("open-data-folder")
+                            .debug_selector(|| "open-data-folder".into())
+                            .tab_index(0)
+                            .flex_shrink_0()
                             .px(px(12.0))
                             .py(px(6.0))
                             .rounded(px(6.0))
@@ -736,103 +573,48 @@ impl AppState {
             )
             .child(
                 div()
-                    .rounded(px(8.0))
-                    .border_1()
-                    .border_color(tokens.card_border)
-                    .bg(tokens.card_bg)
-                    .overflow_hidden()
-                    .children(toggle_rows),
-            )
-            .child(
-                div()
-                    .id("sidebar-settings")
-                    .debug_selector(|| "sidebar-settings".into())
-                    .rounded(px(8.0))
-                    .border_1()
-                    .border_color(tokens.card_border)
-                    .bg(tokens.card_bg)
-                    .overflow_hidden()
-                    .child(
-                        div()
-                            .px(px(14.0))
-                            .pt(px(12.0))
-                            .pb(px(8.0))
-                            .child(
-                                div()
-                                    .text_size(px(13.0))
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(tokens.text_primary)
-                                    .child("Sidebar"),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(11.0))
-                                    .text_color(tokens.text_secondary)
-                                    .child("Restore archived threads here."),
-                            ),
-                    )
-                    .when(has_archived_rows, move |card| {
-                        card.child(
-                            div()
-                                .px(px(14.0))
-                                .pt(px(10.0))
-                                .pb(px(6.0))
-                                .text_size(px(11.0))
-                                .text_color(tokens.text_secondary)
-                                .child("Archived threads"),
-                        )
-                        .children(archived_rows)
-                    }),
-            )
-            .child(
-                div()
-                    .id("clear-saved-data")
                     .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(12.0))
-                    .px(px(14.0))
-                    .py(px(10.0))
+                    .flex_col()
+                    .gap(px(10.0))
+                    .p(px(14.0))
                     .rounded(px(8.0))
                     .border_1()
-                    .border_color(tokens.card_border)
+                    .border_color(tokens.block_failure.opacity(0.4))
                     .bg(tokens.card_bg)
-                    .cursor(CursorStyle::PointingHand)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.clear_saved_data(cx);
-                    }))
+                    .child(div().text_size(px(13.0)).font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(tokens.text_primary).child("Clear saved sessions & history"))
+                    .child(div().text_size(px(12.0)).text_color(tokens.text_secondary)
+                        .child(if confirm {
+                            "This cannot be undone. Your settings will be kept."
+                        } else {
+                            "Delete saved layouts, scrollback, and Shob-owned agent sessions. Your settings will be kept."
+                        }))
                     .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.0))
+                        div().flex().flex_wrap().gap(px(8.0))
+                            .when(confirm, |actions| actions.child(
+                                div().id("cancel-clear-saved-data").debug_selector(|| "cancel-clear-saved-data".into())
+                                    .tab_index(0).px(px(10.0)).py(px(6.0)).rounded(px(6.0))
+                                    .bg(tokens.secondary_btn_bg).text_size(px(12.0)).text_color(tokens.text_primary)
+                                    .cursor_pointer().hover(move |button| button.bg(tokens.secondary_btn_hover))
+                                    .child("Cancel")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.clear_data_confirm = false;
+                                        this.settings_focus.focus(window, cx);
+                                        cx.notify();
+                                    })),
+                            ))
                             .child(
-                                div()
-                                    .text_size(px(13.0))
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(tokens.block_failure)
-                                    .child("Clear saved sessions & history"),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(11.0))
-                                    .text_color(tokens.text_secondary)
-                                    .child("Deletes saved layouts, scrollback and Shob-owned SHOB sessions. Settings are kept."),
+                                div().id(if confirm { "confirm-clear-saved-data" } else { "clear-saved-data" })
+                                    .debug_selector(move || if confirm { "confirm-clear-saved-data" } else { "clear-saved-data" }.into())
+                                    .tab_index(0).px(px(10.0)).py(px(6.0)).rounded(px(6.0))
+                                    .bg(tokens.block_failure.opacity(0.12)).text_color(tokens.block_failure).text_size(px(12.0))
+                                    .cursor_pointer().hover(move |button| button.bg(tokens.block_failure.opacity(0.20)))
+                                    .child(if confirm { "Confirm clear" } else { "Clear saved data…" })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.settings_focus.focus(window, cx);
+                                        this.clear_saved_data(cx);
+                                    })),
                             ),
-                    )
-                    .child(
-                        div()
-                            .px(px(10.0))
-                            .py(px(4.0))
-                            .rounded_full()
-                            .bg(tokens.pill_inactive_bg)
-                            .text_size(px(11.0))
-                            .text_color(if confirm {
-                                tokens.block_failure
-                            } else {
-                                tokens.text_secondary
-                            })
-                            .child(if confirm { "Confirm clear" } else { "Clear" }),
                     ),
             )
     }

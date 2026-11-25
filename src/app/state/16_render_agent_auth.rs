@@ -7,7 +7,8 @@ impl AppState {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let tokens = self.tokens(cx);
-        let themed_input = self.palette_scheme == PaletteScheme::MidnightGarden && tokens.is_dark;
+        let themed_input = self.palette_scheme.is_imported()
+            || self.palette_scheme == PaletteScheme::MidnightGarden && tokens.is_dark;
         let filter_focused = auth.filter.read(cx).focus_handle().is_focused(window);
         let provider_focused = auth
             .provider_input

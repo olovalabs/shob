@@ -23,8 +23,8 @@ fn gradient_ascii_maps_the_known_cli_panel_background() {
 
 #[test]
 fn midnight_garden_switches_default_colors_and_round_trips() {
-    let mut colors = ThemeColors::complete_defaults(PaletteScheme::Warp);
-    colors.change_scheme(PaletteScheme::Warp, PaletteScheme::MidnightGarden);
+    let mut colors = ThemeColors::complete_defaults(PaletteScheme::Shob);
+    colors.change_scheme(PaletteScheme::Shob, PaletteScheme::MidnightGarden);
     let tokens = colors.tokens(
         gpui_component::ThemeMode::Dark,
         PaletteScheme::MidnightGarden,
@@ -42,10 +42,10 @@ fn midnight_garden_switches_default_colors_and_round_trips() {
         serde_json::to_string(&PaletteScheme::MidnightGarden).unwrap(),
         "\"midnight_garden\""
     );
-    colors.change_scheme(PaletteScheme::MidnightGarden, PaletteScheme::Warp);
+    colors.change_scheme(PaletteScheme::MidnightGarden, PaletteScheme::Shob);
     assert_eq!(
         colors.dark.style,
-        ThemeColors::complete_defaults(PaletteScheme::Warp)
+        ThemeColors::complete_defaults(PaletteScheme::Shob)
             .dark
             .style
     );
@@ -53,15 +53,15 @@ fn midnight_garden_switches_default_colors_and_round_trips() {
 
 #[test]
 fn generated_defaults_match_built_in_and_keep_customizations_on_scheme_change() {
-    let mut colors = ThemeColors::complete_defaults(PaletteScheme::Warp);
-    let actual = colors.tokens(gpui_component::ThemeMode::Dark, PaletteScheme::Warp);
+    let mut colors = ThemeColors::complete_defaults(PaletteScheme::Shob);
+    let actual = colors.tokens(gpui_component::ThemeMode::Dark, PaletteScheme::Shob);
     let original =
-        ThemeTokens::from_mode_with_scheme(gpui_component::ThemeMode::Dark, PaletteScheme::Warp);
+        ThemeTokens::from_mode_with_scheme(gpui_component::ThemeMode::Dark, PaletteScheme::Shob);
     assert_eq!(actual.window_bg, original.window_bg);
     assert_eq!(actual.model_picker_bg, original.card_bg);
     assert_eq!(actual.model_picker_accent, original.model_picker_accent);
     assert_eq!(
-        colors.palette(PaletteScheme::Warp, true).ansi_colors(),
+        colors.palette(PaletteScheme::Shob, true).ansi_colors(),
         load_warp_palette(true).ansi_colors()
     );
     colors
@@ -76,19 +76,19 @@ fn generated_defaults_match_built_in_and_keep_customizations_on_scheme_change() 
         .dark
         .style
         .insert("model_picker.accent".into(), "#456789".into());
-    colors.remove_generated_picker_colors(PaletteScheme::Warp);
+    colors.remove_generated_picker_colors(PaletteScheme::Shob);
     assert!(!colors.dark.style.contains_key("model_picker.bg"));
-    colors.change_scheme(PaletteScheme::Warp, PaletteScheme::Github);
+    colors.change_scheme(PaletteScheme::Shob, PaletteScheme::Nord);
     assert_eq!(colors.dark.style["window.bg"], "#123456");
     assert_eq!(
         colors
-            .tokens(gpui_component::ThemeMode::Dark, PaletteScheme::Github)
+            .tokens(gpui_component::ThemeMode::Dark, PaletteScheme::Nord)
             .model_picker_accent,
         rgba(0x456789ff).into()
     );
     assert_eq!(
         colors.dark.style["sidebar.bg"],
-        ThemeColors::complete_defaults(PaletteScheme::Github)
+        ThemeColors::complete_defaults(PaletteScheme::Nord)
             .dark
             .style["sidebar.bg"]
     );
@@ -103,7 +103,7 @@ fn overrides_apply_per_mode_and_preserve_palette_defaults() {
         }"##,
     )
     .unwrap();
-    let dark = colors.tokens(gpui_component::ThemeMode::Dark, PaletteScheme::Warp);
+    let dark = colors.tokens(gpui_component::ThemeMode::Dark, PaletteScheme::Shob);
     assert_eq!(dark.window_bg, rgba(0x12345680).into());
     assert_eq!(dark.primary_btn_bg, rgba(0x456789ff).into());
     assert_eq!(dark.chat().background, rgba(0x182838ff).into());
@@ -115,13 +115,13 @@ fn overrides_apply_per_mode_and_preserve_palette_defaults() {
     assert_eq!(dark.chat().link, rgba(0x6789abff).into());
     assert_eq!(dark.model_picker_bg, rgba(0x345678ff).into());
     assert_eq!(dark.model_picker_accent, rgba(0x6789abff).into());
-    let light = colors.tokens(gpui_component::ThemeMode::Light, PaletteScheme::Warp);
+    let light = colors.tokens(gpui_component::ThemeMode::Light, PaletteScheme::Shob);
     assert_eq!(
         light.window_bg,
-        ThemeTokens::from_mode_with_scheme(gpui_component::ThemeMode::Light, PaletteScheme::Warp)
+        ThemeTokens::from_mode_with_scheme(gpui_component::ThemeMode::Light, PaletteScheme::Shob)
             .window_bg
     );
-    let palette = colors.palette(PaletteScheme::Warp, true);
+    let palette = colors.palette(PaletteScheme::Shob, true);
     let red = terminal::hsla_to_rgb(palette.ansi_colors()[1]);
     assert_eq!((red.r, red.g, red.b), (0xab, 0xcd, 0xef));
     assert_eq!(palette.background(), load_warp_palette(true).background());
@@ -131,13 +131,13 @@ fn overrides_apply_per_mode_and_preserve_palette_defaults() {
 #[test]
 fn user_prompt_bubble_colors_follow_theme_mode_and_scheme() {
     let warp_dark =
-        ThemeTokens::from_mode_with_scheme(gpui_component::ThemeMode::Dark, PaletteScheme::Warp);
+        ThemeTokens::from_mode_with_scheme(gpui_component::ThemeMode::Dark, PaletteScheme::Shob);
     assert_eq!(warp_dark.chat().user_background, rgba(0x141414ff).into());
     assert_eq!(warp_dark.chat().user_foreground, rgba(0xffffffff).into());
     assert_eq!(warp_dark.chat().user_border, rgba(0xffffff1a).into());
 
     let warp_light =
-        ThemeTokens::from_mode_with_scheme(gpui_component::ThemeMode::Light, PaletteScheme::Warp);
+        ThemeTokens::from_mode_with_scheme(gpui_component::ThemeMode::Light, PaletteScheme::Shob);
     assert_eq!(warp_light.chat().user_background, rgba(0xefefefff).into());
     assert_eq!(warp_light.chat().user_foreground, rgba(0x111111ff).into());
     assert_eq!(warp_light.chat().user_border, rgba(0x1111111a).into());
@@ -152,10 +152,10 @@ fn user_prompt_bubble_colors_follow_theme_mode_and_scheme() {
     assert!(github_light.chat().user_background.l > 0.8);
     assert!(github_light.chat().user_foreground.l < 0.2);
 
-    let mut colors = ThemeColors::complete_defaults(PaletteScheme::Warp);
+    let mut colors = ThemeColors::complete_defaults(PaletteScheme::Shob);
     assert_eq!(colors.dark.style["chat.user.bg"], "#141414ff");
     assert_eq!(colors.light.style["chat.user.bg"], "#efefefff");
-    colors.change_scheme(PaletteScheme::Warp, PaletteScheme::MidnightGarden);
+    colors.change_scheme(PaletteScheme::Shob, PaletteScheme::MidnightGarden);
     assert_eq!(
         colors.dark.style["chat.user.bg"],
         ThemeColors::complete_defaults(PaletteScheme::MidnightGarden)
@@ -174,13 +174,13 @@ fn invalid_colors_leave_defaults_intact() {
     .unwrap();
     assert_eq!(
         colors
-            .tokens(gpui_component::ThemeMode::Dark, PaletteScheme::Warp)
+            .tokens(gpui_component::ThemeMode::Dark, PaletteScheme::Shob)
             .window_bg,
-        ThemeTokens::from_mode_with_scheme(gpui_component::ThemeMode::Dark, PaletteScheme::Warp)
+        ThemeTokens::from_mode_with_scheme(gpui_component::ThemeMode::Dark, PaletteScheme::Shob)
             .window_bg
     );
     assert_eq!(
-        colors.palette(PaletteScheme::Warp, true).ansi_colors()[1],
+        colors.palette(PaletteScheme::Shob, true).ansi_colors()[1],
         load_warp_palette(true).ansi_colors()[1]
     );
 }
@@ -218,10 +218,18 @@ fn warp_palette_matches_upstream_colors() {
 }
 
 #[test]
-fn warp_scheme_is_default_and_overrides_tokens() {
-    assert_eq!(PaletteScheme::default(), PaletteScheme::Warp);
+fn shob_scheme_is_default_and_overrides_tokens() {
+    assert_eq!(PaletteScheme::default(), PaletteScheme::Shob);
+    assert_eq!(
+        serde_json::from_str::<PaletteScheme>("\"warp\"").unwrap(),
+        PaletteScheme::Shob
+    );
+    assert_eq!(
+        serde_json::to_string(&PaletteScheme::Shob).unwrap(),
+        "\"shob\""
+    );
     let mode = gpui_component::ThemeMode::Dark;
-    let warp = ThemeTokens::from_mode_with_scheme(mode, PaletteScheme::Warp);
+    let warp = ThemeTokens::from_mode_with_scheme(mode, PaletteScheme::Shob);
     let github = ThemeTokens::from_mode_with_scheme(mode, PaletteScheme::Github);
     // Warp pane background is near-black; GitHub's is a blue-grey.
     assert!(warp.pane_bg.l < 0.05);
@@ -229,11 +237,7 @@ fn warp_scheme_is_default_and_overrides_tokens() {
     // Warp selection accent is the cyan #19AAD8.
     let accent = terminal::hsla_to_rgb(warp.block_border_selected);
     assert_eq!((accent.r, accent.g, accent.b), (0x19, 0xaa, 0xd8));
-    for scheme in [
-        PaletteScheme::Warp,
-        PaletteScheme::Github,
-        PaletteScheme::MidnightGarden,
-    ] {
+    for scheme in PaletteScheme::ALL {
         for (mode, picker_accent) in [
             (gpui_component::ThemeMode::Dark, 0xe38a94ff),
             (gpui_component::ThemeMode::Light, 0xa64c5bff),
@@ -247,8 +251,51 @@ fn warp_scheme_is_default_and_overrides_tokens() {
 
 #[test]
 fn load_palette_dispatches_by_scheme() {
-    let warp = load_palette(PaletteScheme::Warp, true);
+    let shob = load_palette(PaletteScheme::Shob, true);
     let github = load_palette(PaletteScheme::Github, true);
-    assert_eq!(warp.background(), load_warp_palette(true).background());
+    assert_eq!(shob.background(), load_warp_palette(true).background());
     assert_eq!(github.background(), load_github_palette(true).background());
+
+    let mut dark_backgrounds = std::collections::HashSet::new();
+    for scheme in PaletteScheme::ALL
+        .into_iter()
+        .filter(|scheme| scheme.is_imported())
+    {
+        use gpui_component::ThemeMode::{Dark, Light};
+        for mode in [Dark, Light] {
+            let colors = ThemeColors::complete_defaults(scheme);
+            let tokens = colors.tokens(mode, scheme);
+            let terminal = colors.palette(scheme, mode.is_dark());
+            let rgb = terminal::hsla_to_rgb;
+            assert_eq!(
+                rgb(terminal.background()),
+                rgb(tokens.pane_bg),
+                "{}",
+                scheme.label()
+            );
+            assert_eq!(
+                rgb(terminal.foreground()),
+                rgb(tokens.text_primary),
+                "{}",
+                scheme.label()
+            );
+            assert_eq!(
+                terminal.ansi_colors().map(rgb),
+                load_palette(scheme, mode.is_dark()).ansi_colors().map(rgb),
+                "{}",
+                scheme.label(),
+            );
+            if mode.is_dark() {
+                assert!(tokens.pane_bg.l < 0.5 && tokens.text_primary.l > 0.5);
+                assert!(dark_backgrounds.insert(colors.dark.style["pane.bg"].clone()));
+            } else {
+                assert!(tokens.pane_bg.l > 0.5 && tokens.text_primary.l < 0.5);
+            }
+            let stored = serde_json::to_string(&scheme).unwrap();
+            assert_eq!(
+                serde_json::from_str::<PaletteScheme>(&stored).unwrap(),
+                scheme
+            );
+        }
+    }
 }

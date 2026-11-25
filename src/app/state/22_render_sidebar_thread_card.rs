@@ -666,9 +666,9 @@ impl AppState {
                     self.update_state.needs_attention(),
                     tokens,
                 )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.active_view = ActiveView::Settings;
-                    cx.notify();
+                .debug_selector(|| "sidebar-settings-entry".into())
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.open_settings(window, cx);
                 })),
             )
     }

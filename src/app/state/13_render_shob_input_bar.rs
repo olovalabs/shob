@@ -37,15 +37,16 @@ impl AppState {
             picker_provider_icon(&model.provider, is_custom_provider(&model.provider))
         });
 
-        let gradient_ascii = self.palette_scheme == PaletteScheme::MidnightGarden && tokens.is_dark;
-        let bar_border: Hsla = if gradient_ascii {
+        let themed_chrome = self.palette_scheme.is_imported()
+            || self.palette_scheme == PaletteScheme::MidnightGarden && tokens.is_dark;
+        let bar_border: Hsla = if themed_chrome {
             tokens.editor_bar_border
         } else if tokens.is_dark {
             rgba(0x1d1d1dff).into()
         } else {
             tokens.pane_border
         };
-        let bar_bg: Hsla = if gradient_ascii {
+        let bar_bg: Hsla = if themed_chrome {
             tokens.editor_bar_bg
         } else if tokens.is_dark {
             rgba(0x050505ff).into()
@@ -54,40 +55,44 @@ impl AppState {
         };
         let focused_bar_bg = tokens.chat().composer;
         let focused_bar_border = tokens.editor_bar_border;
-        let badge_border: Hsla = if gradient_ascii {
+        let badge_border: Hsla = if themed_chrome {
             tokens.card_border
         } else if tokens.is_dark {
             rgba(0x282828ff).into()
         } else {
             rgba(0x00000018).into()
         };
-        let badge_bg: Hsla = if gradient_ascii {
+        let badge_bg: Hsla = if themed_chrome {
             tokens.card_hover
         } else if tokens.is_dark {
             rgba(0x111111ff).into()
         } else {
             rgba(0x0000000a).into()
         };
-        let dir_icon_color: Hsla = if gradient_ascii {
+        let dir_icon_color: Hsla = if themed_chrome {
             tokens.text_secondary
         } else if tokens.is_dark {
             rgba(0xb2b2c3ff).into()
         } else {
             tokens.text_secondary
         };
-        let dir_text_color: Hsla = if gradient_ascii {
+        let dir_text_color: Hsla = if themed_chrome {
             tokens.text_primary
         } else if tokens.is_dark {
             rgba(0xe5e6fcff).into()
         } else {
             tokens.text_primary
         };
-        let git_icon_color: Hsla = if tokens.is_dark {
+        let git_icon_color: Hsla = if self.palette_scheme.is_imported() {
+            tokens.block_success
+        } else if tokens.is_dark {
             rgba(0xadc993ff).into()
         } else {
             rgba(0x2d7a2dff).into()
         };
-        let git_text_color: Hsla = if tokens.is_dark {
+        let git_text_color: Hsla = if self.palette_scheme.is_imported() {
+            tokens.block_success
+        } else if tokens.is_dark {
             rgba(0xd9fcb8ff).into()
         } else {
             rgba(0x236823ff).into()
@@ -191,7 +196,7 @@ impl AppState {
                     .rounded(px(8.0))
                     .border_1()
                     .border_color(tokens.card_border)
-                    .bg(if pane.chat.active || gradient_ascii {
+                    .bg(if pane.chat.active || themed_chrome {
                         tokens.card_bg
                     } else if tokens.is_dark {
                         rgba(0x1e1f22ff).into()
@@ -523,28 +528,29 @@ impl AppState {
             return None;
         }
 
-        let bg: Hsla = if pane.chat.active {
+        let themed_chrome = pane.chat.active || self.palette_scheme.is_imported();
+        let bg: Hsla = if themed_chrome {
             tokens.card_bg
         } else if tokens.is_dark {
             rgba(0x16171eff).into()
         } else {
             rgba(0xffffffff).into()
         };
-        let border: Hsla = if pane.chat.active {
+        let border: Hsla = if themed_chrome {
             tokens.card_border
         } else if tokens.is_dark {
             rgba(0x2d2e3dff).into()
         } else {
             tokens.card_border
         };
-        let row_selected_bg: Hsla = if pane.chat.active {
+        let row_selected_bg: Hsla = if themed_chrome {
             tokens.sidebar_item_active
         } else if tokens.is_dark {
             rgba(0x262838ff).into()
         } else {
             rgba(0x0000000f).into()
         };
-        let row_hover_bg: Hsla = if pane.chat.active {
+        let row_hover_bg: Hsla = if themed_chrome {
             tokens.sidebar_item_hover
         } else if tokens.is_dark {
             rgba(0x1f2130ff).into()

@@ -121,97 +121,66 @@ impl AppState {
     /// Palette cards show both appearances of each built-in theme.
     fn render_palette_scheme_picker(&self, narrow: bool, cx: &mut Context<Self>) -> gpui::Div {
         let tokens = self.tokens(cx);
-        let options = [
-            (
-                PaletteScheme::Warp,
-                "palette-scheme-warp",
-                0xe8ecf5ff,
-                0x252a3aff,
-            ),
-            (
-                PaletteScheme::Github,
-                "palette-scheme-github",
-                0xc8dff6ff,
-                0x203e5bff,
-            ),
-            (
-                PaletteScheme::MidnightGarden,
-                "palette-scheme-midnight-garden",
-                0xb8f1e6ff,
-                0x164d60ff,
-            ),
-        ];
-        let cards = options
-            .into_iter()
-            .map(|(scheme, id, light, dark)| {
-                let selected = self.palette_scheme == scheme;
-                let swatch = |color| {
-                    div()
-                        .size(px(48.0))
-                        .rounded_full()
-                        .border_1()
-                        .border_color(if selected {
-                            tokens.ring
-                        } else {
-                            tokens.card_border
-                        })
-                        .bg(gpui::linear_gradient(
-                            135.0,
-                            gpui::linear_color_stop(rgba(color), 0.0),
-                            gpui::linear_color_stop(
-                                rgba(if color == light {
-                                    0xf7f7f8ff
-                                } else {
-                                    0x101116ff
-                                }),
-                                1.0,
-                            ),
-                        ))
-                };
+        let cards = PaletteScheme::ALL.into_iter().map(|scheme| {
+            let selected = self.palette_scheme == scheme;
+            let swatch = |mode| {
+                let preview = ThemeTokens::from_mode_with_scheme(mode, scheme);
                 div()
-                    .id(id)
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .h(px(124.0))
-                    .p(px(12.0))
-                    .rounded(px(10.0))
+                    .size(px(36.0))
+                    .rounded_full()
                     .border_1()
                     .border_color(if selected {
                         tokens.ring
                     } else {
                         tokens.card_border
                     })
-                    .bg(tokens.card_bg)
-                    .cursor(CursorStyle::PointingHand)
-                    .hover(move |style| style.bg(tokens.card_hover))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, _, window, cx| {
-                            cx.stop_propagation();
-                            this.set_palette_scheme(scheme, Some(window), cx);
-                        }),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .gap(px(20.0))
-                            .child(swatch(light))
-                            .child(swatch(dark)),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(13.0))
-                            .text_color(tokens.text_primary)
-                            .child(scheme.label()),
-                    )
-                    .flex()
-                    .flex_col()
-                    .into_any_element()
-            })
-            .collect::<Vec<_>>();
+                    .bg(gpui::linear_gradient(
+                        135.0,
+                        gpui::linear_color_stop(preview.primary_btn_bg, 0.0),
+                        gpui::linear_color_stop(preview.pane_bg, 1.0),
+                    ))
+            };
+            div()
+                .id(("palette-scheme", scheme as usize))
+                .debug_selector(move || scheme.label().to_owned())
+                .tab_index(0)
+                .min_w_0()
+                .h(px(104.0))
+                .p(px(12.0))
+                .rounded(px(10.0))
+                .border_1()
+                .border_color(if selected {
+                    tokens.ring
+                } else {
+                    tokens.card_border
+                })
+                .bg(tokens.card_bg)
+                .cursor(CursorStyle::PointingHand)
+                .hover(move |style| style.bg(tokens.card_hover))
+                .focus_visible(move |style| style.border_color(tokens.ring))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.set_palette_scheme(scheme, Some(window), cx);
+                }))
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .gap(px(10.0))
+                        .child(swatch(gpui_component::ThemeMode::Light))
+                        .child(swatch(gpui_component::ThemeMode::Dark)),
+                )
+                .child(
+                    div()
+                        .text_size(px(13.0))
+                        .text_color(tokens.text_primary)
+                        .child(scheme.label()),
+                )
+                .flex()
+                .flex_col()
+                .into_any_element()
+        });
         div()
             .flex()
             .flex_col()
@@ -221,12 +190,12 @@ impl AppState {
                     .text_size(px(16.0))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(tokens.text_primary)
-                    .child("Themes"),
+                    .child("Built-in palettes"),
             )
             .child(
                 div()
-                    .flex()
-                    .when(narrow, |row| row.flex_col())
+                    .grid()
+                    .grid_cols(if narrow { 2 } else { 3 })
                     .gap(px(10.0))
                     .children(cards),
             )

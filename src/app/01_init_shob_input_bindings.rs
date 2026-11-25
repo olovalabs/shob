@@ -29,7 +29,10 @@ pub enum ActiveView {
 enum SettingsSection {
     #[default]
     Appearance,
-    Data,
+    Themes,
+    Restore,
+    Archive,
+    Storage,
     Updates,
 }
 

@@ -133,7 +133,7 @@ pub fn load_github_palette(dark: bool) -> ColorPalette {
 /// Load the terminal palette for a scheme and light/dark mode.
 pub fn load_palette(scheme: PaletteScheme, dark: bool) -> ColorPalette {
     match scheme {
-        PaletteScheme::Warp => load_warp_palette(dark),
+        PaletteScheme::Shob => load_warp_palette(dark),
         PaletteScheme::Github => load_github_palette(dark),
         PaletteScheme::MidnightGarden if dark => {
             terminal::ColorPaletteBuilder::from_palette(load_warp_palette(true))
@@ -145,6 +145,9 @@ pub fn load_palette(scheme: PaletteScheme, dark: bool) -> ColorPalette {
                 .build()
         }
         PaletteScheme::MidnightGarden => load_warp_palette(false),
+        scheme => imported::lookup(scheme, dark)
+            .expect("imported scheme has a palette")
+            .terminal(),
     }
 }
 

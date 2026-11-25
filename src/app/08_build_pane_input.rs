@@ -325,6 +325,11 @@ fn run_gui() -> Result<()> {
             theme::apply_component_theme(initial_mode, None, cx);
             load_embedded_fonts(cx);
             sync_component_fonts(cx);
+            theme::sync_imported_components(
+                app_settings.palette_scheme,
+                app_settings.theme_colors.tokens(initial_mode, app_settings.palette_scheme),
+                cx,
+            );
 
             std::thread::spawn(|| {
                 completion::prewarm();
@@ -352,7 +357,7 @@ fn run_gui() -> Result<()> {
                 },
                 |window, cx| {
                     startup_mark("window created");
-                    let app_state = cx.new(|_| AppState {
+                    let app_state = cx.new(|cx| AppState {
                         projects: Vec::new(),
                         active_project_idx: 0,
                         next_id: 1,
@@ -405,6 +410,7 @@ fn run_gui() -> Result<()> {
                         last_window_bounds: app_settings.window,
                         persistence_enabled: std::env::var_os("SHOB_DISABLE_RESTORE").is_none(),
                         settings_section: SettingsSection::default(),
+                        settings_focus: cx.focus_handle(),
                         update_state: updater::State::default(),
                         clear_data_confirm: false,
                     });

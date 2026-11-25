@@ -96,7 +96,7 @@ The sidebar groups running, pinned, active, snoozed, and settled threads. Use th
 
 Customize Shob to match your workflow.
 
-- Light and dark themes
+- Desktop and terminal palettes in Settings → Themes, with light, dark, and system modes in Appearance
 - System appearance detection
 - Custom theme colors
 - Flexible terminal layouts

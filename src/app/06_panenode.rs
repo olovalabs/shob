@@ -442,7 +442,7 @@ struct AppState {
     focused_pane_id: Option<usize>,
     pub active_view: ActiveView,
     pub theme_preference: ThemePreference,
-    /// Terminal color palette / block chrome (Warp by default).
+    /// Desktop and terminal color palette.
     pub palette_scheme: PaletteScheme,
     default_agent_model: Option<agent_auth::AgentModel>,
     pub sidebar_visible: bool,
@@ -501,6 +501,7 @@ struct AppState {
     /// writes to the saved state (read-only troubleshooting mode).
     persistence_enabled: bool,
     settings_section: SettingsSection,
+    settings_focus: gpui::FocusHandle,
     update_state: updater::State,
     /// Two-step confirmation state for "clear saved sessions".
     clear_data_confirm: bool,
@@ -623,6 +624,7 @@ include!("state/19_discover_project_editors.rs");
 include!("state/20_render_terminal_pane.rs");
 include!("state/21_render_t3_sidebar_actions.rs");
 include!("state/22_render_sidebar_thread_card.rs");
+include!("state/settings_navigation.rs");
 include!("state/23_render_settings_page.rs");
 include!("state/24_toggle_restore_option.rs");
 

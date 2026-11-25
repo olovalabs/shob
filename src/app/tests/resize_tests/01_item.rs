@@ -175,6 +175,7 @@ fn build_app_state(cx: &mut Context<AppState>) -> AppState {
         last_window_bounds: None,
         persistence_enabled: false,
         settings_section: SettingsSection::default(),
+        settings_focus: cx.focus_handle(),
         update_state: updater::State::default(),
         clear_data_confirm: false,
     }
@@ -352,6 +353,91 @@ fn gradient_ascii_colors_split_pane_input_for_terminal_and_agent() {
             pixel[2] > pixel[0] + 20 && pixel[2] > pixel[1],
             "the {agent:?} input surface should use the blue theme: {pixel:?}"
         );
+    }
+}
+
+#[test]
+fn settings_navigation_isolates_pages_and_returns_to_workspace() {
+    let mut app = TestAppContext::new();
+    let (mut cx, state) = open_app(&mut app);
+    cx.draw_frame().unwrap();
+    let settings = cx.debug_bounds("sidebar-settings-entry").unwrap();
+    cx.simulate_click(settings.center(), Modifiers::default());
+    cx.draw_frame().unwrap();
+    assert!(cx.debug_bounds("sidebar").is_none());
+    assert!(cx.debug_bounds("theme-option-system").is_some());
+    assert!(cx.debug_bounds("Shob").is_none());
+
+    for (section, visible, hidden) in [
+        ("settings-nav-restore", "restore-sessions", "archived-threads"),
+        ("settings-nav-archive", "archived-threads", "restore-sessions"),
+        ("settings-nav-storage", "clear-saved-data", "archived-threads"),
+    ] {
+        let link = cx.debug_bounds(section).unwrap();
+        cx.simulate_click(link.center(), Modifiers::default());
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds(visible).is_some(), "missing {visible}");
+        assert!(cx.debug_bounds(hidden).is_none(), "unexpected {hidden}");
+    }
+    let clear = cx.debug_bounds("clear-saved-data").unwrap();
+    cx.simulate_click(clear.center(), Modifiers::default());
+    cx.draw_frame().unwrap();
+    assert!(cx.debug_bounds("confirm-clear-saved-data").is_some());
+    cx.simulate_keystrokes("escape");
+    cx.draw_frame().unwrap();
+    assert!(cx.debug_bounds("confirm-clear-saved-data").is_none());
+    assert!(cx.debug_bounds("clear-saved-data").is_some());
+
+    let back = cx.debug_bounds("settings-close-btn").unwrap();
+    cx.simulate_click(back.center(), Modifiers::default());
+    cx.draw_frame().unwrap();
+    assert!(cx.debug_bounds("settings-navigation").is_none());
+    assert!(cx.debug_bounds("sidebar").is_some());
+    state.read_with(&cx, |s, _| {
+        assert_eq!(s.active_view, ActiveView::Workspace);
+        assert_eq!(s.focused_pane_id, Some(1));
+    });
+}
+
+#[test]
+fn theme_picker_keeps_all_palettes_reachable_at_narrow_width() {
+    let mut app = TestAppContext::new();
+    let (mut cx, state) = open_app(&mut app);
+    cx.update_window_entity(&state, |s, window, cx| {
+        s.open_settings(window, cx);
+        s.settings_section = SettingsSection::Themes;
+    });
+    for (width, columns) in [(1200.0, 3), (500.0, 2)] {
+        cx.simulate_resize(size(px(width), px(1000.0)));
+        cx.draw_frame().unwrap();
+        let bounds: Vec<_> = PaletteScheme::ALL
+            .iter()
+            .map(|scheme| cx.debug_bounds(scheme.label()).unwrap())
+            .collect();
+        for row in bounds.chunks(columns) {
+            assert!(row.windows(2).all(|pair| pair[0].right() < pair[1].left()));
+        }
+        assert!(bounds[0].bottom() < bounds[columns].top());
+        assert!(bounds.iter().all(|card| card.right() <= px(width)));
+        if let Some(path) = std::env::var_os("SHOB_THEMES_SCREENSHOT") {
+            let path = PathBuf::from(path);
+            let path = if columns == 3 { path } else { path.with_file_name("settings-compact.png") };
+            cx.update(|window, _| window.render_to_image().unwrap().save(path).unwrap());
+        }
+        if columns == 3 {
+            let matrix = cx.debug_bounds("Matrix").unwrap();
+            cx.simulate_click(matrix.center(), Modifiers::default());
+            cx.draw_frame().unwrap();
+            state.read_with(&cx, |s, cx| {
+                let tokens = s.tokens(cx);
+                assert_eq!(s.saved_settings().palette_scheme, PaletteScheme::Matrix);
+                assert_eq!(
+                    terminal::hsla_to_rgb(s.palette.background()),
+                    terminal::hsla_to_rgb(tokens.pane_bg),
+                );
+                assert_eq!(gpui_component::Theme::global(cx).colors.foreground, tokens.text_primary);
+            });
+        }
     }
 }
 

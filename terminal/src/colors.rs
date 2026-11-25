@@ -392,6 +392,13 @@ impl ColorPaletteBuilder {
         self
     }
 
+    pub fn ansi(mut self, colors: [(u8, u8, u8); 16]) -> Self {
+        for (index, (r, g, b)) in colors.into_iter().enumerate() {
+            self.set_ansi_color(index, r, g, b);
+        }
+        self
+    }
+
     pub fn black(mut self, r: u8, g: u8, b: u8) -> Self {
         self.set_ansi_color(0, r, g, b);
         self

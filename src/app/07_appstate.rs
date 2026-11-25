@@ -4,7 +4,8 @@ impl Render for AppState {
         APP_ROOT_RENDERS.with(|count| count.set(count.get() + 1));
         // The wrapper marks only panes mounted by this root pass. Background
         // sessions and panes hidden by previews/maximization stay dormant.
-        let selected = self.active_session().map(|session| session.id);
+        let workspace = self.active_view == ActiveView::Workspace;
+        let selected = if workspace { self.active_session().map(|session| session.id) } else { None };
         let seen_at = std::time::Instant::now();
         for project in &mut self.projects {
             for session in &mut project.sessions {
@@ -54,16 +55,18 @@ impl Render for AppState {
         }
         let sidebar_docked =
             Self::sidebar_docked(self.sidebar_visible, _window.viewport_size().width);
-        if !sidebar_docked && !self.compact_sidebar_open {
-            self.close_sidebar_search(_window, cx);
+        if workspace {
+            if !sidebar_docked && !self.compact_sidebar_open {
+                self.close_sidebar_search(_window, cx);
+            }
+            self.ensure_panes_input_state(_window, cx);
         }
-        self.ensure_panes_input_state(_window, cx);
 
         let tokens = self.tokens(cx);
         // Track which pane owns keyboard focus each frame; the poller uses
         // this for Active-state resolution and for clearing sticky Done/Error.
         let mut focused_pane = None;
-        if let Some(session) = self.active_session() {
+        if workspace && let Some(session) = self.active_session() {
             for pane in &session.panes {
                 let is_term_focused =
                     !pane.chat.active && pane.terminal.read(cx).focus_handle().is_focused(_window);
@@ -120,6 +123,12 @@ impl Render for AppState {
                     window.push_notification(note, cx);
                 }
             });
+        }
+
+        if !workspace {
+            let settings = self.render_settings_page(_window, cx);
+            diagnostics::render_end(diag_render);
+            return settings.into_any_element();
         }
 
         let active_title = self
@@ -579,11 +588,6 @@ impl Render for AppState {
                     .child(div().flex().flex_col().size_full().child(terminal_area)),
             );
 
-        let main_content = match self.active_view {
-            ActiveView::Workspace => terminal_content.into_any_element(),
-            ActiveView::Settings => self.render_settings_page(_window, cx).into_any_element(),
-        };
-
         let root = div()
             .id("app-root")
             .relative()
@@ -670,6 +674,15 @@ impl Render for AppState {
                 } else {
                     keystroke.modifiers.control
                 };
+                if (shortcut || keystroke.modifiers.control)
+                    && !keystroke.modifiers.alt
+                    && keystroke.key == ","
+                    && this.open_agent_auth_pane().is_none()
+                {
+                    this.open_settings(window, cx);
+                    cx.stop_propagation();
+                    return;
+                }
                 if shortcut && !keystroke.modifiers.alt {
                     match keystroke.key.as_str() {
                         "n" => {
@@ -786,7 +799,7 @@ impl Render for AppState {
                     .h_full()
                     .min_w_0()
                     .overflow_hidden()
-                    .child(main_content),
+                    .child(terminal_content),
             )
             .when(!sidebar_docked && !self.compact_sidebar_open, |this| {
                 this.child(
