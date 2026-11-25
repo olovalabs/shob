@@ -204,19 +204,17 @@ impl AppState {
             #[cfg(unix)]
             State::Restarting => {}
             State::Checking | State::Installing => {}
-            _ if updater::enabled() => self.check_for_updates(cx),
-            _ => {}
+            State::Idle | State::Current | State::External(_) | State::Failed(_) => {
+                self.check_for_updates(cx);
+            }
         }
     }
 
     fn render_updates(&self, cx: &mut Context<Self>) -> gpui::Div {
+        use gpui_component::button::ButtonVariants as _;
         use updater::State;
         let tokens = self.tokens(cx);
         let (message, action) = match &self.update_state {
-            State::Idle if !updater::enabled() => (
-                "In-app updates are available in official release builds.".into(),
-                None,
-            ),
             State::Idle => (
                 "Check GitHub for a new version.".into(),
                 Some("Check for updates"),
@@ -225,7 +223,7 @@ impl AppState {
             State::Current => ("Shob is up to date.".into(), Some("Check for updates")),
             State::Available(update) => (
                 format!("Shob {} is available.", update.version()),
-                Some("Download update"),
+                Some("Update"),
             ),
             State::Installing => ("Downloading and preparing the update…".into(), None),
             State::Ready(ready) => (
@@ -248,7 +246,7 @@ impl AppState {
                 div()
                     .text_size(px(13.0))
                     .text_color(tokens.text_primary)
-                    .child(concat!("Shob ", env!("CARGO_PKG_VERSION"))),
+                    .child(concat!("Installed version: ", env!("CARGO_PKG_VERSION"))),
             )
             .child(
                 div()
@@ -262,9 +260,12 @@ impl AppState {
                     .flex_wrap()
                     .gap(px(8.0))
                     .children(action.map(|label| {
-                        Button::new("shob-update-action").label(label).on_click(
-                            cx.listener(|this, _, window, cx| this.activate_update(window, cx)),
-                        )
+                        Button::new("shob-update-action")
+                            .label(label)
+                            .primary()
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.activate_update(window, cx)),
+                            )
                     }))
                     .child(
                         Button::new("shob-release-notes")

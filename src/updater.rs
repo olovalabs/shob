@@ -195,48 +195,15 @@ fn schedule_msi_install(script: &Path) -> Result<()> {
 }
 
 pub fn check() -> Result<State> {
+    let can_install = enabled();
     #[cfg(target_os = "windows")]
-    remove_leftovers();
-    let current = Version::parse(env!("CARGO_PKG_VERSION"))?;
+    if can_install {
+        remove_leftovers();
+    }
     let Some(published) = Published::latest()? else {
         return Ok(State::Current);
     };
-    let version = gpui_updater_core::parse_tag(&published.tag_name)?;
-    if !version.pre.is_empty() || !version.cmp_precedence(&current).is_gt() {
-        return Ok(State::Current);
-    }
-
-    let root = current_install_root()?;
-    let exe = std::env::current_exe()?;
-    let owner = install::ownership(&root, &OwnershipHints::new());
-    if !owner.is_self_update() || (cfg!(target_os = "linux") && exe.starts_with("/usr/bin")) {
-        let message = owner.update_command().map_or_else(
-            || format!("Shob {version} is available. Update through your package manager."),
-            |command| format!("Shob {version} is available. Update with {command}."),
-        );
-        return Ok(State::External(message));
-    }
-    let Some(format) = Format::detect(&root, &exe) else {
-        return Ok(State::External(format!(
-            "Shob {version} is available on GitHub."
-        )));
-    };
-    let name = format.asset(&version);
-    let Some(release) = published.select(&name, current, version.clone()) else {
-        return Ok(State::External(format!(
-            "Shob {version} is available. The verified update for this package is not published yet."
-        )));
-    };
-    if let Err(error) = install::check_location(&root, &name) {
-        return Ok(State::External(format!(
-            "Shob {version} is available. {error}"
-        )));
-    }
-    Ok(State::Available(Box::new(Update {
-        root,
-        release,
-        format,
-    })))
+    published.update_for(Version::parse(env!("CARGO_PKG_VERSION"))?, can_install)
 }
 
 #[derive(Deserialize)]
@@ -253,6 +220,50 @@ struct PublishedAsset {
 }
 
 impl Published {
+    fn update_for(&self, current: Version, can_install: bool) -> Result<State> {
+        let version = gpui_updater_core::parse_tag(&self.tag_name)?;
+        if !version.pre.is_empty() || !version.cmp_precedence(&current).is_gt() {
+            return Ok(State::Current);
+        }
+        if !can_install {
+            return Ok(State::External(format!(
+                "Shob {version} is available on GitHub. In-app installation is disabled for this build or session."
+            )));
+        }
+
+        let root = current_install_root()?;
+        let exe = std::env::current_exe()?;
+        let owner = install::ownership(&root, &OwnershipHints::new());
+        if !owner.is_self_update() || (cfg!(target_os = "linux") && exe.starts_with("/usr/bin")) {
+            let message = owner.update_command().map_or_else(
+                || format!("Shob {version} is available. Update through your package manager."),
+                |command| format!("Shob {version} is available. Update with {command}."),
+            );
+            return Ok(State::External(message));
+        }
+        let Some(format) = Format::detect(&root, &exe) else {
+            return Ok(State::External(format!(
+                "Shob {version} is available on GitHub."
+            )));
+        };
+        let name = format.asset(&version);
+        let Some(release) = self.select(&name, current, version.clone()) else {
+            return Ok(State::External(format!(
+                "Shob {version} is available. The verified update for this package is not published yet."
+            )));
+        };
+        if let Err(error) = install::check_location(&root, &name) {
+            return Ok(State::External(format!(
+                "Shob {version} is available. {error}"
+            )));
+        }
+        Ok(State::Available(Box::new(Update {
+            root,
+            release,
+            format,
+        })))
+    }
+
     fn latest() -> Result<Option<Self>> {
         let response = reqwest::blocking::Client::builder()
             .user_agent(concat!("shob/", env!("CARGO_PKG_VERSION")))
@@ -430,7 +441,7 @@ pub fn schedule_restart(path: &Path, app_image: bool) -> Result<()> {
 }
 
 #[cfg(target_os = "windows")]
-pub fn remove_leftovers() {
+fn remove_leftovers() {
     if let Ok(root) = current_install_root()
         && !windows_msi(&root)
         && install::ownership(&root, &OwnershipHints::new()).is_self_update()
@@ -442,6 +453,26 @@ pub fn remove_leftovers() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_build_reports_newer_stable_versions_without_offering_installation() {
+        let current = Version::new(1, 9, 0);
+        let mut published = Published {
+            tag_name: "v1.10.0".into(),
+            assets: Vec::new(),
+        };
+        assert!(matches!(
+            published.update_for(current.clone(), false).unwrap(),
+            State::External(message) if message.contains("1.10.0")
+        ));
+        for tag in ["v1.8.0", "v1.9.0", "v1.10.0-beta.1"] {
+            published.tag_name = tag.into();
+            assert!(matches!(
+                published.update_for(current.clone(), false).unwrap(),
+                State::Current
+            ));
+        }
+    }
 
     #[test]
     fn selects_only_the_exact_asset_and_verified_delta_for_the_current_version() {
