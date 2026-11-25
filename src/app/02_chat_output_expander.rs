@@ -308,17 +308,6 @@ fn append_tool_edit(diff: &mut String, edit: &serde_json::Value) {
     }
 }
 
-fn model_picker_filter_marker(color: Hsla, row_height: f32) -> impl IntoElement {
-    div()
-        .absolute()
-        .right(px(4.0))
-        .top(px((row_height - 20.0) / 2.0))
-        .w(px(3.0))
-        .h(px(20.0))
-        .rounded_full()
-        .bg(color)
-}
-
 fn style_auth_input(input: Input, tokens: ThemeTokens, focused: bool) -> Input {
     input
         .appearance(false)

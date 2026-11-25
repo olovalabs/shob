@@ -92,9 +92,9 @@ impl AppState {
                     .child(
                         svg()
                             .path(icon)
-                            .size(if in_picker { px(13.0) } else { px(14.0) })
+                            .size(if in_picker { px(15.0) } else { px(14.0) })
                             .flex_shrink_0()
-                            .when(!in_picker, |icon| icon.text_color(pill_color)),
+                            .text_color(if in_picker { tokens.text_secondary } else { pill_color }),
                     )
                     .child(current.label())
                     .when(in_picker, |button| {
@@ -102,6 +102,7 @@ impl AppState {
                             svg()
                                 .path("icons/chevron-down.svg")
                                 .size(px(10.0))
+                                .text_color(tokens.text_secondary)
                                 .with_transformation(gpui::Transformation::rotate(gpui::radians(
                                     std::f32::consts::PI,
                                 ))),

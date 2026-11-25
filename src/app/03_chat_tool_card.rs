@@ -348,7 +348,11 @@ fn provider_icon_stem(id: &str) -> &str {
 /// Providers added through the OpenAI-compatible API form (or hand-added to
 /// `models.json`) get the OpenAI-compatible logo; the rest get monochrome stems.
 fn provider_icon_path(id: &str) -> SharedString {
-    if is_custom_provider(id) {
+    provider_icon_path_for(id, is_custom_provider(id))
+}
+
+fn provider_icon_path_for(id: &str, custom: bool) -> SharedString {
+    if custom {
         return SharedString::from("logos/openai-compatible.svg");
     }
     let stem = provider_icon_stem(id);
@@ -358,6 +362,23 @@ fn provider_icon_path(id: &str) -> SharedString {
         "synthetic"
     };
     SharedString::from(format!("icons/provider/{stem}.svg"))
+}
+
+fn picker_provider_icon(id: &str, custom: bool) -> SharedString {
+    if id == "anthropic" && !custom {
+        return "icons/provider/claude-agent.svg".into();
+    }
+    provider_icon_path_for(id, custom)
+}
+
+fn picker_effort_label(level: &str) -> &str {
+    match level {
+        "off" | "none" => "None",
+        "low" => "Low",
+        "xhigh" => "Extra High",
+        "max" => "Max",
+        level => reasoning_effort_label(level),
+    }
 }
 
 fn is_custom_provider(id: &str) -> bool {

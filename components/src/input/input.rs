@@ -1,6 +1,6 @@
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, App, DefiniteLength, Edges, EdgesRefinement, Entity, InteractiveElement as _,
+    AnyElement, App, DefiniteLength, Edges, EdgesRefinement, Entity, Hsla, InteractiveElement as _,
     IntoElement, IsZero, MouseButton, ParentElement as _, Rems, RenderOnce, StyleRefinement,
     Styled, Window, div, px, relative,
 };
@@ -17,10 +17,19 @@ use crate::{Sizable, StyleSized};
 
 use super::InputState;
 
+#[derive(Clone, Copy)]
+pub struct InputColors {
+    pub foreground: Hsla,
+    pub placeholder: Hsla,
+    pub caret: Hsla,
+    pub selection: Hsla,
+}
+
 #[derive(IntoElement)]
 pub struct Input {
     state: Entity<InputState>,
     style: StyleRefinement,
+    colors: Option<InputColors>,
     size: Size,
     prefix: Option<AnyElement>,
     suffix: Option<AnyElement>,
@@ -60,6 +69,7 @@ impl Input {
             state: state.clone(),
             size: Size::default(),
             style: StyleRefinement::default(),
+            colors: None,
             prefix: None,
             suffix: None,
             height: None,
@@ -72,6 +82,11 @@ impl Input {
             tab_index: 0,
             selected: false,
         }
+    }
+
+    pub fn colors(mut self, colors: InputColors) -> Self {
+        self.colors = Some(colors);
+        self
     }
 
     pub fn prefix(mut self, prefix: impl IntoElement) -> Self {
@@ -234,6 +249,7 @@ impl RenderOnce for Input {
         self.state.update(cx, |state, _| {
             state.disabled = self.disabled;
             state.size = self.size;
+            state.colors = self.colors;
         });
 
         let state = self.state.read(cx);

@@ -306,6 +306,7 @@ pub struct InputState {
     /// The mask pattern for formatting the input text
     pub(crate) mask_pattern: MaskPattern,
     pub(super) placeholder: SharedString,
+    pub(super) colors: Option<super::InputColors>,
 
     /// Popover
     pub(super) diagnostic_popover: Option<Entity<DiagnosticPopover>>,
@@ -395,6 +396,7 @@ impl InputState {
             read_only: false,
             max_bytes: None,
             masked: false,
+            colors: None,
             clean_on_escape: false,
             soft_wrap: true,
             loading: false,

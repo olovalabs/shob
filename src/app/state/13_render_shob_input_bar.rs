@@ -23,13 +23,19 @@ impl AppState {
             .chat
             .selected_model
             .as_ref()
-            .map(|model| model.id.clone())
+            .map(|model| {
+                let levels = model.thinking_levels();
+                if !levels.is_empty() {
+                    let level = PaneChat::resolve_thinking_level(pane.chat.mode_thinking_level(), &levels);
+                    format!("{} {}", model.id, picker_effort_label(level))
+                } else {
+                    model.id.clone()
+                }
+            })
             .unwrap_or_else(|| "No model selected".to_string());
-        let model_provider_icon = pane
-            .chat
-            .selected_model
-            .as_ref()
-            .map(|model| provider_icon_path(&model.provider));
+        let model_provider_icon = pane.chat.selected_model.as_ref().map(|model| {
+            picker_provider_icon(&model.provider, is_custom_provider(&model.provider))
+        });
 
         let gradient_ascii = self.palette_scheme == PaletteScheme::MidnightGarden && tokens.is_dark;
         let bar_border: Hsla = if gradient_ascii {
@@ -264,20 +270,16 @@ impl AppState {
                             .gap(px(6.0))
                             .h(px(28.0))
                             .px(px(8.0))
-                            .rounded(px(7.0))
-                            .when(!self.settings.agent_layout, |pill| pill.bg(tokens.card_bg))
+                            .rounded(px(9.0))
+                            .bg(tokens.card_hover)
                             .text_size(px(13.0))
                             .text_color(tokens.text_primary)
                             .cursor_pointer()
                             .hover(|view| view.bg(tokens.sidebar_item_hover))
                             .when_some(model_provider_icon, |pill, icon| {
-                                pill.child(svg().path(icon).size(px(15.0)).flex_shrink_0().text_color(tokens.text_primary))
+                                pill.child(svg().path(icon).size(px(17.0)).flex_shrink_0().text_color(tokens.text_primary))
                             })
                             .child(div().min_w_0().max_w(px(224.0)).truncate().child(model_pill))
-                            .when(focused_composer, |pill| pill.child(
-                                svg().path("icons/chevron-down.svg").size(px(12.0))
-                                    .flex_shrink_0().text_color(tokens.text_muted)
-                            ))
                             .child(canvas(move |area, _, _| bounds.set(area), |_, _, _, _| {})
                                 .absolute().top_0().left_0().size_full())
                             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {

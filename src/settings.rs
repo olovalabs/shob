@@ -260,7 +260,12 @@ fn parse_jsonc<T: serde::de::DeserializeOwned>(text: &str) -> Result<T, String> 
 fn load_from(path: &Path) -> Option<AppSettings> {
     let text = fs::read_to_string(path).ok()?;
     match parse_jsonc::<AppSettings>(&text) {
-        Ok(settings) => Some(settings),
+        Ok(mut settings) => {
+            settings
+                .theme_colors
+                .remove_generated_picker_colors(settings.palette_scheme);
+            Some(settings)
+        }
         Err(error) => {
             eprintln!("failed to parse {}: {error}", path.display());
             None

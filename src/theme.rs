@@ -264,11 +264,6 @@ impl ThemeColors {
             style.insert("card.bg".into(), hex(tokens.card_bg));
             style.insert("card.border".into(), hex(tokens.card_border));
             style.insert("card.hover".into(), hex(tokens.card_hover));
-            style.insert("model_picker.bg".into(), hex(tokens.model_picker_bg));
-            style.insert(
-                "model_picker.accent".into(),
-                hex(tokens.model_picker_accent),
-            );
             style.insert("pill.active.bg".into(), hex(tokens.pill_active_bg));
             style.insert("pill.active.fg".into(), hex(tokens.pill_active_fg));
             style.insert("pill.inactive.bg".into(), hex(tokens.pill_inactive_bg));
@@ -366,12 +361,41 @@ impl ThemeColors {
         }
     }
 
+    pub(crate) fn remove_generated_picker_colors(&mut self, scheme: PaletteScheme) {
+        // Older settings files saved picker defaults as overrides, masking their theme colors.
+        let dark_defaults = if scheme == PaletteScheme::MidnightGarden {
+            [["#061b3cff", "#39a8f5ff"]; 2]
+        } else {
+            [["#181818ff", "#3b6ef5ff"], ["#0e0f20ff", "#aaa3ffff"]]
+        };
+        for (appearance, defaults) in [
+            (&mut self.dark, dark_defaults),
+            (&mut self.light, [["#ffffffff", "#2857d5ff"]; 2]),
+        ] {
+            for (index, key) in ["model_picker.bg", "model_picker.accent"]
+                .into_iter()
+                .enumerate()
+            {
+                if appearance
+                    .style
+                    .get(key)
+                    .is_some_and(|value| defaults.iter().any(|pair| value == pair[index]))
+                {
+                    appearance.style.remove(key);
+                }
+            }
+        }
+    }
+
     fn appearance(&self, dark: bool) -> &AppearanceColors {
         if dark { &self.dark } else { &self.light }
     }
 
     pub fn tokens(&self, mode: gpui_component::ThemeMode, scheme: PaletteScheme) -> ThemeTokens {
         let mut tokens = ThemeTokens::from_mode_with_scheme(mode, scheme);
+        let default_ring = tokens.ring;
+        let mut picker_bg = None;
+        let mut picker_accent = None;
         for (name, value) in self.appearance(mode.is_dark()).ui.iter().chain(
             self.appearance(mode.is_dark())
                 .style
@@ -426,8 +450,8 @@ impl ThemeColors {
                 "card_bg" => tokens.card_bg = rgba(color).into(),
                 "card_border" => tokens.card_border = rgba(color).into(),
                 "card_hover" => tokens.card_hover = rgba(color).into(),
-                "model_picker_bg" => tokens.model_picker_bg = rgba(color).into(),
-                "model_picker_accent" => tokens.model_picker_accent = rgba(color).into(),
+                "model_picker_bg" => picker_bg = Some(rgba(color).into()),
+                "model_picker_accent" => picker_accent = Some(rgba(color).into()),
                 "pill_active_bg" => tokens.pill_active_bg = rgba(color).into(),
                 "pill_active_fg" => tokens.pill_active_fg = rgba(color).into(),
                 "pill_inactive_bg" => tokens.pill_inactive_bg = rgba(color).into(),
@@ -450,6 +474,12 @@ impl ThemeColors {
                 _ => eprintln!("unknown UI theme token: {name}"),
             }
         }
+        tokens.model_picker_bg = picker_bg.unwrap_or(tokens.card_bg);
+        tokens.model_picker_accent = picker_accent.unwrap_or(if tokens.ring == default_ring {
+            tokens.model_picker_accent
+        } else {
+            tokens.ring
+        });
         tokens
     }
 
@@ -520,6 +550,13 @@ impl ThemeTokens {
         if scheme == PaletteScheme::MidnightGarden && mode.is_dark() {
             tokens.apply_midnight_garden();
         }
+        tokens.model_picker_bg = tokens.card_bg;
+        tokens.model_picker_accent = rgba(if mode.is_dark() {
+            0xe38a94ff
+        } else {
+            0xa64c5bff
+        })
+        .into();
         tokens
     }
 
@@ -559,8 +596,6 @@ impl ThemeTokens {
         self.primary_btn_hover = rgba(0x299af0ff).into();
         self.primary_btn_fg = self.text_primary;
         self.ring = rgba(0x39a8f5ff).into();
-        self.model_picker_bg = self.card_bg;
-        self.model_picker_accent = self.ring;
         self.block_bg = self.pane_bg;
         self.block_bg_hover = self.card_hover;
         self.block_border = self.border_subtle;
@@ -792,8 +827,8 @@ impl ThemeTokens {
             card_bg: rgba(0x1a1b24ff).into(),
             card_border: rgba(0x2b2c3cff).into(),
             card_hover: rgba(0x222330ff).into(),
-            model_picker_bg: rgba(0x181818ff).into(),
-            model_picker_accent: rgba(0x3b6ef5ff).into(),
+            model_picker_bg: rgba(0x1a1b24ff).into(),
+            model_picker_accent: rgba(0x388bfdff).into(),
             pill_active_bg: rgba(0x1f6febff).into(),
             pill_active_fg: rgba(0xffffffff).into(),
             pill_inactive_bg: rgba(0x23242cff).into(),
@@ -868,7 +903,7 @@ impl ThemeTokens {
             card_border: rgba(0xd1d9e0ff).into(),
             card_hover: rgba(0xf6f8faff).into(),
             model_picker_bg: rgba(0xffffffff).into(),
-            model_picker_accent: rgba(0x2857d5ff).into(),
+            model_picker_accent: rgba(0x0969daff).into(),
             pill_active_bg: rgba(0x0969daff).into(),
             pill_active_fg: rgba(0xffffffff).into(),
             pill_inactive_bg: rgba(0xeaeef2ff).into(),

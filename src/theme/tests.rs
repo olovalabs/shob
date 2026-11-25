@@ -30,6 +30,8 @@ fn midnight_garden_switches_default_colors_and_round_trips() {
         PaletteScheme::MidnightGarden,
     );
     assert_eq!(tokens.pane_bg, rgba(0x001536ff).into());
+    assert_eq!(tokens.model_picker_bg, tokens.card_bg);
+    assert_eq!(tokens.model_picker_accent, rgba(0xe38a94ff).into());
     assert_eq!(
         colors
             .palette(PaletteScheme::MidnightGarden, true)
@@ -56,7 +58,8 @@ fn generated_defaults_match_built_in_and_keep_customizations_on_scheme_change() 
     let original =
         ThemeTokens::from_mode_with_scheme(gpui_component::ThemeMode::Dark, PaletteScheme::Warp);
     assert_eq!(actual.window_bg, original.window_bg);
-    assert_eq!(actual.model_picker_bg, original.model_picker_bg);
+    assert_eq!(actual.model_picker_bg, original.card_bg);
+    assert_eq!(actual.model_picker_accent, original.model_picker_accent);
     assert_eq!(
         colors.palette(PaletteScheme::Warp, true).ansi_colors(),
         load_warp_palette(true).ansi_colors()
@@ -68,7 +71,13 @@ fn generated_defaults_match_built_in_and_keep_customizations_on_scheme_change() 
     colors
         .dark
         .style
+        .insert("model_picker.bg".into(), "#181818ff".into());
+    colors
+        .dark
+        .style
         .insert("model_picker.accent".into(), "#456789".into());
+    colors.remove_generated_picker_colors(PaletteScheme::Warp);
+    assert!(!colors.dark.style.contains_key("model_picker.bg"));
     colors.change_scheme(PaletteScheme::Warp, PaletteScheme::Github);
     assert_eq!(colors.dark.style["window.bg"], "#123456");
     assert_eq!(
@@ -89,7 +98,7 @@ fn generated_defaults_match_built_in_and_keep_customizations_on_scheme_change() 
 fn overrides_apply_per_mode_and_preserve_palette_defaults() {
     let colors: ThemeColors = serde_json::from_str(
         r##"{
-            "dark": {"ui": {"window_bg": "#12345680", "pane.bg": "#182838", "text.primary": "#abcdef", "editor.bar.bg": "#234567", "primary.btn.bg": "#456789", "chat.user.bg": "#1c1c1c", "chat.user.fg": "#fafafa", "chat.user.border": "#333333", "ring": "#6789ab"},
+            "dark": {"ui": {"window_bg": "#12345680", "pane.bg": "#182838", "text.primary": "#abcdef", "editor.bar.bg": "#234567", "primary.btn.bg": "#456789", "chat.user.bg": "#1c1c1c", "chat.user.fg": "#fafafa", "chat.user.border": "#333333", "card.bg": "#345678", "ring": "#6789ab"},
                      "terminal": {"red": "#abcdef"}}
         }"##,
     )
@@ -104,6 +113,8 @@ fn overrides_apply_per_mode_and_preserve_palette_defaults() {
     assert_eq!(dark.chat().user_foreground, rgba(0xfafafaff).into());
     assert_eq!(dark.chat().user_border, rgba(0x333333ff).into());
     assert_eq!(dark.chat().link, rgba(0x6789abff).into());
+    assert_eq!(dark.model_picker_bg, rgba(0x345678ff).into());
+    assert_eq!(dark.model_picker_accent, rgba(0x6789abff).into());
     let light = colors.tokens(gpui_component::ThemeMode::Light, PaletteScheme::Warp);
     assert_eq!(
         light.window_bg,
@@ -218,6 +229,20 @@ fn warp_scheme_is_default_and_overrides_tokens() {
     // Warp selection accent is the cyan #19AAD8.
     let accent = terminal::hsla_to_rgb(warp.block_border_selected);
     assert_eq!((accent.r, accent.g, accent.b), (0x19, 0xaa, 0xd8));
+    for scheme in [
+        PaletteScheme::Warp,
+        PaletteScheme::Github,
+        PaletteScheme::MidnightGarden,
+    ] {
+        for (mode, picker_accent) in [
+            (gpui_component::ThemeMode::Dark, 0xe38a94ff),
+            (gpui_component::ThemeMode::Light, 0xa64c5bff),
+        ] {
+            let tokens = ThemeColors::complete_defaults(scheme).tokens(mode, scheme);
+            assert_eq!(tokens.model_picker_bg, tokens.card_bg);
+            assert_eq!(tokens.model_picker_accent, rgba(picker_accent).into());
+        }
+    }
 }
 
 #[test]

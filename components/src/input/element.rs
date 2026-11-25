@@ -864,7 +864,9 @@ impl Element for TextElement {
 
         let mut bounds = bounds;
 
-        let foreground = if state.mode.is_code_editor() {
+        let foreground = if let Some(colors) = state.colors {
+            colors.foreground
+        } else if state.mode.is_code_editor() {
             cx.theme()
                 .highlight_theme
                 .style
@@ -876,7 +878,9 @@ impl Element for TextElement {
         let (display_text, text_color) = if is_empty {
             (
                 &Rope::from(placeholder.as_str()),
-                cx.theme().muted_foreground,
+                state
+                    .colors
+                    .map_or(cx.theme().muted_foreground, |colors| colors.placeholder),
             )
         } else if state.masked {
             (
@@ -1179,6 +1183,7 @@ impl Element for TextElement {
 
         let mut mask_offset_y = px(0.);
         let state = self.state.read(cx);
+        let colors = state.colors;
         if state.masked && state.text.len() > 0 {
             if cfg!(target_os = "macos") {
                 mask_offset_y = px(3.);
@@ -1217,17 +1222,18 @@ impl Element for TextElement {
         }
 
         if window.is_window_active() {
-            let secondary_selection = cx.theme().selection.saturation(0.1);
+            let selection = colors.map_or(cx.theme().selection, |colors| colors.selection);
+            let secondary_selection = selection.saturation(0.1);
             for (path, is_active) in prepaint.search_match_paths.iter() {
                 window.paint_path(path.clone(), secondary_selection);
 
                 if *is_active {
-                    window.paint_path(path.clone(), cx.theme().selection);
+                    window.paint_path(path.clone(), selection);
                 }
             }
 
             if let Some(path) = prepaint.selection_path.take() {
-                window.paint_path(path, cx.theme().selection);
+                window.paint_path(path, selection);
             }
 
             if let Some(path) = prepaint.hover_highlight_path.take() {
@@ -1276,7 +1282,8 @@ impl Element for TextElement {
 
         if focused && show_cursor {
             if let Some(cursor_bounds) = prepaint.cursor_bounds_with_scroll() {
-                window.paint_quad(fill(cursor_bounds, cx.theme().caret));
+                let caret = colors.map_or(cx.theme().caret, |colors| colors.caret);
+                window.paint_quad(fill(cursor_bounds, caret));
             }
         }
 
