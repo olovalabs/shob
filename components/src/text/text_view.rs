@@ -11,7 +11,7 @@ use gpui::{
     StyleRefinement, Styled, Window, div, px,
 };
 
-use super::flow::{Flow, FlowElement, MarkdownBlocks};
+use super::flow::{Flow, FlowElement, FlowListRow, MarkdownBlocks};
 use crate::highlighter::HighlightTheme;
 use crate::menu::{ContextMenuExt, PopupMenuItem};
 use crate::scroll::ScrollableElement;
@@ -118,7 +118,7 @@ pub(crate) fn init(cx: &mut App) {
 #[derive(IntoElement, Clone)]
 struct TextViewElement {
     list_state: Option<ListState>,
-    enclosing_list_row: Option<(ListState, usize)>,
+    enclosing_list_row: Option<FlowListRow>,
     estimated_height: Pixels,
     state: Entity<TextViewState>,
 }
@@ -188,7 +188,7 @@ pub struct TextView {
     scrollable: bool,
     code_block_actions: Option<Arc<CodeBlockActionsFn>>,
     blocks: Option<MarkdownBlocks>,
-    enclosing_list_row: Option<(ListState, usize)>,
+    enclosing_list_row: Option<FlowListRow>,
 }
 
 pub(crate) struct ParsedContent {
@@ -858,8 +858,8 @@ impl TextView {
     }
 
     /// Anchor virtualized Markdown blocks to the enclosing list without adding a nested vertical scroll.
-    pub fn anchor_to_list_row(mut self, list: &ListState, row: usize) -> Self {
-        self.enclosing_list_row = Some((list.clone(), row));
+    pub fn anchor_to_list_row(mut self, list: &ListState, index: usize, preserve_anchor: bool) -> Self {
+        self.enclosing_list_row = Some(FlowListRow { list: list.clone(), index, preserve_anchor });
         self
     }
 

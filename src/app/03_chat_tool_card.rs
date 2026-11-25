@@ -995,5 +995,6 @@ struct ChatSnapshot {
     rows: std::rc::Rc<std::cell::RefCell<ChatRowCache>>,
     unready_row: std::cell::Cell<Option<usize>>,
     list_state: Option<ListState>,
+    preserve_anchor: bool,
     host: UiHost,
 }

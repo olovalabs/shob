@@ -360,6 +360,101 @@ fn completed_long_message_virtualizes_blocks_in_the_outer_chat_scroll() {
     });
     cx.draw_frame().unwrap();
     assert!((cx.debug_bounds(key).unwrap().top() - y).abs() <= px(1.0));
+
+    let inset = y - viewport.top();
+    for width in [640., 800., 650.] {
+        cx.simulate_resize(size(px(width), px(720.)));
+        cx.draw_frame().unwrap();
+        let viewport = cx.debug_bounds("agent-chat").unwrap();
+        let block = cx.debug_bounds(key).expect("same Markdown block after resize");
+        assert!((block.top() - viewport.top() - inset).abs() <= px(1.0));
+    }
+}
+
+#[test]
+fn long_markdown_stays_above_the_following_prompt_during_reflow() {
+    let mut app = TestAppContext::new();
+    let (mut cx, state) = open_app(&mut app);
+    let pane_id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
+    let text = format!(
+        "# First section\n\n```rust\n{}```\n\n## Second section\n\n{}\n\nFinal paragraph.",
+        "let value = 42;\n".repeat(16),
+        "Words that wrap to another line at narrow widths. ".repeat(10),
+    );
+    cx.update_window_entity(&state, |s, window, cx| {
+        s.set_chat_mode(pane_id, true, window, cx);
+        let chat = &mut s.pane_mut(pane_id).unwrap().chat;
+        chat.messages.extend([
+            Arc::new(ChatMessage::new(ChatRole::Assistant, text)),
+            Arc::new(ChatMessage::new(ChatRole::User, "do we have to?".into())),
+        ]);
+        chat.notify_content(cx);
+        cx.notify();
+    });
+
+    let check_stacking = |cx: &mut gpui::VisualTestContext| {
+        let prompt = cx
+            .debug_bounds("chat-user-bubble")
+            .expect("following prompt");
+        for key in [
+            "markdown-flow-block-0",
+            "markdown-flow-block-1",
+            "markdown-flow-block-2",
+            "markdown-flow-block-3",
+            "markdown-flow-block-4",
+        ] {
+            if let Some(block) = cx.debug_bounds(key) {
+                assert!(
+                    block.top() < prompt.top(),
+                    "{key} starts below the prompt: {block:?} vs {prompt:?}"
+                );
+            }
+        }
+        prompt
+    };
+    cx.draw_frame().unwrap();
+    cx.run_until_parked();
+    cx.draw_frame().unwrap();
+    check_stacking(&mut cx);
+    cx.draw_frame().unwrap();
+    let prompt = check_stacking(&mut cx);
+    let last = cx.debug_bounds("markdown-flow-block-4").expect("final paragraph");
+    assert!(last.bottom() < prompt.top());
+
+    for width in [640., 860., 660.] {
+        cx.simulate_resize(size(px(width), px(920.)));
+        cx.draw_frame().unwrap();
+        check_stacking(&mut cx);
+        cx.draw_frame().unwrap();
+        let prompt = check_stacking(&mut cx);
+        let last = cx
+            .debug_bounds("markdown-flow-block-4")
+            .expect("final paragraph after resize");
+        assert!(last.bottom() < prompt.top());
+        cx.draw_frame().unwrap();
+        assert_eq!(check_stacking(&mut cx), prompt);
+    }
+
+    cx.simulate_resize(size(px(660.), px(560.)));
+    cx.draw_frame().unwrap();
+    let before_scroll = check_stacking(&mut cx);
+    let position = cx.debug_bounds("agent-chat").unwrap().center();
+    for delta in [28., -28.] {
+        cx.simulate_event(gpui::ScrollEvent {
+            position,
+            delta: gpui::ScrollDelta::Pixels(point(px(0.), px(delta))),
+            ..Default::default()
+        });
+        cx.draw_frame().unwrap();
+        let prompt = check_stacking(&mut cx);
+        let last = cx.debug_bounds("markdown-flow-block-4").expect("final paragraph while scrolling");
+        assert!(last.bottom() < prompt.top());
+        if delta > 0. {
+            assert!(prompt.top() > before_scroll.top());
+        } else {
+            assert_eq!(prompt, before_scroll);
+        }
+    }
 }
 
 #[test]

@@ -1,7 +1,10 @@
-use std::{collections::HashMap, sync::{Arc, Mutex}};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use gpui::{
-    AnyElement, App, AvailableSpace, Bounds, Element, ElementId, GlobalElementId,
+    AnyElement, App, AvailableSpace, Bounds, ContentMask, Element, ElementId, GlobalElementId,
     InspectorElementId, LayoutId, ListState, Pixels, Size, Style, Window, point, px, size,
 };
 
@@ -26,9 +29,14 @@ struct Source {
 /// Session-local geometry belongs to the document, not the mounted text view.
 #[derive(Default)]
 struct FlowLayoutCache {
-    width: Option<Pixels>,
-    heights: HashMap<usize, f32>,
+    heights: HashMap<usize, BlockMeasurement>,
     total: f32,
+}
+
+#[derive(Clone, Copy)]
+struct BlockMeasurement {
+    height: f32,
+    width: Pixels,
 }
 
 impl MarkdownBlocks {
@@ -112,39 +120,24 @@ struct Block {
 pub(crate) struct Flow {
     blocks: Vec<Arc<Block>>,
     heights: Vec<f32>,
-    measured: Vec<bool>,
+    measured_at: Vec<Option<Pixels>>,
     sums: Vec<f32>,
-    width: Option<Pixels>,
     retained: Option<Arc<Mutex<FlowLayoutCache>>>,
 }
 
 impl Flow {
     pub(crate) fn for_completed_document(document: &MarkdownBlocks) -> Self {
         let retained = document.0.lock().unwrap().layout.clone();
-        let width = retained.lock().unwrap().width;
-        Self { width, retained: Some(retained), ..Self::default() }
+        Self {
+            retained: Some(retained),
+            ..Self::default()
+        }
     }
 
-    fn layout_height(&mut self, width: Pixels) -> Pixels {
-        if self.width.is_some_and(|old| old != width) {
-            self.heights.fill(32.);
-            self.measured.fill(false);
-            for (index, sum) in self.sums.iter_mut().enumerate() {
-                let position = index + 1;
-                *sum = 32. * (position & position.wrapping_neg()) as f32;
-            }
-        }
-        self.width = Some(width);
-        let total = self.prefix(self.blocks.len());
-        if let Some(retained) = &self.retained {
-            let mut cache = retained.lock().unwrap();
-            if cache.width != Some(width) {
-                cache.width = Some(width);
-                cache.heights.clear();
-            }
-            cache.total = total;
-        }
-        px(total)
+    // Intrinsic layout can probe several widths. Keep the last heights as
+    // estimates and only update them when prepaint knows the actual width.
+    fn layout_height(&self) -> Pixels {
+        px(self.prefix(self.blocks.len()))
     }
 
     fn prefix(&self, mut count: usize) -> f32 {
@@ -158,37 +151,45 @@ impl Flow {
     fn push(&mut self, block: Block) {
         let count = self.blocks.len() + 1;
         let start = count & (count - 1);
-        let cached_height = self.retained.as_ref().and_then(|retained| {
-            let cache = retained.lock().unwrap();
-            (cache.width == self.width).then(|| cache.heights.get(&(count - 1)).copied()).flatten()
-        });
-        let height = cached_height.unwrap_or(32.);
+        let cached = self
+            .retained
+            .as_ref()
+            .and_then(|retained| retained.lock().unwrap().heights.get(&(count - 1)).copied());
+        let height = cached.map_or(32., |measurement| measurement.height);
         let sum = self.prefix(count - 1) - self.prefix(start) + height;
         self.blocks.push(Arc::new(block));
         self.heights.push(height);
-        self.measured.push(cached_height.is_some());
+        self.measured_at
+            .push(cached.map(|measurement| measurement.width));
         self.sums.push(sum);
     }
-    fn update(&mut self, index: usize, height: f32) -> bool {
-        self.measured[index] = true;
+    fn update(&mut self, index: usize, height: f32, width: Pixels) -> bool {
         let delta = height - self.heights[index];
-        if delta.abs() < 0.5 {
+        let changed = delta.abs() >= 0.5;
+        if !changed && self.measured_at[index] == Some(width) {
             return false;
         }
-        self.heights[index] = height;
-        if let Some(retained) = &self.retained {
-            let mut cache = retained.lock().unwrap();
-            if cache.width == self.width {
-                cache.heights.insert(index, height);
-                cache.total += delta;
+        self.measured_at[index] = Some(width);
+        if changed {
+            self.heights[index] = height;
+            let mut i = index + 1;
+            while i <= self.sums.len() {
+                self.sums[i - 1] += delta;
+                i += i & i.wrapping_neg();
             }
         }
-        let mut i = index + 1;
-        while i <= self.sums.len() {
-            self.sums[i - 1] += delta;
-            i += i & i.wrapping_neg();
+        if let Some(retained) = &self.retained {
+            let mut cache = retained.lock().unwrap();
+            cache.heights.insert(
+                index,
+                BlockMeasurement {
+                    height: self.heights[index],
+                    width,
+                },
+            );
+            cache.total = self.layout_height().as_f32();
         }
-        true
+        changed
     }
     fn at(&self, y: f32) -> usize {
         let mut index = 0;
@@ -224,12 +225,19 @@ impl Flow {
 pub(crate) struct FlowElement {
     pub(crate) flow: Arc<Mutex<Flow>>,
     pub(crate) context: NodeContext,
-    pub(crate) list_row: Option<(ListState, usize)>,
+    pub(crate) list_row: Option<FlowListRow>,
+}
+
+#[derive(Clone)]
+pub(crate) struct FlowListRow {
+    pub(crate) list: ListState,
+    pub(crate) index: usize,
+    pub(crate) preserve_anchor: bool,
 }
 
 impl Element for FlowElement {
     type RequestLayoutState = ();
-    type PrepaintState = Vec<AnyElement>;
+    type PrepaintState = (Vec<AnyElement>, Option<ContentMask<Pixels>>);
     fn id(&self) -> Option<ElementId> {
         Some("markdown-flow".into())
     }
@@ -250,7 +258,7 @@ impl Element for FlowElement {
                     AvailableSpace::Definite(width) => width,
                     _ => px(640.),
                 });
-                size(width, flow.lock().unwrap().layout_height(width))
+                size(width, flow.lock().unwrap().layout_height())
             }),
             (),
         )
@@ -263,20 +271,29 @@ impl Element for FlowElement {
         _: &mut (),
         window: &mut Window,
         cx: &mut App,
-    ) -> Vec<AnyElement> {
+    ) -> Self::PrepaintState {
         let mask = window.content_mask().bounds;
         let top = (mask.top() - bounds.top()).as_f32().max(0.);
         let bottom = (mask.bottom() - bounds.top()).as_f32();
         if bottom <= 0. || mask.top() >= bounds.bottom() {
-            return Vec::new();
+            return Self::PrepaintState::default();
         }
-        let (anchor_index, anchor_offset) = {
+        let (anchor_index, anchor_origin) = {
             let flow = self.flow.lock().unwrap();
             let index = flow.at(top);
-            (index, top - flow.prefix(index))
+            (index, flow.prefix(index))
         };
-        let anchored = top > 0. && self.list_row.is_some();
-        let mut index = if anchored { anchor_index.saturating_sub(2) } else { anchor_index };
+        let anchor_offset = top - anchor_origin;
+        let anchored = top > 0.
+            && self
+                .list_row
+                .as_ref()
+                .is_some_and(|row| row.preserve_anchor);
+        let mut index = if anchored {
+            anchor_index.saturating_sub(2)
+        } else {
+            anchor_index
+        };
         let mut measured_rows = Vec::new();
         let mut changed = false;
         let mut correction = 0.;
@@ -286,7 +303,7 @@ impl Element for FlowElement {
                 let Some(block) = flow.blocks.get(index) else {
                     break;
                 };
-                if index < anchor_index && flow.measured[index] {
+                if index < anchor_index && flow.measured_at[index] == Some(bounds.size.width) {
                     index += 1;
                     continue;
                 }
@@ -299,7 +316,10 @@ impl Element for FlowElement {
             let mut context = (*block.context).clone();
             context.code_block_actions = self.context.code_block_actions.clone();
             context.style.heading_font_size = self.context.style.heading_font_size.clone();
-            let mut element = block.node.render(index, index == 0, prev_is_heading, &context, window, cx);
+            let mut element =
+                block
+                    .node
+                    .render(index, index == 0, prev_is_heading, &context, window, cx);
             let measured = element.layout_as_root(
                 Size {
                     width: AvailableSpace::Definite(bounds.size.width),
@@ -309,39 +329,78 @@ impl Element for FlowElement {
                 cx,
             );
             let mut flow = self.flow.lock().unwrap();
-            changed |= flow.update(index, measured.height.as_f32().max(1.));
+            let height = measured.height.as_f32().max(1.);
+            changed |= flow.update(index, height, bounds.size.width);
             if anchored && index == anchor_index {
-                let inset = anchor_offset.min((flow.heights[index] - 1.).max(0.));
-                correction = offset + inset - top;
+                let inset = if anchor_offset < height {
+                    anchor_offset
+                } else {
+                    height - 1.
+                };
+                correction = (offset - anchor_origin) + (inset - anchor_offset);
             }
             if index >= anchor_index {
-                measured_rows.push((offset, element));
+                measured_rows.push((offset, height, element));
             }
             index += 1;
         }
-        let view = window.current_view();
-        if let Some((list, row)) = &self.list_row
-            && correction.abs() >= 0.5
-        {
-            let list = list.clone();
-            let row = *row;
-            // The owning ListState is mutably borrowed while it prepaints its items.
-            window.defer(cx, move |_, cx| {
-                let mut anchor = list.logical_scroll_top();
-                if anchor.item_ix == row && !list.is_following_tail() {
-                    anchor.offset_in_item = (anchor.offset_in_item + px(correction)).max(px(0.));
-                    list.scroll_to(anchor);
-                    cx.notify(view);
-                }
-            });
+        if changed || correction != 0. {
+            let view = window.current_view();
+            if let Some(row) = self.list_row.clone().filter(|row| row.preserve_anchor) {
+                // The owning list is borrowed until prepaint finishes.
+                window.defer(cx, move |_, cx| {
+                    let mut refresh = changed;
+                    if row.index < row.list.item_count() {
+                        let mut anchor = row.list.logical_scroll_top();
+                        if correction != 0.
+                            && anchor.item_ix == row.index
+                            && !row.list.is_following_tail()
+                        {
+                            anchor.offset_in_item =
+                                (anchor.offset_in_item + px(correction)).max(px(0.));
+                            row.list.scroll_to(anchor);
+                            refresh = true;
+                        }
+                        if changed {
+                            row.list.remeasure_items(row.index..row.index + 1);
+                        }
+                    }
+                    if refresh {
+                        cx.notify(view);
+                    }
+                });
+            } else if changed {
+                // Tail-follow lays out visible rows again on the next frame.
+                cx.notify(view);
+            }
         }
-        if changed {
-            cx.notify(view);
-        }
-        measured_rows.into_iter().map(|(offset, mut element)| {
-            element.prepaint_at(bounds.origin + point(px(0.), px(offset - correction)), window, cx);
-            element
-        }).collect()
+        // The list has already placed siblings using this frame's height.
+        // Never paint newly measured blocks outside that reservation.
+        let height = bounds.size.height.as_f32();
+        let bottom = bottom.min(height);
+        measured_rows.retain_mut(|(offset, block_height, _)| {
+            *offset -= correction;
+            *offset < bottom && *offset + *block_height > top
+        });
+        let spills_above = mask.top() < bounds.top()
+            && measured_rows
+                .first()
+                .is_some_and(|(offset, _, _)| *offset < 0.);
+        let spills_below = mask.bottom() > bounds.bottom()
+            && measured_rows
+                .last()
+                .is_some_and(|(offset, block_height, _)| *offset + *block_height > height);
+        let clip = (spills_above || spills_below).then_some(ContentMask { bounds });
+        let elements = window.with_content_mask(clip, |window| {
+            measured_rows
+                .into_iter()
+                .map(|(offset, _, mut element)| {
+                    element.prepaint_at(bounds.origin + point(px(0.), px(offset)), window, cx);
+                    element
+                })
+                .collect()
+        });
+        (elements, clip)
     }
     fn paint(
         &mut self,
@@ -349,13 +408,15 @@ impl Element for FlowElement {
         _: Option<&InspectorElementId>,
         _: Bounds<Pixels>,
         _: &mut (),
-        elements: &mut Vec<AnyElement>,
+        (elements, clip): &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
-        for element in elements {
-            element.paint(window, cx);
-        }
+        window.with_content_mask(*clip, |window| {
+            for element in elements {
+                element.paint(window, cx);
+            }
+        });
     }
 }
 
@@ -388,7 +449,7 @@ mod tests {
         let mut flow = Flow::default();
         flow.append(parsed("first **bold** paragraph"));
         let first = flow.blocks[0].clone();
-        flow.update(0, 91.);
+        flow.update(0, 91., px(500.));
         for index in 0..4_000 {
             flow.append(parsed(&format!("paragraph {index}")));
         }
@@ -401,17 +462,21 @@ mod tests {
         let document = MarkdownBlocks::default();
         let mut original = Flow::for_completed_document(&document);
         original.append(parsed("first\n\nsecond\n\nthird"));
-        original.layout_height(px(500.));
-        original.update(0, 91.);
-        original.update(1, 12.);
+        original.update(0, 91., px(500.));
+        original.update(1, 12., px(500.));
         drop(original);
         assert_eq!(document.cached_height(), px(135.));
 
         let mut remounted = Flow::for_completed_document(&document);
         remounted.append(parsed("first\n\nsecond\n\nthird"));
-        assert_eq!(remounted.layout_height(px(500.)), px(135.));
+        assert_eq!(remounted.layout_height(), px(135.));
         assert_eq!(remounted.at(95.), 1);
-        assert_eq!(remounted.layout_height(px(350.)), px(96.));
+        assert!(remounted.update(1, 24., px(350.)));
+        assert_eq!(remounted.layout_height(), px(147.));
+        assert_eq!(
+            remounted.measured_at,
+            [Some(px(500.)), Some(px(350.)), None]
+        );
     }
 
     #[test]

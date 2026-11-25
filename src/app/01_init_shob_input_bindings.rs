@@ -443,7 +443,7 @@ struct ChatRenderContext<'a> {
 
 struct ChatRowMeasurement<'a> {
     ready: std::cell::Cell<bool>,
-    list_row: Option<(&'a ListState, usize)>,
+    list_row: Option<(&'a ListState, usize, bool)>,
 }
 
 struct ChatMessageOptions<'a> {
@@ -508,8 +508,8 @@ fn chat_markdown(
     .text_color(color);
     if let Some(row) = measurement_ready {
         row.ready.set(row.ready.get() && view.is_measurement_ready());
-        if let Some((list, index)) = row.list_row {
-            view = view.anchor_to_list_row(list, index);
+        if let Some((list, index, preserve_anchor)) = row.list_row {
+            view = view.anchor_to_list_row(list, index, preserve_anchor);
         }
     }
     view

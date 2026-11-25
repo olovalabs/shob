@@ -61,6 +61,7 @@ impl AppState {
                     .items_end()
                     .child(
                         div()
+                            .debug_selector(|| "chat-user-bubble".into())
                             .max_w(relative(0.70))
                             .min_w_0()
                             .px(px(16.0))

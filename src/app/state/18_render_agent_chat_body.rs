@@ -131,6 +131,7 @@ impl AppState {
             rows: row_cache,
             unready_row: std::cell::Cell::new(None),
             list_state: Some(source.list_state.clone()),
+            preserve_anchor: !source.list_state.is_following_tail(),
             host,
         });
         let list_state = source.list_state.clone();
@@ -546,7 +547,7 @@ impl AppState {
         let tokens = snapshot.tokens;
         let measurement = ChatRowMeasurement {
             ready: std::cell::Cell::new(true),
-            list_row: snapshot.list_state.as_ref().map(|list| (list, index)),
+            list_row: snapshot.list_state.as_ref().map(|list| (list, index, snapshot.preserve_anchor)),
         };
         let measurement_ready = Some(&measurement);
         let inner: AnyElement = match row {

@@ -706,6 +706,7 @@ fn codex_markdown_reference_capture() {
                     conversation: pane.chat.conversation_key.clone().into(), tokens, rows,
                     unready_row: Default::default(),
                     list_state: None,
+                    preserve_anchor: false,
                     host: UiHost::new(cx.weak_entity()),
                 };
                 div().size_full().overflow_hidden().bg(tokens.chat().background)
