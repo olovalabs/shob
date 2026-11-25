@@ -276,6 +276,12 @@ impl Log {
     }
 
     pub fn append_event_at(&mut self, event: &AgentEvent, at_ms: Option<u64>) {
+        // Native worker previews are replaceable snapshots. The child transcript
+        // and final tool result are durable, not repeated copies of the live tail.
+        if matches!(event, AgentEvent::ToolUpdate { name, .. } if name == embedded::subagent_tool::NAME)
+        {
+            return;
+        }
         self.append(Entry::Event {
             event: project_event(event),
             at_ms,
@@ -562,6 +568,11 @@ fn normalize_replay(messages: &mut [std::sync::Arc<ChatMessage>]) {
             && tool.state == ToolState::Running
         {
             tool.state = ToolState::Unknown;
+            if tool.name == embedded::subagent_tool::NAME {
+                tool.workers
+                    .iter_mut()
+                    .for_each(crate::subagent_chat::Worker::mark_interrupted);
+            }
         }
     }
 }

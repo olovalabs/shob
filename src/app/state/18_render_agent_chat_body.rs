@@ -457,10 +457,7 @@ impl AppState {
                         block.push(workers[worker_index].clone());
                         worker_index += 1;
                     }
-                    if block
-                        .iter()
-                        .any(|row| matches!(row.status, "is starting" | "is working"))
-                    {
+                    if block.iter().any(WorkerRowSnapshot::is_active) {
                         active_row = Some(rows.len());
                     }
                     checkpoints.push(checkpoint);
@@ -743,14 +740,12 @@ impl AppState {
                             .into()
                     }
                 })
-                // A fixed frame, not a repeating animation: a running turn can last
-                // hours, and a 650 ms repeat would repaint the window the whole time.
-                .child(
-                    div()
-                        .size(px(16.0))
-                        .flex_shrink_0()
-                        .child(sidebar_loader(0.0, tokens.text_muted)),
-                )
+                .child(animated_agent_loader(
+                    ("chat-activity-loader", snapshot.pane_id),
+                    tokens.text_muted,
+                    window,
+                    cx,
+                ))
                 .child(
                     div()
                         .text_color(tokens.text_muted)

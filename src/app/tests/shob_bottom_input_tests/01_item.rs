@@ -767,6 +767,14 @@ fn subagent_view_matches_main_chat_column_width_and_row_grouping() {
         pane.chat.active = true;
         push_chat_event(
             &mut pane.chat.messages,
+            AgentEvent::ToolStart {
+                id: Some("sub-1".into()),
+                name: embedded::subagent_tool::NAME.into(),
+                input: String::new(),
+            },
+        );
+        push_chat_event(
+            &mut pane.chat.messages,
             AgentEvent::Subagents {
                 tool_id: "sub-1".into(),
                 workers: vec![subagent_chat::Worker {
@@ -787,6 +795,14 @@ fn subagent_view_matches_main_chat_column_width_and_row_grouping() {
     cx.simulate_click(row.origin + point(px(20.0), px(10.0)), Modifiers::default());
     cx.update_window_entity(&state, |state, _, cx| {
         let pane = state.pane_mut(pane_id).unwrap();
+        push_chat_event(
+            &mut pane.chat.messages,
+            AgentEvent::ToolUpdate {
+                id: Some("sub-1".into()),
+                name: embedded::subagent_tool::NAME.into(),
+                output: "Native worker preview".into(),
+            },
+        );
         let view = pane.chat.worker_view.as_mut().expect("worker view open");
         let mut messages = vec![Arc::new(ChatMessage::new(
             ChatRole::User,
@@ -826,6 +842,7 @@ fn subagent_view_matches_main_chat_column_width_and_row_grouping() {
         cx.notify();
     });
     cx.draw_frame().expect("draw worker transcript");
+    assert!(cx.debug_bounds("subagent-progress").is_some());
     let transcript = cx
         .debug_bounds("subagent-transcript")
         .expect("subagent transcript");

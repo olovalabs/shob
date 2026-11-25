@@ -316,9 +316,38 @@ fn running_tools_are_not_left_spinning() {
         name: "read".into(),
         input: "".into(),
     });
+    let name = embedded::subagent_tool::NAME.to_owned();
+    log.append_event(&AgentEvent::ToolStart {
+        id: Some("t2".into()),
+        name: name.clone(),
+        input: "".into(),
+    });
+    log.append_event(&AgentEvent::ToolUpdate {
+        id: Some("t2".into()),
+        name,
+        output: "Transitory preview".into(),
+    });
+    log.append_event(&AgentEvent::Subagents {
+        tool_id: "t2".into(),
+        workers: vec![crate::subagent_chat::Worker {
+            id: "child".into(),
+            title: "Explorer".into(),
+            status: "running".into(),
+            transcript: Some(PathBuf::from("child.jsonl")),
+            result: None,
+        }],
+    });
     log.flush();
     let messages = load(log.path());
     assert_eq!(messages[0].tool.as_ref().unwrap().state, ToolState::Unknown);
+    let worker_tool = messages[1].tool.as_ref().unwrap();
+    assert_eq!(worker_tool.state, ToolState::Unknown);
+    assert!(worker_tool.output.is_empty());
+    assert_eq!(worker_tool.workers[0].status_label(), "Interrupted");
+    assert_eq!(
+        worker_tool.workers[0].transcript.as_deref(),
+        Some(Path::new("child.jsonl"))
+    );
     let path = log.path().to_path_buf();
     drop(log);
     let _ = fs::remove_file(path);

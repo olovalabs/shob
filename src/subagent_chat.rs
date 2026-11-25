@@ -51,13 +51,23 @@ impl Worker {
             "completed" | "success" | "succeeded" | "done" => "Completed",
             "failed" | "error" => "Failed",
             "cancelled" | "canceled" | "aborted" => "Cancelled",
+            "interrupted" => "Interrupted",
             "idle" => "Idle",
             _ => "Reported",
         }
     }
 
     fn finished(&self) -> bool {
-        matches!(self.status_label(), "Completed" | "Failed" | "Cancelled")
+        matches!(
+            self.status_label(),
+            "Completed" | "Failed" | "Cancelled" | "Interrupted"
+        )
+    }
+
+    pub fn mark_interrupted(&mut self) {
+        if matches!(self.status_label(), "Starting" | "Running") {
+            self.status = "interrupted".to_owned();
+        }
     }
 
     fn update(&mut self, next: &Self) {

@@ -322,6 +322,7 @@ fn worker_status_label(label: &str) -> &'static str {
         "Completed" => "finished",
         "Failed" => "failed",
         "Cancelled" => "was cancelled",
+        "Interrupted" => "was interrupted",
         "Idle" => "is idle",
         _ => "reported",
     }

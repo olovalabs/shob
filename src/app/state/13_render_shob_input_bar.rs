@@ -301,7 +301,6 @@ impl AppState {
             .flex()
             .flex_col()
             .children(pane.chat.active.then(|| self.render_agent_follow_ups(pane, &tokens, cx)).flatten())
-            .children(pane.chat.active.then(|| self.render_agent_activity(pane, &tokens, cx)).flatten())
             .children(pane.chat.active.then(|| self.render_agent_recovery(pane, &tokens, cx)).flatten())
             .children(
                 self.render_agent_task_list(pane, &tokens, cx)

@@ -456,16 +456,16 @@ impl AppState {
         let path = row.worker.transcript.clone().filter(|path| {
             path.starts_with(&shob_session_root) || path.starts_with(&legacy_session_root)
         });
-        let tool_id = pane.chat.visible_messages()[index]
-            .tool
-            .as_ref()
-            .and_then(|tool| tool.id.clone());
+        let tool = pane.chat.visible_messages()[index].tool.as_ref();
+        let native = tool.is_some_and(|tool| tool.name == embedded::subagent_tool::NAME);
+        let tool_id = tool.and_then(|tool| tool.id.clone());
         let id = id.to_owned();
         let worker_id = id.clone();
         let load_id = id.clone();
         let load = cx.spawn(async move |this, cx| {
             let path = match path {
                 Some(path) => Some(path),
+                None if native => None,
                 None => {
                     cx.background_executor()
                         .spawn(async move {
@@ -477,6 +477,23 @@ impl AppState {
             let Some(path) = path else { return };
             let mut previous = None;
             loop {
+                let running = if native {
+                    let Ok(Some(running)) = this.update(cx, |this, _| {
+                        let pane = this.pane_mut(pane_id)?;
+                        let view = pane.chat.worker_view.as_ref()?;
+                        (view.id == load_id && view.index == index).then(|| {
+                            pane.chat.running
+                                && pane.chat.visible_messages().get(index)
+                                    .and_then(|message| message.tool.as_ref())
+                                    .is_some_and(|tool| tool.state == ToolState::Running)
+                        })
+                    }) else {
+                        break;
+                    };
+                    running
+                } else {
+                    true
+                };
                 let file = path.clone();
                 let snapshot = cx
                     .background_executor()
@@ -509,6 +526,9 @@ impl AppState {
                     {
                         break;
                     }
+                }
+                if !running {
+                    break;
                 }
                 cx.background_executor()
                     .timer(std::time::Duration::from_millis(250))
@@ -572,6 +592,21 @@ impl AppState {
         let tokens = self.tokens(cx);
         let worker = row.worker;
         let running = matches!(worker.status_label(), "Starting" | "Running");
+        let live_preview = pane.chat.visible_messages().get(row.index)
+            .and_then(|message| message.tool.as_ref())
+            .filter(|tool| {
+                running && tool.name == embedded::subagent_tool::NAME && tool.state == ToolState::Running
+            })
+            .and_then(|tool| tool.output.lines().rev().find(|line| !line.trim().is_empty()))
+            .map(|line| {
+                let start = line.ceil_char_boundary(line.len().saturating_sub(512));
+                SharedString::from(&line[start..])
+            });
+        let terminal_notice = row.result
+            .filter(|_| matches!(worker.status_label(), "Failed" | "Cancelled"))
+            .and_then(|text| text.lines().next())
+            .filter(|line| !line.is_empty())
+            .map(|line| SharedString::from(&line[..line.floor_char_boundary(line.len().min(512))]));
         let back = div()
             .id(("subagent-back", pane_id))
             .debug_selector(|| "subagent-back".to_string())
@@ -742,7 +777,17 @@ impl AppState {
                                                     "Subagent · {}",
                                                     worker.status_label()
                                                 )),
-                                        ),
+                                        )
+                                        .children(live_preview.or(terminal_notice).map(|text| {
+                                            div()
+                                                .id(("subagent-progress", pane_id))
+                                                .debug_selector(|| "subagent-progress".to_string())
+                                                .min_w_0()
+                                                .truncate()
+                                                .text_size(px(12.0))
+                                                .text_color(tokens.text_secondary)
+                                                .child(text)
+                                        })),
                                 ),
                         ),
                 ),

@@ -3258,21 +3258,53 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn host_subagents_runs_child_and_forwards_tool_details() {
-        use ai::providers::faux::{FauxProvider, FauxScript, FauxStep};
+    async fn host_subagents_forwards_each_workers_result() {
+        use ai::providers::faux::{
+            faux_assistant_message, FauxBlock, FauxProvider, FauxScript, FauxStep,
+        };
+        use ai::types::{Content, Message, StopReason};
         use ai::{Api, Model};
         use harness::agent_harness::AgentLane;
         use runtime::{ModelRequest, ProviderDeclaration, ProviderRegistry, RuntimeConfig};
         use std::collections::BTreeMap;
 
         let script = FauxScript::new();
+        let reports = ["Found a useful lead.", "Found no issues."];
         script.set_responses(vec![
-            FauxStep::tool_call(
-                "subagent",
-                serde_json::json!({"role": "Explorer", "task": "Check workspace"}),
-            ),
-            FauxStep::text("Explorer found nothing wrong."),
-            FauxStep::text("All clear from parent."),
+            FauxStep::message(faux_assistant_message(
+                vec![
+                    FauxBlock::tool_call(
+                        "subagent",
+                        serde_json::json!({"role":"Explorer", "task":"Check workspace"}),
+                    ),
+                    FauxBlock::tool_call(
+                        "subagent",
+                        serde_json::json!({"role":"Reviewer", "task":"Check documentation"}),
+                    ),
+                ],
+                StopReason::ToolUse,
+            )),
+            FauxStep::text(reports[0]),
+            FauxStep::text(reports[1]),
+            FauxStep::factory(move |ctx| {
+                let mut outputs = ctx
+                    .messages
+                    .iter()
+                    .filter_map(|message| match message {
+                        Message::ToolResult(result) => {
+                            assert!(!result.is_error);
+                            let [Content::Text(text)] = result.content.as_slice() else {
+                                panic!("expected a text report");
+                            };
+                            Some(text.text.lines().next().unwrap())
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                outputs.sort_unstable();
+                assert_eq!(outputs, reports);
+                faux_assistant_message("All clear from parent.", StopReason::Stop)
+            }),
         ]);
         let model = Model::new(
             "embedded-subagent",
@@ -3362,13 +3394,29 @@ mod tests {
             )),
             "expected live running ToolDetails, got {events:?}"
         );
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                SessionEvent::ToolDetails { name, details, .. }
-                    if name == "subagent" && details["progress"][0]["status"] == "completed"
-            )),
-            "expected final completed ToolDetails, got {events:?}"
+        let completed = events
+            .iter()
+            .filter_map(|event| match event {
+                SessionEvent::ToolDetails { id, name, details } if name == "subagent" => {
+                    let worker = &details["progress"][0];
+                    (worker["status"] == "completed").then_some((id, worker))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            completed.len(),
+            2,
+            "expected two completed workers: {events:?}"
         );
+        assert_ne!(completed[0].0, completed[1].0);
+        assert_ne!(completed[0].1["id"], completed[1].1["id"]);
+        assert_ne!(completed[0].1["transcript"], completed[1].1["transcript"]);
+        let mut outputs = completed
+            .iter()
+            .map(|(_, worker)| worker["resultText"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        outputs.sort_unstable();
+        assert_eq!(outputs, reports);
     }
 }

@@ -64,10 +64,9 @@ impl PaneChat {
     }
 
     fn event_updates_root(event: &agent_bridge::AgentEvent) -> bool {
-        !matches!(
-            event,
-            agent_bridge::AgentEvent::Text(_) | agent_bridge::AgentEvent::Thinking(_)
-        )
+        use agent_bridge::AgentEvent;
+        !matches!(event, AgentEvent::Text(_) | AgentEvent::Thinking(_))
+            && !matches!(event, AgentEvent::ToolUpdate { name, .. } if name == embedded::subagent_tool::NAME)
     }
 
     fn set_usage(&mut self, usage: embedded::AgentUsage) {
@@ -348,6 +347,7 @@ impl PaneChat {
         let mut from = tail;
         match event {
             AgentEvent::Done | AgentEvent::Closed => {
+                cache.invalidate_workers();
                 from = self
                     .messages
                     .iter()
@@ -415,10 +415,6 @@ impl PaneChat {
 
     fn scroll_to_end(&self) {
         scroll_list_to_end(&self.list_state);
-    }
-
-    fn remeasure_row(&self, row: usize) {
-        remeasure_list_row(&self.list_state, row);
     }
 
     fn list_source(&self, running: bool) -> ChatListSource<'_> {

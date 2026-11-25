@@ -5,13 +5,13 @@
 //! Child sessions cannot recursively spawn subagents or expand capabilities.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use agent::types::{AgentToolResult, TextContentOrImage, ToolExecutionMode, ToolResultPartial};
 use agent::{AgentEmitter, AgentError, AgentEvent, AgentTool};
-use ai::types::{AssistantMessageEvent, Schema, Tool};
+use ai::types::{AssistantMessageEvent, Schema, StopReason, Tool};
 use async_trait::async_trait;
 use futures::FutureExt;
 use harness::agent_harness::{AgentHarness, HarnessRunOutcome, RunResult, WeakAgentHarness};
@@ -34,8 +34,9 @@ const MAX_TURNS: u32 = 32;
 const DEFAULT_TIMEOUT_SECONDS: u64 = 600;
 const MAX_ACTIVE_SUBAGENTS: usize = 16;
 const MAX_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
-const MAX_EVENTS: usize = 8192;
-const UPDATE_INTERVAL: Duration = Duration::from_millis(200);
+const MAX_REPORT_BYTES: usize = 64 * 1024;
+const MAX_PREVIEW_BYTES: usize = 2048;
+const UPDATE_INTERVAL: Duration = Duration::from_millis(50);
 
 pub(crate) fn prompt_metadata() -> extensions::ToolPromptMetadata {
     extensions::ToolPromptMetadata {
@@ -44,7 +45,7 @@ pub(crate) fn prompt_metadata() -> extensions::ToolPromptMetadata {
                 .into(),
         ),
         prompt_guidelines: vec![
-            "Use subagent when a task benefits from isolated context or parallel exploration (multiple independent subagent calls run concurrently)."
+            "Use subagent when a task benefits from isolated context or parallel exploration. Issue independent calls in the same response to run them concurrently. Give each worker a clear deliverable. The tool returns its report and, when available, a transcript path you can read in sections for more detail."
                 .into(),
         ],
     }
@@ -352,8 +353,19 @@ impl AgentTool for SubagentTool {
                 max_turns,
                 requested_tools,
             )
-            .await
-            .map_err(|error| AgentError::Tool(error.to_string()))?;
+            .await;
+        let child = match child {
+            Ok(child) => child,
+            Err(error) => {
+                return finish_result(
+                    &child_id,
+                    &role,
+                    "failed",
+                    transcript_path.as_deref(),
+                    format!("Could not start subagent: {error}"),
+                )
+            }
+        };
 
         // Emit initial running worker snapshot so the host UI immediately renders
         // the subagent row and binds its live transcript viewer.
@@ -392,17 +404,13 @@ impl AgentTool for SubagentTool {
             Ok(result) => result,
             Err(_) => {
                 let _ = cleanup_harness.close().await;
-                Err(AgentError::StructuredTool(Box::new(AgentToolResult {
-                    content: vec![TextContentOrImage::text("subagent runner panicked")],
-                    details: progress_details(
-                        &child_id,
-                        &role,
-                        "failed",
-                        transcript_path.as_deref(),
-                        Some("subagent runner panicked"),
-                    ),
-                    ..Default::default()
-                })))
+                finish_result(
+                    &child_id,
+                    &role,
+                    "failed",
+                    transcript_path.as_deref(),
+                    "Subagent runner panicked.".into(),
+                )
             }
         };
         execution_scope.wait_idle().await;
@@ -453,144 +461,127 @@ async fn run_child(
         _ = child.scope.cancelled() => StopReasonKind::Cancelled("parent run ended"),
         _ = parent_abort => StopReasonKind::Cancelled("parent run cancelled"),
         _ = tokio::time::sleep(Duration::from_secs(DEFAULT_TIMEOUT_SECONDS)) => StopReasonKind::TimedOut,
+        _ = observer.publish_updates() => unreachable!(),
         result = &mut run => StopReasonKind::Finished(result),
     };
 
-    let outcome = match stop {
+    let (status, notice, text) = match stop {
         StopReasonKind::Finished(Ok(result)) => {
             let _ = child.harness.drain_session().await;
             let _ = child.harness.close().await;
             match result.outcome {
                 HarnessRunOutcome::Completed { final_message, .. } => {
                     let text = assistant_text(&final_message);
-                    let display = if text.trim().is_empty() {
-                        "(subagent completed with no text output)".to_owned()
-                    } else {
-                        text
-                    };
-                    Ok(AgentToolResult {
-                        content: vec![TextContentOrImage::text(display.clone())],
-                        details: progress_details(
-                            child_id,
-                            role,
-                            "completed",
-                            transcript_path,
-                            Some(&display),
+                    match final_message.stop_reason {
+                        StopReason::ToolUse => (
+                            "failed",
+                            Some("Subagent stopped after using tools without a final report. It may have reached its turn limit.".into()),
+                            text,
                         ),
-                        ..Default::default()
-                    })
-                }
-                HarnessRunOutcome::Aborted { final_message, .. } => {
-                    let partial = assistant_text(&final_message);
-                    let msg = if partial.trim().is_empty() {
-                        "subagent aborted".to_owned()
-                    } else {
-                        format!("subagent aborted\n\n{partial}")
-                    };
-                    Err(AgentError::StructuredTool(Box::new(AgentToolResult {
-                        content: vec![TextContentOrImage::text(msg.clone())],
-                        details: progress_details(
-                            child_id,
-                            role,
-                            "cancelled",
-                            transcript_path,
-                            Some(&msg),
+                        StopReason::Length => (
+                            "failed",
+                            Some("Subagent reached the model's output limit; the report is incomplete.".into()),
+                            text,
                         ),
-                        ..Default::default()
-                    })))
+                        _ if text.trim().is_empty() => (
+                            "failed",
+                            Some("Subagent ended without a final text report.".into()),
+                            text,
+                        ),
+                        _ => ("completed", None, text),
+                    }
                 }
+                HarnessRunOutcome::Aborted { final_message, .. } => (
+                    "cancelled",
+                    Some("Subagent aborted.".into()),
+                    assistant_text(&final_message),
+                ),
                 HarnessRunOutcome::Failed {
                     error,
                     final_message,
                     ..
-                } => {
-                    let partial = final_message
+                } => (
+                    "failed",
+                    Some(format!("Subagent failed: {}", error.message)),
+                    final_message
                         .map(|m| assistant_text(&m))
-                        .unwrap_or_default();
-                    let msg = if partial.trim().is_empty() {
-                        format!("subagent failed: {error:?}")
-                    } else {
-                        format!("subagent failed: {error:?}\n\n{partial}")
-                    };
-                    Err(AgentError::StructuredTool(Box::new(AgentToolResult {
-                        content: vec![TextContentOrImage::text(msg.clone())],
-                        details: progress_details(
-                            child_id,
-                            role,
-                            "failed",
-                            transcript_path,
-                            Some(&msg),
-                        ),
-                        ..Default::default()
-                    })))
-                }
-                HarnessRunOutcome::Suspended { .. } => {
-                    let msg = "subagent suspended unexpectedly".to_owned();
-                    Err(AgentError::StructuredTool(Box::new(AgentToolResult {
-                        content: vec![TextContentOrImage::text(msg.clone())],
-                        details: progress_details(
-                            child_id,
-                            role,
-                            "failed",
-                            transcript_path,
-                            Some(&msg),
-                        ),
-                        ..Default::default()
-                    })))
-                }
+                        .unwrap_or_default(),
+                ),
+                HarnessRunOutcome::Suspended { .. } => (
+                    "failed",
+                    Some("Subagent suspended unexpectedly.".into()),
+                    String::new(),
+                ),
             }
         }
         StopReasonKind::Finished(Err(error)) => {
             let _ = child.harness.drain_session().await;
             let _ = child.harness.close().await;
-            let msg = format!("subagent run failed: {error}");
-            Err(AgentError::StructuredTool(Box::new(AgentToolResult {
-                content: vec![TextContentOrImage::text(msg.clone())],
-                details: progress_details(child_id, role, "failed", transcript_path, Some(&msg)),
-                ..Default::default()
-            })))
+            (
+                "failed",
+                Some(format!("Subagent run failed: {error}")),
+                String::new(),
+            )
         }
-        StopReasonKind::Cancelled(reason) => {
+        stop => {
             let _ = lane.abort().await;
             let _ = child.harness.close().await;
             let _ = tokio::time::timeout(Duration::from_secs(2), &mut run).await;
-            Err(AgentError::StructuredTool(Box::new(AgentToolResult {
-                content: vec![TextContentOrImage::text(reason)],
-                details: progress_details(
-                    child_id,
-                    role,
-                    "cancelled",
-                    transcript_path,
-                    Some(reason),
+            let (status, notice) = match stop {
+                StopReasonKind::Cancelled(reason) => ("cancelled", reason.to_owned()),
+                StopReasonKind::TimedOut => (
+                    "failed",
+                    format!("Subagent timed out after {DEFAULT_TIMEOUT_SECONDS} seconds."),
                 ),
-                ..Default::default()
-            })))
-        }
-        StopReasonKind::TimedOut => {
-            let _ = lane.abort().await;
-            let _ = child.harness.close().await;
-            let _ = tokio::time::timeout(Duration::from_secs(2), &mut run).await;
-            let msg = format!("subagent timed out after {DEFAULT_TIMEOUT_SECONDS} seconds");
-            Err(AgentError::StructuredTool(Box::new(AgentToolResult {
-                content: vec![TextContentOrImage::text(msg.clone())],
-                details: progress_details(child_id, role, "failed", transcript_path, Some(&msg)),
-                ..Default::default()
-            })))
-        }
-        StopReasonKind::OutputLimit => {
-            let _ = lane.abort().await;
-            let _ = child.harness.close().await;
-            let _ = tokio::time::timeout(Duration::from_secs(2), &mut run).await;
-            let msg = "subagent output limit exceeded".to_owned();
-            Err(AgentError::StructuredTool(Box::new(AgentToolResult {
-                content: vec![TextContentOrImage::text(msg.clone())],
-                details: progress_details(child_id, role, "failed", transcript_path, Some(&msg)),
-                ..Default::default()
-            })))
+                StopReasonKind::OutputLimit => ("failed", "Subagent output limit exceeded.".into()),
+                StopReasonKind::Finished(_) => unreachable!(),
+            };
+            (status, Some(notice), String::new())
         }
     };
-    observer.finished.store(true, Ordering::Release);
-    outcome
+    let mut report = notice.unwrap_or_default();
+    if text.trim().is_empty() && status != "completed" {
+        let partial = observer.partial_text();
+        if !partial.trim().is_empty() {
+            report.push_str("\n\nLatest partial output:\n");
+            report.push_str(&partial);
+        }
+    } else {
+        if !report.is_empty() {
+            report.push_str("\n\n");
+        }
+        report.push_str(&text);
+    }
+    finish_result(child_id, role, status, transcript_path, report)
+}
+
+fn finish_result(
+    id: &str,
+    role: &str,
+    status: &str,
+    transcript: Option<&Path>,
+    mut report: String,
+) -> Result<AgentToolResult, AgentError> {
+    if report.len() > MAX_REPORT_BYTES {
+        report.truncate(prefix_end(&report, MAX_REPORT_BYTES));
+        report.push_str("\n\n[Report truncated.]");
+    }
+    let details = progress_details(id, role, status, transcript, Some(&report));
+    if let Some(path) = transcript {
+        report.push_str(&format!("\n\nSubagent transcript: {}", path.display()));
+    } else {
+        report.push_str("\n\nNo durable subagent transcript was saved.");
+    }
+    let result = AgentToolResult {
+        content: vec![TextContentOrImage::text(report)],
+        details,
+        ..Default::default()
+    };
+    if status == "completed" {
+        Ok(result)
+    } else {
+        Err(AgentError::StructuredTool(Box::new(result)))
+    }
 }
 
 struct ChildObserver {
@@ -599,16 +590,17 @@ struct ChildObserver {
     transcript_path: Option<PathBuf>,
     on_update: Arc<dyn Fn(ToolResultPartial) + Send + Sync>,
     limit_exceeded: CancellationToken,
-    finished: AtomicBool,
+    changed: tokio::sync::Notify,
     state: Mutex<ObserverState>,
 }
 
+#[derive(Default)]
 struct ObserverState {
     bytes: usize,
-    events: usize,
     turns: u32,
-    last_emit: Instant,
     activity: Option<String>,
+    preview: String,
+    last_report: String,
 }
 
 impl ChildObserver {
@@ -624,62 +616,89 @@ impl ChildObserver {
             transcript_path,
             on_update,
             limit_exceeded: CancellationToken::new(),
-            finished: AtomicBool::new(false),
-            state: Mutex::new(ObserverState {
-                bytes: 0,
-                events: 0,
-                turns: 0,
-                last_emit: Instant::now() - UPDATE_INTERVAL,
-                activity: None,
-            }),
+            changed: tokio::sync::Notify::new(),
+            state: Mutex::new(ObserverState::default()),
         }
     }
 
     fn observe(&self, event: AgentEvent) {
-        if self.finished.load(Ordering::Acquire) {
-            return;
-        }
-        let mut emit_text: Option<String> = None;
-        {
-            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-            let mut changed = false;
-            match event {
-                AgentEvent::TurnEnd { .. } => {
-                    state.turns += 1;
-                    changed = true;
-                }
-                AgentEvent::ToolExecutionStart { tool_name, .. } => {
-                    state.activity = Some(format!("Running {tool_name}"));
-                    changed = true;
-                }
-                AgentEvent::MessageUpdate {
-                    assistant_message_event: AssistantMessageEvent::TextDelta { delta, .. },
-                    ..
-                } => {
-                    if state.bytes.saturating_add(delta.len()) > MAX_OUTPUT_BYTES
-                        || state.events >= MAX_EVENTS
-                    {
-                        self.limit_exceeded.cancel();
-                        return;
-                    }
-                    state.bytes += delta.len();
-                    state.events += 1;
-                }
-                _ => {}
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        match event {
+            AgentEvent::TurnStart => {
+                state.turns += 1;
+                state.activity = None;
+                state.preview.clear();
             }
-            if changed && state.last_emit.elapsed() >= UPDATE_INTERVAL {
-                state.last_emit = Instant::now();
-                let summary = match &state.activity {
-                    Some(activity) if state.turns > 0 => {
-                        format!("{} (turn {}): {activity}…", self.role, state.turns + 1)
+            AgentEvent::TurnEnd {
+                message: agent::AgentMessage::Assistant(message),
+                ..
+            } => {
+                let mut text = assistant_text(&message);
+                if !text.trim().is_empty() {
+                    if text.len() > MAX_REPORT_BYTES {
+                        text.truncate(prefix_end(&text, MAX_REPORT_BYTES));
+                        text.push_str("\n\n[Partial output truncated.]");
                     }
-                    Some(activity) => format!("{}: {activity}…", self.role),
-                    None => format!("{} (turn {})…", self.role, state.turns + 1),
-                };
-                emit_text = Some(summary);
+                    state.last_report = text;
+                }
+                return;
             }
+            AgentEvent::RetryScheduled { attempt, .. } => {
+                state.preview.clear();
+                state.activity = Some(format!("Retrying provider request ({attempt})"));
+            }
+            AgentEvent::ToolExecutionStart { tool_name, .. } => {
+                state.activity = Some(format!("Running {tool_name}"));
+            }
+            AgentEvent::MessageUpdate {
+                assistant_message_event: AssistantMessageEvent::TextDelta { delta, .. },
+                ..
+            } if !delta.is_empty() => {
+                state.bytes = state.bytes.saturating_add(delta.len());
+                if state.bytes > MAX_OUTPUT_BYTES {
+                    self.limit_exceeded.cancel();
+                    return;
+                }
+                state.preview.push_str(tail(&delta, MAX_PREVIEW_BYTES));
+                if state.preview.len() > MAX_PREVIEW_BYTES * 2 {
+                    let start = tail_start(&state.preview, MAX_PREVIEW_BYTES);
+                    state.preview.drain(..start);
+                }
+            }
+            _ => return,
         }
-        if let Some(text) = emit_text {
+        self.changed.notify_one();
+    }
+
+    fn partial_text(&self) -> String {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if !state.last_report.is_empty() {
+            state.last_report.clone()
+        } else {
+            tail(&state.preview, MAX_PREVIEW_BYTES).to_owned()
+        }
+    }
+
+    async fn publish_updates(&self) {
+        loop {
+            self.changed.notified().await;
+            let text = {
+                let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+                let mut text = format!("{} (turn {})", self.role, state.turns);
+                if let Some(activity) = &state.activity {
+                    text.push_str(": ");
+                    text.push_str(activity);
+                }
+                let preview = tail(&state.preview, MAX_PREVIEW_BYTES);
+                if !preview.trim().is_empty() {
+                    text.push('\n');
+                    if preview.len() < state.preview.len() {
+                        text.push('…');
+                    }
+                    text.push_str(preview);
+                }
+                text
+            };
             (self.on_update)(ToolResultPartial {
                 content: vec![TextContentOrImage::text(text)],
                 details: progress_details(
@@ -691,8 +710,29 @@ impl ChildObserver {
                 ),
                 ..Default::default()
             });
+            tokio::time::sleep(UPDATE_INTERVAL).await;
         }
     }
+}
+
+fn prefix_end(text: &str, max_bytes: usize) -> usize {
+    let mut end = text.len().min(max_bytes);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    end
+}
+
+fn tail_start(text: &str, bytes: usize) -> usize {
+    let mut start = text.len().saturating_sub(bytes);
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    start
+}
+
+fn tail(text: &str, bytes: usize) -> &str {
+    &text[tail_start(text, bytes)..]
 }
 
 struct ChildEmitter(Arc<ChildObserver>);
@@ -746,7 +786,10 @@ fn sanitize_id(raw: &str, fallback: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ai::providers::faux::{FauxProvider, FauxScript, FauxStep};
+    use ai::providers::faux::{
+        faux_assistant_message, FauxBlock, FauxProvider, FauxScript, FauxStep,
+    };
+    use ai::types::{Content, Message};
     use harness::agent_harness::AgentLane;
     use harness::types::AgentHarnessOptions;
 
@@ -834,7 +877,19 @@ mod tests {
             ),
             FauxStep::tool_call("read", json!({"path": "hello.txt"})),
             FauxStep::text("Child summary: hello world"),
-            FauxStep::text("Parent done."),
+            FauxStep::factory(|ctx| {
+                let Some(Message::ToolResult(result)) = ctx.messages.last() else {
+                    panic!("parent did not receive the worker tool result");
+                };
+                assert!(!result.is_error);
+                let [Content::Text(result)] = result.content.as_slice() else {
+                    panic!("expected a text report");
+                };
+                assert!(result
+                    .text
+                    .starts_with("Child summary: hello world\n\nSubagent transcript: "));
+                faux_assistant_message("Parent done.", StopReason::Stop)
+            }),
         ]);
         let (parent, _provider, harness_cell, env) =
             test_parent(script, Some(dir.path().to_path_buf())).await;
@@ -925,6 +980,90 @@ mod tests {
         parent.close().await.unwrap();
         drop(parent);
         assert!(weak.get().unwrap().upgrade().is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn incomplete_worker_reports_reach_the_parent_as_errors() {
+        for (step, max_turns, notice) in [
+            (FauxStep::text(" "), 3, "without a final text report"),
+            (
+                FauxStep::tool_call("read", json!({"path":"two.txt"})),
+                2,
+                "stopped after using tools without a final report",
+            ),
+        ] {
+            let script = FauxScript::new();
+            script.set_responses(vec![
+                FauxStep::tool_call(
+                    NAME,
+                    json!({"task":"Check the files", "maxTurns":max_turns}),
+                ),
+                FauxStep::message(faux_assistant_message(
+                    vec![
+                        FauxBlock::text("Useful lead from an earlier turn."),
+                        FauxBlock::tool_call("read", json!({"path":"one.txt"})),
+                    ],
+                    StopReason::ToolUse,
+                )),
+                step,
+                FauxStep::factory(move |ctx| {
+                    let Some(Message::ToolResult(result)) = ctx.messages.last() else {
+                        panic!("parent did not receive the worker tool result");
+                    };
+                    assert!(result.is_error);
+                    let [Content::Text(result)] = result.content.as_slice() else {
+                        panic!("expected a text report");
+                    };
+                    assert!(result.text.contains(notice), "{}", result.text);
+                    assert!(result.text.contains("Useful lead from an earlier turn."));
+                    faux_assistant_message("Parent understood.", StopReason::Stop)
+                }),
+            ]);
+            let (parent, _, _, _) = test_parent(script, None).await;
+            let result = parent
+                .prompt_text("Delegate file check", vec![])
+                .await
+                .unwrap();
+            assert!(
+                matches!(result.outcome, HarnessRunOutcome::Completed { final_message, .. }
+                if assistant_text(&final_message) == "Parent understood.")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn worker_text_is_available_in_a_bounded_live_snapshot() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let observer = ChildObserver::new(
+            "worker".into(),
+            "Explorer".into(),
+            None,
+            Arc::new(move |update| {
+                tx.try_send(update).unwrap();
+            }),
+        );
+        let message = Arc::new(faux_assistant_message("", StopReason::Stop));
+        for delta in ["界".repeat(MAX_PREVIEW_BYTES), "live report".to_owned()] {
+            observer.observe(AgentEvent::MessageUpdate {
+                message: message.clone(),
+                message_id: None,
+                assistant_message_event: AssistantMessageEvent::TextDelta {
+                    content_index: 0,
+                    delta,
+                    partial: message.clone(),
+                },
+            });
+        }
+        let update = tokio::select! {
+            _ = observer.publish_updates() => unreachable!(),
+            update = rx.recv() => update.unwrap(),
+        };
+        let [TextContentOrImage::Text(text)] = update.content.as_slice() else {
+            panic!("expected text preview");
+        };
+        assert!(text.text.ends_with("live report"));
+        assert!(text.text.len() < MAX_PREVIEW_BYTES + 100);
+        assert_eq!(update.details["progress"][0]["status"], "running");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

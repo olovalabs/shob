@@ -310,6 +310,7 @@ impl Render for AppState {
                                     view.child(self.render_focused_agent_info(
                                         pane,
                                         usage.is_some(),
+                                        _window,
                                         cx,
                                     ))
                                 },

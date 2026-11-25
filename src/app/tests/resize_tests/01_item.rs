@@ -495,10 +495,21 @@ fn focused_environment_panel_opens_on_narrow_windows() {
         "the welcome screen hides project details"
     );
     cx.update_window_entity(&state, |s, _, cx| {
-        s.projects[0].sessions[0].panes[0]
-            .chat
-            .messages
-            .push(Arc::new(ChatMessage::new(ChatRole::User, "Hello".into())));
+        let messages = s.projects[0].sessions[0].panes[0].chat.visible_messages_mut();
+        messages.push(Arc::new(ChatMessage::new(ChatRole::User, "Hello".into())));
+        push_chat_event(messages, agent_bridge::AgentEvent::Subagents {
+            tool_id: "workers".into(),
+            workers: [ ("Scanning", "running"), ("Reviewed", "completed") ]
+                .into_iter()
+                .map(|(id, status)| subagent_chat::Worker {
+                    id: id.into(),
+                    title: id.into(),
+                    status: status.into(),
+                    transcript: None,
+                    result: None,
+                })
+                .collect(),
+        });
         cx.notify();
     });
     cx.draw_frame().unwrap();
@@ -509,7 +520,34 @@ fn focused_environment_panel_opens_on_narrow_windows() {
     assert!(cx.debug_bounds("agent-info-toggle").is_none());
     cx.simulate_click(toggle.center(), Modifiers::none());
     cx.draw_frame().unwrap();
-    assert!(cx.debug_bounds("agent-changes").is_some());
+    let changes = cx.debug_bounds("agent-changes").unwrap();
+    let agents = cx.debug_bounds("active-agents").unwrap();
+    assert!(agents.top() > changes.bottom());
+    let worker = cx.debug_bounds("active-agent-Scanning").unwrap();
+    let avatar = cx.debug_bounds("active-agent-avatar").unwrap();
+    let loader = cx.debug_bounds("active-agent-loader").unwrap();
+    assert!(avatar.right() < worker.center().x && loader.left() > worker.center().x);
+    let loader_colors = |cx: &mut VisualTestContext| {
+        cx.update(|window, _| {
+            let scale = window.scale_factor();
+            let bounds = loader.scale(scale);
+            window.painted_quads().into_iter()
+                .filter(|quad| quad.bounds.size.width == px(4.0).scale(scale)
+                    && bounds.contains(&quad.bounds.center()))
+                .map(|quad| quad.background)
+                .collect::<Vec<_>>()
+        })
+    };
+    let before = loader_colors(&mut cx);
+    assert_eq!(before.len(), 9);
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(2765));
+    cx.run_until_parked();
+    cx.draw_frame().unwrap();
+    let after = loader_colors(&mut cx);
+    assert_eq!(after.len(), 9);
+    assert_ne!(before, after, "loader must keep animating after the old one-shot ends");
+    assert!(cx.debug_bounds("active-agent-Reviewed").is_none());
     assert!(cx.debug_bounds("Open in Zed").is_some());
     let primary = cx.debug_bounds("open-default-editor").unwrap();
     let chevron = cx.debug_bounds("open-editor-picker").unwrap();
@@ -521,6 +559,13 @@ fn focused_environment_panel_opens_on_narrow_windows() {
     cx.simulate_click(toggle.center(), Modifiers::none());
     cx.draw_frame().unwrap();
     assert!(cx.debug_bounds("agent-changes").is_none());
+    assert!(cx.debug_bounds("active-agents").is_none());
+    cx.simulate_click(toggle.center(), Modifiers::none());
+    cx.draw_frame().unwrap();
+    let active_agent = cx.debug_bounds("active-agent-Scanning").unwrap();
+    cx.simulate_click(active_agent.center(), Modifiers::none());
+    cx.draw_frame().unwrap();
+    assert!(cx.debug_bounds("subagent-back").is_some());
 }
 
 #[test]

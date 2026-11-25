@@ -183,6 +183,8 @@ For read-only investigations, the built-in agent can use declarative **codemode*
 
 Tool-result details include observed duration and displayed bytes, not estimated token savings. Aggregate counters are transient and reset on session start or tool reload; they do not change workspace persistence.
 
+In native Agent chat with the embedded backend, the agent can delegate independent tasks to subagents in parallel. Open a worker to see its live preview and saved transcript. The parent receives each worker’s report and a transcript path for detailed output; if a worker stops without a report, the parent sees why and receives recent partial text when available. Workers inherit the parent’s tools and approval rules.
+
 ### Agent Permissions
 
 Shob remembers the approval mode selected in native agent chat across restarts.

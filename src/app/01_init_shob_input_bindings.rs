@@ -78,6 +78,40 @@ fn sidebar_loader(phase: f32, color: Hsla) -> Div {
     grid
 }
 
+struct AgentActivityLoader(Hsla);
+
+impl Render for AgentActivityLoader {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        use gpui::{Animation, AnimationExt};
+
+        let color = self.0;
+        sidebar_loader(0.0, color).with_animation(
+            "agent-loader-wave",
+            Animation::new(std::time::Duration::from_millis(650))
+                .repeat_synced()
+                .with_max_fps(15.0),
+            move |_, phase| sidebar_loader(phase, color),
+        )
+    }
+}
+
+fn animated_agent_loader(
+    id: impl Into<ElementId>,
+    color: Hsla,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement {
+    let loader = window.use_keyed_state(id, cx, |_, _| AgentActivityLoader(color));
+    if loader.read(cx).0 != color {
+        loader.update(cx, |loader, cx| {
+            loader.0 = color;
+            cx.notify();
+        });
+    }
+    // Animation ticks invalidate the loader view, not its surrounding chat or drawer.
+    loader.cached(StyleRefinement::default().size(px(16.0)).flex_shrink_0())
+}
+
 #[cfg(unix)]
 static STATUS_BUS: std::sync::LazyLock<Option<status_bus::BusIdentity>> =
     std::sync::LazyLock::new(|| status_bus::start().ok());

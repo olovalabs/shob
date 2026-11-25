@@ -198,6 +198,7 @@ impl AppState {
         &self,
         pane: &TerminalPane,
         has_usage: bool,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let tokens = self.tokens(cx);
@@ -236,17 +237,19 @@ impl AppState {
             .right(px(16.0))
             .w(px(280.0))
             .max_w(relative(0.9))
-            .rounded(px(14.0))
-            .border_1()
-            .border_color(tokens.card_border)
-            .bg(tokens.card_hover)
-            .shadow_md()
-            .overflow_hidden()
+            .max_h(relative(0.75))
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
             .child(
                 div()
-                    .id(("project-details-body", pane_id))
-                    .max_h(px(520.0))
-                    .overflow_y_scrollbar()
+                    .flex_shrink_0()
+                    .rounded(px(14.0))
+                    .border_1()
+                    .border_color(tokens.card_border)
+                    .bg(tokens.card_hover)
+                    .shadow_md()
                     .flex()
                     .flex_col()
                     .p(px(8.0))
@@ -554,6 +557,98 @@ impl AppState {
                             ),
                     ),
             )
+            .children(self.render_active_agents(pane, tokens, window, cx))
+    }
+
+    fn render_active_agents(
+        &self,
+        pane: &TerminalPane,
+        tokens: ThemeTokens,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
+        let pane_id = pane.id;
+        let rows = Self::build_chat_rows(&pane.chat, pane.chat.visible_running());
+        let rows = rows.borrow();
+        let active = rows.workers.iter().filter(|row| row.is_active());
+        let count = active.clone().count();
+        if count == 0 {
+            return None;
+        }
+        Some(
+            div()
+                .id(("active-agents", pane_id))
+                .debug_selector(|| "active-agents".into())
+                .flex_shrink_0()
+                .rounded(px(14.0))
+                .border_1()
+                .border_color(tokens.card_border)
+                .bg(tokens.card_hover)
+                .p(px(8.0))
+                .child(
+                    div()
+                        .px(px(6.0))
+                        .py(px(5.0))
+                        .text_size(px(12.0))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(tokens.text_secondary)
+                        .child(if count == 1 {
+                            "1 Active Agent".to_owned()
+                        } else {
+                            format!("{count} Active Agents")
+                        }),
+                )
+                .children(active.map(|row| {
+                    let index = row.index;
+                    let worker = row.id.clone();
+                    let loader = animated_agent_loader(
+                        format!("drawer-loader-{pane_id}-{index}-{worker}"),
+                        tokens.text_secondary,
+                        window,
+                        cx,
+                    );
+                    div()
+                        .id(SharedString::from(format!("active-agent-{pane_id}-{index}-{worker}")))
+                        .debug_selector({
+                            let worker = worker.clone();
+                            move || format!("active-agent-{worker}")
+                        })
+                        .h(px(30.0))
+                        .px(px(6.0))
+                        .rounded(px(6.0))
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .text_size(px(12.0))
+                        .cursor_pointer()
+                        .hover(|row| row.bg(tokens.pane_header_btn_hover))
+                        .child(
+                            div()
+                                .debug_selector(|| "active-agent-avatar".into())
+                                .flex_shrink_0()
+                                .child(Self::worker_avatar(row.avatar, 3.0)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_color(tokens.text_primary)
+                                .child(row.title.clone()),
+                        )
+                        .child(
+                            div()
+                                .debug_selector(|| "active-agent-loader".into())
+                                .size(px(16.0))
+                                .flex_shrink_0()
+                                .child(loader),
+                        )
+                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.open_worker_view(pane_id, index, &worker, window, cx);
+                        }))
+                })),
+        )
     }
 
     fn render_tool_panel_chooser(

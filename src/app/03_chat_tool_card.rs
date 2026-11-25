@@ -548,6 +548,9 @@ fn finish_chat_tools(messages: &mut [Arc<ChatMessage>]) {
             && let Some(tool) = Arc::make_mut(message).tool.as_mut()
         {
             tool.state = ToolState::Unknown;
+            if tool.name == embedded::subagent_tool::NAME {
+                tool.workers.iter_mut().for_each(subagent_chat::Worker::mark_interrupted);
+            }
             if chat_batch::is_batch(&tool.name) {
                 tool.expanded = false;
             }
@@ -874,6 +877,12 @@ struct WorkerRowSnapshot {
     avatar: usize,
     title: String,
     status: &'static str,
+}
+
+impl WorkerRowSnapshot {
+    fn is_active(&self) -> bool {
+        matches!(self.status, "is starting" | "is working")
+    }
 }
 
 /// One virtualized transcript unit. Settled history stays measured and is not

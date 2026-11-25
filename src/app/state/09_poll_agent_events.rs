@@ -168,6 +168,15 @@ impl AppState {
                                 }
                                 continue;
                             }
+                            if let agent_bridge::AgentEvent::Subagents { tool_id, workers } = &event
+                                && pane.chat.messages.iter().rev()
+                                    .take_while(|message| message.role != ChatRole::User)
+                                    .filter_map(|message| message.tool.as_ref())
+                                    .find(|tool| tool.id.as_ref() == Some(tool_id))
+                                    .is_some_and(|tool| tool.workers == *workers)
+                            {
+                                continue;
+                            }
                             let apply_start = std::time::Instant::now();
                             changed |= PaneChat::event_updates_root(&event);
                             content_changed = true;
@@ -258,6 +267,7 @@ impl AppState {
                         }
                         if content_changed {
                             pane.chat.notify_content(cx);
+                            pane.chat.notify_worker_view(cx);
                         }
                         if !pane.chat.bridge_needs_context
                             && let Some(id) = bridge.session_id()
