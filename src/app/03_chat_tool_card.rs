@@ -829,11 +829,41 @@ type ModelBridge = agent_bridge::AgentBridge;
 struct WorkerView {
     index: usize,
     id: String,
-    scroll: gpui::ScrollHandle,
+    conversation_key: String,
     messages: Vec<Arc<ChatMessage>>,
     expanded: HashSet<usize>,
     full_output: HashSet<usize>,
+    expanded_tool_groups: HashMap<String, HashSet<usize>>,
+    expanded_turns: HashMap<String, HashSet<usize>>,
+    list_state: ListState,
+    list_rows: std::cell::Cell<usize>,
+    list_key: std::cell::Cell<u64>,
+    row_cache: std::rc::Rc<std::cell::RefCell<ChatRowCache>>,
+    active_dirty: std::cell::Cell<bool>,
+    activity_dirty: std::cell::Cell<bool>,
+    dirty_messages: std::cell::RefCell<HashSet<usize>>,
+    scroll_handler_installed: std::cell::Cell<bool>,
+    autoscroll: bool,
+    focused_scrollbar: std::cell::RefCell<Option<Entity<FocusedChatScrollbar>>>,
     _load: Option<gpui::Task<()>>,
+}
+
+struct ChatListSource<'a> {
+    conversation_key: &'a str,
+    messages: &'a [Arc<ChatMessage>],
+    running: bool,
+    autoscroll: bool,
+    list_state: &'a ListState,
+    list_rows: &'a std::cell::Cell<usize>,
+    list_key: &'a std::cell::Cell<u64>,
+    row_cache: &'a std::rc::Rc<std::cell::RefCell<ChatRowCache>>,
+    active_dirty: &'a std::cell::Cell<bool>,
+    activity_dirty: &'a std::cell::Cell<bool>,
+    dirty_messages: &'a std::cell::RefCell<HashSet<usize>>,
+    scroll_handler_installed: &'a std::cell::Cell<bool>,
+    expanded_tool_groups: &'a HashMap<String, HashSet<usize>>,
+    expanded_turns: &'a HashMap<String, HashSet<usize>>,
+    focused_scrollbar: &'a std::cell::RefCell<Option<Entity<FocusedChatScrollbar>>>,
 }
 
 /// Owned worker display data, refreshed only when worker activity changes.

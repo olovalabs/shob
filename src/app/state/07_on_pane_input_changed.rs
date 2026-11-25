@@ -513,6 +513,18 @@ impl AppState {
                 if !view.expanded.remove(&index) {
                     view.expanded.insert(index);
                 }
+                if let Some(msg) = view.messages.get_mut(index)
+                    && (msg.tool.is_some() || msg.role == ChatRole::Thinking)
+                {
+                    let msg = Arc::make_mut(msg);
+                    if let Some(tool) = &mut msg.tool {
+                        tool.expanded = !tool.expanded;
+                    } else {
+                        msg.expanded = !msg.expanded;
+                    }
+                }
+                view.invalidate_message_row(index);
+                pane.chat.notify_worker_view(cx);
                 cx.notify();
                 return;
             }
@@ -542,6 +554,7 @@ impl AppState {
         let Some(pane) = self.pane_mut(pane_id) else {
             return;
         };
+        let in_worker = pane.chat.worker_view.is_some();
         let messages = if let Some(view) = &mut pane.chat.worker_view {
             &mut view.messages
         } else {
@@ -557,7 +570,12 @@ impl AppState {
             return;
         };
         *expanded = !*expanded;
-        pane.chat.invalidate_message_row(index);
+        if let Some(view) = &pane.chat.worker_view {
+            view.invalidate_message_row(index);
+            pane.chat.notify_worker_view(cx);
+        } else if !in_worker {
+            pane.chat.invalidate_message_row(index);
+        }
         cx.notify();
     }
 
@@ -567,6 +585,16 @@ impl AppState {
                 if !view.full_output.remove(&index) {
                     view.full_output.insert(index);
                 }
+                if let Some(message) = view.messages.get_mut(index)
+                    && message.tool.is_some()
+                {
+                    let message = Arc::make_mut(message);
+                    if let Some(tool) = message.tool.as_mut() {
+                        tool.show_full = !tool.show_full;
+                    }
+                }
+                view.invalidate_message_row(index);
+                pane.chat.notify_worker_view(cx);
                 cx.notify();
                 return;
             }
@@ -586,6 +614,26 @@ impl AppState {
 
     fn toggle_worked_turn(&mut self, pane_id: usize, start: usize, cx: &mut Context<Self>) {
         let Some(pane) = self.pane_mut(pane_id) else { return; };
+        if let Some(view) = &mut pane.chat.worker_view {
+            let first_row = view.row_cache.borrow().rows.iter().position(|row| matches!(row, ChatRow::Worked { start: index, .. } if *index == start)).unwrap_or(0);
+            let turns = view.expanded_turns.entry(view.conversation_key.clone()).or_default();
+            if !turns.remove(&start) { turns.insert(start); }
+            view.invalidate_message_row(start);
+            let running = Self::worker_running(&pane.chat.messages, view);
+            let new_count = Self::build_chat_rows_from(&view.list_source(running)).borrow().rows.len();
+            let old_count = view.list_rows.get();
+            let anchor = view.list_state.logical_scroll_top();
+            view.autoscroll = false;
+            view.list_state.set_follow_mode(FollowMode::Normal);
+            if first_row <= old_count {
+                view.list_state.splice(first_row..old_count, new_count.saturating_sub(first_row));
+                view.list_rows.set(new_count);
+                view.list_state.scroll_to(anchor);
+            }
+            pane.chat.notify_worker_view(cx);
+            cx.notify();
+            return;
+        }
         let first_row = pane.chat.row_cache.borrow().rows.iter().position(|row| matches!(row, ChatRow::Worked { start: index, .. } if *index == start)).unwrap_or(0);
         let turns = pane.chat.expanded_turns.entry(pane.chat.conversation_key.clone()).or_default();
         if !turns.remove(&start) { turns.insert(start); }
@@ -607,6 +655,19 @@ impl AppState {
         let Some(pane) = self.pane_mut(pane_id) else {
             return;
         };
+        if let Some(view) = &mut pane.chat.worker_view {
+            let groups = view
+                .expanded_tool_groups
+                .entry(view.conversation_key.clone())
+                .or_default();
+            if !groups.remove(&start) {
+                groups.insert(start);
+            }
+            view.invalidate_message_row(start);
+            pane.chat.notify_worker_view(cx);
+            cx.notify();
+            return;
+        }
         let groups = pane
             .chat
             .expanded_tool_groups

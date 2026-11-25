@@ -54,6 +54,15 @@ impl PaneChat {
         }
     }
 
+    fn notify_worker_view(&self, cx: &mut App) {
+        if self.view_visible.get()
+            && self.worker_view.is_some()
+            && let Some(view) = self.view.borrow().as_ref()
+        {
+            view.update(cx, |_, cx| cx.notify());
+        }
+    }
+
     fn event_updates_root(event: &agent_bridge::AgentEvent) -> bool {
         !matches!(
             event,
@@ -405,49 +414,150 @@ impl PaneChat {
     }
 
     fn scroll_to_end(&self) {
-        self.list_state.scroll_to_end();
-        self.list_state.set_follow_mode(FollowMode::Tail);
+        scroll_list_to_end(&self.list_state);
     }
 
-    /// Re-measuring an item normally resets an anchor inside it to its top.
-    /// Keep the reader's position within a growing or expanded message.
     fn remeasure_row(&self, row: usize) {
-        let anchor =
-            (!self.list_state.is_following_tail()).then(|| self.list_state.logical_scroll_top());
-        self.list_state.splice(row..row + 1, 1);
-        if let Some(anchor) = anchor.filter(|anchor| anchor.item_ix == row) {
-            self.list_state.scroll_to(anchor);
-        }
+        remeasure_list_row(&self.list_state, row);
     }
 
-    /// Keep the list's item count in step with the transcript. Appending and
-    /// truncating preserve the reader's scroll anchor; a conversation switch
-    /// resets measurements.
-    fn sync_rows(&self, count: usize, key: u64) {
-        if key != self.list_key.get() {
-            self.list_state.reset(count);
-            self.list_state.set_follow_mode(FollowMode::Tail);
-            self.list_key.set(key);
-            self.list_rows.set(count);
-            return;
+    fn list_source(&self, running: bool) -> ChatListSource<'_> {
+        ChatListSource {
+            conversation_key: self.conversation_key.as_str(),
+            messages: self.visible_messages(),
+            running,
+            autoscroll: self.autoscroll,
+            list_state: &self.list_state,
+            list_rows: &self.list_rows,
+            list_key: &self.list_key,
+            row_cache: &self.row_cache,
+            active_dirty: &self.active_dirty,
+            activity_dirty: &self.activity_dirty,
+            dirty_messages: &self.dirty_messages,
+            scroll_handler_installed: &self.scroll_handler_installed,
+            expanded_tool_groups: &self.expanded_tool_groups,
+            expanded_turns: &self.expanded_turns,
+            focused_scrollbar: &self.focused_scrollbar,
         }
-        let old = self.list_rows.get();
-        if count > old {
-            self.list_state.splice(old..old, count - old);
-            // Appending a boundary finalizes the previous tail row (for
-            // example a streaming answer becomes settled Markdown), so its
-            // cached height must be remeasured too.
-            if old > 0 {
-                self.remeasure_row(old - 1);
-            }
-        } else if count < old {
-            self.list_state.splice(count..old, 0);
-        }
-        self.list_rows.set(count);
     }
 
     fn visible_conversation(&mut self) -> Option<&mut conversations::Log> {
         self.conversation.as_mut()
+    }
+}
+
+fn scroll_list_to_end(list_state: &ListState) {
+    list_state.scroll_to_end();
+    list_state.set_follow_mode(FollowMode::Tail);
+}
+
+/// Re-measuring an item normally resets an anchor inside it to its top.
+/// Keep the reader's position within a growing or expanded message.
+fn remeasure_list_row(list_state: &ListState, row: usize) {
+    let anchor = (!list_state.is_following_tail()).then(|| list_state.logical_scroll_top());
+    list_state.splice(row..row + 1, 1);
+    if let Some(anchor) = anchor.filter(|anchor| anchor.item_ix == row) {
+        list_state.scroll_to(anchor);
+    }
+}
+
+/// Keep the list's item count in step with the transcript. Appending and
+/// truncating preserve the reader's scroll anchor; a conversation switch
+/// resets measurements.
+fn sync_list_rows(
+    list_state: &ListState,
+    list_rows: &std::cell::Cell<usize>,
+    list_key: &std::cell::Cell<u64>,
+    count: usize,
+    key: u64,
+) {
+    if key != list_key.get() {
+        list_state.reset(count);
+        list_state.set_follow_mode(FollowMode::Tail);
+        list_key.set(key);
+        list_rows.set(count);
+        return;
+    }
+    let old = list_rows.get();
+    if count > old {
+        list_state.splice(old..old, count - old);
+        // Appending a boundary finalizes the previous tail row (for
+        // example a streaming answer becomes settled Markdown), so its
+        // cached height must be remeasured too.
+        if old > 0 {
+            remeasure_list_row(list_state, old - 1);
+        }
+    } else if count < old {
+        list_state.splice(count..old, 0);
+    }
+    list_rows.set(count);
+}
+
+impl WorkerView {
+    fn new(index: usize, id: String, load: gpui::Task<()>) -> Self {
+        let conversation_key = format!("worker-{index}-{id}");
+        let list_state = ListState::new(0, ListAlignment::Top, px(600.0));
+        list_state.set_follow_mode(FollowMode::Tail);
+        Self {
+            index,
+            id,
+            conversation_key,
+            messages: Vec::new(),
+            expanded: HashSet::new(),
+            full_output: HashSet::new(),
+            expanded_tool_groups: HashMap::new(),
+            expanded_turns: HashMap::new(),
+            list_state,
+            list_rows: std::cell::Cell::new(0),
+            list_key: std::cell::Cell::new(0),
+            row_cache: Default::default(),
+            active_dirty: std::cell::Cell::new(false),
+            activity_dirty: std::cell::Cell::new(false),
+            dirty_messages: std::cell::RefCell::new(HashSet::new()),
+            scroll_handler_installed: std::cell::Cell::new(false),
+            autoscroll: true,
+            focused_scrollbar: Default::default(),
+            _load: Some(load),
+        }
+    }
+
+    fn invalidate_message_row(&self, index: usize) {
+        self.dirty_messages.borrow_mut().insert(index);
+        self.row_cache.borrow_mut().invalidate_from(index);
+    }
+
+    fn scroll_to_end(&self) {
+        scroll_list_to_end(&self.list_state);
+    }
+
+    fn list_source(&self, running: bool) -> ChatListSource<'_> {
+        ChatListSource {
+            conversation_key: self.conversation_key.as_str(),
+            messages: &self.messages,
+            running,
+            autoscroll: self.autoscroll,
+            list_state: &self.list_state,
+            list_rows: &self.list_rows,
+            list_key: &self.list_key,
+            row_cache: &self.row_cache,
+            active_dirty: &self.active_dirty,
+            activity_dirty: &self.activity_dirty,
+            dirty_messages: &self.dirty_messages,
+            scroll_handler_installed: &self.scroll_handler_installed,
+            expanded_tool_groups: &self.expanded_tool_groups,
+            expanded_turns: &self.expanded_turns,
+            focused_scrollbar: &self.focused_scrollbar,
+        }
+    }
+}
+
+impl ChatListSource<'_> {
+    fn remeasure_row(&self, row: usize) {
+        remeasure_list_row(self.list_state, row);
+    }
+
+    fn sync_rows(&self, count: usize, key: u64) {
+        sync_list_rows(self.list_state, self.list_rows, self.list_key, count, key);
     }
 }
 

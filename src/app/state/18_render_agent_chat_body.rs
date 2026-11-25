@@ -15,98 +15,8 @@ impl AppState {
                 return self.render_worker_view(pane, view, worker, window, cx);
             }
         }
-        let render_start = std::time::Instant::now();
         let tokens = self.tokens(cx);
-        let conversation = pane.chat.conversation_key.as_str();
         let pane_id = pane.id;
-        let is_autoscroll = pane.chat.autoscroll;
-        if is_autoscroll && !pane.chat.list_state.is_following_tail() {
-            pane.chat.list_state.set_follow_mode(FollowMode::Tail);
-        }
-
-        let running = pane.chat.visible_running();
-        let row_start = std::time::Instant::now();
-        let row_cache = Self::build_chat_rows(&pane.chat, running);
-        let cached = row_cache.borrow();
-        let rows = &cached.rows;
-        let active_row = cached.state.active_row;
-        crate::stream_timing::record_since("ui.render_rows", row_start);
-
-        let row_count = rows.len();
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        std::hash::Hash::hash(conversation, &mut hasher);
-        pane.chat
-            .sync_rows(row_count, std::hash::Hasher::finish(&hasher));
-        // Markdown parsing and virtual block measurements can finish without
-        // another transcript event. Refresh only previously measured viewport
-        // rows on this child notification, preserving the list's scroll anchor.
-        let first_visible = pane.chat.list_state.logical_scroll_top().item_ix;
-        let mut visible_end = first_visible;
-        while visible_end < row_count {
-            let Some(bounds) = pane.chat.list_state.bounds_for_item(visible_end) else {
-                break;
-            };
-            if bounds.top() >= window.viewport_size().height {
-                break;
-            }
-            visible_end += 1;
-        }
-        if visible_end > first_visible {
-            pane.chat
-                .list_state
-                .remeasure_items(first_visible..visible_end);
-        }
-        for index in pane.chat.dirty_messages.take() {
-            if let Some(row) = rows.iter().position(|row| chat_row_contains(row, index)) {
-                pane.chat.remeasure_row(row);
-            }
-        }
-        if pane.chat.active_dirty.replace(false) {
-            let latest_content = active_row.or_else(|| {
-                rows.iter()
-                    .rposition(|row| !matches!(row, ChatRow::Running { .. }))
-            });
-            if pane.chat.activity_dirty.replace(false) {
-                for (index, row) in rows.iter().enumerate().rev() {
-                    if matches!(row, ChatRow::Message { message, .. } if message.role == ChatRole::User)
-                    {
-                        break;
-                    }
-                    // A section can fold or receive more output after the reply starts.
-                    if (matches!(row, ChatRow::ToolGroup { .. } | ChatRow::Subagents { .. })
-                        || matches!(row, ChatRow::Message { message, .. } if message.tool.as_ref().is_some_and(|tool| tool.expanded)))
-                        && Some(index) != latest_content
-                    {
-                        pane.chat.remeasure_row(index);
-                    }
-                }
-            }
-            if let Some(row) = latest_content {
-                pane.chat.remeasure_row(row);
-            }
-        }
-        drop(cached);
-        if !pane.chat.scroll_handler_installed.get() {
-            let weak = cx.weak_entity();
-            let id = pane_id;
-            pane.chat
-                .list_state
-                .set_scroll_handler(move |event, _, cx| {
-                    let _ = weak.update(cx, |this, cx| {
-                        if let Some(pane) = this.pane_mut(id) {
-                            // Bottom-aligned lists report their end with no scroll
-                            // anchor; tail-follow itself is re-armed during layout,
-                            // after this callback has run.
-                            let following = event.is_following_tail || !event.is_scrolled;
-                            if pane.chat.autoscroll != following {
-                                pane.chat.autoscroll = following;
-                                pane.chat.notify_content(cx);
-                            }
-                        }
-                    });
-                });
-            pane.chat.scroll_handler_installed.set(true);
-        }
         let default_screen: Option<AnyElement> = if pane.chat.visible_messages().is_empty() {
             let screen = div()
                 .id(("agent-default-screen", pane_id))
@@ -140,6 +50,126 @@ impl AppState {
                 .into_any_element();
         }
 
+        let running = pane.chat.visible_running();
+        self.render_chat_transcript(
+            pane_id,
+            pane.chat.list_source(running),
+            ("agent-chat", pane_id),
+            "agent-chat",
+            false,
+            window,
+            cx,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_chat_transcript(
+        &self,
+        pane_id: usize,
+        source: ChatListSource<'_>,
+        id: (&'static str, usize),
+        debug_name: &'static str,
+        worker: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let render_start = std::time::Instant::now();
+        let tokens = self.tokens(cx);
+        let conversation = source.conversation_key;
+        let is_autoscroll = source.autoscroll;
+        if is_autoscroll && !source.list_state.is_following_tail() {
+            source.list_state.set_follow_mode(FollowMode::Tail);
+        }
+
+        let row_start = std::time::Instant::now();
+        let row_cache = Self::build_chat_rows_from(&source);
+        let cached = row_cache.borrow();
+        let rows = &cached.rows;
+        let active_row = cached.state.active_row;
+        crate::stream_timing::record_since("ui.render_rows", row_start);
+
+        let row_count = rows.len();
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(conversation, &mut hasher);
+        source.sync_rows(row_count, std::hash::Hasher::finish(&hasher));
+        // Markdown parsing and virtual block measurements can finish without
+        // another transcript event. Refresh only previously measured viewport
+        // rows on this child notification, preserving the list's scroll anchor.
+        let first_visible = source.list_state.logical_scroll_top().item_ix;
+        let mut visible_end = first_visible;
+        while visible_end < row_count {
+            let Some(bounds) = source.list_state.bounds_for_item(visible_end) else {
+                break;
+            };
+            if bounds.top() >= window.viewport_size().height {
+                break;
+            }
+            visible_end += 1;
+        }
+        if visible_end > first_visible {
+            source
+                .list_state
+                .remeasure_items(first_visible..visible_end);
+        }
+        for index in source.dirty_messages.take() {
+            if let Some(row) = rows.iter().position(|row| chat_row_contains(row, index)) {
+                source.remeasure_row(row);
+            }
+        }
+        if source.active_dirty.replace(false) {
+            let latest_content = active_row.or_else(|| {
+                rows.iter()
+                    .rposition(|row| !matches!(row, ChatRow::Running { .. }))
+            });
+            if source.activity_dirty.replace(false) {
+                for (index, row) in rows.iter().enumerate().rev() {
+                    if matches!(row, ChatRow::Message { message, .. } if message.role == ChatRole::User)
+                    {
+                        break;
+                    }
+                    // A section can fold or receive more output after the reply starts.
+                    if (matches!(row, ChatRow::ToolGroup { .. } | ChatRow::Subagents { .. })
+                        || matches!(row, ChatRow::Message { message, .. } if message.tool.as_ref().is_some_and(|tool| tool.expanded)))
+                        && Some(index) != latest_content
+                    {
+                        source.remeasure_row(index);
+                    }
+                }
+            }
+            if let Some(row) = latest_content {
+                source.remeasure_row(row);
+            }
+        }
+        drop(cached);
+        if !source.scroll_handler_installed.get() {
+            let weak = cx.weak_entity();
+            let id = pane_id;
+            source
+                .list_state
+                .set_scroll_handler(move |event, _, cx| {
+                    let _ = weak.update(cx, |this, cx| {
+                        if let Some(pane) = this.pane_mut(id) {
+                            // Bottom-aligned lists report their end with no scroll
+                            // anchor; tail-follow itself is re-armed during layout,
+                            // after this callback has run.
+                            let following = event.is_following_tail || !event.is_scrolled;
+                            if worker {
+                                if let Some(view) = &mut pane.chat.worker_view
+                                    && view.autoscroll != following
+                                {
+                                    view.autoscroll = following;
+                                    pane.chat.notify_worker_view(cx);
+                                }
+                            } else if pane.chat.autoscroll != following {
+                                pane.chat.autoscroll = following;
+                                pane.chat.notify_content(cx);
+                            }
+                        }
+                    });
+                });
+            source.scroll_handler_installed.set(true);
+        }
+
         let host = UiHost::new(cx.weak_entity());
         let snapshot = Rc::new(ChatSnapshot {
             focused_layout: self.settings.agent_layout,
@@ -150,10 +180,10 @@ impl AppState {
             host: host.clone(),
         });
         let row_snapshot = Rc::clone(&snapshot);
-        let list_state = pane.chat.list_state.clone();
+        let list_state = source.list_state.clone();
         let chat_view = div()
-            .id(("agent-chat", pane_id))
-            .debug_selector(|| "agent-chat".to_string())
+            .id(id)
+            .debug_selector(move || debug_name.to_string())
             .size_full()
             .bg(tokens.chat().background)
             .flex()
@@ -169,9 +199,14 @@ impl AppState {
             );
 
         let scroll_to_bottom_btn = if !is_autoscroll {
+            let btn_id = if worker {
+                ("subagent-scroll-to-bottom-btn", pane_id)
+            } else {
+                ("scroll-to-bottom-btn", pane_id)
+            };
             Some(
                 div()
-                    .id(("scroll-to-bottom-btn", pane_id))
+                    .id(btn_id)
                     .debug_selector(|| "scroll-to-bottom-btn".to_string())
                     .absolute()
                     .bottom(if self.settings.agent_layout {
@@ -226,8 +261,16 @@ impl AppState {
                         host.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
                             if let Some(pane) = this.pane_mut(pane_id) {
-                                pane.chat.autoscroll = true;
-                                pane.chat.scroll_to_end();
+                                if worker {
+                                    if let Some(view) = &mut pane.chat.worker_view {
+                                        view.autoscroll = true;
+                                        view.scroll_to_end();
+                                    }
+                                    pane.chat.notify_worker_view(cx);
+                                } else {
+                                    pane.chat.autoscroll = true;
+                                    pane.chat.scroll_to_end();
+                                }
                                 cx.notify();
                             }
                         }),
@@ -237,23 +280,48 @@ impl AppState {
             None
         };
 
-        let scrollbar = div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .right_0()
-            .bottom_0()
-            .child(
-                gpui_component::scroll::Scrollbar::vertical(&list_state)
-                    .id(("agent-chat-scrollbar", pane_id)),
-            );
+        let scrollbar = if !self.settings.agent_layout {
+            Some(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .child(
+                        gpui_component::scroll::Scrollbar::vertical(&list_state).id(if worker {
+                            ("subagent-chat-scrollbar", pane_id)
+                        } else {
+                            ("agent-chat-scrollbar", pane_id)
+                        }),
+                    )
+                    .into_any_element(),
+            )
+        } else if worker {
+            let mut scrollbar = source.focused_scrollbar.borrow_mut();
+            let scrollbar = scrollbar.get_or_insert_with(|| {
+                cx.new(|_| FocusedChatScrollbar {
+                    pane_id,
+                    list: list_state.clone(),
+                    height: Rc::new(std::cell::Cell::new(px(0.0))),
+                })
+            });
+            Some(
+                scrollbar
+                    .clone()
+                    .cached(StyleRefinement::default().absolute().size_full())
+                    .into_any_element(),
+            )
+        } else {
+            None
+        };
 
         crate::stream_timing::record_since("ui.render_chat", render_start);
         div()
             .relative()
             .size_full()
             .child(chat_view)
-            .when(!self.settings.agent_layout, |view| view.child(scrollbar))
+            .children(scrollbar)
             .children(scroll_to_bottom_btn)
             .into_any_element()
     }
@@ -262,14 +330,21 @@ impl AppState {
         chat: &PaneChat,
         running: bool,
     ) -> std::rc::Rc<std::cell::RefCell<ChatRowCache>> {
-        let visible = chat.visible_messages();
-        let mut cache = chat.row_cache.borrow_mut();
-        if cache.conversation.as_deref() != Some(chat.conversation_key.as_str())
+        Self::build_chat_rows_from(&chat.list_source(running))
+    }
+
+    fn build_chat_rows_from(
+        source: &ChatListSource<'_>,
+    ) -> std::rc::Rc<std::cell::RefCell<ChatRowCache>> {
+        let visible = source.messages;
+        let running = source.running;
+        let mut cache = source.row_cache.borrow_mut();
+        if cache.conversation.as_deref() != Some(source.conversation_key)
             || visible.len() < cache.message_count
             || cache.state.cursor > visible.len()
         {
             *cache = ChatRowCache {
-                conversation: Some(chat.conversation_key.clone()),
+                conversation: Some(source.conversation_key.to_owned()),
                 dirty: true,
                 workers_dirty: true,
                 ..Default::default()
@@ -303,7 +378,7 @@ impl AppState {
             cache.activity = None;
         }
         if !cache.dirty {
-            return std::rc::Rc::clone(&chat.row_cache);
+            return std::rc::Rc::clone(source.row_cache);
         }
         if cache.workers_dirty {
             cache.workers = subagent_chat::rows(visible)
@@ -351,7 +426,7 @@ impl AppState {
             if worked.is_some_and(|range| cursor >= range.end) { worked = None; }
             let message = &visible[cursor];
             if message.worked_end > cursor && worked.is_none_or(|range| range.start != cursor) {
-                let open = chat.expanded_turns.get(chat.conversation_key.as_str()).is_some_and(|turns| turns.contains(&cursor));
+                let open = source.expanded_turns.get(source.conversation_key).is_some_and(|turns| turns.contains(&cursor));
                 checkpoints.push(checkpoint);
                 rows.push(ChatRow::Worked { start: cursor, elapsed_ms: message.worked_ms, open, has_details: message.worked_end - cursor > usize::from(message.worked_answer.is_some()) });
                 worked = Some(WorkedRange { start: cursor, end: message.worked_end, answer: message.worked_answer, open });
@@ -408,11 +483,11 @@ impl AppState {
                     } else { break; }
                     cursor += 1;
                 }
-                let live = has_running_call || (running && cursor == visible.len());
+                let live = running && (has_running_call || cursor == visible.len());
                 let open = live
-                    || chat
+                    || source
                         .expanded_tool_groups
-                        .get(chat.conversation_key.as_str())
+                        .get(source.conversation_key)
                         .is_some_and(|groups| groups.contains(&start));
                 if running && cursor == visible.len() {
                     active_row = Some(rows.len());
@@ -489,7 +564,7 @@ impl AppState {
             let built = rows.len() - kept_rows;
             cache.built_rows += built;
         }
-        std::rc::Rc::clone(&chat.row_cache)
+        std::rc::Rc::clone(source.row_cache)
     }
 
     fn render_chat_row(

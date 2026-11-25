@@ -102,49 +102,51 @@ impl AppState {
                                 "Copy prompt".into(),
                                 tokens,
                             ))
-                            .child({
+                            .when(!conversation.starts_with("worker-"), |actions| {
                                 let text = text.clone();
-                                div()
-                                    .id(SharedString::from(format!(
-                                        "chat-edit-user-{pane_id}-{index}"
-                                    )))
-                                    .tab_index(0)
-                                    .size(px(22.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded(px(5.0))
-                                    .text_color(tokens.text_muted)
-                                    .cursor(CursorStyle::PointingHand)
-                                    .hover(move |style| {
-                                        style
-                                            .bg(tokens.sidebar_item_hover)
-                                            .text_color(tokens.text_primary)
-                                    })
-                                    .tooltip(|window, cx| {
-                                        gpui_component::tooltip::Tooltip::new(
-                                            "Edit in empty composer",
-                                        )
-                                        .build(window, cx)
-                                    })
-                                    .on_click(host.listener(move |this, _, window, cx| {
-                                        if let Some(input) = this
-                                            .pane_ref(pane_id)
-                                            .and_then(|pane| pane.input_state.clone())
-                                            && input.read(cx).value().trim().is_empty()
-                                        {
-                                            input.update(cx, |input, cx| {
-                                                input.set_value(text.clone(), window, cx);
-                                                input.focus(window, cx);
-                                            });
-                                        }
-                                    }))
-                                    .child(
-                                        svg()
-                                            .path("icons/pencil.svg")
-                                            .size(px(14.0))
-                                            .text_color(tokens.text_muted),
-                                    )
+                                actions.child(
+                                    div()
+                                        .id(SharedString::from(format!(
+                                            "chat-edit-user-{pane_id}-{index}"
+                                        )))
+                                        .tab_index(0)
+                                        .size(px(22.0))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .rounded(px(5.0))
+                                        .text_color(tokens.text_muted)
+                                        .cursor(CursorStyle::PointingHand)
+                                        .hover(move |style| {
+                                            style
+                                                .bg(tokens.sidebar_item_hover)
+                                                .text_color(tokens.text_primary)
+                                        })
+                                        .tooltip(|window, cx| {
+                                            gpui_component::tooltip::Tooltip::new(
+                                                "Edit in empty composer",
+                                            )
+                                            .build(window, cx)
+                                        })
+                                        .on_click(host.listener(move |this, _, window, cx| {
+                                            if let Some(pane) = this.pane_ref(pane_id)
+                                                && pane.chat.worker_view.is_none()
+                                                && let Some(input) = pane.input_state.clone()
+                                                && input.read(cx).value().trim().is_empty()
+                                            {
+                                                input.update(cx, |input, cx| {
+                                                    input.set_value(text.clone(), window, cx);
+                                                    input.focus(window, cx);
+                                                });
+                                            }
+                                        }))
+                                        .child(
+                                            svg()
+                                                .path("icons/pencil.svg")
+                                                .size(px(14.0))
+                                                .text_color(tokens.text_muted),
+                                        ),
+                                )
                             }),
                     )
                     .into_any_element()
@@ -224,9 +226,15 @@ impl AppState {
                             })
                             .on_click(host.listener(move |this, _, _, cx| {
                                 if let Some(pane) = this.pane_ref(pane_id) {
-                                    let text = pane
+                                    let messages = pane
                                         .chat
-                                        .visible_messages()
+                                        .worker_view
+                                        .as_ref()
+                                        .map_or_else(
+                                            || pane.chat.visible_messages(),
+                                            |view| view.messages.as_slice(),
+                                        );
+                                    let text = messages
                                         .get(start..=end)
                                         .unwrap_or_default()
                                         .iter()
@@ -485,12 +493,15 @@ impl AppState {
                     previous = Some(stamp);
                     if this
                         .update(cx, |this, cx| {
-                            if let Some(view) = this
-                                .pane_mut(pane_id)
-                                .and_then(|pane| pane.chat.worker_view.as_mut())
-                                .filter(|view| view.id == load_id && view.index == index)
+                            if let Some(pane) = this.pane_mut(pane_id)
+                                && let Some(view) = pane
+                                    .chat
+                                    .worker_view
+                                    .as_mut()
+                                    .filter(|view| view.id == load_id && view.index == index)
                             {
-                                view.messages = messages;
+                                Self::sync_worker_messages(view, messages);
+                                pane.chat.notify_worker_view(cx);
                                 cx.notify();
                             }
                         })
@@ -504,16 +515,49 @@ impl AppState {
                     .await;
             }
         });
-        pane.chat.worker_view = Some(WorkerView {
-            index,
-            id,
-            scroll: gpui::ScrollHandle::new(),
-            messages: Vec::new(),
-            expanded: HashSet::new(),
-            full_output: HashSet::new(),
-            _load: Some(load),
-        });
+        pane.chat.worker_view = Some(WorkerView::new(index, id, load));
+        pane.chat.notify_worker_view(cx);
         cx.notify();
+    }
+
+    fn worker_running(messages: &[Arc<ChatMessage>], view: &WorkerView) -> bool {
+        subagent_chat::rows(messages)
+            .iter()
+            .find(|row| row.index == view.index && row.worker.id == view.id)
+            .is_some_and(|row| matches!(row.worker.status_label(), "Starting" | "Running"))
+    }
+
+    fn sync_worker_messages(view: &mut WorkerView, mut messages: Vec<Arc<ChatMessage>>) {
+        for &index in &view.expanded {
+            if let Some(msg) = messages.get_mut(index)
+                && (msg.tool.is_some() || msg.role == ChatRole::Thinking)
+            {
+                let row = Arc::make_mut(msg);
+                if let Some(tool) = &mut row.tool {
+                    tool.expanded = !tool.expanded;
+                } else {
+                    row.expanded = !row.expanded;
+                }
+            }
+        }
+        for &index in &view.full_output {
+            if let Some(msg) = messages.get_mut(index)
+                && msg.tool.is_some()
+            {
+                let row = Arc::make_mut(msg);
+                if let Some(tool) = &mut row.tool {
+                    tool.show_full = !tool.show_full;
+                }
+            }
+        }
+        view.messages = messages;
+        {
+            let mut cache = view.row_cache.borrow_mut();
+            cache.invalidate_from(0);
+            cache.activity = None;
+        }
+        view.active_dirty.set(true);
+        view.activity_dirty.set(true);
     }
 
     fn render_worker_view(
@@ -525,14 +569,13 @@ impl AppState {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let pane_id = pane.id;
-        if view.scroll.max_offset().y + view.scroll.offset().y <= px(24.0) {
-            view.scroll.scroll_to_bottom();
-        }
         let tokens = self.tokens(cx);
         let worker = row.worker;
+        let running = matches!(worker.status_label(), "Starting" | "Running");
         let back = div()
             .id(("subagent-back", pane_id))
             .debug_selector(|| "subagent-back".to_string())
+            .ml(px(-8.0))
             .flex()
             .items_center()
             .gap(px(6.0))
@@ -553,121 +596,158 @@ impl AppState {
             .on_click(cx.listener(move |this, _, window, cx| {
                 if let Some(pane) = this.pane_mut(pane_id) {
                     pane.chat.worker_view = None;
+                    pane.chat.notify_content(cx);
                     this.focus_pane_input(pane_id, window, cx);
                 }
             }));
 
-        let mut body = div()
-            .id(("subagent-transcript", pane_id))
-            .debug_selector(|| "subagent-transcript".to_string())
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .track_scroll(&view.scroll)
-            .px(px(24.0))
-            .py(px(16.0))
-            .flex()
-            .flex_col()
-            .gap(px(14.0));
-        let conversation = format!("worker-{}-{}", view.index, view.id);
-        let messages = view.messages.iter();
-        let host = UiHost::new(cx.weak_entity());
-        let mut has_reply = false;
-        for (index, message) in messages.enumerate() {
-            has_reply |= matches!(
+        let has_reply = view.messages.iter().any(|message| {
+            matches!(
                 message.role,
                 ChatRole::Assistant | ChatRole::Thinking | ChatRole::Tool
-            );
-            let mut adjusted = None;
-            if view.expanded.contains(&index) || view.full_output.contains(&index) {
-                let mut row = (**message).clone();
-                if let Some(tool) = &mut row.tool {
-                    tool.expanded ^= view.expanded.contains(&index);
-                    tool.show_full ^= view.full_output.contains(&index);
-                } else {
-                    row.expanded ^= view.expanded.contains(&index);
-                }
-                adjusted = Some(row);
+            )
+        });
+        let report = (!has_reply)
+            .then(|| row.result.filter(|result| !result.is_empty()))
+            .flatten();
+
+        let body = if !view.messages.is_empty() && report.is_none() {
+            self.render_chat_transcript(
+                pane_id,
+                view.list_source(running),
+                ("subagent-transcript", pane_id),
+                "subagent-transcript",
+                true,
+                window,
+                cx,
+            )
+        } else {
+            let conversation = view.conversation_key.as_str();
+            let host = UiHost::new(cx.weak_entity());
+            let mut column = div()
+                .w_full()
+                .min_w_0()
+                .max_w(agent_appearance::COLUMN_WIDTH)
+                .px(agent_appearance::GUTTER)
+                .py(px(16.0))
+                .font_family(cx.theme().font_family.clone())
+                .text_size(agent_appearance::FONT_SIZE)
+                .line_height(agent_appearance::LINE_HEIGHT)
+                .text_color(tokens.chat().foreground)
+                .flex()
+                .flex_col()
+                .gap(px(12.0));
+            for (index, message) in view.messages.iter().enumerate() {
+                column = column.child(
+                    div()
+                        .when(
+                            self.settings.agent_layout && message.role == ChatRole::User,
+                            |item| item.pt(px(8.0)).pb(px(12.0)),
+                        )
+                        .child(Self::render_chat_message(
+                            message,
+                            ChatMessageOptions {
+                                pane_id,
+                                conversation,
+                                index,
+                                running: message.streaming,
+                                copy_range: None,
+                            },
+                            &host,
+                            ChatRenderContext { tokens, window, cx },
+                        )),
+                );
             }
-            let message = adjusted.as_ref().unwrap_or(message);
-            body = body.child(Self::render_chat_message(
-                message,
-                ChatMessageOptions {
-                    pane_id,
-                    conversation: &conversation,
-                    index,
-                    running: message.streaming,
-                    copy_range: None,
-                },
-                &host,
-                ChatRenderContext { tokens, window, cx },
-            ));
-        }
-        if !has_reply {
-            if let Some(result) = row.result.filter(|result| !result.is_empty()) {
-                body = body.child(chat_markdown(
+            if let Some(result) = report {
+                column = column.child(chat_markdown(
                     format!("subagent-report-{pane_id}-{conversation}").into(),
                     result.to_owned(),
-                    px(13.0),
-                    rems(0.6),
-                    tokens.text_primary,
+                    agent_appearance::FONT_SIZE,
+                    rems(1.0),
+                    tokens.chat().foreground,
                     ChatRenderContext { tokens, window, cx },
                 ));
             } else if view.messages.is_empty() {
-                let text = match worker.status_label() {
-                    "Starting" | "Running" => "Waiting for the subagent’s first message…",
-                    _ => "No transcript or report was saved for this subagent.",
+                let text = if running {
+                    "Waiting for the subagent’s first message…"
+                } else {
+                    "No transcript or report was saved for this subagent."
                 };
-                body = body.child(
+                column = column.child(
                     div()
-                        .text_size(px(13.0))
+                        .text_size(agent_appearance::FONT_SIZE)
                         .text_color(tokens.text_muted)
                         .child(text),
                 );
             }
-        }
+            div()
+                .id(("subagent-transcript", pane_id))
+                .debug_selector(|| "subagent-transcript".to_string())
+                .size_full()
+                .bg(tokens.chat().background)
+                .overflow_y_scroll()
+                .flex()
+                .justify_center()
+                .child(column)
+                .into_any_element()
+        };
 
         div()
             .size_full()
+            .bg(tokens.chat().background)
+            .font_family(cx.theme().font_family.clone())
+            .text_color(tokens.chat().foreground)
             .flex()
             .flex_col()
             .child(
-                div()
-                    .px(px(16.0))
-                    .py(px(10.0))
-                    .border_b_1()
-                    .border_color(tokens.border_subtle)
-                    .child(back)
-                    .child(
-                        div()
-                            .mt(px(9.0))
-                            .px(px(8.0))
-                            .pb(px(4.0))
-                            .flex()
-                            .items_center()
-                            .gap(px(10.0))
-                            .child(Self::worker_avatar(row.avatar, 4.0))
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .flex_1()
-                                    .child(
-                                        div()
-                                            .truncate()
-                                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .text_color(tokens.text_primary)
-                                            .child(worker.display_title()),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(11.0))
-                                            .text_color(tokens.text_muted)
-                                            .child(format!("Subagent · {}", worker.status_label())),
-                                    ),
-                            ),
-                    ),
+                div().w_full().flex().justify_center().child(
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .max_w(agent_appearance::COLUMN_WIDTH)
+                        .px(agent_appearance::GUTTER)
+                        .pt(px(12.0))
+                        .pb(px(12.0))
+                        .border_b_1()
+                        .border_color(tokens.chat().border)
+                        .flex()
+                        .flex_col()
+                        .items_start()
+                        .child(back)
+                        .child(
+                            div()
+                                .w_full()
+                                .mt(px(8.0))
+                                .flex()
+                                .items_center()
+                                .gap(px(10.0))
+                                .child(Self::worker_avatar(row.avatar, 4.0))
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .flex_1()
+                                        .child(
+                                            div()
+                                                .truncate()
+                                                .text_size(agent_appearance::FONT_SIZE)
+                                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                .text_color(tokens.text_primary)
+                                                .child(worker.display_title()),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(12.0))
+                                                .text_color(tokens.text_muted)
+                                                .child(format!(
+                                                    "Subagent · {}",
+                                                    worker.status_label()
+                                                )),
+                                        ),
+                                ),
+                        ),
+                ),
             )
-            .child(body)
+            .child(div().flex_1().min_h_0().w_full().child(body))
             .into_any_element()
     }
 

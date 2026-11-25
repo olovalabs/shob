@@ -752,3 +752,110 @@ First report
     assert!(cx.debug_bounds("subagent-transcript").is_none());
     assert!(cx.debug_bounds("subagent-row-FirstWorker").is_some());
 }
+
+#[test]
+fn subagent_view_matches_main_chat_column_width_and_row_grouping() {
+    use agent_bridge::AgentEvent;
+
+    let mut app = TestAppContext::new();
+    let (mut cx, state) = open_app(&mut app);
+    cx.simulate_resize(gpui::size(px(1400.0), px(800.0)));
+    let pane_id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
+    cx.update_window_entity(&state, |state, _, cx| {
+        state.settings.agent_layout = true;
+        let pane = state.pane_mut(pane_id).unwrap();
+        pane.chat.active = true;
+        push_chat_event(
+            &mut pane.chat.messages,
+            AgentEvent::Subagents {
+                tool_id: "sub-1".into(),
+                workers: vec![subagent_chat::Worker {
+                    id: "Explorer".into(),
+                    title: "Explorer".into(),
+                    status: "running".into(),
+                    transcript: None,
+                    result: None,
+                }],
+            },
+        );
+        cx.notify();
+    });
+    cx.draw_frame().expect("draw parent chat");
+    let row = cx
+        .debug_bounds("subagent-row-Explorer")
+        .expect("explorer worker");
+    cx.simulate_click(row.origin + point(px(20.0), px(10.0)), Modifiers::default());
+    cx.update_window_entity(&state, |state, _, cx| {
+        let pane = state.pane_mut(pane_id).unwrap();
+        let view = pane.chat.worker_view.as_mut().expect("worker view open");
+        let mut messages = vec![Arc::new(ChatMessage::new(
+            ChatRole::User,
+            "Inspect terminal hot path".into(),
+        ))];
+        push_chat_event(
+            &mut messages,
+            AgentEvent::ToolStart {
+                id: Some("t1".into()),
+                name: "bash".into(),
+                input: "{\"command\":\"cat Cargo.toml\"}".into(),
+            },
+        );
+        push_chat_event(
+            &mut messages,
+            AgentEvent::ToolEnd {
+                id: Some("t1".into()),
+                name: "bash".into(),
+                output: "ok".into(),
+                failed: false,
+            },
+        );
+        push_chat_event(
+            &mut messages,
+            AgentEvent::Text("Docs read. Confirming caps.".into()),
+        );
+        push_chat_event(
+            &mut messages,
+            AgentEvent::ToolStart {
+                id: Some("t2".into()),
+                name: "read".into(),
+                input: "{\"path\":\"src/main.rs\"}".into(),
+            },
+        );
+        AppState::sync_worker_messages(view, messages);
+        pane.chat.notify_worker_view(cx);
+        cx.notify();
+    });
+    cx.draw_frame().expect("draw worker transcript");
+    let transcript = cx
+        .debug_bounds("subagent-transcript")
+        .expect("subagent transcript");
+    let row_bounds = cx
+        .debug_bounds("agent-chat-row")
+        .expect("centered agent chat row");
+    assert!(
+        row_bounds.size.width <= agent_appearance::COLUMN_WIDTH + px(1.0),
+        "subagent row width {} should match COLUMN_WIDTH {}",
+        row_bounds.size.width,
+        agent_appearance::COLUMN_WIDTH
+    );
+    assert!(
+        row_bounds.origin.x > transcript.origin.x + px(100.0),
+        "subagent row should be centered inside wide transcript viewport"
+    );
+    let back = cx.debug_bounds("subagent-back").expect("back button");
+    assert!(
+        (back.origin.x - row_bounds.origin.x).abs() <= px(24.0),
+        "subagent header back button ({}) should align with centered column ({})",
+        back.origin.x,
+        row_bounds.origin.x
+    );
+    assert!(
+        cx.debug_bounds("tool-group-1").is_some(),
+        "completed tools before assistant text should group like main agent UI"
+    );
+    assert!(
+        cx.debug_bounds("tool-row-3").is_some(),
+        "live running tool should stay visible like main agent UI"
+    );
+}
+
