@@ -1,10 +1,11 @@
 use gpui::{
-    App, Context, Div, Entity, MouseButton, Render, SharedString, WeakEntity, Window, div,
-    prelude::*, px, svg,
+    App, Context, Div, Entity, MouseButton, Render, SharedString, Subscription, WeakEntity, Window,
+    div, prelude::*, px, svg,
 };
-use gpui_component::input::{Input, InputState};
+use gpui_component::input::{Input, InputEvent, InputState};
 
 use crate::AppState;
+use crate::browser::address::{DEFAULT_SEARCH_TEMPLATE, Resolved, resolve_address, search_url};
 use crate::theme::ThemeTokens;
 use crate::workspace_state::SavedBrowser;
 
@@ -60,6 +61,7 @@ pub struct BrowserSurface {
     tabs: Vec<BrowserTab>,
     active: usize,
     address: Entity<InputState>,
+    _address_subscription: Subscription,
 }
 
 impl BrowserSurface {
@@ -82,14 +84,59 @@ impl BrowserSurface {
             tabs.push(BrowserTab::new_tab());
         }
         let active = saved.active.min(tabs.len() - 1);
+        let initial_url = tabs[active].url.clone();
+        let address = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Search or enter address")
+                .default_value(initial_url)
+        });
+        let _address_subscription = cx.subscribe_in(
+            &address,
+            window,
+            |this, input, event: &InputEvent, window, cx| {
+                if let InputEvent::PressEnter { .. } = event {
+                    let raw = input.read(cx).value();
+                    this.navigate_to(raw.as_str(), window, cx);
+                }
+            },
+        );
         Self {
             owner,
             pane_id,
             tabs,
             active,
-            address: cx
-                .new(|cx| InputState::new(window, cx).placeholder("Search or enter address")),
+            address,
+            _address_subscription,
         }
+    }
+
+    fn navigate_to(&mut self, raw: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(resolved) = resolve_address(raw) else {
+            return;
+        };
+        let url = match resolved {
+            Resolved::Url(url) => url,
+            Resolved::Search(query) => search_url(DEFAULT_SEARCH_TEMPLATE, &query),
+        };
+        if let Some(tab) = self.tabs.get_mut(self.active) {
+            tab.url = url.clone();
+            tab.title.clear();
+        }
+        self.address.update(cx, |state, cx| {
+            state.set_value(url, window, cx);
+        });
+        cx.notify();
+    }
+
+    fn sync_address_bar(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let url = self
+            .tabs
+            .get(self.active)
+            .map(|tab| tab.url.clone())
+            .unwrap_or_default();
+        self.address.update(cx, |state, cx| {
+            state.set_value(url, window, cx);
+        });
     }
 
     /// What survives a restart: the page-tab URLs and which one was visible.
@@ -144,9 +191,10 @@ impl BrowserSurface {
                     .child(div().min_w_0().truncate().child(tab.display_title()))
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(move |this, _, _, cx| {
+                        cx.listener(move |this, _, window, cx| {
                             if this.active != index {
                                 this.active = index;
+                                this.sync_address_bar(window, cx);
                                 cx.notify();
                             }
                         }),
@@ -170,10 +218,11 @@ impl BrowserSurface {
                     )
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|this, _, _, cx| {
+                        cx.listener(|this, _, window, cx| {
                             if this.tabs.len() < MAX_BROWSER_TABS {
                                 this.tabs.push(BrowserTab::new_tab());
                                 this.active = this.tabs.len() - 1;
+                                this.sync_address_bar(window, cx);
                                 cx.notify();
                             }
                         }),

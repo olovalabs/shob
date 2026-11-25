@@ -196,7 +196,7 @@ mod tests {
     fn search_urls_encode_the_query() {
         assert_eq!(
             search_url(DEFAULT_SEARCH_TEMPLATE, "c++ tutorial"),
-            "https://duckduckgo.com/?q=c%2B%20tutorial"
+            "https://duckduckgo.com/?q=c%2B%2B%20tutorial"
         );
         assert_eq!(
             search_url("https://lite.duckduckgo.com/lite/?q=", "a b"),
