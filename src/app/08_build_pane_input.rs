@@ -353,7 +353,7 @@ fn run_gui() -> Result<()> {
                     window_decorations: Some(WindowDecorations::Client),
                     app_id: Some("shob".to_string()),
                     icon: window_icon,
-                    ..gpui_kit::component::TitleBar::window_options()
+                    ..window_chrome::window_options()
                 },
                 |window, cx| {
                     startup_mark("window created");
