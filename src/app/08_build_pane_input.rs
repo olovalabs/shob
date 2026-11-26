@@ -367,6 +367,8 @@ fn run_gui() -> Result<()> {
                         pane_index: HashMap::new(),
                         project_change_counts: HashMap::new(),
                         git_snapshots: HashMap::new(),
+                        conversation_header_branch: None,
+                        conversation_header_menu_focus: cx.focus_handle(),
                         git_refreshing: HashSet::new(),
                         git_worktree_creating: HashSet::new(),
                         palette: palette.clone(),
@@ -693,37 +695,48 @@ fn run_gui() -> Result<()> {
                         }
                     }).detach();
 
-                    // Keep the active project's summary and Git workspace snapshot fresh without running Git on the UI thread.
-                    // One loop serves active agent panes and never overlaps requests.
+                    // Refresh conversation HEAD and agent workspace details without overlapping background requests.
                     let changes_state = app_state.downgrade();
                     cx.spawn(async move |cx: &mut gpui::AsyncApp| {
                         loop {
-                            let Ok(directory) = changes_state.update(cx, |state, _| {
+                            let Ok(directories) = changes_state.update(cx, |state, _| {
                                 if state.active_view != ActiveView::Workspace { return None; }
-                                let project = state.projects.get(state.active_project_idx)?;
-                                let session = project.sessions.get(project.active_session_idx)?;
-                                if let Some(focused_id) = state.focused_pane_id
-                                    && let Some(pane) = session.panes.iter().find(|p| p.id == focused_id && p.chat.active && p.preview_owner.is_none())
-                                {
-                                    return Some(state.agent_working_directory(pane));
-                                }
-                                session.panes.iter().find(|pane| pane.chat.active && pane.preview_owner.is_none())
-                                    .map(|pane| state.agent_working_directory(pane))
+                                let header_dir = state.conversation_header_directory().map(Path::to_path_buf);
+                                let agent_dir = state.active_session().and_then(|session| {
+                                    let mut panes = session.panes.iter().filter(|p| p.chat.active && p.preview_owner.is_none());
+                                    panes.clone().find(|p| Some(p.id) == state.focused_pane_id)
+                                        .or_else(|| panes.next())
+                                        .map(|pane| state.agent_working_directory(pane))
+                                });
+                                Some((header_dir, agent_dir))
                             }) else { break; };
-                            if let Some(directory) = directory {
-                                let workdir = directory.clone();
-                                let (summary, snapshot) = cx.background_executor().spawn(async move {
-                                    let snapshot = git_workspace::inspect(&workdir);
-                                    let summary = project_diff::summary(workdir).ok();
-                                    (summary, snapshot)
+                            if let Some((header_dir, agent_dir)) = directories
+                                && (header_dir.is_some() || agent_dir.is_some())
+                            {
+                                let (branch, agent) = cx.background_executor().spawn(async move {
+                                    let branch = header_dir.and_then(|dir| {
+                                        git_workspace::detect_git_branch_uncached(&dir)
+                                            .map(|branch| (dir, SharedString::from(branch)))
+                                    });
+                                    let agent = agent_dir.map(|dir| {
+                                        let snapshot = git_workspace::inspect(&dir);
+                                        let summary = project_diff::summary(dir.clone()).ok();
+                                        (dir, summary, snapshot)
+                                    });
+                                    (branch, agent)
                                 }).await;
                                 if changes_state.update(cx, |state, cx| {
-                                    let summary_changed = state.project_change_counts.get(&directory) != Some(&summary);
-                                    if summary_changed {
-                                        state.project_change_counts.insert(directory.clone(), summary);
+                                    if state.conversation_header_branch != branch {
+                                        state.conversation_header_branch = branch;
                                         cx.notify();
                                     }
-                                    state.apply_git_snapshot(directory, snapshot, cx);
+                                    if let Some((directory, summary, snapshot)) = agent {
+                                        if state.project_change_counts.get(&directory) != Some(&summary) {
+                                            state.project_change_counts.insert(directory.clone(), summary);
+                                            cx.notify();
+                                        }
+                                        state.apply_git_snapshot(directory, snapshot, cx);
+                                    }
                                 }).is_err() { break; }
                             }
                             cx.background_executor().timer(std::time::Duration::from_secs(4)).await;

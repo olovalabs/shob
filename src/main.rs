@@ -48,6 +48,7 @@ mod attention;
 mod chat_batch;
 mod cli;
 mod completion;
+mod conversation_header;
 mod conversations;
 mod diagnostics;
 mod file_icons;

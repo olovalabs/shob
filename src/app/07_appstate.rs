@@ -131,16 +131,6 @@ impl Render for AppState {
             return settings.into_any_element();
         }
 
-        let active_title = self
-            .active_session()
-            .map(|s| s.title.clone())
-            .unwrap_or_else(|| SharedString::from("No session"));
-
-        let active_project_name = self
-            .active_project()
-            .map(|p| p.name.clone())
-            .unwrap_or_else(|| SharedString::from("No project"));
-
         let terminal_area = if let Some(session) = self.active_session() {
             // Each session is its own screen: its pane tree (and maximized
             // pane) is rendered exclusively; other sessions' panes keep
@@ -184,50 +174,7 @@ impl Render for AppState {
                             .items_center()
                             .bg(tokens.chat().background)
                             .font_family(cx.theme().font_family.clone())
-                            .child(
-                                div()
-                                    .id("agent-conversation-header")
-                                    .w_full()
-                                    .h(px(38.0))
-                                    .flex_shrink_0()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(10.0))
-                                    .px(px(16.0))
-                                    .border_b_1()
-                                    .border_color(tokens.border)
-                                    .text_size(px(13.0))
-                                    .text_color(tokens.text_primary)
-                                    .child(session_logo_icon(session.logo.clone(), tokens.text_muted))
-                                    .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().child(active_title.clone()))
-                                    .child({
-                                        let pane_id = pane.id;
-                                        div()
-                                                .id(("focused-agent-info-toggle", pane_id))
-                                                .debug_selector(|| "focused-agent-info-toggle".into())
-                                                .size(px(32.0))
-                                                .flex_shrink_0()
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .rounded(px(6.0))
-                                                .cursor_pointer()
-                                                .hover(|style| style.bg(tokens.pane_header_btn_hover))
-                                                .child(svg().path("icons/info.svg").size(px(16.0)).text_color(tokens.text_secondary))
-                                                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                                    cx.stop_propagation();
-                                                    this.editor_picker_open = None;
-                                                    if let Some(pane) = this.pane_mut(pane_id) {
-                                                        if wide {
-                                                            pane.chat.info_open = Some(!info_visible);
-                                                        } else {
-                                                            pane.chat.info_open_compact = !info_visible;
-                                                        }
-                                                        cx.notify();
-                                                    }
-                                                }))
-                                    }),
-                            )
+                            .child(self.render_conversation_header(pane.id, wide, info_visible, tokens, cx))
                             .when(ascii_welcome, |view| view.child(ascii_glow::render()))
                             .when(usage.is_some(), |view| {
                                 view.child(
@@ -473,22 +420,10 @@ impl Render for AppState {
         } else {
             self.render_empty_terminal(cx).into_any_element()
         };
-        // Focused terminal's status and logo, mirrored in the title bar.
-        let agent_screen = self.settings.agent_layout
-            && self.active_session().and_then(|session| self.one_mode_pane(session))
-                .is_some_and(|pane| pane.chat.active && pane.diff_preview.is_none() && pane.markdown_preview.is_none());
+        let agent_pane = self.focused_conversation_pane();
         let titlebar_status = self.active_session().map(|s| s.status)
             .filter(|status| *status != SessionStatus::Active);
-        let titlebar_logo = self.active_session().map(|s| s.logo.clone());
-        let panel_source = self
-            .settings
-            .agent_layout
-            .then(|| self.active_session())
-            .flatten()
-            .and_then(|session| self.one_mode_pane(session))
-            .filter(|pane| {
-                pane.chat.active && pane.diff_preview.is_none() && pane.markdown_preview.is_none()
-            })
+        let panel_source = agent_pane
             .filter(|pane| !self.tool_panel_is_open(pane))
             .map(|pane| pane.id);
 
@@ -516,22 +451,21 @@ impl Render for AppState {
                             .when(!sidebar_docked, |row| row.pl(px(112.0)))
                             .text_size(px(12.5))
                             .text_color(tokens.titlebar_fg)
-                            .children((!agent_screen).then_some(titlebar_logo).flatten().map(|logo| {
-                                div()
-                                    .size(px(16.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .flex_shrink_0()
-                                    .child(session_logo_icon(logo, tokens.titlebar_fg))
-                            }))
-                            .when(!agent_screen, |row| row.child(
-                                div()
-                                    .min_w_0()
-                                    .overflow_hidden()
-                                    .text_ellipsis()
-                                    .child(format!("{active_project_name} — {active_title}")),
-                            ))
+                            .when(agent_pane.is_none(), |row| {
+                                let project = self.active_project().map_or("No project", |p| p.name.as_str());
+                                let session = self.active_session();
+                                let title = session.map_or("No session", |s| s.title.as_str());
+                                row.children(session.map(|s| {
+                                    div()
+                                        .size(px(16.0))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .flex_shrink_0()
+                                        .child(session_logo_icon(s.logo.clone(), tokens.titlebar_fg))
+                                }))
+                                .child(div().min_w_0().truncate().child(format!("{project} — {title}")))
+                            })
                             .children(titlebar_status.map(|status| {
                                 let (dot_color, text_color, badge_bg) = status.colors();
                                 div()

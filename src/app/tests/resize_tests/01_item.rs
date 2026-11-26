@@ -127,6 +127,8 @@ fn build_app_state(cx: &mut Context<AppState>) -> AppState {
         pane_index: HashMap::from([(1, (0, 0, 0))]),
         project_change_counts: HashMap::new(),
         git_snapshots: HashMap::new(),
+        conversation_header_branch: None,
+        conversation_header_menu_focus: cx.focus_handle(),
         git_refreshing: HashSet::new(),
         git_worktree_creating: HashSet::new(),
         palette,
@@ -564,6 +566,44 @@ fn titlebar_close_responds_at_the_edge_of_the_button() {
     );
     cx.run_until_parked();
     app.update(|cx| assert!(cx.windows().is_empty()));
+}
+
+#[test]
+fn conversation_header_switcher_activates_a_session() {
+    let mut app = TestAppContext::new();
+    let (mut cx, state) = open_app(&mut app);
+    cx.draw_frame().unwrap();
+    assert!(cx.debug_bounds("conversation-session-switcher").is_none());
+    cx.update_window_entity(&state, |s, window, cx| {
+        s.settings.agent_layout = true;
+        let pane = &mut s.projects[0].sessions[0].panes[0];
+        pane.chat.active = true;
+        pane.legacy_chat = true;
+        s.create_project_session(0, true, window, cx);
+        assert_eq!(s.projects[0].active_session_idx, 1);
+    });
+    cx.draw_frame().unwrap();
+    let header = cx.debug_bounds("agent-conversation-header").unwrap();
+    let switcher = cx.debug_bounds("conversation-session-switcher").unwrap();
+    let info = cx.debug_bounds("focused-agent-info-toggle").unwrap();
+    assert!(header.contains(&switcher.center()) && header.contains(&info.center()));
+    cx.simulate_click(switcher.center(), Modifiers::none());
+    cx.draw_frame().unwrap();
+    let first = cx.debug_bounds("conversation-session-1").unwrap();
+    cx.simulate_click(first.center(), Modifiers::none());
+    assert_eq!(
+        state.read_with(&cx, |s, _| s.projects[0].active_session_idx),
+        0
+    );
+    cx.draw_frame().unwrap();
+    let switcher = cx.debug_bounds("conversation-session-switcher").unwrap();
+    cx.simulate_click(switcher.center(), Modifiers::none());
+    cx.draw_frame().unwrap();
+    cx.simulate_keystrokes("down enter");
+    assert_eq!(
+        state.read_with(&cx, |s, _| s.projects[0].active_session_idx),
+        1
+    );
 }
 
 #[test]

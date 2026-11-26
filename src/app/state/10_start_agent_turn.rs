@@ -805,6 +805,7 @@ impl AppState {
 
         // Workspace input must not steal focus from a transient modal.
         if self.active_view == ActiveView::Workspace
+            && !self.conversation_header_menu_focus.contains_focused(window, cx)
             && self.history_search.is_none()
             && !self.sidebar_search_focused(window, cx)
             && let Some(pane_id) = self.focused_pane_id

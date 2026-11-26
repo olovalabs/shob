@@ -433,6 +433,8 @@ struct AppState {
     project_change_counts: HashMap<PathBuf, Option<project_diff::ChangeSummary>>,
     /// Cached Git workspace snapshots keyed by active directory.
     git_snapshots: HashMap<PathBuf, git_workspace::GitWorkspaceSnapshot>,
+    conversation_header_branch: Option<(PathBuf, SharedString)>,
+    conversation_header_menu_focus: gpui::FocusHandle,
     /// Directories currently being inspected off-thread.
     git_refreshing: HashSet<PathBuf>,
     /// Agent panes currently creating a new worktree off-thread.
