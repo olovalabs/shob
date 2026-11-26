@@ -208,7 +208,7 @@ pub(crate) fn open_app(cx: &mut TestAppContext) -> (VisualTestContext, Entity<Ap
                     icon: image::load_from_memory(APP_ICON_PNG)
                         .ok()
                         .map(|image| Arc::new(image.into_rgba8())),
-                    ..gpui_kit::component::TitleBar::window_options()
+                    ..window_chrome::window_options()
                 },
                 |window, cx| {
                     state.update(cx, |state, cx| {

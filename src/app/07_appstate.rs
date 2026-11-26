@@ -1,5 +1,22 @@
 impl Render for AppState {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let inset = window_chrome::titlebar_inset(window);
+        let content = self.render_app(window, cx);
+        if inset > px(0.0) {
+            div()
+                .size_full()
+                .pt(inset)
+                .bg(self.tokens(cx).titlebar_bg)
+                .child(content)
+                .into_any_element()
+        } else {
+            content
+        }
+    }
+}
+
+impl AppState {
+    fn render_app(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         #[cfg(test)]
         APP_ROOT_RENDERS.with(|count| count.set(count.get() + 1));
         // The wrapper marks only panes mounted by this root pass. Background
@@ -437,9 +454,7 @@ impl Render for AppState {
                     .h(px(38.0))
                     .bg(tokens.titlebar_bg)
                     .border_color(tokens.titlebar_border)
-                    .when(cfg!(target_os = "macos") && sidebar_docked, |bar| {
-                        bar.pl_3()
-                    })
+                    .when(cfg!(target_os = "macos"), |bar| bar.pl_3())
                     .child(
                         div()
                             .flex()

@@ -78,6 +78,7 @@ mod system_detection;
 mod theme;
 mod token_efficiency;
 mod updater;
+mod window_chrome;
 mod workspace_state;
 mod workspace_switcher;
 
