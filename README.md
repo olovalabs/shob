@@ -119,11 +119,11 @@ The launcher in [`cli/`](cli/) requires Node.js 22 or later. It downloads and ve
 latest Shob binary from GitHub Releases on first run. Linux x64, Apple Silicon Macs, and
 Windows x64 use the same portable builds as the direct downloads.
 
-Once `@olovalabs/shob-desktop` is published, run:
+Once the desktop launcher (`shob-code@0.1.0`) is published, run:
 
 ```sh
-npx @olovalabs/shob-desktop@latest  # Try the desktop app
-npm install -g @olovalabs/shob-desktop
+npx shob-code                     # Try the desktop app
+npm install -g shob-code
 shob                              # Start the TUI
 shob gui                          # Open the desktop app
 shob gui install                  # Register Shob in your desktop's app launcher
@@ -133,7 +133,7 @@ shob update                       # Update the downloaded Shob binary
 Run `shob gui remove` to remove the desktop entry. Shob keeps the downloaded binary in
 the `launcher` directory under the platform's Shob data directory so desktop shortcuts
 and the terminal command can share it. Update the npm launcher itself with
-`npm install -g @olovalabs/shob-desktop@latest`.
+`npm install -g shob-code@latest`.
 
 To build the TypeScript launcher, use Node.js 22.12 or later and run `npm ci` followed
 by `npm run build` in [`cli/`](cli/). Vite builds both CLI entry points into `dist/`.
@@ -143,7 +143,7 @@ by `npm run build` in [`cli/`](cli/). Vite builds both CLI entry points into `di
 cd cli
 npm ci
 npm pack
-npx --package=./olovalabs-shob-desktop-0.1.0.tgz -- shob-desktop
+npx --package=./shob-code-0.1.0.tgz -- shob-code
 ```
 
 Run `npm publish` from `cli/` to build and publish the package with public access.

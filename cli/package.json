@@ -1,5 +1,5 @@
 {
-  "name": "@olovalabs/shob-desktop",
+  "name": "shob-code",
   "version": "0.1.0",
   "description": "Launch the native Shob terminal and desktop workspace",
   "license": "MIT",
@@ -14,7 +14,7 @@
   },
   "bin": {
     "shob": "./dist/shob.js",
-    "shob-desktop": "./dist/shob-desktop.js"
+    "shob-code": "./dist/shob-desktop.js"
   },
   "files": [
     "dist/"
