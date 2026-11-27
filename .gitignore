@@ -22,6 +22,8 @@ coverage/
 
 # Node / JS integration test artifacts
 node_modules/
+/cli/dist/
+/cli/*.tgz
 
 # Agent runtime artifacts
 .shob/

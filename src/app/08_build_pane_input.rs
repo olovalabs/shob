@@ -129,6 +129,9 @@ fn detect_shell() -> (String, String) {
 }
 #[cfg(target_os = "linux")]
 fn ensure_linux_desktop_entry() {
+    if std::env::var_os("SHOB_SKIP_DESKTOP_ENTRY").as_deref() == Some(std::ffi::OsStr::new("1")) {
+        return;
+    }
     let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
         return;
     };

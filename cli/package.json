@@ -1,0 +1,35 @@
+{
+  "name": "@olovalabs/shob-desktop",
+  "version": "0.1.0",
+  "description": "Launch the native Shob terminal and desktop workspace",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/olovalabs/shob.git",
+    "directory": "cli"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "shob": "./dist/shob.js",
+    "shob-desktop": "./dist/shob-desktop.js"
+  },
+  "files": [
+    "dist/"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && vite build",
+    "prepack": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.7",
+    "typescript": "^7.0.2",
+    "vite": "^8.4.0"
+  }
+}

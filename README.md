@@ -113,6 +113,44 @@ With `shob` on your `PATH`, run `shob` from any project folder to start the codi
 
 Press `Ctrl+V` or `Alt+V` in the TUI to attach a copied image. Each image gets an inline label such as `[Image 1]`. Reference those numbers in your instructions or delete a label to omit its image. Use `Alt+V` if your terminal intercepts `Ctrl+V`.
 
+### npm launcher
+
+The launcher in [`cli/`](cli/) requires Node.js 22 or later. It downloads and verifies the
+latest Shob binary from GitHub Releases on first run. Linux x64, Apple Silicon Macs, and
+Windows x64 use the same portable builds as the direct downloads.
+
+Once `@olovalabs/shob-desktop` is published, run:
+
+```sh
+npx @olovalabs/shob-desktop@latest  # Try the desktop app
+npm install -g @olovalabs/shob-desktop
+shob                              # Start the TUI
+shob gui                          # Open the desktop app
+shob gui install                  # Register Shob in your desktop's app launcher
+shob update                       # Update the downloaded Shob binary
+```
+
+Run `shob gui remove` to remove the desktop entry. Shob keeps the downloaded binary in
+the `launcher` directory under the platform's Shob data directory so desktop shortcuts
+and the terminal command can share it. Update the npm launcher itself with
+`npm install -g @olovalabs/shob-desktop@latest`.
+
+To build the TypeScript launcher, use Node.js 22.12 or later and run `npm ci` followed
+by `npm run build` in [`cli/`](cli/). Vite builds both CLI entry points into `dist/`.
+`npm pack` builds and packages the CLI for local testing:
+
+```sh
+cd cli
+npm ci
+npm pack
+npx --package=./olovalabs-shob-desktop-0.1.0.tgz -- shob-desktop
+```
+
+Run `npm publish` from `cli/` to build and publish the package with public access.
+
+On Linux, the launcher sets `SHOB_SKIP_DESKTOP_ENTRY=1` to leave desktop registration
+to `shob gui install`. Older Shob builds may still register a desktop entry on launch.
+
 ### Prerequisites
 
 Install [Rust](https://www.rust-lang.org/tools/install) version 1.94.1 or newer.
