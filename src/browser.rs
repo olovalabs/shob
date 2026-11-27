@@ -149,7 +149,11 @@ pub(crate) fn remove(path: &Path) -> Result<()> {
     }
 }
 
-fn copy_verified(source: impl Read, mut destination: impl Write, artifact: &Artifact) -> Result<()> {
+fn copy_verified(
+    source: impl Read,
+    mut destination: impl Write,
+    artifact: &Artifact,
+) -> Result<()> {
     let mut source = source.take(artifact.bytes + 1);
     let mut buffer = [0; 32 * 1024];
     let mut hash = Sha256::new();
