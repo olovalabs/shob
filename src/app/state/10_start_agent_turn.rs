@@ -808,6 +808,7 @@ impl AppState {
             && !self.conversation_header_menu_focus.contains_focused(window, cx)
             && self.history_search.is_none()
             && !self.sidebar_search_focused(window, cx)
+            && !self.sidebar_project_picker_focused(window, cx)
             && let Some(pane_id) = self.focused_pane_id
             && let Some(&(p_idx, s_idx, pane_idx)) = self.pane_index.get(&pane_id)
             && let Some(project) = self.projects.get(p_idx)

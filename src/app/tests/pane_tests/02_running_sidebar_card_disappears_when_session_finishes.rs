@@ -196,6 +196,61 @@ fn new_sidebar_session_renders_first_and_stays_on_the_first_page() {
 }
 
 #[test]
+fn new_sidebar_thread_search_filters_projects_from_keyboard_input() {
+    let mut app = TestAppContext::new();
+    let (mut cx, state) = open_app(&mut app);
+    let project = tempfile::Builder::new()
+        .prefix("picker-target-")
+        .tempdir()
+        .unwrap();
+    cx.update_window_entity(&state, |state, _, cx| {
+        state.settings.agent_layout = true;
+        state.projects[0].sessions[0].panes[0].chat.active = true;
+        state.projects.push(Project {
+            id: 2,
+            name: "Another project".into(),
+            path: project.path().to_path_buf(),
+            sessions: Vec::new(),
+            active_session_idx: 0,
+            expanded: false,
+            visible_session_count: 5,
+        });
+        state.next_id = 3;
+        state.rebuild_session_index();
+        cx.notify();
+    });
+    cx.draw_frame().unwrap();
+    let new_thread = cx.debug_bounds("sidebar-new-thread").unwrap();
+    cx.simulate_click(new_thread.center(), Modifiers::none());
+    cx.draw_frame().unwrap();
+
+    cx.simulate_input("picker-target");
+    assert_eq!(
+        state.read_with(&cx, AppState::sidebar_project_picker_query),
+        "picker-target"
+    );
+    cx.draw_frame().unwrap();
+    assert!(cx.debug_bounds("new-session-project-empty").is_none());
+
+    let search = cx.debug_bounds("new-session-project-search").unwrap();
+    cx.simulate_click(search.center(), Modifiers::none());
+    cx.simulate_keystrokes("end");
+    cx.simulate_input("z");
+    cx.draw_frame().unwrap();
+    assert!(cx.debug_bounds("new-session-project-empty").is_some());
+    cx.simulate_keystrokes("enter");
+    assert!(state.read_with(&cx, |state, _| state.sidebar_project_picker.is_some()));
+    cx.draw_frame().unwrap();
+
+    cx.simulate_keystrokes("backspace enter");
+    state.read_with(&cx, |state, _| {
+        assert!(state.sidebar_project_picker.is_none());
+        assert_eq!(state.active_project_idx, 1);
+        assert_eq!(state.projects[1].sessions.len(), 1);
+    });
+}
+
+#[test]
 fn sidebar_search_opens_a_match_outside_the_inbox_scope() {
     let mut cx = TestAppContext::new();
     let (mut cx, app_state) = open_app(&mut cx);

@@ -431,6 +431,7 @@ impl AppState {
         if matching.is_empty() {
             list = list.child(
                 div()
+                    .debug_selector(|| "new-session-project-empty".into())
                     .p(px(12.0))
                     .text_sm()
                     .text_color(tokens.text_secondary)
@@ -499,6 +500,7 @@ impl AppState {
                             )
                             .child(
                                 div()
+                                    .debug_selector(|| "new-session-project-search".into())
                                     .h(px(36.0))
                                     .flex()
                                     .items_center()
