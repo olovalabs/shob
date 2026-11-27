@@ -625,7 +625,7 @@ include!("state/17_render_chat_message.rs");
 include!("state/18_render_agent_chat_body.rs");
 include!("state/19_discover_project_editors.rs");
 include!("state/20_render_terminal_pane.rs");
-include!("state/21_render_t3_sidebar_actions.rs");
+include!("state/21_render_sidebar_actions.rs");
 include!("state/22_render_sidebar_thread_card.rs");
 include!("state/settings_navigation.rs");
 include!("state/23_render_settings_page.rs");
@@ -667,11 +667,7 @@ fn sidebar_icon_button(
         )
 }
 
-/// Compact square button for T3 Code's single-row sidebar header and its
-/// icon-only footer. It leaves click handling to the caller so shift-click can
-/// be read from `ClickEvent::modifiers()`.
-fn t3_sidebar_icon_action(
-    _state: &AppState,
+fn sidebar_icon_action(
     id: &'static str,
     icon: &'static str,
     title: &'static str,

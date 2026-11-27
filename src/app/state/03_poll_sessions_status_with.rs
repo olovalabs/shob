@@ -15,7 +15,7 @@ impl AppState {
         let mut panes_polled = 0u64;
         let focused_id = self.focused_pane_id;
         let agent_layout = self.settings.agent_layout;
-        // `T3_STATUS_DEBUG=1` dumps every detection pass: the facts that went in
+        // `SHOB_STATUS_DEBUG=1` dumps every detection pass: the facts that went in
         // and the badge that came out. Without this the poller is invisible.
         let debug = status::debug_enabled();
         let trace = status::trace_enabled();

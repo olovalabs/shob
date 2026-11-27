@@ -12,9 +12,8 @@ impl AppState {
             .get(&pane_id)
             .map(|&(p_idx, _, _)| p_idx)
             .unwrap_or(self.active_project_idx);
-        let project_name = self
-            .projects
-            .get(current_project_idx)
+        let current_project = self.projects.get(current_project_idx);
+        let project_name = current_project
             .map(|project| project.name.clone())
             .unwrap_or_else(|| SharedString::from("Project"));
 
@@ -73,13 +72,19 @@ impl AppState {
                         .left_0()
                         .size_full(),
                     )
-                    .child(
-                        svg()
-                            .path("icons/folder.svg")
-                            .size(px(12.0))
-                            .flex_shrink_0()
-                            .text_color(tokens.text_muted),
-                    )
+                    .map(|trigger| {
+                        if let Some(project) = current_project {
+                            trigger.child(project_favicon(project, *tokens, px(14.0)))
+                        } else {
+                            trigger.child(
+                                svg()
+                                    .path("icons/folder.svg")
+                                    .size(px(12.0))
+                                    .flex_shrink_0()
+                                    .text_color(tokens.text_muted),
+                            )
+                        }
+                    })
                     .child(div().max_w(px(140.0)).truncate().child(project_name))
                     .child(
                         svg()
@@ -169,17 +174,7 @@ impl AppState {
                                     .cursor_pointer()
                                     .when(is_active, |row| row.bg(hover_bg))
                                     .hover(move |s| s.bg(hover_bg))
-                                    .child(
-                                        svg()
-                                            .path("icons/folder.svg")
-                                            .size(px(14.0))
-                                            .flex_shrink_0()
-                                            .text_color(if is_active {
-                                                accent
-                                            } else {
-                                                tokens.text_secondary
-                                            }),
-                                    )
+                                    .child(project_favicon(project, *tokens, px(18.0)))
                                     .child(
                                         div()
                                             .flex_1()

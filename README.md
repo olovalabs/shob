@@ -257,6 +257,10 @@ SHOB_TOKEN_EFFICIENCY=0
 
 Settings are stored in your platform's configuration directory.
 
+For status diagnostics, `SHOB_STATUS_TRACE=1` logs state transitions and their
+evidence. `SHOB_STATUS_DEBUG=1` logs every detection pass, including excerpts
+from the terminal screen.
+
 ### Idle sessions
 
 A session you are not looking at releases its render caches immediately and, after

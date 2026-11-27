@@ -50,7 +50,6 @@ pub const SIDEBAR_MIN_WIDTH: Pixels = px(180.0);
 const SIDEBAR_MAX_FRACTION: f32 = 0.5;
 /// Width of the invisible drag strip along the sidebar's right border.
 const SIDEBAR_RESIZE_HANDLE_WIDTH: Pixels = px(4.0);
-/// T3 Code's row sizes and inbox paging.
 const SIDEBAR_THREAD_CARD_HEIGHT: Pixels = px(78.0);
 const SIDEBAR_THREAD_SLIM_HEIGHT: Pixels = px(36.0);
 const SIDEBAR_ACTIVE_INITIAL_COUNT: usize = 5;

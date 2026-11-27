@@ -562,9 +562,59 @@ impl gpui::Asset for FaviconAsset {
 
 enum ProjectFaviconAsset {}
 
+#[derive(Clone)]
+struct LoadedProjectFavicon {
+    image: Arc<gpui::RenderImage>,
+    tone: ProjectFaviconTone,
+}
+
+#[derive(Clone, Copy)]
+enum ProjectFaviconTone {
+    Dark,
+    Light,
+    Mixed,
+}
+
+impl LoadedProjectFavicon {
+    fn from_image(image: Arc<gpui::RenderImage>) -> Option<Self> {
+        let mut opacity = 0usize;
+        let mut dark = 0;
+        let mut light = 0;
+        let (pixels, _) = image.as_bytes(0)?.as_chunks::<4>();
+        for &[b, g, r, a] in pixels {
+            let alpha = usize::from(a);
+            let brightness = (54 * u16::from(r) + 183 * u16::from(g) + 19 * u16::from(b)) / 256;
+            opacity += alpha;
+            if brightness <= 62 {
+                dark += alpha;
+            } else if brightness >= 193 {
+                light += alpha;
+            }
+        }
+        if opacity == 0 {
+            return None;
+        }
+        let tone = if dark * 4 >= opacity * 3 {
+            ProjectFaviconTone::Dark
+        } else if light * 4 >= opacity * 3 {
+            ProjectFaviconTone::Light
+        } else {
+            ProjectFaviconTone::Mixed
+        };
+        Some(Self { image, tone })
+    }
+
+    fn needs_backdrop(&self, dark_theme: bool) -> bool {
+        matches!(
+            (self.tone, dark_theme),
+            (ProjectFaviconTone::Dark, true) | (ProjectFaviconTone::Light, false)
+        )
+    }
+}
+
 impl gpui::Asset for ProjectFaviconAsset {
     type Source = PathBuf;
-    type Output = Result<Arc<gpui::RenderImage>, gpui::ImageCacheError>;
+    type Output = Result<LoadedProjectFavicon, gpui::ImageCacheError>;
 
     fn load(root: PathBuf, cx: &mut App) -> impl Future<Output = Self::Output> + Send + 'static {
         static SLOTS: std::sync::LazyLock<(
@@ -580,85 +630,256 @@ impl gpui::Asset for ProjectFaviconAsset {
         let renderer = cx.svg_renderer();
         async move {
             let _ = SLOTS.1.recv().await;
-            let result = smol::unblock(move || -> anyhow::Result<Arc<gpui::RenderImage>> {
-                use std::io::Read as _;
-                const CANDIDATES: &[(&str, gpui::ImageFormat)] = &[
-                    ("favicon.svg", gpui::ImageFormat::Svg),
-                    ("favicon.ico", gpui::ImageFormat::Ico),
-                    ("favicon.png", gpui::ImageFormat::Png),
-                    ("public/favicon.svg", gpui::ImageFormat::Svg),
-                    ("public/favicon.ico", gpui::ImageFormat::Ico),
-                    ("public/favicon.png", gpui::ImageFormat::Png),
-                    ("app/favicon.ico", gpui::ImageFormat::Ico),
-                    ("app/icon.svg", gpui::ImageFormat::Svg),
-                    ("app/icon.png", gpui::ImageFormat::Png),
-                    ("src/app/favicon.ico", gpui::ImageFormat::Ico),
-                    ("src/app/icon.svg", gpui::ImageFormat::Svg),
-                    ("src/app/icon.png", gpui::ImageFormat::Png),
-                    ("assets/icon.svg", gpui::ImageFormat::Svg),
-                    ("assets/icon.png", gpui::ImageFormat::Png),
-                    ("assets/logo.svg", gpui::ImageFormat::Svg),
-                    ("assets/logo.png", gpui::ImageFormat::Png),
-                    ("web/favicon.png", gpui::ImageFormat::Png),
-                ];
-                for (path, format) in CANDIDATES {
-                    let Ok(file) = std::fs::File::open(root.join(path)) else {
-                        continue;
-                    };
-                    let mut bytes = Vec::new();
-                    if file.take(1024 * 1024 + 1).read_to_end(&mut bytes).is_ok()
-                        && bytes.len() <= 1024 * 1024
-                        && let Ok(image) =
-                            gpui::Image::from_bytes(*format, bytes).to_image_data(renderer.clone())
-                    {
-                        return Ok(image);
-                    }
-                }
-                anyhow::bail!("no project favicon")
-            })
-            .await;
+            let result = smol::unblock(move || load_project_favicon(&root, &renderer)).await;
             let _ = SLOTS.0.try_send(());
             result.map_err(Into::into)
         }
     }
 }
 
-fn sidebar_project_icon(project: &Project, tokens: ThemeTokens) -> AnyElement {
-    let root = project.path.clone();
-    let initial = project
-        .name
-        .chars()
-        .next()
-        .unwrap_or('?')
-        .to_uppercase()
-        .to_string();
-    let fallback = move || {
-        div()
-            .size_full()
+fn load_project_favicon(
+    root: &Path,
+    renderer: &gpui::SvgRenderer,
+) -> anyhow::Result<LoadedProjectFavicon> {
+    use std::io::Read as _;
+    const MAX_BYTES: u64 = 1024 * 1024;
+    const MAX_RASTER_SIDE: u32 = 2048;
+    const ICON_PIXELS: u32 = 64;
+    const CANDIDATES: &[&str] = &[
+        "favicon.svg",
+        "favicon.ico",
+        "favicon.png",
+        "favicon.webp",
+        "public/favicon.svg",
+        "public/favicon.ico",
+        "public/favicon.png",
+        "public/favicon.webp",
+        "public/favicon/favicon.svg",
+        "public/favicon/favicon.png",
+        "public/favicon/favicon-96x96.webp",
+        "app/favicon.ico",
+        "app/icon.svg",
+        "app/icon.png",
+        "src/app/favicon.ico",
+        "src/app/icon.svg",
+        "src/app/icon.png",
+        "static/favicon.svg",
+        "static/favicon.ico",
+        "static/favicon.png",
+        "assets/favicon.svg",
+        "assets/favicon.ico",
+        "assets/favicon.png",
+        "assets/favicon.webp",
+        "assets/icon.svg",
+        "assets/icon.png",
+        "assets/logo.svg",
+        "assets/logo.png",
+        "assets/logo.webp",
+        "web/favicon.png",
+        "apps/web/public/favicon/favicon.svg",
+        "apps/web/public/favicon.svg",
+        "apps/web/public/favicon.ico",
+        "apps/web/public/favicon.png",
+        "apps/web/src/app/favicon.ico",
+    ];
+    for candidate in CANDIDATES {
+        let path = root.join(candidate);
+        if !path
+            .metadata()
+            .is_ok_and(|meta| meta.is_file() && meta.len() <= MAX_BYTES)
+        {
+            continue;
+        }
+        let Ok(file) = std::fs::File::open(&path) else {
+            continue;
+        };
+        let mut bytes = Vec::new();
+        if file.take(MAX_BYTES + 1).read_to_end(&mut bytes).is_err()
+            || bytes.len() as u64 > MAX_BYTES
+        {
+            continue;
+        }
+        if candidate.ends_with(".svg") {
+            let side = gpui::DevicePixels(ICON_PIXELS as i32);
+            if let Ok(svg) = renderer.parse_svg(&normalize_favicon_svg_colors(&bytes))
+                && let Ok(image) =
+                    renderer.render_parsed(&svg, gpui::SvgSize::Size(size(side, side)))
+                && let Some(favicon) = LoadedProjectFavicon::from_image(image)
+            {
+                return Ok(favicon);
+            }
+            continue;
+        }
+        let Ok(mut reader) =
+            image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()
+        else {
+            continue;
+        };
+        if !matches!(
+            reader.format(),
+            Some(image::ImageFormat::Png | image::ImageFormat::Ico | image::ImageFormat::WebP)
+        ) {
+            continue;
+        }
+        let mut limits = image::Limits::default();
+        limits.max_image_width = Some(MAX_RASTER_SIDE);
+        limits.max_image_height = Some(MAX_RASTER_SIDE);
+        limits.max_alloc = Some(32 * 1024 * 1024);
+        reader.limits(limits);
+        let Ok(image) = reader.decode() else {
+            continue;
+        };
+        let mut pixels = if image.width().max(image.height()) > ICON_PIXELS {
+            image.thumbnail(ICON_PIXELS, ICON_PIXELS).into_rgba8()
+        } else {
+            image.into_rgba8()
+        };
+        for pixel in pixels.as_chunks_mut::<4>().0 {
+            pixel.swap(0, 2);
+        }
+        let image = Arc::new(gpui::RenderImage::new([image::Frame::new(pixels)]));
+        if let Some(favicon) = LoadedProjectFavicon::from_image(image) {
+            return Ok(favicon);
+        }
+    }
+    anyhow::bail!("no project favicon")
+}
+
+fn normalize_favicon_svg_colors(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    use std::borrow::Cow;
+
+    static DISPLAY_P3: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\bcolor\(\s*display-p3\s+([^()]*)\)").unwrap()
+    });
+    let Ok(svg) = std::str::from_utf8(bytes) else {
+        return Cow::Borrowed(bytes);
+    };
+    match DISPLAY_P3.replace_all(svg, |captures: &regex::Captures<'_>| {
+        display_p3_hex(&captures[1]).unwrap_or_else(|| captures[0].to_owned())
+    }) {
+        Cow::Borrowed(svg) => Cow::Borrowed(svg.as_bytes()),
+        Cow::Owned(svg) => Cow::Owned(svg.into_bytes()),
+    }
+}
+
+fn display_p3_hex(value: &str) -> Option<String> {
+    fn component(value: &str) -> Option<f64> {
+        let value = value.trim();
+        let number = match value.strip_suffix('%') {
+            Some(percent) => f64::from(percent.parse::<f32>().ok()?) / 100.0,
+            None => f64::from(value.parse::<f32>().ok()?),
+        };
+        number.is_finite().then_some(number)
+    }
+    fn linear(value: f64) -> f64 {
+        if value.abs() <= 0.04045 {
+            value / 12.92
+        } else {
+            ((value.abs() + 0.055) / 1.055).powf(2.4).copysign(value)
+        }
+    }
+    fn encoded(value: f64) -> u8 {
+        let value = value.clamp(0.0, 1.0);
+        let value = if value <= 0.0031308 {
+            12.92 * value
+        } else {
+            1.055 * value.powf(1.0 / 2.4) - 0.055
+        };
+        (value * 255.0).round() as u8
+    }
+
+    let (channels, alpha) = match value.split_once('/') {
+        Some((channels, alpha)) => (channels, component(alpha)?),
+        None => (value, 1.0),
+    };
+    let mut channels = channels.split_ascii_whitespace();
+    let r = linear(component(channels.next()?)?);
+    let g = linear(component(channels.next()?)?);
+    let b = linear(component(channels.next()?)?);
+    if channels.next().is_some() {
+        return None;
+    }
+
+    // Linear Display P3 to linear sRGB, composed from CSS Color 4's D65 matrices.
+    let red = encoded(1.224_940_18 * r - 0.224_940_18 * g);
+    let green = encoded(-0.042_056_95 * r + 1.042_056_95 * g);
+    let blue = encoded(-0.019_637_55 * r - 0.078_636_05 * g + 1.098_273_60 * b);
+    let alpha = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+    Some(format!("#{red:02x}{green:02x}{blue:02x}{alpha:02x}"))
+}
+
+#[derive(IntoElement)]
+struct ProjectFavicon {
+    root: PathBuf,
+    initials: SharedString,
+    tokens: ThemeTokens,
+    size: Pixels,
+}
+
+impl gpui::RenderOnce for ProjectFavicon {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        use std::hash::{DefaultHasher, Hash as _, Hasher as _};
+
+        let frame = div()
+            .size(self.size)
+            .flex_none()
+            .rounded(self.size * 0.24)
+            .overflow_hidden();
+        if let Some(Ok(favicon)) = window.use_asset::<ProjectFaviconAsset>(&self.root, cx) {
+            return frame
+                .when(favicon.needs_backdrop(self.tokens.is_dark), |frame| {
+                    frame
+                        .bg(self
+                            .tokens
+                            .pane_bg
+                            .blend(self.tokens.text_primary.opacity(0.85)))
+                        .p(self.size * 0.1)
+                })
+                .child(
+                    img(favicon.image)
+                        .size_full()
+                        .object_fit(ObjectFit::Contain),
+                );
+        }
+
+        let mut hasher = DefaultHasher::new();
+        self.root.hash(&mut hasher);
+        let accent = Hsla {
+            h: (hasher.finish() % 360) as f32 / 360.0,
+            s: 0.72,
+            l: if self.tokens.is_dark { 0.74 } else { 0.30 },
+            a: 1.0,
+        };
+        frame
             .flex()
             .items_center()
             .justify_center()
-            .text_size(px(9.0))
-            .text_color(tokens.sidebar_fg)
-            .child(initial.clone())
-            .into_any_element()
-    };
-    div()
-        .size(px(14.0))
-        .flex_none()
-        .rounded(px(3.0))
-        .overflow_hidden()
-        .bg(tokens.sidebar_item_hover)
-        .child(
-            img(move |window: &mut Window, cx: &mut App| {
-                window.use_asset::<ProjectFaviconAsset>(&root, cx)
-            })
-            .size_full()
-            .object_fit(ObjectFit::Contain)
-            .with_loading(fallback.clone())
-            .with_fallback(fallback),
-        )
-        .into_any_element()
+            .bg(self.tokens.pane_bg.blend(accent.opacity(0.19)))
+            .text_size(self.size * 0.49)
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_color(accent)
+            .child(self.initials)
+    }
+}
+
+fn project_favicon(project: &Project, tokens: ThemeTokens, size: Pixels) -> ProjectFavicon {
+    let mut initials: String = project
+        .name
+        .chars()
+        .filter(|ch| ch.is_alphanumeric())
+        .take(2)
+        .flat_map(char::to_uppercase)
+        .take(2)
+        .collect();
+    if initials.is_empty() {
+        initials.push('?');
+    }
+    ProjectFavicon {
+        root: project.path.clone(),
+        initials: SharedString::from(initials),
+        tokens,
+        size,
+    }
 }
 
 fn web_sources(name: &str, output: &str) -> Vec<String> {

@@ -102,7 +102,7 @@ fn branch_picker_switches_branches_and_jumps_worktrees() {
 }
 
 #[test]
-fn t3_sidebar_thread_sections_prioritize_snooze_settle_and_archive() {
+fn sidebar_thread_sections_prioritize_snooze_settle_and_archive() {
     let now = 1_000_000;
     assert_eq!(
         SidebarThreadState::default().section(now),
@@ -181,7 +181,7 @@ fn sidebar_quick_settle_moves_active_thread_to_settled() {
 }
 
 #[test]
-fn t3_sidebar_working_section_counts_and_keeps_active_when_collapsed() {
+fn sidebar_working_section_counts_and_keeps_active_when_collapsed() {
     let mut app = TestAppContext::new();
     let (mut cx, state) = open_app(&mut app);
     cx.update_window_entity(&state, |state, _, cx| {
@@ -217,13 +217,14 @@ fn t3_sidebar_working_section_counts_and_keeps_active_when_collapsed() {
 }
 
 #[test]
-fn t3_sidebar_new_button_chooses_project_before_creating_thread() {
+fn sidebar_new_button_chooses_project_before_creating_thread() {
     let mut app = TestAppContext::new();
     let (mut cx, state) = open_app(&mut app);
-    cx.update_window_entity(&state, |state, _, cx| {
+    cx.update_window_entity(&state, |state, window, cx| {
         let scope = state.projects[0].path.clone();
         state.settings.sidebar.project_scope = Some(scope);
-        cx.notify();
+        state.theme_preference = ThemePreference::Dark;
+        state.apply_theme_preference(Some(window), cx);
     });
     cx.draw_frame().unwrap();
     assert!(cx.debug_bounds("sidebar-new-thread").is_some());
@@ -231,6 +232,20 @@ fn t3_sidebar_new_button_chooses_project_before_creating_thread() {
     assert!(cx.debug_bounds("sidebar-footer").is_some());
     let new_thread = cx.debug_bounds("sidebar-new-thread").unwrap();
     cx.simulate_click(new_thread.center(), Modifiers::none());
+    cx.draw_frame().unwrap();
+    if let Some(path) = std::env::var_os("SHOB_PROJECT_PICKER_SCREENSHOT") {
+        cx.update(|window, _| {
+            window.render_to_image().unwrap().save(PathBuf::from(path)).unwrap();
+        });
+    }
+
+    cx.simulate_resize(size(px(360.0), px(260.0)));
+    cx.draw_frame().unwrap();
+    let modal = cx.debug_bounds("new-session-project-modal").unwrap();
+    let bot = cx.debug_bounds("new-session-bot").unwrap();
+    assert!(modal.right() <= px(360.0) && modal.bottom() <= px(260.0));
+    assert!(modal.contains(&bot.center()));
+    cx.simulate_click(bot.center(), Modifiers::none());
     cx.draw_frame().unwrap();
     assert!(cx.debug_bounds("new-session-project-modal").is_some());
     assert_eq!(
@@ -245,7 +260,7 @@ fn t3_sidebar_new_button_chooses_project_before_creating_thread() {
 }
 
 #[test]
-fn t3_sidebar_always_reveals_the_active_route() {
+fn sidebar_always_reveals_the_active_route() {
     let mut app = TestAppContext::new();
     let (mut cx, state) = open_app(&mut app);
     cx.update_window_entity(&state, |state, _, cx| {

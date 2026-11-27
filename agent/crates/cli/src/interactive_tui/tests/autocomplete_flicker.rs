@@ -1,4 +1,4 @@
-//! Regression probes for the autocomplete panel flicker (PR-8 / pr-t3):
+//! Regression probes for the autocomplete panel flicker (PR-8):
 //! holding Backspace in a `/` draft re-renders the popup on every keystroke,
 //! and the dock stacks `autocomplete_container` as an auto-height entry, so
 //! every row-count change reflows the transcript. The popup must reuse its

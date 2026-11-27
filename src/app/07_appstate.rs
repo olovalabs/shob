@@ -738,7 +738,7 @@ impl AppState {
                         .h_full()
                         .flex_shrink_0()
                         .relative()
-                        .child(self.render_sidebar(_window, cx))
+                        .child(self.render_sidebar(cx))
                         .child(self.render_sidebar_resize_handle(cx)),
                 )
             })
@@ -803,7 +803,7 @@ impl AppState {
                                     .sidebar_width
                                     .min((_window.viewport_size().width - px(40.0)).max(px(0.0))))
                                 .occlude()
-                                .child(self.render_sidebar(_window, cx)),
+                                .child(self.render_sidebar(cx)),
                         ),
                 )
             })
@@ -835,7 +835,7 @@ impl AppState {
     }
 }
 
-/// How many non-empty screen lines `T3_STATUS_DEBUG` prints per terminal.
+/// How many non-empty screen lines `SHOB_STATUS_DEBUG` prints per terminal.
 const DEBUG_SCREEN_LINES: usize = 14;
 
 /// Sidebar form of a session title: full text up to 160 chars, then an ellipsis.

@@ -116,9 +116,6 @@ impl AppState {
         self.select_folder_and_add_project(window, cx);
     }
 
-    /// T3 Code creates a draft thread rather than starting an agent run. In
-    /// Shob that maps to an empty agent conversation, or an empty terminal in
-    /// split view; an already-empty chat is reused instead of duplicated.
     fn create_new_sidebar_session(
         &mut self,
         project_idx: usize,
@@ -132,8 +129,7 @@ impl AppState {
         self.sidebar_project_picker = None;
         self.sidebar_thread_menu = None;
         let project_idx = project_idx.min(self.projects.len() - 1);
-        // A new T3 draft is always a new thread; an existing empty chat is not
-        // hijacked the way Shob's legacy "New chat" shortcut did.
+        // The sidebar always opens a fresh thread, even if the current chat is empty.
         let agent_chat = self.settings.agent_layout;
         self.create_project_session(project_idx, agent_chat, window, cx);
         self.compact_sidebar_open = false;

@@ -114,7 +114,7 @@ impl AppState {
                 (self.conversation_header_directory() == Some(dir.as_path()))
                     .then_some(branch.clone())
             });
-        row.child(sidebar_project_icon(project, tokens))
+        row.child(project_favicon(project, tokens, px(16.0)))
             .child(
                 div()
                     .min_w_0()

@@ -138,4 +138,69 @@ mod tests {
         assert_eq!(icon.width(), 1254);
         assert_eq!(icon.height(), 1254);
     }
+
+    #[test]
+    fn project_favicon_preserves_color_and_skips_invalid_candidates() {
+        let project = tempfile::tempdir().unwrap();
+        let root = project.path();
+        std::fs::write(root.join("favicon.svg"), "<broken>").unwrap();
+        std::fs::create_dir(root.join("public")).unwrap();
+        std::fs::write(
+            root.join("public/favicon.svg"),
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"/>"#,
+        )
+        .unwrap();
+        let public = root.join("apps/web/public/favicon");
+        std::fs::create_dir_all(&public).unwrap();
+        std::fs::write(
+            public.join("favicon.svg"),
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16">
+                <rect width="8" height="16" fill="#863bff"
+                    style="fill:#863bff;fill:color(display-p3 .5252 .23 1)"/>
+                <rect x="8" width="8" height="16" fill="color(display-p3 0% 90% 80% / 75%)"/>
+            </svg>"##,
+        )
+        .unwrap();
+
+        let renderer = gpui::SvgRenderer::new(std::sync::Arc::new(()));
+        let favicon = crate::load_project_favicon(root, &renderer).unwrap();
+        let (pixels, _) = favicon.image.as_bytes(0).unwrap().as_chunks::<4>();
+        assert!(pixels.contains(&[255, 53, 145, 255]));
+        assert!(pixels.iter().any(|p| (203..=205).contains(&p[0])
+            && (233..=235).contains(&p[1])
+            && p[2] == 0
+            && p[3] == 191));
+        assert!(!favicon.needs_backdrop(true) && !favicon.needs_backdrop(false));
+
+        let assets = root.join("assets");
+        std::fs::create_dir(&assets).unwrap();
+        image::RgbaImage::from_pixel(96, 48, image::Rgba([124, 58, 255, 255]))
+            .save(assets.join("favicon.png"))
+            .unwrap();
+        let favicon = crate::load_project_favicon(root, &renderer).unwrap();
+        assert_eq!(
+            favicon.image.size(0),
+            gpui::size(gpui::DevicePixels(64), gpui::DevicePixels(32))
+        );
+        assert_eq!(
+            &favicon.image.as_bytes(0).unwrap()[..4],
+            &[255, 58, 124, 255]
+        );
+
+        for (fill, dark_theme) in [("#222224", true), ("#f0f0f0", false)] {
+            std::fs::write(
+                root.join("favicon.svg"),
+                format!(
+                    r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16">
+                        <rect width="8" height="16" fill="{fill}"/>
+                        <rect x="8" width="1" height="1" fill="orange"/>
+                    </svg>"#
+                ),
+            )
+            .unwrap();
+            let favicon = crate::load_project_favicon(root, &renderer).unwrap();
+            assert!(favicon.needs_backdrop(dark_theme));
+            assert!(!favicon.needs_backdrop(!dark_theme));
+        }
+    }
 }

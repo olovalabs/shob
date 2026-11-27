@@ -1,4 +1,4 @@
-# Sidebar: before and after
+# Sidebar
 
 Shob uses a flat thread inbox with project filtering.
 
@@ -7,14 +7,6 @@ Shob uses a flat thread inbox with project filtering.
 ![Shob's legacy project-grouped sidebar](sidebar-before.png)
 
 Legacy behavior: a separate activity rail, project-tree toolbar, per-project session rows, a running-sessions shelf, and a layout switch footer.
-
-## After
-
-![T3 Code-style flat thread inbox](sidebar-after.png)
-
-The image is a reference for the flat thread inbox, rather than a current screenshot.
-
-> The two images are design references, not runtime screenshots.
 
 ## Behavior notes
 

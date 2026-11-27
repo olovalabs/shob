@@ -76,7 +76,7 @@ impl AppState {
         buttons
     }
 
-    fn render_t3_sidebar_actions(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+    fn render_sidebar_actions(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let tokens = self.tokens(cx);
         let picker_mode = self
             .sidebar_project_picker
@@ -171,7 +171,7 @@ impl AppState {
                             ),
                     )
                     .child(
-                        self.sidebar_icon_action(
+                        sidebar_icon_action(
                             "sidebar-project-filter",
                             "icons/list-filter.svg",
                             "Filter projects",
@@ -190,7 +190,7 @@ impl AppState {
                         )),
                     )
                     .child(
-                        self.sidebar_icon_action(
+                        sidebar_icon_action(
                             "sidebar-add-project",
                             "icons/folder-plus.svg",
                             "Add project",
@@ -204,7 +204,7 @@ impl AppState {
                         )),
                     )
                     .child(
-                        self.sidebar_icon_action(
+                        sidebar_icon_action(
                             "sidebar-new-thread",
                             "icons/square-pen.svg",
                             "New thread",
@@ -255,12 +255,12 @@ impl AppState {
                 .overflow_y_scroll()
                 .px(px(8.0))
                 .child(if search_query.is_empty() {
-                    self.render_t3_sidebar_inbox(cx)
+                    self.render_sidebar_inbox(cx)
                 } else {
-                    self.render_t3_sidebar_search_results(&search_query, cx)
+                    self.render_sidebar_search_results(&search_query, cx)
                 }),
         );
-        sidebar = sidebar.child(self.render_t3_sidebar_footer(cx));
+        sidebar = sidebar.child(self.render_sidebar_footer(cx));
         if self.system_monitor_open {
             sidebar = sidebar.child(deferred(self.render_system_monitor(cx)).priority(101));
         }
@@ -349,6 +349,9 @@ impl AppState {
         picker: &SidebarProjectPicker,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
+        use gpui_component::button::ButtonVariants as _;
+        use gpui_component::{Disableable as _, Icon};
+
         let tokens = self.tokens(cx);
         let query = self.sidebar_project_picker_query(cx);
         let matching: Vec<_> = self
@@ -363,42 +366,63 @@ impl AppState {
         let selected = picker.selected.min(matching.len().saturating_sub(1));
         let mut list = div()
             .id("new-session-project-list")
+            .min_h_0()
             .w_full()
-            .max_h(px(360.0))
+            .max_h(px(320.0))
             .overflow_y_scroll()
             .flex()
-            .flex_col();
+            .flex_col()
+            .gap(px(2.0));
         for (index, (project_idx, project)) in matching.iter().enumerate() {
             let project_idx = *project_idx;
+            let highlighted = index == selected;
             list = list.child(
                 div()
                     .id(("new-session-project", project_idx))
                     .w_full()
-                    .px(px(12.0))
+                    .px(px(9.0))
                     .py(px(8.0))
-                    .rounded(px(6.0))
+                    .rounded(px(8.0))
                     .flex()
+                    .flex_none()
                     .items_center()
                     .gap(px(10.0))
-                    .when(index == selected, |row| row.bg(tokens.sidebar_item_active))
-                    .hover(|row| row.bg(tokens.sidebar_item_hover))
+                    .when(highlighted, |row| row.bg(tokens.sidebar_item_active))
+                    .when(!highlighted, |row| row.hover(|row| row.bg(tokens.sidebar_item_hover)))
                     .cursor(CursorStyle::PointingHand)
-                    .child(sidebar_project_icon(project, tokens))
+                    .child(project_favicon(project, tokens, px(24.0)))
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
                             .flex()
                             .flex_col()
-                            .child(div().text_sm().truncate().child(project.name.clone()))
+                            .gap(px(1.0))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .truncate()
+                                    .child(project.name.clone()),
+                            )
                             .child(
                                 div()
                                     .text_xs()
-                                    .text_color(tokens.sidebar_muted)
+                                    .text_color(tokens.text_secondary)
                                     .truncate()
                                     .child(project.path.to_string_lossy().to_string()),
                             ),
                     )
+                    .when(highlighted, |row| {
+                        row.child(
+                            svg()
+                                .path("icons/arrow-right.svg")
+                                .size(px(14.0))
+                                .mr(px(3.0))
+                                .flex_none()
+                                .text_color(tokens.text_secondary),
+                        )
+                    })
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.choose_new_session_project(Some(project_idx), window, cx)
                     })),
@@ -409,17 +433,36 @@ impl AppState {
                 div()
                     .p(px(12.0))
                     .text_sm()
-                    .text_color(tokens.sidebar_muted)
+                    .text_color(tokens.text_secondary)
                     .child("No matching projects"),
             );
         }
+        let hints = [("↑ ↓", "Navigate"), ("Enter", "Select"), ("Esc", "Close")].map(
+            |(keys, label)| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(5.0))
+                    .child(
+                        div()
+                            .px(px(5.0))
+                            .rounded(px(4.0))
+                            .border_1()
+                            .border_color(tokens.border)
+                            .bg(tokens.pane_bg)
+                            .text_color(tokens.text_secondary)
+                            .child(keys),
+                    )
+                    .child(label)
+            },
+        );
         div()
             .absolute()
             .inset_0()
             .flex()
             .justify_center()
             .items_center()
-            .bg(rgba(0x00000080))
+            .bg(cx.theme().overlay)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, window, cx| this.close_sidebar_project_picker(window, cx)),
@@ -428,40 +471,100 @@ impl AppState {
                 div()
                     .id("new-session-project-modal")
                     .debug_selector(|| "new-session-project-modal".into())
-                    .w(px(560.0))
+                    .w(px(520.0))
                     .max_w(relative(0.9))
-                    .max_h(relative(0.8))
+                    .max_h(relative(0.9))
                     .occlude()
-                    .rounded(px(12.0))
+                    .rounded(px(14.0))
                     .border_1()
                     .border_color(tokens.border)
                     .bg(tokens.card_bg)
                     .shadow_md()
                     .flex()
                     .flex_col()
-                    .p(px(12.0))
                     .child(
                         div()
-                            .h(px(36.0))
-                            .w_full()
-                            .child(Input::new(&picker.input).appearance(false).cleanable(false)),
+                            .flex()
+                            .flex_col()
+                            .flex_none()
+                            .gap(px(10.0))
+                            .px(px(16.0))
+                            .pt(px(14.0))
+                            .pb(px(10.0))
+                            .child(
+                                div()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_size(px(16.0))
+                                    .child("New thread"),
+                            )
+                            .child(
+                                div()
+                                    .h(px(36.0))
+                                    .flex()
+                                    .items_center()
+                                    .px(px(8.0))
+                                    .rounded(px(8.0))
+                                    .border_1()
+                                    .border_color(tokens.border)
+                                    .bg(tokens.pane_bg)
+                                    .child(
+                                        Input::new(&picker.input)
+                                            .w_full()
+                                            .appearance(false)
+                                            .prefix(
+                                                svg()
+                                                    .path("ui_icons/search.svg")
+                                                    .size(px(14.0))
+                                                    .text_color(tokens.text_secondary),
+                                            ),
+                                    ),
+                            ),
                     )
                     .child(
                         div()
+                            .min_h_0()
+                            .flex()
+                            .flex_col()
+                            .px(px(8.0))
+                            .pb(px(8.0))
+                            .child(list),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_none()
+                            .flex_wrap()
+                            .items_center()
+                            .justify_between()
+                            .gap(px(6.0))
                             .px(px(12.0))
                             .py(px(8.0))
-                            .text_xs()
-                            .text_color(tokens.sidebar_muted)
-                            .child("Projects"),
-                    )
-                    .child(list)
-                    .child(
-                        div()
-                            .px(px(12.0))
-                            .pt(px(10.0))
-                            .text_xs()
-                            .text_color(tokens.sidebar_muted)
-                            .child("↑ ↓ Navigate    Enter Select    Esc Close"),
+                            .border_t_1()
+                            .border_color(tokens.border_subtle)
+                            .child(
+                                div()
+                                    .debug_selector(|| "new-session-bot".into())
+                                    .child(
+                                        Button::new("new-session-bot")
+                                            .small()
+                                            .ghost()
+                                            .icon(Icon::default().path("ui_icons/settings-gear.svg"))
+                                            .label("Bot")
+                                            .disabled(true)
+                                            .text_color(tokens.text_muted),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_wrap()
+                                    .items_center()
+                                    .gap(px(10.0))
+                                    .pr(px(4.0))
+                                    .text_size(px(11.0))
+                                    .text_color(tokens.text_secondary)
+                                    .children(hints),
+                            ),
                     ),
             )
     }
@@ -530,7 +633,12 @@ impl AppState {
                     cx.listener(|this, _, _, cx| this.cancel_renaming_project(cx)),
                 ));
         } else {
-            row = row.child(div().flex_1().min_w_0().truncate().child(owned_label));
+            row = row
+                .gap(px(7.0))
+                .when_some(project_idx.and_then(|idx| self.projects.get(idx)), |row, project| {
+                    row.child(project_favicon(project, tokens, px(16.0)))
+                })
+                .child(div().flex_1().min_w_0().truncate().child(owned_label));
             if let Some(id) = project_id.filter(|_| mode == SidebarProjectPickerMode::Scope) {
                 row = row
                     .child(
@@ -580,7 +688,7 @@ impl AppState {
         row
     }
 
-    fn render_t3_sidebar_inbox(&self, cx: &mut Context<Self>) -> gpui::Div {
+    fn render_sidebar_inbox(&self, cx: &mut Context<Self>) -> gpui::Div {
         let tokens = self.tokens(cx);
         let groups = self.sidebar_thread_groups();
         let active_key = self.sidebar_active_thread_key();
@@ -657,11 +765,11 @@ impl AppState {
             );
         }
         if groups.working_count == 0 && groups.pinned.is_empty() && groups.active.is_empty() {
-            list = list.child(self.render_t3_sidebar_empty(cx));
+            list = list.child(self.render_sidebar_empty(cx));
         }
         list = list.child(div().flex_1().min_h(px(8.0)));
         if !groups.snoozed.is_empty() || self.settings.sidebar.snoozed_expanded {
-            list = list.child(self.render_t3_sidebar_shelf(
+            list = list.child(self.render_sidebar_shelf(
                 SidebarShelf::Snoozed,
                 &groups.snoozed,
                 groups.hidden_settled,
@@ -671,7 +779,7 @@ impl AppState {
             ));
         }
         if !groups.settled.is_empty() || self.settings.sidebar.settled_expanded {
-            list = list.child(self.render_t3_sidebar_shelf(
+            list = list.child(self.render_sidebar_shelf(
                 SidebarShelf::Settled,
                 &groups.settled,
                 groups.hidden_settled,
@@ -683,7 +791,7 @@ impl AppState {
         list
     }
 
-    fn render_t3_sidebar_empty(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+    fn render_sidebar_empty(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let tokens = self.tokens(cx);
         div()
             .id("sidebar-search-empty")
@@ -695,7 +803,7 @@ impl AppState {
             .child("No threads yet. Use the pencil button to start one.")
     }
 
-    fn render_t3_sidebar_search_results(&self, query: &str, cx: &mut Context<Self>) -> gpui::Div {
+    fn render_sidebar_search_results(&self, query: &str, cx: &mut Context<Self>) -> gpui::Div {
         let rows = self.sidebar_search_thread_refs(query);
         let active_key = self.sidebar_active_thread_key();
         let now_ms = sidebar_now_ms();
@@ -718,7 +826,7 @@ impl AppState {
         list
     }
 
-    fn render_t3_sidebar_shelf(
+    fn render_sidebar_shelf(
         &self,
         shelf: SidebarShelf,
         rows: &[SidebarThreadRef],

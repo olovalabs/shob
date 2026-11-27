@@ -417,7 +417,7 @@ pub fn pack_for(process_names: &[String]) -> Option<&'static str> {
         .map(|pack| pack.id.as_str())
 }
 
-/// Which pack and rule produced the verdict, for `T3_STATUS_DEBUG` output.
+/// Which pack and rule produced the verdict, for `SHOB_STATUS_DEBUG` output.
 ///
 /// `None` means either that no pack applies (a plain shell) or that the pack
 /// matched no rule; the caller logs the pack separately to tell those apart.
@@ -650,18 +650,18 @@ fn read_proc_start_time(pid: u32) -> Option<u64> {
         .ok()
 }
 
-/// True when `T3_STATUS_DEBUG` is set: the poller logs every detection pass
+/// True when `SHOB_STATUS_DEBUG` is set: the poller logs every detection pass
 /// together with the facts that produced it.
 ///
 /// This is the fastest way to explain a wrong badge — run the app with
-/// `T3_STATUS_DEBUG=1` and the terminal shows exactly why each state changed.
+/// `SHOB_STATUS_DEBUG=1` and the terminal shows exactly why each state changed.
 pub fn debug_enabled() -> bool {
-    std::env::var_os("T3_STATUS_DEBUG").is_some()
+    std::env::var_os("SHOB_STATUS_DEBUG").is_some()
 }
 
 /// Compact state and evidence transitions, without screen contents.
 pub fn trace_enabled() -> bool {
-    std::env::var_os("T3_STATUS_TRACE").is_some()
+    std::env::var_os("SHOB_STATUS_TRACE").is_some()
 }
 
 /// Single status for a terminal, joining the screen itself.

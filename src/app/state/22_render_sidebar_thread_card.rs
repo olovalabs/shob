@@ -55,7 +55,7 @@ impl AppState {
                     .gap(px(6.0))
                     .text_xs()
                     .text_color(tokens.sidebar_muted)
-                    .child(sidebar_project_icon(project, tokens))
+                    .child(project_favicon(project, tokens, px(16.0)))
                     .child(
                         div()
                             .flex_1()
@@ -148,7 +148,7 @@ impl AppState {
             })
             .hover(|style| style.bg(tokens.sidebar_item_hover))
             .cursor(CursorStyle::PointingHand)
-            .child(session_logo_icon(session.logo.clone(), tokens.sidebar_icon))
+            .child(project_favicon(&self.projects[project_idx], tokens, px(16.0)))
             .child(
                 div()
                     .flex_1()
@@ -157,6 +157,7 @@ impl AppState {
                     .text_sm()
                     .child(session.title.clone()),
             )
+            .child(session_logo_icon(session.logo.clone(), tokens.sidebar_icon))
             .child(self.sidebar_thread_status_menu(
                 row,
                 status,
@@ -585,7 +586,7 @@ impl AppState {
             ))
     }
 
-    fn render_t3_sidebar_footer(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+    fn render_sidebar_footer(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let tokens = self.tokens(cx);
         div()
             .id("sidebar-footer")
@@ -600,7 +601,7 @@ impl AppState {
             .border_t_1()
             .border_color(tokens.sidebar_footer_border)
             .child(
-                self.sidebar_icon_action(
+                sidebar_icon_action(
                     "layout-switch",
                     "icons/bot.svg",
                     if self.settings.agent_layout {
@@ -615,7 +616,7 @@ impl AppState {
             )
             .child(div().flex_1())
             .child(
-                self.sidebar_icon_action(
+                sidebar_icon_action(
                     "system-monitor",
                     "icons/monitor.svg",
                     "System monitor",
@@ -629,7 +630,7 @@ impl AppState {
                 })),
             )
             .child(
-                self.sidebar_icon_action(
+                sidebar_icon_action(
                     "sidebar-settings",
                     "icons/settings.svg",
                     "Settings",
@@ -643,21 +644,10 @@ impl AppState {
             )
     }
 
-    fn render_sidebar(&self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
-        self.render_t3_sidebar(window, cx).into_any_element()
-    }
-
-    /// T3 Code's sidebar has no activity rail or project toolbar: the wordmark,
-    /// search/scope/New row, flat inbox, parked shelves, and icon-only footer
-    /// are the whole surface.
-    fn render_t3_sidebar(
-        &self,
-        _window: &Window,
-        cx: &mut Context<Self>,
-    ) -> gpui::Stateful<gpui::Div> {
+    fn render_sidebar(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let tokens = self.tokens(cx);
         div()
-            .id("t3-sidebar-root")
+            .id("sidebar-root")
             .debug_selector(|| "sidebar".into())
             .relative()
             .h_full()
@@ -668,7 +658,7 @@ impl AppState {
             .bg(tokens.sidebar_bg)
             .border_r_1()
             .border_color(tokens.sidebar_border)
-            .child(self.render_t3_sidebar_actions(cx))
+            .child(self.render_sidebar_actions(cx))
             .when(self.integration_panel_visible, |this| {
                 this.child(self.render_integrations_panel(cx))
             })

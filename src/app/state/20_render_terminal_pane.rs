@@ -576,9 +576,7 @@ impl AppState {
         cx.notify();
     }
 
-    /// The T3-style search field is always mounted. Startup creates its input
-    /// once; Escape and selecting a result clear the text instead of unmounting
-    /// it, so the header never changes height.
+    /// Keep the search field mounted so clearing it preserves the header height.
     fn ensure_sidebar_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.sidebar_search.is_some() {
             return;
@@ -804,16 +802,5 @@ impl AppState {
         }
         self.schedule_workspace_save(cx);
         cx.notify();
-    }
-
-    fn sidebar_icon_action(
-        &self,
-        id: &'static str,
-        icon: &'static str,
-        title: &'static str,
-        active: bool,
-        tokens: ThemeTokens,
-    ) -> gpui::Stateful<gpui::Div> {
-        t3_sidebar_icon_action(self, id, icon, title, active, tokens)
     }
 }
