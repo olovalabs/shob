@@ -475,17 +475,30 @@ impl AppState {
     // Sidebar: projects and their sessions
     // ---------------------------------------------------------------------
 
-    /// Largest width the sidebar may take in a window of `window_width`.
-    ///
-    /// Capped at half the window so the terminal keeps usable columns, and
-    /// never below the minimum (a very narrow window would otherwise make the
-    /// max smaller than the min).
     fn sidebar_docked(visible: bool, window_width: Pixels) -> bool {
         visible && window_width >= COMPACT_WINDOW_WIDTH
     }
 
     fn sidebar_max_width(window_width: Pixels) -> Pixels {
-        (window_width * SIDEBAR_MAX_FRACTION).max(SIDEBAR_MIN_WIDTH)
+        (window_width - SIDEBAR_MAIN_MIN_WIDTH).max(SIDEBAR_MIN_WIDTH)
+    }
+
+    fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let compact = window.viewport_size().width < COMPACT_WINDOW_WIDTH;
+        let visible = if compact {
+            self.compact_sidebar_open = !self.compact_sidebar_open;
+            self.compact_sidebar_open
+        } else {
+            self.sidebar_visible = !self.sidebar_visible;
+            self.schedule_workspace_save(cx);
+            self.sidebar_visible
+        };
+        if !visible {
+            self.close_sidebar_search(window, cx);
+            self.close_sidebar_project_picker(window, cx);
+            self.close_sidebar_thread_menu(cx);
+        }
+        cx.notify();
     }
 
     /// Move the sidebar edge to `width`, clamped to the allowed range.
@@ -508,9 +521,10 @@ impl AppState {
     /// actual movement is tracked by the root element, which spans the window
     /// and so keeps receiving moves even when the pointer runs past the strip.
     /// A hairline lights up on hover so the edge is discoverable.
-    fn render_sidebar_resize_handle(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+    fn render_sidebar_resize_handle(&self, cx: &mut Context<Self>) -> AnyElement {
         let active = self.sidebar_resizing;
-        div()
+        let tokens = self.sidebar_tokens(cx);
+        let handle = div()
             .id("sidebar-resize-handle")
             .debug_selector(|| "sidebar-resize-handle".to_string())
             .group("sidebar-resize")
@@ -524,11 +538,18 @@ impl AppState {
             .cursor_col_resize()
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                    // Remember the gap between pointer and edge, so the sidebar
-                    // does not jump to the cursor on the first move.
-                    this.sidebar_resize_offset = Some(event.position.x - this.sidebar_width);
-                    this.sidebar_resizing = true;
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    if event.click_count == 2 {
+                        this.sidebar_width = SIDEBAR_WIDTH;
+                        this.schedule_workspace_save(cx);
+                    } else {
+                        let edge = this
+                            .sidebar_width
+                            .min(Self::sidebar_max_width(window.viewport_size().width));
+                        this.sidebar_resize_offset = Some(event.position.x - edge);
+                        this.sidebar_resizing = true;
+                    }
                     cx.notify();
                 }),
             )
@@ -538,7 +559,8 @@ impl AppState {
                     .w(px(2.0))
                     .when(active, |this| this.bg(cx.theme().drag_border))
                     .group_hover("sidebar-resize", |this| this.bg(cx.theme().drag_border)),
-            )
+            );
+        self.sidebar_tooltip(handle, "sidebar-resize-tooltip", "Resize sidebar", SidebarTooltipSide::Right, tokens, cx)
     }
 
     /// Follow the pointer while the sidebar edge is held.
@@ -560,7 +582,11 @@ impl AppState {
         let Some(offset) = self.sidebar_resize_offset else {
             return;
         };
-        if self.set_sidebar_width(event.position.x - offset, window) {
+        let width = event.position.x - offset;
+        let collapse = width < SIDEBAR_MIN_WIDTH * 0.25;
+        let changed = self.sidebar_resize_collapse != collapse;
+        self.sidebar_resize_collapse = collapse;
+        if self.set_sidebar_width(width, window) || changed {
             cx.notify();
         }
     }
@@ -572,6 +598,9 @@ impl AppState {
         }
         self.sidebar_resizing = false;
         self.sidebar_resize_offset = None;
+        if std::mem::take(&mut self.sidebar_resize_collapse) {
+            self.sidebar_visible = false;
+        }
         self.schedule_workspace_save(cx);
         cx.notify();
     }
@@ -584,30 +613,31 @@ impl AppState {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
         let subscription = cx.subscribe(&input, |_, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
-                cx.notify();
+                // Read the value after the input's update has released its lease.
+                let weak = cx.entity().downgrade();
+                cx.defer(move |cx| {
+                    let _ = weak.update(cx, Self::update_sidebar_message_search);
+                });
             }
         });
-        self.sidebar_search = Some(SidebarSearch {
-            input,
-            previous_focus: None,
-            _subscription: subscription,
-        });
+        self.sidebar_search = Some(SidebarSearch::new(input, subscription));
     }
 
     fn open_sidebar_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.ensure_sidebar_search(window, cx);
+        if window.viewport_size().width < COMPACT_WINDOW_WIDTH {
+            self.compact_sidebar_open = true;
+        } else if !self.sidebar_visible {
+            self.sidebar_visible = true;
+            self.schedule_workspace_save(cx);
+        }
         self.sidebar_project_picker = None;
         self.sidebar_thread_menu = None;
-        let previous_focus = window.focused(cx);
-        let input = self
-            .sidebar_search
-            .as_ref()
-            .map(|search| search.input.clone());
         if let Some(search) = self.sidebar_search.as_mut() {
-            search.previous_focus = previous_focus;
-        }
-        if let Some(input) = input {
-            input.update(cx, |state, cx| state.focus(window, cx));
+            if !search.input.read(cx).focus_handle().is_focused(window) {
+                search.previous_focus = window.focused(cx);
+            }
+            search.input.update(cx, |state, cx| state.focus(window, cx));
         }
         cx.notify();
     }
@@ -634,8 +664,12 @@ impl AppState {
         });
         if let Some((input, previous_focus, focused)) = snapshot {
             input.update(cx, |state, cx| state.set_value("", window, cx));
-            if focused && let Some(previous_focus) = previous_focus {
-                window.focus(&previous_focus, cx);
+            if focused {
+                if let Some(previous_focus) = previous_focus {
+                    window.focus(&previous_focus, cx);
+                } else {
+                    window.blur(cx);
+                }
             }
             cx.notify();
         }
@@ -655,11 +689,49 @@ impl AppState {
         cx: &mut Context<Self>,
     ) -> bool {
         let focused = self.sidebar_search_focused(window, cx);
-        if focused && key == "escape" {
+        if !focused {
+            return false;
+        }
+        if key == "escape" {
             cx.stop_propagation();
             self.close_sidebar_search(window, cx);
+            return true;
         }
-        focused
+        if !matches!(key, "up" | "down" | "enter") {
+            return true;
+        }
+        let query = self.sidebar_search_query(cx);
+        if query.is_empty() {
+            return true;
+        }
+        let rows = self.sidebar_search_rows(&query);
+        cx.stop_propagation();
+        if rows.is_empty() {
+            return true;
+        }
+        let selected = self.sidebar_search.as_ref().and_then(|search| search.selected)
+            .and_then(|id| rows.iter().position(|row| self.sidebar_thread_id(row.thread) == id));
+        let last = rows.len() - 1;
+        match key {
+            "enter" => {
+                let row = rows[selected.unwrap_or(0)].thread;
+                self.select_session(row.project_idx, row.session_idx, window, cx);
+            }
+            _ => {
+                let index = if key == "down" {
+                    selected.map_or(0, |index| (index + 1).min(last))
+                } else {
+                    selected.map_or(last, |index| index.saturating_sub(1))
+                };
+                let id = self.sidebar_thread_id(rows[index].thread);
+                if let Some(search) = self.sidebar_search.as_mut() {
+                    search.selected = Some(id);
+                    search.scroll.scroll_to_item(index);
+                }
+                cx.notify();
+            }
+        }
+        true
     }
 
     fn sidebar_search_focused(&self, window: &Window, cx: &App) -> bool {
@@ -732,22 +804,23 @@ impl AppState {
     }
 
     fn close_sidebar_thread_menu(&mut self, cx: &mut Context<Self>) {
-        if self.sidebar_thread_menu.take().is_some() {
+        self.sidebar_custom_snooze = None;
+        let closed = self.sidebar_thread_menu.take().is_some() | self.sidebar_folder_menu.take().is_some();
+        if closed {
             cx.notify();
         }
     }
 
     fn sidebar_scope_indices(&self) -> Vec<usize> {
-        self.settings
-            .sidebar
-            .project_scope
-            .as_ref()
-            .and_then(|path| {
-                self.projects
-                    .iter()
-                    .position(|project| &project.path == path)
+        let sidebar = &self.settings.sidebar;
+        self.projects
+            .iter()
+            .enumerate()
+            .filter(|(_, project)| {
+                sidebar.project_scope.as_ref() == Some(&project.path)
+                    || sidebar.extra_project_scopes.contains(&project.path)
             })
-            .into_iter()
+            .map(|(index, _)| index)
             .collect()
     }
 
@@ -769,9 +842,29 @@ impl AppState {
         self.settings.sidebar.project_scope = project_idx
             .and_then(|idx| self.projects.get(idx))
             .map(|project| project.path.clone());
+        self.settings.sidebar.extra_project_scopes.clear();
         self.settled_visible_count = SIDEBAR_SETTLED_INITIAL_COUNT;
         self.close_sidebar_project_picker(window, cx);
         self.schedule_workspace_save(cx);
+    }
+
+    fn toggle_sidebar_project_scope(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(project) = self.projects.get(index) else {
+            return;
+        };
+        let sidebar = &mut self.settings.sidebar;
+        if sidebar.project_scope.as_ref() == Some(&project.path) {
+            sidebar.project_scope = sidebar.extra_project_scopes.pop();
+        } else if let Some(position) = sidebar.extra_project_scopes.iter().position(|path| path == &project.path) {
+            sidebar.extra_project_scopes.remove(position);
+        } else if sidebar.project_scope.is_none() {
+            sidebar.project_scope = Some(project.path.clone());
+        } else {
+            sidebar.extra_project_scopes.push(project.path.clone());
+        }
+        self.settled_visible_count = SIDEBAR_SETTLED_INITIAL_COUNT;
+        self.schedule_workspace_save(cx);
+        cx.notify();
     }
 
     fn choose_new_session_project(
@@ -781,18 +874,11 @@ impl AppState {
         cx: &mut Context<Self>,
     ) {
         let project_idx = project_idx.unwrap_or(self.active_project_idx);
-        if self
-            .settings
-            .sidebar
-            .project_scope
-            .as_ref()
-            .is_some_and(|scope| {
-                self.projects
-                    .get(project_idx)
-                    .is_some_and(|project| &project.path != scope)
-            })
+        let scope = self.sidebar_scope_indices();
+        if !scope.is_empty() && !scope.contains(&project_idx)
         {
             self.settings.sidebar.project_scope = None;
+            self.settings.sidebar.extra_project_scopes.clear();
         }
         self.close_sidebar_project_picker(window, cx);
         self.create_new_sidebar_session(project_idx, window, cx);

@@ -88,9 +88,9 @@ The Files surface restores open files, unsaved drafts, expanded folders, and the
 
 ### Sidebar
 
-The sidebar groups running, pinned, active, snoozed, and settled threads. Use the project filter to narrow the list, and the row menu to pin, settle, snooze, archive, or delete a thread. Archived threads can be restored from Settings.
+The sidebar groups pinned and active threads above the Working, Snoozed, and Settled shelves. In the project filter, Shift-click projects to combine scopes or turn on **Project folders** for collapsible project groups. Ctrl/Cmd-click threads to select multiple rows; Shift-click extends the selection. Drag or right-click to act on the selection. Archived threads can be restored from Settings.
 
-**New thread** opens a project chooser. `Ctrl/Cmd+N` opens the chooser, `Ctrl/Cmd+K` focuses sidebar search, and `Ctrl/Cmd+Shift+B` opens the project filter. Thread metadata is stored in `workspace.json`; project scope and shelf expansion are stored in `settings.json`.
+**New thread** skips the chooser when one project is in scope or only one is open. `Ctrl/Cmd+N` starts a thread, `Ctrl/Cmd+Shift+N` starts one in the current context, `Ctrl/Cmd+K` searches titles and saved conversation messages, and `Ctrl/Cmd+B` toggles the sidebar. Use `F6` to move between the sidebar and workspace. Double-click the resize edge to reset its width. Labels, ordering, and shelf state survive restart; the current multi-selection does not.
 
 ### Make It Yours
 
@@ -207,7 +207,7 @@ To use Shob's native AI chat, switch a terminal pane to **Agent** mode and run `
 
 Browser automation is optional. Open **Settings → Browser → Install browser** to download the verified `agent-browser` helper and set up Chrome for Testing, then use `@browser` in Agent chat. Installation needs an internet connection but no npm or administrator privileges. Removing the helper leaves the shared Chrome for Testing installation intact.
 
-The first message in a native agent conversation triggers a short title request using the selected model. Shob updates the sidebar before streaming the reply. If the title request fails or times out, the reply still starts and the sidebar uses the prompt text instead.
+The first message in a native agent conversation triggers a short title request using the selected model. Shob updates the sidebar before streaming the reply, unless the thread was manually renamed. If the title request fails or times out, the reply still starts and Shob uses the prompt text as the generated title.
 
 Reasoning starts folded and can be expanded while the agent runs. If an unfinished Markdown block exceeds 8 KiB, chat temporarily shows its latest 8 KiB as plain text; copying keeps the full message, and full Markdown returns when the message finishes.
 

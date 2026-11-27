@@ -207,9 +207,15 @@ fn sidebar_working_section_counts_and_keeps_active_when_collapsed() {
         cx.notify();
     });
     cx.draw_frame().unwrap();
+    cx.background_executor.advance_clock(SIDEBAR_ROW_MOTION);
+    cx.run_until_parked();
+    cx.draw_frame().unwrap();
     assert!(cx.debug_bounds("session-row-999").is_some());
     let toggle = cx.debug_bounds("sidebar-working-toggle").unwrap();
     cx.simulate_click(toggle.center(), Modifiers::none());
+    cx.draw_frame().unwrap();
+    cx.background_executor.advance_clock(SIDEBAR_ROW_MOTION);
+    cx.run_until_parked();
     cx.draw_frame().unwrap();
     assert!(cx.debug_bounds("session-row-999").is_none());
     assert!(cx.debug_bounds("session-row-1").is_some());
@@ -221,8 +227,16 @@ fn sidebar_new_button_chooses_project_before_creating_thread() {
     let mut app = TestAppContext::new();
     let (mut cx, state) = open_app(&mut app);
     cx.update_window_entity(&state, |state, window, cx| {
-        let scope = state.projects[0].path.clone();
-        state.settings.sidebar.project_scope = Some(scope);
+        state.projects.push(Project {
+            id: 2,
+            name: "Second project".into(),
+            path: state.projects[0].path.join("second"),
+            sessions: Vec::new(),
+            active_session_idx: 0,
+            expanded: false,
+            visible_session_count: SIDEBAR_ACTIVE_INITIAL_COUNT,
+        });
+        state.next_id = 3;
         state.theme_preference = ThemePreference::Dark;
         state.apply_theme_preference(Some(window), cx);
     });
@@ -264,6 +278,20 @@ fn sidebar_new_button_chooses_project_before_creating_thread() {
     assert_eq!(
         state.read_with(&cx, |state, _| state.projects[0].sessions.len()),
         2
+    );
+    cx.simulate_resize(size(px(1200.0), px(780.0)));
+    cx.update_window_entity(&state, |state, _, cx| {
+        state.settings.sidebar.project_scope = Some(state.projects[0].path.clone());
+        cx.notify();
+    });
+    cx.draw_frame().unwrap();
+    let new_thread = cx.debug_bounds("sidebar-new-thread").unwrap();
+    cx.simulate_click(new_thread.center(), Modifiers::none());
+    cx.draw_frame().unwrap();
+    assert!(cx.debug_bounds("new-session-project-modal").is_none());
+    assert_eq!(
+        state.read_with(&cx, |state, _| state.projects[0].sessions.len()),
+        3
     );
 }
 

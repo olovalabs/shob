@@ -546,7 +546,7 @@ fn dragging_sidebar_edge_resizes_and_clamps_the_width() {
         "the edge must follow the pointer one-to-one"
     );
 
-    // Drag left to the window edge: the minimum holds instead of collapsing.
+    // Crossing the collapse threshold previews off-canvas without storing a sub-minimum width.
     cx.simulate_mouse_move(
         point(px(10.0), grab.y),
         Some(MouseButton::Left),
@@ -555,8 +555,9 @@ fn dragging_sidebar_edge_resizes_and_clamps_the_width() {
     cx.draw_frame().expect("frame while clamping");
     let narrowed = app_state.read_with(&cx, |state, _| state.sidebar_width);
     assert_eq!(narrowed, SIDEBAR_MIN_WIDTH, "the minimum width must hold");
+    assert!(cx.debug_bounds("sidebar").is_none());
 
-    // Drag right across the window: half of it is the ceiling.
+    // Dragging back restores the rail and leaves 640 px for the workspace.
     cx.simulate_mouse_move(
         point(px(1150.0), grab.y),
         Some(MouseButton::Left),
@@ -565,7 +566,7 @@ fn dragging_sidebar_edge_resizes_and_clamps_the_width() {
     cx.draw_frame().expect("frame at the ceiling");
     let viewport_width = cx.update(|window, _| window.viewport_size().width);
     let widest = app_state.read_with(&cx, |state, _| state.sidebar_width);
-    assert_eq!(widest, viewport_width * SIDEBAR_MAX_FRACTION);
+    assert_eq!(widest, viewport_width - SIDEBAR_MAIN_MIN_WIDTH);
 
     cx.simulate_mouse_up(grab, MouseButton::Left, Modifiers::none());
     cx.draw_frame().expect("frame after releasing");
@@ -573,6 +574,14 @@ fn dragging_sidebar_edge_resizes_and_clamps_the_width() {
         assert!(!state.sidebar_resizing, "the drag must be marked finished");
         assert_eq!(state.sidebar_resize_offset, None);
     });
+
+    let edge = cx.debug_bounds("sidebar-resize-handle").unwrap().center();
+    cx.simulate_mouse_down(edge, MouseButton::Left, Modifiers::none());
+    let collapsed = point(px(10.0), edge.y);
+    cx.simulate_mouse_move(collapsed, Some(MouseButton::Left), Modifiers::none());
+    cx.simulate_mouse_up(collapsed, MouseButton::Left, Modifiers::none());
+    cx.draw_frame().unwrap();
+    assert!(!app_state.read_with(&cx, |state, _| state.sidebar_visible));
 }
 
 #[test]

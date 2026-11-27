@@ -139,17 +139,35 @@ impl AppState {
 
     fn handle_sidebar_new_session(
         &mut self,
-        _shift: bool,
+        local: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.projects.is_empty() {
+        let scoped = self.sidebar_scope_indices();
+        if self.projects.is_empty() {
+            self.select_folder_and_add_project(window, cx);
+        } else if let Some(project_idx) = (scoped.len() == 1 && !self.settings.sidebar.project_folders)
+            .then(|| scoped[0])
+            .or_else(|| local.then_some(self.active_project_idx))
+            .or_else(|| (self.projects.len() == 1).then_some(0))
+        {
+            self.choose_new_session_project(Some(project_idx), window, cx);
+        } else {
             self.open_sidebar_project_picker(SidebarProjectPickerMode::NewSession, window, cx);
         }
     }
 
-    fn sidebar_thread_state(&self, uid: &str) -> SidebarThreadState {
-        self.sidebar_threads.get(uid).copied().unwrap_or_default()
+    fn sidebar_thread_state(&self, uid: &str) -> &SidebarThreadState {
+        static EMPTY: std::sync::LazyLock<SidebarThreadState> =
+            std::sync::LazyLock::new(SidebarThreadState::default);
+        self.sidebar_threads.get(uid).unwrap_or(&EMPTY)
+    }
+
+    fn sidebar_thread_title<'a>(&'a self, session: &'a Session) -> &'a SharedString {
+        self.sidebar_thread_state(&session.uid)
+            .title
+            .as_ref()
+            .unwrap_or(&session.title)
     }
 
     fn sidebar_thread_uid(&self, project_idx: usize, session_idx: usize) -> Option<String> {
@@ -163,8 +181,9 @@ impl AppState {
         let mut rows = Vec::new();
         for (project_idx, project) in self.projects.iter().enumerate() {
             for (session_idx, session) in project.sessions.iter().enumerate() {
-                if self.sidebar_thread_state(&session.uid).archived {
-                    rows.push((project_idx, session_idx, session.title.to_string()));
+                let state = self.sidebar_thread_state(&session.uid);
+                if state.archived {
+                    rows.push((project_idx, session_idx, self.sidebar_thread_title(session).to_string()));
                 }
             }
         }
@@ -194,7 +213,8 @@ impl AppState {
     }
 
     fn sidebar_session_has_title(&self, session: &Session) -> bool {
-        !self.settings.agent_layout
+        self.sidebar_thread_state(&session.uid).title.is_some()
+            || !self.settings.agent_layout
             || !self.one_mode_pane(session).is_some_and(|pane| {
                 pane.chat.active
                     && (pane.chat.conversation_title().is_none()
@@ -243,14 +263,12 @@ impl AppState {
                     pinned: state.pinned,
                     revealed_active: is_active,
                 };
-                if session.status == SessionStatus::Working && !state.archived && !state.settled {
+                if !self.settings.sidebar.project_folders
+                    && session.status == SessionStatus::Working
+                    && !state.archived
+                    && !state.settled
+                {
                     groups.working.push(row);
-                } else if is_active && !state.settled {
-                    if state.pinned {
-                        groups.pinned.push(row);
-                    } else {
-                        groups.active.push(row);
-                    }
                 } else {
                     match section {
                         SidebarSection::Pinned => groups.pinned.push(row),
@@ -266,31 +284,34 @@ impl AppState {
             .sort_by_key(|row| std::cmp::Reverse(self.sidebar_thread_id(*row)));
         groups.pinned.sort_by_key(|row| {
             let uid = self
-                .sidebar_thread_uid(row.project_idx, row.session_idx)
-                .unwrap_or_default();
+                .projects[row.project_idx].sessions[row.session_idx].uid.as_str();
             (
-                self.sidebar_thread_state(&uid)
+                self.sidebar_thread_state(uid)
                     .pin_order
                     .unwrap_or(u64::MAX),
                 std::cmp::Reverse(self.sidebar_thread_id(*row)),
             )
         });
-        groups
-            .active
-            .sort_by_key(|row| std::cmp::Reverse(self.sidebar_thread_id(*row)));
+        let order = self.sidebar_inbox_rank();
+        groups.active.sort_by_key(|row| {
+            let session = &self.projects[row.project_idx].sessions[row.session_idx];
+            (order.get(session.uid.as_str()).map(|rank| rank + 1).unwrap_or(0), std::cmp::Reverse(session.id))
+        });
         for shelf in [&mut groups.snoozed, &mut groups.settled] {
             shelf.sort_by_key(|row| {
                 let uid = self
-                    .sidebar_thread_uid(row.project_idx, row.session_idx)
-                    .unwrap_or_default();
+                    .projects[row.project_idx].sessions[row.session_idx].uid.as_str();
                 (
-                    std::cmp::Reverse(self.sidebar_thread_state(&uid).parked_at_ms.unwrap_or(0)),
+                    std::cmp::Reverse(self.sidebar_thread_state(uid).parked_at_ms.unwrap_or(0)),
                     std::cmp::Reverse(self.sidebar_thread_id(*row)),
                 )
             });
         }
 
-        let active_limit = self
+        let active_limit = if self.settings.sidebar.project_folders {
+            usize::MAX
+        } else {
+            self
             .projects
             .first()
             .map(|project| {
@@ -298,25 +319,24 @@ impl AppState {
                     .visible_session_count
                     .max(SIDEBAR_ACTIVE_INITIAL_COUNT)
             })
-            .unwrap_or(SIDEBAR_ACTIVE_INITIAL_COUNT);
+                .unwrap_or(SIDEBAR_ACTIVE_INITIAL_COUNT)
+        };
         let active_index = active_key.and_then(|key| {
             groups
                 .active
                 .iter()
                 .position(|row| self.sidebar_thread_is(*row, key))
         });
-        let mut visible_active: Vec<usize> = (0..active_limit.min(groups.active.len())).collect();
-        if let Some(active_index) = active_index
-            && !visible_active.contains(&active_index)
-        {
-            visible_active.push(active_index);
+        let first_page = active_limit.min(groups.active.len());
+        groups.hidden_active = groups.active.len() - first_page;
+        let extra_active = active_index
+            .filter(|index| *index >= first_page)
+            .map(|index| groups.active[index]);
+        groups.active.truncate(first_page);
+        if let Some(row) = extra_active {
+            groups.active.push(row);
+            groups.hidden_active -= 1;
         }
-        groups.hidden_active = groups.active.len().saturating_sub(visible_active.len());
-        let active_rows = groups.active.clone();
-        groups.active = visible_active
-            .into_iter()
-            .filter_map(|index| active_rows.get(index).copied())
-            .collect();
 
         let settled_limit = self
             .settled_visible_count
@@ -350,7 +370,7 @@ impl AppState {
                 if state.archived || !self.sidebar_session_has_title(session) {
                     continue;
                 }
-                if !sidebar_matches(&query, session.title.as_str())
+                if !sidebar_matches(&query, self.sidebar_thread_title(session).as_str())
                     && !sidebar_matches(&query, project.name.as_str())
                 {
                     continue;
@@ -406,9 +426,8 @@ impl AppState {
                 };
                 (label, tokens.pane_border_focused)
             }
-            SessionStatus::Blocked | SessionStatus::Error => {
-                ("Failed".to_string(), tokens.block_failure)
-            }
+            SessionStatus::Blocked => ("Blocked".to_string(), tokens.block_failure),
+            SessionStatus::Error => ("Failed".to_string(), tokens.block_failure),
             SessionStatus::Done => ("Done".to_string(), tokens.block_success),
             _ => (sidebar_relative_time(now_ms, since), tokens.sidebar_muted),
         }
@@ -491,6 +510,77 @@ impl AppState {
         cx.notify();
     }
 
+    fn sidebar_inbox_rank(&self) -> HashMap<&str, usize> {
+        self.settings.sidebar.inbox_order.iter().enumerate().map(|(index, uid)| (uid.as_str(), index)).collect()
+    }
+
+    fn drop_sidebar_threads(
+        &mut self,
+        drag: &SidebarThreadDrag,
+        section: SidebarSection,
+        target: Option<(SidebarThreadRef, bool)>,
+        cx: &mut Context<Self>,
+    ) {
+        let ids = self.sidebar_action_selection(drag.session_id, &drag.members);
+        let mut members: Vec<_> = ids.iter()
+            .filter_map(|id| self.session_index.get(id))
+            .map(|&(project, session)| self.projects[project].sessions[session].uid.clone())
+            .collect();
+        let target = target.and_then(|(row, before)| {
+            self.sidebar_thread_uid(row.project_idx, row.session_idx).map(|uid| (uid, before))
+        });
+        if members.is_empty() || target.as_ref().is_some_and(|(uid, _)| members.contains(uid)) {
+            return;
+        }
+        let now = sidebar_now_ms();
+        for uid in &members {
+            let state = self.sidebar_threads.entry(uid.clone()).or_default();
+            state.pinned = section == SidebarSection::Pinned;
+            state.settled = section == SidebarSection::Settled;
+            state.archived = false;
+            state.pin_order = None;
+            state.snoozed_until_ms = (section == SidebarSection::Snoozed)
+                .then(|| now.saturating_add(SIDEBAR_SNOOZE_MS));
+            state.parked_at_ms = (state.settled || state.snoozed_until_ms.is_some()).then_some(now);
+        }
+        if section == SidebarSection::Pinned {
+            let moved: HashSet<&str> = members.iter().map(String::as_str).collect();
+            let mut pinned: Vec<_> = self.sidebar_threads.iter()
+                .filter(|(uid, state)| state.pinned && !moved.contains(uid.as_str()))
+                .map(|(uid, state)| (state.pin_order.unwrap_or(u64::MAX), uid.clone()))
+                .collect();
+            pinned.sort_unstable();
+            let index = target.as_ref().and_then(|(target, before)| {
+                pinned.iter().position(|(_, uid)| uid == target).map(|index| index + usize::from(!before))
+            }).unwrap_or(pinned.len());
+            pinned.splice(index..index, members.drain(..).map(|uid| (0, uid)));
+            for (index, (_, uid)) in pinned.into_iter().enumerate() {
+                if let Some(state) = self.sidebar_threads.get_mut(&uid) {
+                    state.pin_order = Some(index as u64);
+                }
+            }
+        } else if section == SidebarSection::Settled {
+            self.settings.sidebar.settled_expanded = true;
+        } else if section == SidebarSection::Active && let Some((target, before)) = target {
+            let rank = self.sidebar_inbox_rank();
+            let moved: HashSet<&str> = members.iter().map(String::as_str).collect();
+            let mut inbox: Vec<_> = self.projects.iter().flat_map(|project| &project.sessions)
+                .filter(|session| !moved.contains(session.uid.as_str()))
+                .collect();
+            inbox.sort_by_key(|session| (
+                rank.get(session.uid.as_str()).map(|rank| rank + 1).unwrap_or(0),
+                std::cmp::Reverse(session.id)
+            ));
+            let Some(position) = inbox.iter().position(|session| session.uid == target) else { return };
+            let mut order: Vec<_> = inbox.into_iter().map(|session| session.uid.clone()).collect();
+            let index = position + usize::from(!before);
+            order.splice(index..index, members);
+            self.settings.sidebar.inbox_order = order;
+        }
+        self.schedule_workspace_save(cx);
+        cx.notify();
+    }
+
     fn settle_sidebar_thread(
         &mut self,
         project_idx: usize,
@@ -537,6 +627,7 @@ impl AppState {
         &mut self,
         project_idx: usize,
         session_idx: usize,
+        duration_ms: u64,
         cx: &mut Context<Self>,
     ) {
         let Some(uid) = self.sidebar_thread_uid(project_idx, session_idx) else {
@@ -545,7 +636,7 @@ impl AppState {
         {
             let now = sidebar_now_ms();
             let state = self.sidebar_threads.entry(uid).or_default();
-            state.snoozed_until_ms = Some(now.saturating_add(SIDEBAR_SNOOZE_MS));
+            state.snoozed_until_ms = Some(now.saturating_add(duration_ms));
             state.settled = false;
             state.pinned = false;
             state.pin_order = None;
@@ -727,6 +818,7 @@ impl AppState {
         // PTY masters close and the shells go away with them.
         drop(removed);
         self.sidebar_threads.remove(&removed_uid);
+        self.settings.sidebar.inbox_order.retain(|uid| uid != &removed_uid);
         // Invalidate older debounced snapshots before publishing the deletion.
         self.save_generation.fetch_add(1, Ordering::SeqCst);
         let saved = if self.persistence_enabled {
@@ -783,8 +875,16 @@ impl AppState {
         drop(removed);
         self.sidebar_threads
             .retain(|uid, _| !removed_uids.contains(uid));
-        if self.settings.sidebar.project_scope.as_deref() == Some(removed_path.as_path()) {
-            self.settings.sidebar.project_scope = None;
+        let sidebar = &mut self.settings.sidebar;
+        sidebar.pinned_projects.retain(|path| path != &removed_path);
+        sidebar.project_order.retain(|path| path != &removed_path);
+        self.sidebar_folder_show_all.remove(&project_id);
+        let count = sidebar.extra_project_scopes.len();
+        sidebar.extra_project_scopes.retain(|path| path != &removed_path);
+        if sidebar.project_scope.as_ref() == Some(&removed_path) {
+            sidebar.project_scope = sidebar.extra_project_scopes.pop();
+        }
+        if count != sidebar.extra_project_scopes.len() || sidebar.project_scope.is_none() {
             self.settled_visible_count = SIDEBAR_SETTLED_INITIAL_COUNT;
         }
         self.rebuild_session_index();

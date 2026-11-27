@@ -29,30 +29,56 @@ fn sidebar_renders_collapsed_and_expanded_projects() {
 
     let dir = scratch_project_dir("shob-multi-project-collapse");
     cx.update_window_entity(&app_state, |state, window, cx| {
+        state.settings.sidebar.project_folders = true;
         state.open_project_path(dir, window, cx);
     });
     cx.draw_frame().expect("frame with two expanded projects");
 
     // Collapse the first project while the second stays expanded.
-    cx.update_window_entity(&app_state, |state, _window, cx| {
-        state.toggle_project_expanded(0, cx);
-    });
+    let folder = cx.debug_bounds("sidebar-project-folder-1").unwrap();
+    cx.simulate_click(folder.center(), Modifiers::none());
     cx.draw_frame().expect("frame with one collapsed project");
+    cx.background_executor.advance_clock(SIDEBAR_ROW_MOTION);
+    cx.run_until_parked();
+    cx.draw_frame().unwrap();
     let expanded = app_state.read_with(&cx, |state, _| {
         (state.projects[0].expanded, state.projects[1].expanded)
     });
     assert_eq!(expanded, (false, true));
+    assert!(cx.debug_bounds("session-row-1").is_none());
 
     // Activating a collapsed project expands it again.
     cx.update_window_entity(&app_state, |state, window, cx| {
         state.activate_project(0, window, cx);
     });
     cx.draw_frame().expect("frame after activating a project");
+    cx.background_executor.advance_clock(SIDEBAR_ROW_MOTION);
+    cx.run_until_parked();
+    cx.draw_frame().unwrap();
     let (active, expanded) = app_state.read_with(&cx, |state, _| {
         (state.active_project_idx, state.projects[0].expanded)
     });
     assert_eq!(active, 0);
     assert!(expanded);
+
+    let second = app_state.read_with(&cx, |state, _| state.projects[1].sessions[0].id);
+    let second_row = app_state.read_with(&cx, |state, _| {
+        state.sidebar_row_bounds(SidebarNavKey::Thread(second)).unwrap()
+    });
+    cx.simulate_click(second_row.center(), Modifiers { shift: true, ..Modifiers::none() });
+    cx.draw_frame().unwrap();
+    app_state.read_with(&cx, |state, _| {
+        assert_eq!(*state.sidebar_selection.members, HashSet::from([1, second]));
+        assert_eq!(state.active_session().unwrap().id, 1);
+    });
+    cx.simulate_mouse_down(second_row.center(), MouseButton::Right, Modifiers::none());
+    cx.simulate_mouse_up(second_row.center(), MouseButton::Right, Modifiers::none());
+    cx.draw_frame().unwrap();
+    let pin = cx.debug_bounds("sidebar-thread-pin").unwrap();
+    cx.simulate_click(pin.center(), Modifiers::none());
+    app_state.read_with(&cx, |state, _| {
+        assert_eq!(state.sidebar_thread_groups().pinned.len(), 2);
+    });
 }
 
 #[test]
@@ -97,7 +123,7 @@ fn sidebar_renders_with_agent_and_worker() {
 #[test]
 fn sidebar_thread_menu_exposes_delete_for_the_selected_thread() {
     let mut cx = TestAppContext::new();
-    let (mut cx, _) = open_app(&mut cx);
+    let (mut cx, state) = open_app(&mut cx);
     cx.draw_frame().unwrap();
     let row = cx.debug_bounds("session-row-1").unwrap();
     cx.simulate_mouse_move(row.center(), None, Modifiers::none());
@@ -107,6 +133,27 @@ fn sidebar_thread_menu_exposes_delete_for_the_selected_thread() {
     cx.draw_frame().unwrap();
     assert!(cx.debug_bounds("sidebar-thread-menu-popover").is_some());
     assert!(cx.debug_bounds("session-close").is_some());
+    cx.simulate_keystrokes("escape");
+    cx.draw_frame().unwrap();
+    cx.simulate_mouse_down(row.center(), MouseButton::Right, Modifiers::none());
+    cx.simulate_mouse_up(row.center(), MouseButton::Right, Modifiers::none());
+    cx.draw_frame().unwrap();
+    let rename = cx.debug_bounds("sidebar-thread-rename").unwrap();
+    cx.simulate_click(rename.center(), Modifiers::none());
+    cx.draw_frame().unwrap();
+    assert!(state.read_with(&cx, |state, _| state.sidebar_thread_rename.is_some()));
+    cx.simulate_input("Sidebar planning notes");
+    state.read_with(&cx, |state, cx| {
+        let rename = state.sidebar_thread_rename.as_ref().unwrap();
+        assert_eq!(rename.input.read(cx).value().as_str(), "Sidebar planning notes");
+    });
+    cx.simulate_keystrokes("enter");
+    state.read_with(&cx, |state, cx| {
+        let saved = state.saved_workspace(cx);
+        assert_eq!(saved.threads[0].title.as_deref(), Some("Sidebar planning notes"));
+        let result = state.sidebar_search_thread_refs("planning notes");
+        assert_eq!(state.sidebar_thread_id(result[0]), 1);
+    });
 }
 
 #[test]
@@ -178,6 +225,9 @@ fn new_sidebar_session_renders_first_and_stays_on_the_first_page() {
     });
     cx.draw_frame()
         .expect("sidebar with the newest session first");
+    cx.background_executor.advance_clock(SIDEBAR_ROW_MOTION);
+    cx.run_until_parked();
+    cx.draw_frame().unwrap();
 
     let newest = cx
         .debug_bounds("session-row-7")
@@ -318,9 +368,9 @@ fn sidebar_search_opens_a_match_outside_the_inbox_scope() {
     assert!(cx.debug_bounds("sidebar-search-empty").is_some());
     cx.simulate_keystrokes("backspace");
     cx.draw_frame().unwrap();
-    let result = cx.debug_bounds("session-row-3").expect("full title match");
+    assert!(cx.debug_bounds("session-row-3").is_some());
     assert!(cx.debug_bounds("session-row-1").is_none());
-    cx.simulate_click(result.center(), Modifiers::default());
+    cx.simulate_keystrokes("down enter");
     cx.draw_frame().unwrap();
     app_state.read_with(&cx, |state, cx| {
         assert!(state.sidebar_search_query(cx).is_empty());
