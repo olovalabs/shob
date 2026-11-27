@@ -19,6 +19,34 @@ mod chat_row_cache_tests {
     }
 
     #[test]
+    fn chat_error_shows_the_provider_message() {
+        let mut chat = PaneChat::default();
+        for (error, expected) in [
+            (
+                r#"http error 403: {"error":{"code":"forbidden_api_key","message":"[code=forbidden_api_key] query api key by digest: api key revoked","type":"forbidden_api_key"}}"#,
+                "[code=forbidden_api_key] query api key by digest: api key revoked",
+            ),
+            (
+                r#"{"error":{"message":"Try again\nshortly."}}"#,
+                "Try again\nshortly.",
+            ),
+            (
+                r#"http error: {"message":"Rate limit exceeded."}"#,
+                "Rate limit exceeded.",
+            ),
+            ("The agent session closed unexpectedly.", "The agent session closed unexpectedly."),
+            (
+                r#"http error 502: {"error":{"code":"bad_gateway","message":""}}"#,
+                r#"http error 502: {"error":{"code":"bad_gateway","message":""}}"#,
+            ),
+        ] {
+            apply(&mut chat, AgentEvent::Error(error.into()));
+            let message = chat.messages.last().unwrap();
+            assert_eq!(message.text, expected);
+        }
+    }
+
+    #[test]
     fn completed_turn_disclosure_hides_progress_and_keeps_final_answer() {
         let mut chat = PaneChat { running: true, ..Default::default() };
         let mut user = ChatMessage::new(ChatRole::User, "prompt".into());

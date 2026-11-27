@@ -233,6 +233,11 @@ enum ToolState {
 }
 impl ChatMessage {
     fn new(role: ChatRole, text: String) -> Self {
+        let text = if role == ChatRole::Error {
+            agent_appearance::provider_error_message(&text).unwrap_or(text)
+        } else {
+            text
+        };
         Self {
             role,
             text,

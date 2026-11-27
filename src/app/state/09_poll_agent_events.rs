@@ -197,7 +197,10 @@ impl AppState {
                                 && matches!(event, agent_bridge::AgentEvent::Error(_));
                             match &event {
                                 agent_bridge::AgentEvent::Error(error) => {
-                                    pane.chat.recovery = Some(error.clone());
+                                    pane.chat.recovery = Some(
+                                        agent_appearance::provider_error_message(error)
+                                            .unwrap_or_else(|| error.clone()),
+                                    );
                                     pane.chat.follow_ups_paused = true;
                                 }
                                 agent_bridge::AgentEvent::Done
@@ -247,8 +250,8 @@ impl AppState {
                                     finish_chat_streaming(&mut pane.chat.messages);
                                     closed = true;
                                 }
-                                agent_bridge::AgentEvent::Error(message) if startup_error => {
-                                    pane.chat.startup_error = Some(message);
+                                agent_bridge::AgentEvent::Error(_) if startup_error => {
+                                    pane.chat.startup_error = pane.chat.recovery.clone();
                                 }
                                 agent_bridge::AgentEvent::Title(title) => {
                                     pane.chat.set_agent_title(title);

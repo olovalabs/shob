@@ -95,3 +95,27 @@ pub fn worked_label(millis: u64) -> String {
         format!("Worked for {seconds}s")
     }
 }
+
+pub fn provider_error_message(error: &str) -> Option<String> {
+    if error.len() > 64 * 1024 {
+        return None;
+    }
+    let mut body = error.trim();
+    if let Some((prefix, rest)) = body.split_once(':')
+        && (prefix == "http error"
+            || prefix.strip_prefix("http error ").is_some_and(|status| {
+                status.len() == 3 && status.bytes().all(|byte| byte.is_ascii_digit())
+            }))
+    {
+        body = rest.trim_start();
+    }
+    if !body.starts_with('{') {
+        return None;
+    }
+    let payload: serde_json::Value = serde_json::from_str(body).ok()?;
+    let message = payload["error"]["message"]
+        .as_str()
+        .or_else(|| payload["error"].as_str())
+        .or_else(|| payload["message"].as_str())?;
+    (!message.trim().is_empty()).then(|| message.to_owned())
+}
