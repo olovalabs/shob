@@ -589,7 +589,9 @@ impl MessageSearch {
                 }
                 let result = entry.and_then(|entry| {
                     let name = entry.file_name();
-                    if Path::new(&name).extension().is_none_or(|ext| ext != "jsonl")
+                    if Path::new(&name)
+                        .extension()
+                        .is_none_or(|ext| ext != "jsonl")
                         || !entry.file_type()?.is_file()
                     {
                         return Ok(None);
@@ -611,7 +613,9 @@ impl MessageSearch {
                 });
                 match result {
                     Ok(Some(hit))
-                        if newest.as_ref().is_none_or(|old: &MessageHit| old.at_ms < hit.at_ms) =>
+                        if newest
+                            .as_ref()
+                            .is_none_or(|old: &MessageHit| old.at_ms < hit.at_ms) =>
                     {
                         newest = Some(hit);
                     }
@@ -623,7 +627,11 @@ impl MessageSearch {
         (newest.map(|hit| (hit.role, hit.text)), failed)
     }
 
-    fn search_transcript(&mut self, snapshot: &str, is_stale: &impl Fn() -> bool) -> Option<MessageHit> {
+    fn search_transcript(
+        &mut self,
+        snapshot: &str,
+        is_stale: &impl Fn() -> bool,
+    ) -> Option<MessageHit> {
         let mut newest = None;
         let mut assistant = String::new();
         let mut assistant_at = None;
@@ -635,21 +643,38 @@ impl MessageSearch {
                 continue; // As in replay, skip a corrupt or partially written line.
             };
             let (role, text, at_ms) = match entry {
-                Entry::Event { event: AgentEvent::Text(delta), at_ms } => {
+                Entry::Event {
+                    event: AgentEvent::Text(delta),
+                    at_ms,
+                } => {
                     assistant.push_str(&delta);
                     assistant_at = at_ms.or(assistant_at);
                     continue;
                 }
-                Entry::Event { event: AgentEvent::Title(_) | AgentEvent::Usage(_) | AgentEvent::Subagents { .. }, .. } => continue,
+                Entry::Event {
+                    event:
+                        AgentEvent::Title(_) | AgentEvent::Usage(_) | AgentEvent::Subagents { .. },
+                    ..
+                } => continue,
                 Entry::User { text, at_ms } => (ChatRole::User, text, at_ms),
                 Entry::Local { role, text } => (role, text, None),
                 Entry::Event { .. } => {
-                    self.record_hit(&mut newest, ChatRole::Assistant, &assistant, assistant_at.take());
+                    self.record_hit(
+                        &mut newest,
+                        ChatRole::Assistant,
+                        &assistant,
+                        assistant_at.take(),
+                    );
                     assistant.clear();
                     continue;
                 }
             };
-            self.record_hit(&mut newest, ChatRole::Assistant, &assistant, assistant_at.take());
+            self.record_hit(
+                &mut newest,
+                ChatRole::Assistant,
+                &assistant,
+                assistant_at.take(),
+            );
             assistant.clear();
             self.record_hit(&mut newest, role, &text, at_ms);
         }
@@ -657,12 +682,22 @@ impl MessageSearch {
         newest
     }
 
-    fn record_hit(&mut self, hit: &mut Option<MessageHit>, role: ChatRole, text: &str, at_ms: Option<u64>) {
-        if self.query.is_empty() || text.is_empty() || !matches!(role, ChatRole::User | ChatRole::Assistant) {
+    fn record_hit(
+        &mut self,
+        hit: &mut Option<MessageHit>,
+        role: ChatRole,
+        text: &str,
+        at_ms: Option<u64>,
+    ) {
+        if self.query.is_empty()
+            || text.is_empty()
+            || !matches!(role, ChatRole::User | ChatRole::Assistant)
+        {
             return;
         }
         self.folded.clear();
-        self.folded.extend(folded_message_chars(text).map(|(_, ch)| ch));
+        self.folded
+            .extend(folded_message_chars(text).map(|(_, ch)| ch));
         let Some(offset) = self.folded.find(&self.query) else {
             return;
         };
@@ -676,8 +711,15 @@ impl MessageSearch {
         }) else {
             return;
         };
-        let start = text[..found].char_indices().rev().nth(16).map_or(0, |(index, _)| index);
-        let end = text[start..].char_indices().nth(128).map_or(text.len(), |(index, _)| start + index);
+        let start = text[..found]
+            .char_indices()
+            .rev()
+            .nth(16)
+            .map_or(0, |(index, _)| index);
+        let end = text[start..]
+            .char_indices()
+            .nth(128)
+            .map_or(text.len(), |(index, _)| start + index);
         let mut excerpt = String::new();
         if start != 0 {
             excerpt.push_str("… ");
@@ -691,22 +733,29 @@ impl MessageSearch {
         if end != text.len() {
             excerpt.push('…');
         }
-        *hit = Some(MessageHit { role, text: excerpt, at_ms });
+        *hit = Some(MessageHit {
+            role,
+            text: excerpt,
+            at_ms,
+        });
     }
 }
 
 fn folded_message_chars(text: &str) -> impl Iterator<Item = (usize, char)> + '_ {
     let mut in_whitespace = true;
-    text.trim_end().char_indices().filter_map(move |(index, ch)| {
-        let whitespace = ch.is_whitespace();
-        let was_whitespace = std::mem::replace(&mut in_whitespace, whitespace);
-        match ch {
-            _ if whitespace => (!was_whitespace).then_some((index, ' ')),
-            '‘' | '’' => Some((index, '\'')),
-            'ς' => Some((index, 'σ')),
-            _ => Some((index, ch)),
-        }
-    }).flat_map(|(index, ch)| ch.to_lowercase().map(move |folded| (index, folded)))
+    text.trim_end()
+        .char_indices()
+        .filter_map(move |(index, ch)| {
+            let whitespace = ch.is_whitespace();
+            let was_whitespace = std::mem::replace(&mut in_whitespace, whitespace);
+            match ch {
+                _ if whitespace => (!was_whitespace).then_some((index, ' ')),
+                '‘' | '’' => Some((index, '\'')),
+                'ς' => Some((index, 'σ')),
+                _ => Some((index, ch)),
+            }
+        })
+        .flat_map(|(index, ch)| ch.to_lowercase().map(move |folded| (index, folded)))
 }
 
 #[cfg(test)]
@@ -734,15 +783,28 @@ fn sidebar_message_search_joins_assistant_deltas_and_ignores_non_messages() {
             at_ms: Some(4),
         },
     ];
-    let snapshot = entries.iter().map(|entry| serde_json::to_string(entry).unwrap())
-        .collect::<Vec<_>>().join("\n");
+    let snapshot = entries
+        .iter()
+        .map(|entry| serde_json::to_string(entry).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
 
-    let hit = MessageSearch::new("YOU'VE FOUND THE FIX").search_transcript(&snapshot, &|| false).unwrap();
+    let hit = MessageSearch::new("YOU'VE FOUND THE FIX")
+        .search_transcript(&snapshot, &|| false)
+        .unwrap();
     assert_eq!(hit.role, ChatRole::Assistant);
     assert_eq!(hit.at_ms, Some(3));
     assert!(hit.text.ends_with("you’ve found the fix."));
-    assert!(MessageSearch::new("Internal notes").search_transcript(&snapshot, &|| false).is_none());
-    assert!(MessageSearch::new("you've").search_transcript(&snapshot, &|| true).is_none());
+    assert!(
+        MessageSearch::new("Internal notes")
+            .search_transcript(&snapshot, &|| false)
+            .is_none()
+    );
+    assert!(
+        MessageSearch::new("you've")
+            .search_transcript(&snapshot, &|| true)
+            .is_none()
+    );
 }
 
 fn read_bounded(path: &Path) -> Option<String> {
