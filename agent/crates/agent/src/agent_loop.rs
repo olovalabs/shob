@@ -1519,7 +1519,10 @@ async fn prepare_tool_call(
         Some(t) => t,
         None => {
             return Prepared::Immediate {
-                result: create_error_tool_result(&format!("Tool {} not found", tool_call.name)),
+                result: create_error_tool_result(&unknown_tool_message(
+                    &tool_call.name,
+                    &current_context.tools,
+                )),
                 is_error: true,
             };
         }
@@ -1614,6 +1617,51 @@ async fn prepare_tool_call(
     Prepared::Ready {
         tool,
         args: validated_args,
+    }
+}
+
+fn unknown_tool_message(name: &str, tools: &[Arc<dyn AgentTool>]) -> String {
+    let mut end = name.len().min(96);
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    let shown = &name[..end];
+    let mut suggestions = tools.iter().filter_map(|tool| {
+        let candidate = tool.schema().name.as_str();
+        (candidate.len() <= 96 && close_tool_name(name, candidate)).then_some(candidate)
+    });
+    let Some(first) = suggestions.next() else {
+        return format!("Unknown tool {shown:?}. Choose a tool from the advertised tool list.");
+    };
+    let alternatives = std::iter::once(first)
+        .chain(suggestions.take(2))
+        .map(|candidate| format!("{candidate:?}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("Unknown tool {shown:?}. Did you mean {alternatives}? Use an advertised tool name.")
+}
+
+fn close_tool_name(name: &str, candidate: &str) -> bool {
+    if name.len().abs_diff(candidate.len()) > 1 {
+        return false;
+    }
+    let (mut left, mut right) = (name.as_bytes(), candidate.as_bytes());
+    while let ([a, rest_left @ ..], [b, rest_right @ ..]) = (left, right) {
+        if !a.eq_ignore_ascii_case(b) {
+            break;
+        }
+        (left, right) = (rest_left, rest_right);
+    }
+    match (left, right) {
+        ([], _) | (_, []) => true,
+        ([_, left_tail @ ..], [_, right_tail @ ..]) if left.len() == right.len() => {
+            left_tail.eq_ignore_ascii_case(right_tail)
+                || matches!((left, right), ([a, b, x @ ..], [c, d, y @ ..])
+                    if a.eq_ignore_ascii_case(d) && b.eq_ignore_ascii_case(c)
+                        && x.eq_ignore_ascii_case(y))
+        }
+        ([_, tail @ ..], _) if left.len() > right.len() => tail.eq_ignore_ascii_case(right),
+        (_, [_, tail @ ..]) => tail.eq_ignore_ascii_case(left),
     }
 }
 

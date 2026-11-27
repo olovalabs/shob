@@ -734,6 +734,20 @@ mod tests {
         }));
         assert!(matches!(&events[..], [AgentEvent::Usage(usage)] if usage.cost.is_none()));
     }
+    #[test]
+    fn rpc_tool_rejection_keeps_call_id_and_error_output() {
+        let output = "Invalid arguments for read. Correct the path and call the tool again.";
+        let events = decode_event(&json!({
+            "type": "tool_execution_end",
+            "toolCallId": "call-1",
+            "toolName": "read",
+            "isError": true,
+            "result": {"content": [{"type": "text", "text": output}]}
+        }));
+        assert!(matches!(&events[..], [
+            AgentEvent::ToolEnd { id: Some(id), name, output: text, failed: true }
+        ] if id == "call-1" && name == "read" && text == output));
+    }
     use std::os::unix::fs::PermissionsExt;
     use std::time::{Duration, Instant};
 

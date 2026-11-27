@@ -633,7 +633,7 @@ impl AppState {
             if !turns.remove(&start) { turns.insert(start); }
             view.invalidate_message_row(start);
             let running = Self::worker_running(&pane.chat.messages, view);
-            let new_count = Self::build_chat_rows_from(&view.list_source(running)).borrow().rows.len();
+            let new_count = Self::build_chat_rows_from(&view.list_source(running)).borrow().list_item_count();
             update_worked_turn_rows(&view.list_state, &view.list_rows, first_row, new_count);
             pane.chat.notify_worker_view(cx);
             cx.notify();
@@ -643,7 +643,7 @@ impl AppState {
         let turns = pane.chat.expanded_turns.entry(pane.chat.conversation_key.clone()).or_default();
         if !turns.remove(&start) { turns.insert(start); }
         pane.chat.invalidate_message_row(start);
-        let new_count = Self::build_chat_rows(&pane.chat, pane.chat.visible_running()).borrow().rows.len();
+        let new_count = Self::build_chat_rows(&pane.chat, pane.chat.visible_running()).borrow().list_item_count();
         update_worked_turn_rows(&pane.chat.list_state, &pane.chat.list_rows, first_row, new_count);
         cx.notify();
     }

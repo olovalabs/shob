@@ -956,6 +956,13 @@ struct ChatRowCache {
 }
 
 impl ChatRowCache {
+    fn list_item_count(&self) -> usize {
+        self.rows.len()
+            - usize::from(
+                self.rows.len() > 1 && matches!(self.rows.last(), Some(ChatRow::Running { .. })),
+            )
+    }
+
     fn invalidate_from(&mut self, index: usize) {
         if self.dirty && index >= self.state.cursor {
             return;

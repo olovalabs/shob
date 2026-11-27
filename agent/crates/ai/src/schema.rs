@@ -11,10 +11,12 @@
 
 use crate::error::AiError;
 use crate::types::{Tool, ToolCall};
+use jsonschema::error::{TypeKind, ValidationErrorKind};
 use jsonschema::paths::PathChunk;
 use jsonschema::JSONSchema;
 use serde_json::{Map, Value};
 use std::collections::{hash_map::DefaultHasher, HashSet, VecDeque};
+use std::fmt::Write as _;
 use std::hash::Hasher;
 use std::sync::{Arc, Mutex};
 
@@ -456,11 +458,16 @@ fn primary_string_property(schema: &Value) -> Option<&str> {
 /// validation. This intentionally only applies object-shape heuristics when
 /// the tool schema expects an object; tools whose schema accepts strings retain
 /// their original string semantics.
-fn normalize_tool_arguments(mut args: Value, schema: &Value) -> Value {
+fn normalize_tool_arguments(mut args: Value, schema: &Value) -> (Value, bool) {
+    let mut malformed_json = false;
     let object_schema = expects_object(schema);
     if object_schema {
         if let Value::String(raw) = &args {
-            args = crate::json_parse::parse_terminal_tool_arguments(raw);
+            let parsed = crate::json_parse::parse_terminal_tool_arguments(raw);
+            let trimmed = raw.trim_start();
+            malformed_json = parsed.as_str() == Some(raw)
+                && (trimmed.starts_with(['{', '[', '"']) || trimmed.starts_with("```"));
+            args = parsed;
         }
     }
 
@@ -506,40 +513,7 @@ fn normalize_tool_arguments(mut args: Value, schema: &Value) -> Value {
             }
         }
     }
-    args
-}
-
-fn example_value(schema: &Value) -> Value {
-    if let Some(values) = schema.get("enum").and_then(Value::as_array) {
-        if let Some(first) = values.first() {
-            return first.clone();
-        }
-    }
-    match schema_types(schema).first().map(String::as_str) {
-        Some("object") => {
-            let mut object = Map::new();
-            let required: HashSet<&str> = schema
-                .get("required")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .collect();
-            if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
-                for (key, property) in properties {
-                    if required.contains(key.as_str()) {
-                        object.insert(key.clone(), example_value(property));
-                    }
-                }
-            }
-            Value::Object(object)
-        }
-        Some("array") => Value::Array(Vec::new()),
-        Some("string") => Value::String(String::new()),
-        Some("integer") | Some("number") => Value::from(0),
-        Some("boolean") => Value::Bool(false),
-        _ => Value::Object(Map::new()),
-    }
+    (args, malformed_json)
 }
 
 /// Validate (and coerce) tool-call arguments against the tool's parameter
@@ -550,7 +524,7 @@ fn example_value(schema: &Value) -> Value {
 /// 3. `JSONSchema::is_valid` — authoritative check.
 ///
 /// Returns the coerced arguments on success, or `AiError::Schema` with a
-/// formatted message (path + message per error + the received JSON) on failure.
+/// short correction message on failure.
 #[tracing::instrument(
     name = "tool.arguments.validate",
     level = "trace",
@@ -559,8 +533,8 @@ fn example_value(schema: &Value) -> Value {
 )]
 pub fn validate_tool_arguments(tool: &Tool, tool_call: &ToolCall) -> Result<Value, AiError> {
     let raw_arguments = &tool_call.arguments;
-    tracing::debug!(tool = %tool.name, arguments = ?raw_arguments, "normalizing tool arguments");
-    let mut args = normalize_tool_arguments(raw_arguments.clone(), tool.parameters.as_value());
+    let (mut args, malformed_json) =
+        normalize_tool_arguments(raw_arguments.clone(), tool.parameters.as_value());
 
     // Step 1: normalize optional nulls.
     normalize_optional_nulls(&mut args, tool.parameters.as_value());
@@ -570,47 +544,97 @@ pub fn validate_tool_arguments(tool: &Tool, tool_call: &ToolCall) -> Result<Valu
     // the Rust port always runs it.
     let coerced = coerce_with_json_schema(args, tool.parameters.as_value());
 
-    // Step 3: authoritative validate.
-    let validator = match get_sub_schema_validator(tool.parameters.as_value()) {
-        Some(v) => v,
-        None => {
-            let error = JSONSchema::compile(tool.parameters.as_value())
-                .err()
-                .map(|error| error.to_string())
-                .unwrap_or_else(|| "validator unavailable".to_string());
-            return Err(AiError::Schema {
-                message: format!("could not compile tool schema for {:?}: {error}", tool.name),
-            });
-        }
+    // Step 3: authoritative validate, with a fast path for valid calls.
+    let Some(validator) = get_sub_schema_validator(tool.parameters.as_value()) else {
+        let tool_name = utf8_prefix(&tool.name, 96);
+        return Err(AiError::Schema {
+            message: format!(
+                "Tool unavailable because Shob could not compile tool schema for {tool_name:?}. Choose another advertised tool."
+            ),
+        });
     };
-
     if validator.is_valid(&coerced) {
         return Ok(coerced);
     }
 
-    let errors: Vec<String> = collect_validation_errors(&validator, &coerced);
-    let errors_block = if errors.is_empty() {
-        "Unknown validation error".to_string()
+    let tool_name = utf8_prefix(&tool.name, 96);
+    let mut message = format!("Invalid arguments for {tool_name:?}.");
+    let errors = validator.validate(&coerced).err().into_iter().flatten();
+    for error in errors.take(3) {
+        let mut field = String::new();
+        for chunk in error.instance_path.iter() {
+            if !field.is_empty() {
+                field.push('.');
+            }
+            match chunk {
+                PathChunk::Property(name) => {
+                    field.push_str(utf8_prefix(name, 96));
+                }
+                PathChunk::Index(index) => field.push_str(&index.to_string()),
+                PathChunk::Keyword(name) => field.push_str(name),
+            }
+            if field.len() >= 96 {
+                field.truncate(utf8_prefix(&field, 96).len());
+                break;
+            }
+        }
+        let problem = match error.kind {
+            ValidationErrorKind::Required { property } => {
+                let name = property.as_str().unwrap_or("field");
+                if !field.is_empty() && field.len() < 96 {
+                    field.push('.');
+                }
+                let remaining = 96 - field.len();
+                field.push_str(utf8_prefix(name, remaining));
+                "required field is missing".to_owned()
+            }
+            ValidationErrorKind::Type { kind } => match kind {
+                TypeKind::Single(expected) => format!("expected {expected}"),
+                TypeKind::Multiple(expected) => {
+                    let types = expected
+                        .into_iter()
+                        .map(|kind| kind.to_string())
+                        .collect::<Vec<_>>();
+                    format!("expected {}", types.join(" or "))
+                }
+            },
+            ValidationErrorKind::AdditionalProperties { .. }
+            | ValidationErrorKind::UnevaluatedProperties { .. } => {
+                "contains unsupported fields".to_owned()
+            }
+            ValidationErrorKind::Enum { .. } | ValidationErrorKind::Constant { .. } => {
+                "use a value listed in the tool definition".to_owned()
+            }
+            ValidationErrorKind::MaxItems { limit } => format!("has more than {limit} items"),
+            ValidationErrorKind::MinItems { limit } => format!("needs at least {limit} items"),
+            ValidationErrorKind::Minimum { limit } => format!("must be at least {limit}"),
+            ValidationErrorKind::Maximum { limit } => format!("must be at most {limit}"),
+            _ => "does not meet the tool's parameter requirements".to_owned(),
+        };
+        let field = if field.is_empty() {
+            "arguments"
+        } else {
+            &field
+        };
+        let _ = write!(message, "\n- {field:?}: {problem}");
+    }
+    let hint = if malformed_json {
+        "\nMalformed tool arguments. Send complete JSON using the advertised tool parameters."
     } else {
-        errors
-            .iter()
-            .map(|e| format!("  - {e}"))
-            .collect::<Vec<_>>()
-            .join("\n")
+        "\nCorrect these fields using the advertised tool parameters, then call the tool again."
     };
+    // Leave room for the AiError display prefix and keep the correction hint.
+    message.truncate(utf8_prefix(&message, 1000 - hint.len()).len());
+    message.push_str(hint);
+    Err(AiError::Schema { message })
+}
 
-    Err(AiError::Schema {
-        message: format!(
-            "Validation failed for tool {:?}:\n{errors_block}\n\nReceived arguments:\n{}\n\nExpected parameter schema:\n{}\n\nOne valid example:\n{}",
-            tool_call.name,
-            serde_json::to_string_pretty(&tool_call.arguments)
-                .unwrap_or_else(|_| "<unprintable>".into()),
-            serde_json::to_string_pretty(tool.parameters.as_value())
-                .unwrap_or_else(|_| "<unavailable>".into()),
-            serde_json::to_string_pretty(&example_value(tool.parameters.as_value()))
-                .unwrap_or_else(|_| "{}".into())
-        ),
-    })
+fn utf8_prefix(text: &str, max_bytes: usize) -> &str {
+    let mut end = text.len().min(max_bytes);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
 }
 
 /// Find a tool by name in a slice and validate its call. Mirrors TS
@@ -623,37 +647,6 @@ pub fn validate_tool_call(tools: &[Tool], tool_call: &ToolCall) -> Result<Value,
             message: format!("Tool {:?} not found", tool_call.name),
         })?;
     validate_tool_arguments(tool, tool_call)
-}
-
-/// Collect human-readable validation errors with JSON-pointer paths, mirroring
-/// the TS `validator.Errors(...).map(formatValidationPath)` output. Uses
-/// `JSONSchema::validate`, whose `Err` variant is an iterator over all errors.
-fn collect_validation_errors(validator: &JSONSchema, value: &Value) -> Vec<String> {
-    let Err(errors) = validator.validate(value) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for error in errors {
-        // Build a dotted path from the JSONPointer chunks (Property/Index),
-        // matching the TS `formatValidationPath` output; root → "root".
-        let dotted: String = error
-            .instance_path
-            .iter()
-            .map(|chunk| match chunk {
-                PathChunk::Property(p) => p.as_ref().to_string(),
-                PathChunk::Index(i) => i.to_string(),
-                PathChunk::Keyword(k) => k.to_string(),
-            })
-            .collect::<Vec<_>>()
-            .join(".");
-        let label = if dotted.is_empty() {
-            "root".to_string()
-        } else {
-            dotted
-        };
-        out.push(format!("{label}: {error}"));
-    }
-    out
 }
 
 #[cfg(test)]
@@ -788,13 +781,13 @@ mod tests {
         for (raw, expected) in &raw_cases {
             assert_eq!(
                 normalize_tool_arguments(json!(raw), &schema),
-                expected.clone(),
+                (expected.clone(), false),
                 "normalizing {raw:?}"
             );
         }
         assert_eq!(
             normalize_tool_arguments(json!({"dir":"."}), &schema),
-            json!({"path":"."})
+            (json!({"path":"."}), false)
         );
         for (raw, _) in &raw_cases {
             assert!(
@@ -806,21 +799,34 @@ mod tests {
     }
 
     #[test]
-    fn validation_errors_include_model_friendly_schema_and_example() {
+    fn validation_errors_are_bounded_actionable_and_omit_argument_values() {
         let t = tool(
-            "required",
+            "edit",
             json!({
                 "type": "object",
-                "properties": {"name": {"type": "string"}},
-                "required": ["name"]
+                "properties": {"path": {"type": "string"}, "offset": {"type": "integer"}},
+                "required": ["path", "offset", "first", "second", "third"]
             }),
         );
-        let message = validate_tool_arguments(&t, &call(json!({})))
+        let message = validate_tool_arguments(&t, &call(json!({"offset": "private".repeat(400)})))
             .unwrap_err()
             .to_string();
-        assert!(message.contains("Expected parameter schema"));
-        assert!(message.contains("One valid example"));
-        assert!(message.contains(r#""name": """#));
+        assert!(message.contains("edit"));
+        assert!(message.contains("path"));
+        assert!(message.contains("expected integer"));
+        assert!(message.contains("Correct these fields"));
+        assert_eq!(message.matches("\n- ").count(), 3);
+        assert!(!message.contains("private"));
+        assert!(!message.contains("properties"));
+        assert!(message.len() <= 1024);
+
+        let long_field = "\u{200b}".repeat(200);
+        let long = tool(&long_field, json!({"required": [long_field]}));
+        let message = validate_tool_arguments(&long, &call(json!({})))
+            .unwrap_err()
+            .to_string();
+        assert!(message.len() <= 1024);
+        assert!(message.ends_with("then call the tool again."));
     }
 
     #[test]

@@ -42,9 +42,10 @@ sha2 = "0.10.9"
 # Test-only SQL authorization probe for the managed-layout experiment.
 rusqlite = { workspace = true, features = ["hooks"] }
 tempfile = { workspace = true }
+reqwest = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 telemetry = { workspace = true }
-ai = { workspace = true }
+ai = { workspace = true, features = ["providers"] }
 agent = { workspace = true }
 
 [package.metadata.docs.rs]
