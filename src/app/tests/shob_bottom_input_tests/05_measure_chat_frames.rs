@@ -446,7 +446,7 @@ fn loopback_provider_switch_keeps_context() {
         let context = chat.context_prompt(prompt);
         let bridge = chat.bridge.as_mut().unwrap();
         bridge
-            .send_prompt_with_context(prompt, chat.bridge_resume.as_deref(), context)
+            .send_prompt_with_context(prompt, chat.bridge_resume.as_deref(), context, None)
             .unwrap();
         chat.messages
             .push(Arc::new(ChatMessage::new(ChatRole::User, prompt.into())));

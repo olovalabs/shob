@@ -9,7 +9,7 @@ impl SettingsSection {
     const GROUPS: [(&str, &[Self]); 3] = [
         ("Personal", &[Self::Appearance, Self::Themes]),
         ("Workspace", &[Self::Restore, Self::Archive, Self::Storage]),
-        ("Application", &[Self::Updates]),
+        ("Application", &[Self::Browser, Self::Updates]),
     ];
 
     fn page(self) -> SettingsPage {
@@ -43,6 +43,12 @@ impl SettingsSection {
                 "Storage",
                 "Manage local data, scrollback, and saved history.",
                 "icons/folder.svg",
+            ),
+            Self::Browser => (
+                "settings-nav-browser",
+                "Browser",
+                "Install optional browser support for @browser in Agent chat.",
+                "icons/monitor.svg",
             ),
             Self::Updates => (
                 "settings-nav-updates",
@@ -99,6 +105,7 @@ impl AppState {
             SettingsSection::Restore => self.render_restore_section(cx),
             SettingsSection::Archive => self.render_archive_section(cx),
             SettingsSection::Storage => self.render_storage_section(cx),
+            SettingsSection::Browser => self.render_browser_section(cx),
             SettingsSection::Updates => self.render_updates(cx),
         };
         let titlebar = self

@@ -179,6 +179,7 @@ fn build_app_state(cx: &mut Context<AppState>) -> AppState {
         persistence_enabled: false,
         settings_section: SettingsSection::default(),
         settings_focus: cx.focus_handle(),
+        browser_install: BrowserInstallState::NotInstalled,
         update_state: updater::State::default(),
         clear_data_confirm: false,
     }

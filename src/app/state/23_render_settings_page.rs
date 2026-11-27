@@ -1,3 +1,22 @@
+enum BrowserInstallState {
+    Checking,
+    Unsupported,
+    NotInstalled,
+    Installing,
+    Installed(PathBuf, Option<String>),
+    Removing,
+    Failed(String),
+}
+
+impl BrowserInstallState {
+    fn path(&self) -> Option<&Path> {
+        match self {
+            Self::Installed(path, _) => Some(path),
+            _ => None,
+        }
+    }
+}
+
 impl AppState {
     fn render_appearance_section(&self, narrow: bool, cx: &mut Context<Self>) -> gpui::Div {
         let tokens = self.tokens(cx);
@@ -132,6 +151,136 @@ impl AppState {
             .gap(px(18.0))
             .child(self.render_palette_scheme_picker(narrow, cx))
             .child(self.render_theme_file_section(cx))
+    }
+
+    fn check_browser_install(&mut self, cx: &mut Context<Self>) {
+        if !browser::supported() {
+            self.browser_install = BrowserInstallState::Unsupported;
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let installed = smol::unblock(browser::installed).await;
+            let _ = this.update(cx, |this, cx| {
+                this.browser_install = match installed {
+                    Ok(Some(path)) => BrowserInstallState::Installed(path, None),
+                    Ok(None) => BrowserInstallState::NotInstalled,
+                    Err(error) => BrowserInstallState::Failed(format!("{error:#}")),
+                };
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn install_browser(&mut self, cx: &mut Context<Self>) {
+        use BrowserInstallState::*;
+        if !matches!(self.browser_install, NotInstalled | Failed(_)) {
+            return;
+        }
+        self.browser_install = Installing;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = smol::unblock(browser::install).await;
+            let _ = this.update(cx, |this, cx| {
+                this.browser_install = match result {
+                    Ok(path) => Installed(path, None),
+                    Err(error) => Failed(format!("{error:#}")),
+                };
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn remove_browser(&mut self, cx: &mut Context<Self>) {
+        use BrowserInstallState::*;
+        let Installed(path, _) = &self.browser_install else {
+            return;
+        };
+        let path = path.clone();
+        self.browser_install = Removing;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let (path, result) = smol::unblock(move || {
+                let result = browser::remove(&path);
+                (path, result)
+            })
+            .await;
+            let _ = this.update(cx, |this, cx| {
+                this.browser_install = match result {
+                    Ok(()) => NotInstalled,
+                    Err(error) => Installed(path, Some(format!("{error:#}"))),
+                };
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn render_browser_section(&self, cx: &mut Context<Self>) -> gpui::Div {
+        use BrowserInstallState::*;
+        use gpui_component::button::ButtonVariants as _;
+        let tokens = self.tokens(cx);
+        let message: SharedString = match &self.browser_install {
+            Checking => "Checking for browser support…".into(),
+            Unsupported => "Browser installation is unavailable on this platform.".into(),
+            NotInstalled => {
+                "Not installed. Setup downloads agent-browser and Chrome for Testing.".into()
+            }
+            Installing => "Downloading and installing browser support…".into(),
+            Installed(_, None) => format!(
+                "Installed · agent-browser {}. Use @browser in Agent chat.",
+                browser::VERSION
+            )
+            .into(),
+            Installed(_, Some(error)) => format!("Removal failed. {error}").into(),
+            Removing => "Removing agent-browser…".into(),
+            Failed(error) => format!("Installation failed. {error}").into(),
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(12.0))
+            .child(
+                div()
+                    .text_size(px(13.0))
+                    .text_color(tokens.text_secondary)
+                    .child(message),
+            )
+            .when(
+                matches!(self.browser_install, NotInstalled | Failed(_)),
+                |page| {
+                    page.child(
+                        div()
+                            .debug_selector(|| "browser-install-action".into())
+                            .child(
+                                Button::new("install-browser")
+                                    .label(if matches!(self.browser_install, Failed(_)) {
+                                        "Try again"
+                                    } else {
+                                        "Install browser"
+                                    })
+                                    .primary()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.install_browser(cx);
+                                    })),
+                            ),
+                    )
+                },
+            )
+            .when(matches!(self.browser_install, Installed(..)), |page| {
+                page.child(
+                    Button::new("remove-browser-helper")
+                        .label("Remove helper")
+                        .on_click(cx.listener(|this, _, _, cx| this.remove_browser(cx))),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(tokens.text_secondary)
+                        .child("Chrome for Testing is shared and is not removed."),
+                )
+            })
     }
 
     fn check_for_updates(&mut self, cx: &mut Context<Self>) {

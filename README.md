@@ -205,6 +205,8 @@ shob integration doctor
 
 To use Shob's native AI chat, switch a terminal pane to **Agent** mode and run `/auth` to connect your model provider.
 
+Browser automation is optional. Open **Settings → Browser → Install browser** to download the verified `agent-browser` helper and set up Chrome for Testing, then use `@browser` in Agent chat. Installation needs an internet connection but no npm or administrator privileges. Removing the helper leaves the shared Chrome for Testing installation intact.
+
 The first message in a native agent conversation triggers a short title request using the selected model. Shob updates the sidebar before streaming the reply. If the title request fails or times out, the reply still starts and the sidebar uses the prompt text instead.
 
 Reasoning starts folded and can be expanded while the agent runs. If an unfinished Markdown block exceeds 8 KiB, chat temporarily shows its latest 8 KiB as plain text; copying keeps the full message, and full Markdown returns when the message finishes.

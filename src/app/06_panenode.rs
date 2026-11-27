@@ -506,6 +506,7 @@ struct AppState {
     persistence_enabled: bool,
     settings_section: SettingsSection,
     settings_focus: gpui::FocusHandle,
+    browser_install: BrowserInstallState,
     update_state: updater::State,
     /// Two-step confirmation state for "clear saved sessions".
     clear_data_confirm: bool,

@@ -779,10 +779,11 @@ impl AppState {
 
 impl AppState {
     fn send_follow_up_now(&mut self, pane_id: usize, index: usize, cx: &mut Context<Self>) {
-        let Some(pane) = self.pane_mut(pane_id) else {
+        let Some(pane) = self.pane_ref(pane_id) else {
             return;
         };
         if !pane.chat.running {
+            let pane = self.pane_mut(pane_id).unwrap();
             if let Some(prompt) = pane.chat.follow_ups.remove(index) {
                 pane.chat.follow_ups.push_front(prompt);
                 self.send_queued_follow_up(pane_id, cx);
@@ -795,7 +796,9 @@ impl AppState {
         let Some(bridge) = pane.chat.bridge.as_ref() else {
             return;
         };
-        match bridge.steer(prompt) {
+        let result = bridge.steer(prompt, self.browser_install.path());
+        let pane = self.pane_mut(pane_id).unwrap();
+        match result {
             Ok(()) => {
                 let text = pane.chat.follow_ups.remove(index).unwrap();
                 let text = format!("Sent to the current run: {text}");
@@ -837,9 +840,6 @@ impl AppState {
             return;
         };
         let cwd = self.agent_working_directory(pane);
-        let save_history = self.settings.restore.agent_history;
-        if let Some(pane) = self.pane_mut(pane_id) {
-            Self::start_agent_turn(pane, prompt, cwd, save_history, cx);
-        }
+        self.start_agent_turn(pane_id, prompt, cwd, cx);
     }
 }
