@@ -376,6 +376,7 @@ impl AppState {
             return;
         }
         self.clear_sidebar_search(window, cx);
+        self.sidebar_selection = SidebarSelection::default();
         let project = &mut self.projects[project_idx];
         project.active_session_idx = session_idx;
         project.expanded = true;

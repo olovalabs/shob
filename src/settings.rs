@@ -91,15 +91,27 @@ pub struct SavedSidebar {
     pub visible: bool,
     #[serde(default = "default_sidebar_width")]
     pub width: f32,
-    /// Canonical path of the one project shown by the sidebar filter.
+    /// Canonical path of the primary project shown by the sidebar filter.
     #[serde(default)]
     pub project_scope: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_project_scopes: Vec<PathBuf>,
     #[serde(default = "default_true")]
     pub working_expanded: bool,
     #[serde(default)]
     pub snoozed_expanded: bool,
     #[serde(default)]
     pub settled_expanded: bool,
+    #[serde(default)]
+    pub project_folders: bool,
+    #[serde(default)]
+    pub multiline_folder_rows: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub project_order: Vec<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pinned_projects: Vec<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inbox_order: Vec<String>,
 }
 
 impl Default for SavedSidebar {
@@ -108,9 +120,15 @@ impl Default for SavedSidebar {
             visible: true,
             width: default_sidebar_width(),
             project_scope: None,
+            extra_project_scopes: Vec::new(),
             working_expanded: true,
             snoozed_expanded: false,
             settled_expanded: false,
+            project_folders: false,
+            multiline_folder_rows: false,
+            project_order: Vec::new(),
+            pinned_projects: Vec::new(),
+            inbox_order: Vec::new(),
         }
     }
 }
@@ -470,9 +488,15 @@ mod tests {
                 visible: false,
                 width: 300.0,
                 project_scope: Some(PathBuf::from("/tmp/one")),
+                extra_project_scopes: vec![PathBuf::from("/tmp/two")],
                 working_expanded: true,
                 snoozed_expanded: true,
                 settled_expanded: true,
+                project_folders: true,
+                multiline_folder_rows: true,
+                project_order: vec![PathBuf::from("/tmp/two"), PathBuf::from("/tmp/one")],
+                pinned_projects: vec![PathBuf::from("/tmp/two")],
+                inbox_order: vec!["thread-2".into(), "thread-1".into()],
             },
             window: Some(SavedWindow {
                 state: WindowState::Maximized,

@@ -40,17 +40,12 @@ enum SettingsSection {
 use assets::{CombinedAssets, MONO_FONT, load_embedded_fonts, sync_component_fonts};
 use status::{SessionStatus, StatusInput};
 pub const APP_ICON_PNG: &[u8] = include_bytes!("../../assets/icons/shob.png");
-/// Default width of the navigation sidebar (Shob style).
 const COMPACT_WINDOW_WIDTH: Pixels = px(768.0);
-pub const SIDEBAR_WIDTH: Pixels = px(260.0);
-/// Narrowest the sidebar can be dragged to; below this the session rows stop
-/// being readable, so the edge refuses to go further.
-pub const SIDEBAR_MIN_WIDTH: Pixels = px(180.0);
-/// Widest the sidebar can be dragged to, as a fraction of the window width.
-/// Keeps the terminal from being squeezed out on narrow windows.
-const SIDEBAR_MAX_FRACTION: f32 = 0.5;
-/// Width of the invisible drag strip along the sidebar's right border.
-const SIDEBAR_RESIZE_HANDLE_WIDTH: Pixels = px(4.0);
+pub const SIDEBAR_WIDTH: Pixels = px(256.0);
+pub const SIDEBAR_MIN_WIDTH: Pixels = px(208.0);
+const SIDEBAR_MAIN_MIN_WIDTH: Pixels = px(640.0);
+const SIDEBAR_RESIZE_HANDLE_WIDTH: Pixels = px(8.0);
+const SIDEBAR_CHROME_HEIGHT: Pixels = px(52.0);
 const SIDEBAR_THREAD_CARD_HEIGHT: Pixels = px(78.0);
 const SIDEBAR_THREAD_SLIM_HEIGHT: Pixels = px(36.0);
 const SIDEBAR_ACTIVE_INITIAL_COUNT: usize = 5;

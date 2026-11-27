@@ -540,6 +540,211 @@ pub fn load_usage(path: &Path) -> Option<embedded::AgentUsage> {
     total
 }
 
+/// Search the persisted user and assistant text without building chat rows,
+/// compiling Markdown or replaying tool output.
+pub(crate) struct MessageSearch {
+    query: String,
+    folded: String,
+}
+
+struct MessageHit {
+    role: ChatRole,
+    text: String,
+    at_ms: Option<u64>,
+}
+
+impl MessageSearch {
+    pub(crate) fn new(query: &str) -> Self {
+        Self {
+            query: folded_message_chars(query).map(|(_, ch)| ch).collect(),
+            folded: String::new(),
+        }
+    }
+
+    /// Return the newest matching excerpt across a thread's pane logs.
+    /// Missing logs are normal; keep scanning other panes after an I/O error.
+    pub(crate) fn search_panes(
+        &mut self,
+        root: &Path,
+        pane_uids: &[String],
+        is_stale: impl Fn() -> bool,
+    ) -> (Option<(ChatRole, String)>, bool) {
+        let mut newest = None;
+        let mut failed = false;
+        for uid in pane_uids {
+            if is_stale() {
+                break;
+            }
+            let dir = root.join(uid);
+            let entries = match fs::read_dir(&dir) {
+                Ok(entries) => entries,
+                Err(error) => {
+                    failed |= error.kind() != io::ErrorKind::NotFound;
+                    continue;
+                }
+            };
+            for entry in entries {
+                if is_stale() {
+                    break;
+                }
+                let result = entry.and_then(|entry| {
+                    let name = entry.file_name();
+                    if Path::new(&name).extension().is_none_or(|ext| ext != "jsonl")
+                        || !entry.file_type()?.is_file()
+                    {
+                        return Ok(None);
+                    }
+                    let mut file = File::open(dir.join(name))?;
+                    let meta = file.metadata()?;
+                    let snapshot = read_snapshot(&mut file, meta.len(), MAX_FILE_BYTES)?;
+                    let mut hit = self.search_transcript(&snapshot, &is_stale);
+                    if let Some(hit) = hit.as_mut()
+                        && hit.at_ms.is_none()
+                    {
+                        hit.at_ms = meta
+                            .modified()
+                            .ok()
+                            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                            .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok());
+                    }
+                    Ok(hit)
+                });
+                match result {
+                    Ok(Some(hit))
+                        if newest.as_ref().is_none_or(|old: &MessageHit| old.at_ms < hit.at_ms) =>
+                    {
+                        newest = Some(hit);
+                    }
+                    Err(error) => failed |= error.kind() != io::ErrorKind::NotFound,
+                    _ => {}
+                }
+            }
+        }
+        (newest.map(|hit| (hit.role, hit.text)), failed)
+    }
+
+    fn search_transcript(&mut self, snapshot: &str, is_stale: &impl Fn() -> bool) -> Option<MessageHit> {
+        let mut newest = None;
+        let mut assistant = String::new();
+        let mut assistant_at = None;
+        for line in snapshot.lines() {
+            if is_stale() {
+                return None;
+            }
+            let Ok(entry) = serde_json::from_str::<Entry>(line) else {
+                continue; // As in replay, skip a corrupt or partially written line.
+            };
+            let (role, text, at_ms) = match entry {
+                Entry::Event { event: AgentEvent::Text(delta), at_ms } => {
+                    assistant.push_str(&delta);
+                    assistant_at = at_ms.or(assistant_at);
+                    continue;
+                }
+                Entry::Event { event: AgentEvent::Title(_) | AgentEvent::Usage(_) | AgentEvent::Subagents { .. }, .. } => continue,
+                Entry::User { text, at_ms } => (ChatRole::User, text, at_ms),
+                Entry::Local { role, text } => (role, text, None),
+                Entry::Event { .. } => {
+                    self.record_hit(&mut newest, ChatRole::Assistant, &assistant, assistant_at.take());
+                    assistant.clear();
+                    continue;
+                }
+            };
+            self.record_hit(&mut newest, ChatRole::Assistant, &assistant, assistant_at.take());
+            assistant.clear();
+            self.record_hit(&mut newest, role, &text, at_ms);
+        }
+        self.record_hit(&mut newest, ChatRole::Assistant, &assistant, assistant_at);
+        newest
+    }
+
+    fn record_hit(&mut self, hit: &mut Option<MessageHit>, role: ChatRole, text: &str, at_ms: Option<u64>) {
+        if self.query.is_empty() || text.is_empty() || !matches!(role, ChatRole::User | ChatRole::Assistant) {
+            return;
+        }
+        self.folded.clear();
+        self.folded.extend(folded_message_chars(text).map(|(_, ch)| ch));
+        let Some(offset) = self.folded.find(&self.query) else {
+            return;
+        };
+        // Keep offsets in the original text even when folding changes a
+        // character's UTF-8 width or turns several whitespace characters into one.
+        let mut folded_offset = 0;
+        let Some(found) = folded_message_chars(text).find_map(|(index, ch)| {
+            let here = folded_offset == offset;
+            folded_offset += ch.len_utf8();
+            here.then_some(index)
+        }) else {
+            return;
+        };
+        let start = text[..found].char_indices().rev().nth(16).map_or(0, |(index, _)| index);
+        let end = text[start..].char_indices().nth(128).map_or(text.len(), |(index, _)| start + index);
+        let mut excerpt = String::new();
+        if start != 0 {
+            excerpt.push_str("… ");
+        }
+        for (index, word) in text[start..end].split_whitespace().enumerate() {
+            if index != 0 {
+                excerpt.push(' ');
+            }
+            excerpt.push_str(word);
+        }
+        if end != text.len() {
+            excerpt.push('…');
+        }
+        *hit = Some(MessageHit { role, text: excerpt, at_ms });
+    }
+}
+
+fn folded_message_chars(text: &str) -> impl Iterator<Item = (usize, char)> + '_ {
+    let mut in_whitespace = true;
+    text.trim_end().char_indices().filter_map(move |(index, ch)| {
+        let whitespace = ch.is_whitespace();
+        let was_whitespace = std::mem::replace(&mut in_whitespace, whitespace);
+        match ch {
+            _ if whitespace => (!was_whitespace).then_some((index, ' ')),
+            '‘' | '’' => Some((index, '\'')),
+            'ς' => Some((index, 'σ')),
+            _ => Some((index, ch)),
+        }
+    }).flat_map(|(index, ch)| ch.to_lowercase().map(move |folded| (index, folded)))
+}
+
+#[cfg(test)]
+#[test]
+fn sidebar_message_search_joins_assistant_deltas_and_ignores_non_messages() {
+    let entries = [
+        Entry::User {
+            text: "A different question".into(),
+            at_ms: Some(1),
+        },
+        Entry::Event {
+            event: AgentEvent::Text("Context before the excerpt: you".into()),
+            at_ms: Some(2),
+        },
+        Entry::Event {
+            event: AgentEvent::Title("Internal notes".into()),
+            at_ms: None,
+        },
+        Entry::Event {
+            event: AgentEvent::Text("’ve found\n the fix.".into()),
+            at_ms: Some(3),
+        },
+        Entry::Event {
+            event: AgentEvent::Thinking("you've found the fix but don't show this".into()),
+            at_ms: Some(4),
+        },
+    ];
+    let snapshot = entries.iter().map(|entry| serde_json::to_string(entry).unwrap())
+        .collect::<Vec<_>>().join("\n");
+
+    let hit = MessageSearch::new("YOU'VE FOUND THE FIX").search_transcript(&snapshot, &|| false).unwrap();
+    assert_eq!(hit.role, ChatRole::Assistant);
+    assert_eq!(hit.at_ms, Some(3));
+    assert!(hit.text.ends_with("you’ve found the fix."));
+    assert!(MessageSearch::new("Internal notes").search_transcript(&snapshot, &|| false).is_none());
+    assert!(MessageSearch::new("you've").search_transcript(&snapshot, &|| true).is_none());
+}
+
 fn read_bounded(path: &Path) -> Option<String> {
     let mut file = File::open(path).ok()?;
     let len = file.metadata().ok()?.len();

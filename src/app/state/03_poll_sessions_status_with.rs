@@ -809,7 +809,6 @@ impl AppState {
         self.schedule_workspace_save(cx);
     }
 
-    #[cfg(test)]
     fn toggle_project_expanded(&mut self, project_idx: usize, cx: &mut Context<Self>) {
         if let Some(project) = self.projects.get_mut(project_idx) {
             project.expanded = !project.expanded;

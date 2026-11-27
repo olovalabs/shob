@@ -135,9 +135,19 @@ fn build_app_state(cx: &mut Context<AppState>) -> AppState {
         focused_pane_id: Some(1),
         sidebar_visible: true,
         compact_sidebar_open: false,
+        sidebar_focus: cx.focus_handle(),
+        sidebar_navigation: Default::default(),
+        sidebar_selection: Default::default(),
+        sidebar_inbox_scroll: gpui::ScrollHandle::new(),
+        sidebar_presentation: SidebarPresentation::default(),
+        sidebar_folder_show_all: HashSet::new(),
+        sidebar_folder_menu: None,
+        sidebar_menu_focus: cx.focus_handle(),
         sidebar_search: None,
         sidebar_project_picker: None,
         sidebar_thread_menu: None,
+        sidebar_custom_snooze: None,
+        sidebar_thread_rename: None,
         system_snapshot: system_detection::Snapshot::default(),
         system_monitor_open: false,
         sidebar_threads: HashMap::new(),
@@ -153,6 +163,7 @@ fn build_app_state(cx: &mut Context<AppState>) -> AppState {
         sidebar_width: SIDEBAR_WIDTH,
         sidebar_resize_offset: None,
         sidebar_resizing: false,
+        sidebar_resize_collapse: false,
         persistence_path: None,
         save_generation: Arc::new(AtomicU64::new(0)),
         workspace_save_task: None,
@@ -1073,12 +1084,22 @@ fn sidebar_show_more_reveals_the_rest_of_the_active_threads() {
     assert!(cx.debug_bounds("session-row-2").is_none());
     cx.simulate_click(more.center(), Modifiers::none());
     cx.draw_frame().unwrap();
-    assert!(cx.debug_bounds("sidebar-active-show-more").is_none());
     state.read_with(&cx, |s, _| {
         let groups = s.sidebar_thread_groups();
         assert_eq!(groups.active.len(), 17);
         assert_eq!(groups.hidden_active, 0);
     });
+    cx.simulate_mouse_move(more.center(), None, Modifiers::none());
+    cx.simulate_event(gpui::ScrollEvent {
+        position: more.center(),
+        delta: gpui::ScrollDelta::Pixels(point(px(0.0), px(-3000.0))),
+        ..Default::default()
+    });
+    cx.draw_frame().unwrap();
+    let less = cx.debug_bounds("sidebar-active-show-more").unwrap();
+    cx.simulate_click(less.center(), Modifiers::none());
+    cx.draw_frame().unwrap();
+    assert!(cx.debug_bounds("session-row-2").is_none());
 }
 
 #[test]

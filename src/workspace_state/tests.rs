@@ -387,6 +387,7 @@ fn sidebar_thread_metadata_roundtrips() {
         snoozed_until_ms: Some(42),
         archived: false,
         parked_at_ms: Some(7),
+        title: Some("Planning notes".into()),
     }];
     workspace.normalize();
     let text = serde_json::to_string(&workspace).unwrap();

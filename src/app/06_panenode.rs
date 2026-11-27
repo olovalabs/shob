@@ -196,12 +196,6 @@ fn sidebar_visible_sessions(count: usize, visible: usize, active: Option<usize>)
     indices
 }
 
-struct SidebarSearch {
-    input: Entity<InputState>,
-    previous_focus: Option<gpui::FocusHandle>,
-    _subscription: gpui::Subscription,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SidebarProjectPickerMode {
     Scope,
@@ -219,13 +213,46 @@ struct SidebarProjectPicker {
 
 #[derive(Clone, Copy, Debug)]
 struct SidebarThreadMenuState {
-    project_idx: usize,
-    session_idx: usize,
-    section: SidebarSection,
-    pinned: bool,
+    row: SidebarThreadRef,
+    position: gpui::Point<Pixels>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct SidebarThreadRename {
+    session_id: usize,
+    input: Entity<InputState>,
+    previous_focus: Option<gpui::FocusHandle>,
+    _blur: gpui::Subscription,
+    _submit: gpui::Subscription,
+}
+
+struct SidebarThreadDrag {
+    session_id: usize,
+    title: SharedString,
+    tokens: ThemeTokens,
+    members: Rc<HashSet<usize>>,
+}
+
+impl Render for SidebarThreadDrag {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .max_w(SIDEBAR_MIN_WIDTH)
+            .px(px(10.0))
+            .py(px(4.0))
+            .rounded(px(6.0))
+            .bg(self.tokens.sidebar_bg)
+            .text_color(self.tokens.sidebar_fg)
+            .border_1()
+            .border_color(self.tokens.sidebar_border)
+            .text_sm()
+            .truncate()
+            .child(self.title.clone())
+            .when(self.members.contains(&self.session_id) && self.members.len() > 1, |ghost| {
+                ghost.child(format!(" · {}", self.members.len()))
+            })
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct SidebarThreadState {
     pinned: bool,
     /// Lower values appear first among pinned threads; swaps persist reordering.
@@ -234,6 +261,7 @@ struct SidebarThreadState {
     snoozed_until_ms: Option<u64>,
     archived: bool,
     parked_at_ms: Option<u64>,
+    title: Option<SharedString>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -251,7 +279,7 @@ enum SidebarShelf {
 }
 
 impl SidebarThreadState {
-    fn section(self, now_ms: u64) -> Option<SidebarSection> {
+    fn section(&self, now_ms: u64) -> Option<SidebarSection> {
         if self.archived {
             return None;
         }
@@ -450,9 +478,19 @@ struct AppState {
     default_agent_model: Option<agent_auth::AgentModel>,
     pub sidebar_visible: bool,
     compact_sidebar_open: bool,
+    sidebar_focus: gpui::FocusHandle,
+    sidebar_navigation: std::cell::RefCell<SidebarNavigation>,
+    sidebar_selection: SidebarSelection,
+    sidebar_inbox_scroll: gpui::ScrollHandle,
+    sidebar_presentation: SidebarPresentation,
+    sidebar_folder_show_all: HashSet<usize>,
+    sidebar_folder_menu: Option<(usize, Point<Pixels>)>,
+    sidebar_menu_focus: gpui::FocusHandle,
     sidebar_search: Option<SidebarSearch>,
     sidebar_project_picker: Option<SidebarProjectPicker>,
     sidebar_thread_menu: Option<SidebarThreadMenuState>,
+    sidebar_custom_snooze: Option<(Entity<InputState>, bool)>,
+    sidebar_thread_rename: Option<SidebarThreadRename>,
     system_snapshot: system_detection::Snapshot,
     system_monitor_open: bool,
     /// Sidebar-only thread state, keyed by the durable session uid.
@@ -468,6 +506,7 @@ struct AppState {
     /// True while the sidebar's right edge is being dragged, so the width is
     /// only persisted once the drag ends instead of on every mouse move.
     sidebar_resizing: bool,
+    sidebar_resize_collapse: bool,
     persistence_path: Option<PathBuf>,
     save_generation: Arc<AtomicU64>,
     workspace_save_task: Option<gpui::Task<()>>,
@@ -629,6 +668,10 @@ include!("state/19_discover_project_editors.rs");
 include!("state/20_render_terminal_pane.rs");
 include!("state/21_render_sidebar_actions.rs");
 include!("state/22_render_sidebar_thread_card.rs");
+include!("state/sidebar_navigation.rs");
+include!("state/sidebar_folders.rs");
+include!("state/sidebar_message_search.rs");
+include!("state/sidebar_presentation.rs");
 include!("state/settings_navigation.rs");
 include!("state/23_render_settings_page.rs");
 include!("state/24_toggle_restore_option.rs");
@@ -678,30 +721,33 @@ fn sidebar_icon_action(
 ) -> gpui::Stateful<gpui::Div> {
     let hover_bg = tokens.sidebar_icon_btn_hover;
     let icon_color = tokens.sidebar_icon;
+    let ring = tokens.ring;
     let icon_hover_color = tokens.sidebar_icon_hover;
     div()
         .id(id)
         .debug_selector(move || id.to_string())
+        .role(gpui::Role::Button)
+        .aria_label(title)
+        .tab_index(0)
         .size(px(28.0))
         .flex()
         .items_center()
         .justify_center()
         .flex_shrink_0()
-        .rounded(px(7.0))
+        .rounded(px(6.0))
+        .border_1()
+        .border_color(rgba(0))
+        .focus_visible(move |button| button.border_color(ring))
         .when(active, move |button| button.bg(tokens.sidebar_item_active))
         .hover(move |button| button.bg(hover_bg))
         .cursor(CursorStyle::PointingHand)
         .child(
             svg()
                 .path(icon)
-                .size(px(15.0))
+                .size(px(16.0))
                 .text_color(icon_color)
                 .hover(move |s| s.text_color(icon_hover_color)),
         )
-        .tooltip(move |_, cx| {
-            cx.new(|_| gpui_component::tooltip::Tooltip::new(SharedString::from(title)))
-                .into()
-        })
 }
 
 fn sidebar_text_button(

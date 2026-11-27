@@ -821,6 +821,11 @@ impl AppState {
         if self.active_view == ActiveView::Workspace
             && !self.conversation_header_menu_focus.contains_focused(window, cx)
             && self.history_search.is_none()
+            && !self.sidebar_focus.contains_focused(window, cx)
+            && !self.sidebar_menu_focus.is_focused(window)
+            && !self.sidebar_custom_snooze.as_ref().is_some_and(|(input, _)| input.read(cx).focus_handle().is_focused(window))
+            && !self.renaming_project.as_ref().is_some_and(|rename| rename.input.read(cx).focus_handle().is_focused(window))
+            && !self.sidebar_thread_rename_focused(window, cx)
             && !self.sidebar_search_focused(window, cx)
             && !self.sidebar_project_picker_focused(window, cx)
             && let Some(pane_id) = self.focused_pane_id

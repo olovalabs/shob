@@ -19,6 +19,7 @@ impl AppState {
                 snoozed_until_ms: state.snoozed_until_ms,
                 archived: state.archived,
                 parked_at_ms: state.parked_at_ms,
+                title: state.title.as_ref().map(ToString::to_string),
             })
             .collect();
         threads.sort_by(|a, b| a.session_uid.cmp(&b.session_uid));
@@ -323,7 +324,7 @@ impl AppState {
         self.startup_loaded = true;
 
         self.sidebar_visible = self.settings.sidebar.visible;
-        self.sidebar_width = px(self.settings.sidebar.width.max(120.0));
+        self.sidebar_width = px(self.settings.sidebar.width).max(SIDEBAR_MIN_WIDTH);
         self.theme_preference = self.settings.theme;
         self.palette_scheme = self.settings.palette_scheme;
         self.default_agent_model = self.settings.default_agent_model.clone();
@@ -359,6 +360,7 @@ impl AppState {
                         snoozed_until_ms: saved.snoozed_until_ms,
                         archived: saved.archived,
                         parked_at_ms: saved.parked_at_ms,
+                        title: saved.title.map(SharedString::from),
                     },
                 )
             })

@@ -368,15 +368,12 @@ fn compact_sidebar_opens_and_dismisses_without_changing_preference() {
     cx.simulate_resize(size(px(640.0), px(480.0)));
     cx.run_until_parked();
     cx.draw_frame().expect("compact frame");
-    cx.simulate_mouse_down(
-        point(px(22.0), px(19.0)),
-        MouseButton::Left,
-        Modifiers::none(),
-    );
+    let toggle = cx.debug_bounds("terminal-sidebar-toggle-btn").unwrap();
+    cx.simulate_click(toggle.center(), Modifiers::none());
     cx.draw_frame().expect("open drawer");
     assert!(state.read_with(&cx, |state, _| state.compact_sidebar_open));
     cx.simulate_mouse_down(
-        point(px(600.0), px(200.0)),
+        point(px(634.0), px(200.0)),
         MouseButton::Left,
         Modifiers::none(),
     );

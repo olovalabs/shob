@@ -70,11 +70,15 @@ impl AppState {
         if !compact {
             self.compact_sidebar_open = false;
         }
-        let sidebar_docked =
-            Self::sidebar_docked(self.sidebar_visible, _window.viewport_size().width);
+        let sidebar_docked = !self.sidebar_resize_collapse
+            && Self::sidebar_docked(self.sidebar_visible, _window.viewport_size().width);
+        let sidebar_width = self
+            .sidebar_width
+            .min(Self::sidebar_max_width(_window.viewport_size().width));
         if workspace {
             if !sidebar_docked && !self.compact_sidebar_open {
                 self.close_sidebar_search(_window, cx);
+                self.reset_sidebar_motion();
             }
             self.ensure_panes_input_state(_window, cx);
         }
@@ -143,6 +147,8 @@ impl AppState {
         }
 
         if !workspace {
+            self.reset_sidebar_motion();
+            self.reset_sidebar_tooltip();
             let settings = self.render_settings_page(_window, cx);
             diagnostics::render_end(diag_render);
             return settings.into_any_element();
@@ -168,7 +174,7 @@ impl AppState {
                         let usage_detail = pane.chat.usage_detail.clone();
                         let workspace_width = _window.viewport_size().width
                             - if sidebar_docked {
-                                self.sidebar_width
+                                sidebar_width
                             } else {
                                 px(0.0)
                             };
@@ -552,6 +558,12 @@ impl AppState {
             )
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 let keystroke = &event.keystroke;
+                if this.sidebar_custom_snooze_key(keystroke.key.as_str(), window, cx) {
+                    return;
+                }
+                if this.sidebar_thread_rename_handles_key(keystroke.key.as_str(), window, cx) {
+                    return;
+                }
 
                 if keystroke.key == "escape" && this.system_monitor_open {
                     this.system_monitor_open = false;
@@ -561,12 +573,20 @@ impl AppState {
                 }
 
                 if keystroke.key == "escape"
-                    && (this.sidebar_project_picker_focused(window, cx)
-                        || this.sidebar_thread_menu.is_some())
+                    && (this.sidebar_project_picker.is_some() || this.sidebar_thread_menu.is_some()
+                        || this.sidebar_folder_menu.is_some())
                 {
                     this.close_sidebar_project_picker(window, cx);
                     this.close_sidebar_thread_menu(cx);
                     cx.stop_propagation();
+                    return;
+                }
+                if keystroke.key == "escape" && this.sidebar_focus.contains_focused(window, cx)
+                    && !this.sidebar_selection.members.is_empty()
+                {
+                    this.sidebar_selection = SidebarSelection::default();
+                    cx.stop_propagation();
+                    cx.notify();
                     return;
                 }
                 if this
@@ -619,6 +639,12 @@ impl AppState {
                         _ => return,
                     }
                 }
+                if this.open_agent_auth_pane().is_none()
+                    && this.sidebar_keyboard_command(event, window, cx)
+                {
+                    cx.stop_propagation();
+                    return;
+                }
                 let shortcut = if cfg!(target_os = "macos") {
                     keystroke.modifiers.platform
                 } else {
@@ -635,13 +661,29 @@ impl AppState {
                 }
                 if shortcut && !keystroke.modifiers.alt {
                     match keystroke.key.as_str() {
-                        "n" => {
-                            this.handle_sidebar_new_session(keystroke.modifiers.shift, window, cx);
+                        "n" | "o" if keystroke.key == "n" || keystroke.modifiers.shift => {
+                            let local = keystroke.key == "n" && keystroke.modifiers.shift;
+                            this.handle_sidebar_new_session(local, window, cx);
                             cx.stop_propagation();
                             return;
                         }
                         "k" if !keystroke.modifiers.shift => {
                             this.open_sidebar_search(window, cx);
+                            cx.stop_propagation();
+                            return;
+                        }
+                        "b" if !keystroke.modifiers.shift => {
+                            if keystroke.modifiers.control
+                                && this
+                                    .focused_pane_id
+                                    .and_then(|pane_id| this.pane_ref(pane_id))
+                                    .is_some_and(|pane| {
+                                        pane.terminal.read(cx).focus_handle().is_focused(window)
+                                    })
+                            {
+                                return;
+                            }
+                            this.toggle_sidebar(window, cx);
                             cx.stop_propagation();
                             return;
                         }
@@ -728,14 +770,9 @@ impl AppState {
                 this.drop_external_files(paths, window, cx);
             }))
             .when(sidebar_docked, |this| {
-                // Clamp on the way out too: a window that shrank since the
-                // width was chosen must not leave the rail eating the terminal.
-                let width = self
-                    .sidebar_width
-                    .min(Self::sidebar_max_width(_window.viewport_size().width));
                 this.child(
                     div()
-                        .w(width)
+                        .w(sidebar_width)
                         .h_full()
                         .flex_shrink_0()
                         .relative()
@@ -757,27 +794,11 @@ impl AppState {
                         .absolute()
                         .top_0()
                         .left_0()
-                        .h(px(48.0))
-                        .px(px(12.0))
+                        .h(SIDEBAR_CHROME_HEIGHT)
+                        .pl(px(9.0))
                         .flex()
                         .items_center()
-                        .gap(px(8.0))
-                        .child(sidebar_icon_button(
-                            "terminal-sidebar-toggle-btn",
-                            "icons/panel-left.svg",
-                            16.0,
-                            &tokens,
-                            cx.listener::<MouseDownEvent>(|this, _, window, cx| {
-                                if window.viewport_size().width < COMPACT_WINDOW_WIDTH {
-                                    this.compact_sidebar_open = true;
-                                } else {
-                                    this.sidebar_visible = true;
-                                    this.schedule_workspace_save(cx);
-                                }
-                                cx.notify();
-                            }),
-                        ))
-                        .child(self.render_navigation_buttons(cx)),
+                        .child(self.render_sidebar_toggle(false, self.sidebar_tokens(cx), cx)),
                 )
             })
             .when(compact && self.compact_sidebar_open, |this| {
@@ -789,9 +810,7 @@ impl AppState {
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|this, _, window, cx| {
-                                this.close_sidebar_search(window, cx);
-                                this.compact_sidebar_open = false;
-                                cx.notify();
+                                this.toggle_sidebar(window, cx);
                             }),
                         )
                         .child(
@@ -800,9 +819,7 @@ impl AppState {
                                 .top_0()
                                 .left_0()
                                 .h_full()
-                                .w(self
-                                    .sidebar_width
-                                    .min((_window.viewport_size().width - px(40.0)).max(px(0.0))))
+                                .w((_window.viewport_size().width - px(12.0)).max(px(0.0)))
                                 .occlude()
                                 .child(self.render_sidebar(cx)),
                         ),
@@ -833,7 +850,7 @@ impl AppState {
                 this.child(self.render_agent_auth_layer(_window, cx))
             });
         diagnostics::render_end(diag_render);
-        root.into_any_element()
+        self.sidebar_tooltip_area(root)
     }
 }
 
