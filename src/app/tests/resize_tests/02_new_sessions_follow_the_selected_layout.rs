@@ -479,7 +479,16 @@ fn browser_completion_inserts_mention_without_sending() {
         s.submit_agent_prompt(pane_id, window, cx);
         assert_eq!(input.read(cx).value().as_str(), "@browser ");
         assert!(s.pane_ref(pane_id).unwrap().chat.messages.is_empty());
+        let draft = "@browser open example.com";
+        set_input_text(&input, draft.into(), window, cx);
+        s.submit_agent_prompt(pane_id, window, cx);
+        assert_eq!(input.read(cx).value().as_str(), draft);
+        assert!(s.pane_ref(pane_id).unwrap().chat.messages.is_empty());
+        assert_eq!(s.active_view, ActiveView::Settings);
+        assert_eq!(s.settings_section, SettingsSection::Browser);
     });
+    cx.draw_frame().unwrap();
+    assert!(cx.debug_bounds("browser-install-action").is_some());
 }
 
 #[test]

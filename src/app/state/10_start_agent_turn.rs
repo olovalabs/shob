@@ -1,12 +1,27 @@
 impl AppState {
     fn start_agent_turn(
-        pane: &mut TerminalPane,
+        &mut self,
+        pane_id: usize,
         prompt: String,
         cwd: PathBuf,
-        save_history: bool,
         cx: &mut Context<Self>,
     ) -> bool {
+        let save_history = self.settings.restore.agent_history;
+        let uses_browser = agent_bridge::has_browser_mention(&prompt);
+        let browser = self
+            .browser_install
+            .path()
+            .filter(|_| uses_browser)
+            .map(Path::to_path_buf);
+        let Some(pane) = self.pane_mut(pane_id) else {
+            return false;
+        };
         pane.chat.retry_prompt = Some(prompt.clone());
+        if uses_browser && browser.is_none() {
+            pane.chat.startup_error = Some(browser::INSTALL_REQUIRED.into());
+            cx.notify();
+            return false;
+        }
         if !cwd.is_dir() {
             pane.chat.startup_error =
                 Some(format!("Project folder unavailable: {}", cwd.display()));
@@ -88,9 +103,10 @@ impl AppState {
                 context,
                 pane.chat.cwd.as_deref().unwrap(),
                 &agent_model_selector(pane.chat.selected_model.as_ref().unwrap()),
+                browser.as_deref(),
             )
         } else {
-            bridge.send_prompt_with_context(&prompt, resume, context)
+            bridge.send_prompt_with_context(&prompt, resume, context, browser.as_deref())
         };
         let sent = match sent {
             Ok(()) => {
@@ -132,12 +148,10 @@ impl AppState {
             return;
         }
         let cwd = self.agent_working_directory(pane);
-        let save_history = self.settings.restore.agent_history;
-        let Some(pane) = self.pane_mut(pane_id) else {
-            return;
-        };
         if let Some(prompt) = pane.chat.follow_ups.front().cloned() {
-            if Self::start_agent_turn(pane, prompt, cwd, save_history, cx) {
+            let started = self.start_agent_turn(pane_id, prompt, cwd, cx);
+            let pane = self.pane_mut(pane_id).unwrap();
+            if started {
                 pane.chat.follow_ups.pop_front();
                 self.schedule_workspace_save(cx);
             } else {

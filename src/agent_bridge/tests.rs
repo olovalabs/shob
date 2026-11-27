@@ -23,25 +23,25 @@ fn automatic_approval_only_covers_existing_workspace_files() {
     std::fs::remove_dir_all(base).unwrap();
 }
 #[test]
-fn bundled_browser_can_execute_when_present() {
-    let Some(path) = super::bundled_browser().unwrap() else {
-        return;
-    };
-    let output = std::process::Command::new(&path)
-        .arg("--version")
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    assert!(String::from_utf8_lossy(&output.stdout).contains("0.43.0"));
-    assert!(super::browser_prompt("@browser test").contains(&path.display().to_string()));
-}
-#[test]
-fn browser_mention_enriches_only_matching_prompts() {
+fn browser_mentions_require_installation_and_enrich_resumed_context() {
+    let installed = std::path::Path::new("installed-agent-browser");
     for prompt in [
         "@browser open example.com",
         "Please use @browser, then summarize.",
     ] {
-        assert!(super::browser_prompt(prompt).contains(super::BROWSER_INSTRUCTIONS));
+        assert_eq!(
+            super::browser_prompt(prompt, None).unwrap_err(),
+            crate::browser::INSTALL_REQUIRED,
+        );
+        let (prepared, context) = super::prepare_prompt(
+            prompt,
+            Some(format!("Prior conversation\n{prompt}")),
+            Some(installed),
+        )
+        .unwrap();
+        assert!(prepared.starts_with(prompt));
+        assert!(prepared.contains("installed-agent-browser"));
+        assert_eq!(context.unwrap(), format!("Prior conversation\n{prepared}"));
     }
     for prompt in [
         "hello",
@@ -49,7 +49,7 @@ fn browser_mention_enriches_only_matching_prompts() {
         "@browser-extension",
         "@browser2",
     ] {
-        assert_eq!(super::browser_prompt(prompt), prompt);
+        assert_eq!(super::browser_prompt(prompt, None).unwrap(), prompt);
     }
 }
 use super::*;

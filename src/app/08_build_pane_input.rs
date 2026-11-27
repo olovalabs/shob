@@ -417,6 +417,7 @@ fn run_gui() -> Result<()> {
                         persistence_enabled: std::env::var_os("SHOB_DISABLE_RESTORE").is_none(),
                         settings_section: SettingsSection::default(),
                         settings_focus: cx.focus_handle(),
+                        browser_install: BrowserInstallState::Checking,
                         update_state: updater::State::default(),
                         clear_data_confirm: false,
                     });
@@ -424,6 +425,7 @@ fn run_gui() -> Result<()> {
                         state.ensure_sidebar_search(window, cx);
                         state.observe_appearance(window, cx);
                         state.refresh_project_editors(cx);
+                        state.check_browser_install(cx);
                     });
 
                     // Close button / window-manager close: flush everything

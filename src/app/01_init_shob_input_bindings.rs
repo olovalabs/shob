@@ -33,6 +33,7 @@ enum SettingsSection {
     Restore,
     Archive,
     Storage,
+    Browser,
     Updates,
 }
 

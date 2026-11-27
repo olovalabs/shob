@@ -633,7 +633,7 @@ impl AppState {
     }
 
     fn submit_agent_prompt(&mut self, pane_id: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let save_history = self.settings.restore.agent_history;
+        let browser_installed = self.browser_install.path().is_some();
 
         let Some(pane) = self.pane_ref(pane_id) else {
             return;
@@ -800,6 +800,11 @@ impl AppState {
             cx.notify();
             return;
         }
+        if !browser_installed && agent_bridge::has_browser_mention(trimmed) {
+            self.settings_section = SettingsSection::Browser;
+            self.open_settings(window, cx);
+            return;
+        }
         if pane.chat.visible_running() {
             if pane.chat.follow_ups.len() >= 16 {
                 return;
@@ -812,8 +817,10 @@ impl AppState {
             cx.notify();
             return;
         }
-        if Self::start_agent_turn(pane, prompt, cwd, save_history, cx) {
-            pane.attachments.clear();
+        if self.start_agent_turn(pane_id, prompt, cwd, cx) {
+            if let Some(pane) = self.pane_mut(pane_id) {
+                pane.attachments.clear();
+            }
             input.update(cx, |state, cx| state.set_value("", window, cx));
         }
     }
