@@ -677,8 +677,14 @@ impl AppState {
         self.sidebar_thread_menu = None;
         let previous_focus = window.focused(cx);
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search projects"));
-        let subscription = cx.subscribe(&input, |_, _, event: &InputEvent, cx| {
+        let subscription = cx.subscribe(&input, |this, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
+                if let Some(picker) = this.sidebar_project_picker.as_mut()
+                    && picker.mode == SidebarProjectPickerMode::NewSession
+                {
+                    picker.selected = 0;
+                    picker.scroll.scroll_to_item(0);
+                }
                 cx.notify();
             }
         });
@@ -686,6 +692,7 @@ impl AppState {
         self.sidebar_project_picker = Some(SidebarProjectPicker {
             mode,
             selected: 0,
+            scroll: gpui::ScrollHandle::new(),
             input,
             previous_focus,
             _subscription: subscription,

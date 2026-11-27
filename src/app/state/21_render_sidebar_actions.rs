@@ -347,12 +347,11 @@ impl AppState {
     fn render_new_session_project_modal(
         &self,
         picker: &SidebarProjectPicker,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        use gpui_component::button::ButtonVariants as _;
-        use gpui_component::{Disableable as _, Icon};
-
         let tokens = self.tokens(cx);
+        let top = (window.viewport_size().height * 0.08).clamp(px(16.0), px(64.0));
         let query = self.sidebar_project_picker_query(cx);
         let matching: Vec<_> = self
             .projects
@@ -370,6 +369,7 @@ impl AppState {
             .w_full()
             .max_h(px(320.0))
             .overflow_y_scroll()
+            .track_scroll(&picker.scroll)
             .flex()
             .flex_col()
             .gap(px(2.0));
@@ -380,27 +380,27 @@ impl AppState {
                 div()
                     .id(("new-session-project", project_idx))
                     .w_full()
-                    .px(px(9.0))
-                    .py(px(8.0))
-                    .rounded(px(8.0))
+                    .px(px(8.0))
+                    .py(px(6.0))
+                    .rounded(px(6.0))
                     .flex()
                     .flex_none()
                     .items_center()
-                    .gap(px(10.0))
+                    .gap(px(8.0))
                     .when(highlighted, |row| row.bg(tokens.sidebar_item_active))
                     .when(!highlighted, |row| row.hover(|row| row.bg(tokens.sidebar_item_hover)))
                     .cursor(CursorStyle::PointingHand)
-                    .child(project_favicon(project, tokens, px(24.0)))
+                    .child(project_favicon(project, tokens, px(18.0)))
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
                             .flex()
                             .flex_col()
-                            .gap(px(1.0))
                             .child(
                                 div()
                                     .text_sm()
+                                    .line_height(px(18.0))
                                     .font_weight(gpui::FontWeight::MEDIUM)
                                     .truncate()
                                     .child(project.name.clone()),
@@ -408,19 +408,19 @@ impl AppState {
                             .child(
                                 div()
                                     .text_xs()
+                                    .line_height(px(16.0))
                                     .text_color(tokens.text_secondary)
                                     .truncate()
                                     .child(project.path.to_string_lossy().to_string()),
                             ),
                     )
-                    .when(highlighted, |row| {
+                    .when(project_idx == self.active_project_idx, |row| {
                         row.child(
-                            svg()
-                                .path("icons/arrow-right.svg")
-                                .size(px(14.0))
-                                .mr(px(3.0))
+                            div()
                                 .flex_none()
-                                .text_color(tokens.text_secondary),
+                                .text_xs()
+                                .text_color(tokens.text_secondary)
+                                .child("Current"),
                         )
                     })
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -438,7 +438,11 @@ impl AppState {
                     .child("No matching projects"),
             );
         }
-        let hints = [("↑ ↓", "Navigate"), ("Enter", "Select"), ("Esc", "Close")].map(
+        let hints = [
+            (&["↑", "↓"][..], "Navigate"),
+            (&["Enter"][..], "Select"),
+            (&["Esc"][..], "Close"),
+        ].map(
             |(keys, label)| {
                 div()
                     .flex()
@@ -446,13 +450,18 @@ impl AppState {
                     .gap(px(5.0))
                     .child(
                         div()
-                            .px(px(5.0))
-                            .rounded(px(4.0))
-                            .border_1()
-                            .border_color(tokens.border)
-                            .bg(tokens.pane_bg)
-                            .text_color(tokens.text_secondary)
-                            .child(keys),
+                            .flex()
+                            .gap(px(3.0))
+                            .children(keys.iter().map(|&key| {
+                                div()
+                                    .min_w(px(18.0))
+                                    .px(px(4.0))
+                                    .rounded(px(4.0))
+                                    .bg(tokens.text_primary.opacity(0.08))
+                                    .text_color(tokens.text_primary)
+                                    .text_center()
+                                    .child(key)
+                            })),
                     )
                     .child(label)
             },
@@ -462,8 +471,10 @@ impl AppState {
             .inset_0()
             .flex()
             .justify_center()
-            .items_center()
-            .bg(cx.theme().overlay)
+            .items_start()
+            .pt(top)
+            .pb(px(12.0))
+            .bg(tokens.window_bg.opacity(0.64))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, window, cx| this.close_sidebar_project_picker(window, cx)),
@@ -472,54 +483,60 @@ impl AppState {
                 div()
                     .id("new-session-project-modal")
                     .debug_selector(|| "new-session-project-modal".into())
-                    .w(px(520.0))
-                    .max_w(relative(0.9))
-                    .max_h(relative(0.9))
+                    .w(px(560.0))
+                    .max_w(relative(0.94))
+                    .max_h(relative(1.0))
                     .occlude()
                     .rounded(px(14.0))
                     .border_1()
                     .border_color(tokens.border)
                     .bg(tokens.card_bg)
-                    .shadow_md()
+                    .shadow_lg()
                     .flex()
                     .flex_col()
                     .child(
                         div()
+                            .debug_selector(|| "new-session-project-search".into())
                             .flex()
-                            .flex_col()
                             .flex_none()
-                            .gap(px(10.0))
-                            .px(px(16.0))
-                            .pt(px(14.0))
-                            .pb(px(10.0))
+                            .items_center()
+                            .h(px(46.0))
+                            .pr(px(12.0))
+                            .border_b_1()
+                            .border_color(tokens.border_subtle)
                             .child(
                                 div()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_size(px(16.0))
-                                    .child("New thread"),
-                            )
-                            .child(
-                                div()
-                                    .debug_selector(|| "new-session-project-search".into())
-                                    .h(px(36.0))
-                                    .flex()
-                                    .items_center()
-                                    .px(px(8.0))
-                                    .rounded(px(8.0))
-                                    .border_1()
-                                    .border_color(tokens.border)
-                                    .bg(tokens.pane_bg)
+                                    .flex_1()
+                                    .min_w_0()
                                     .child(
                                         Input::new(&picker.input)
                                             .w_full()
+                                            .px(px(15.0))
                                             .appearance(false)
                                             .prefix(
                                                 svg()
                                                     .path("ui_icons/search.svg")
                                                     .size(px(14.0))
+                                                    .flex_none()
                                                     .text_color(tokens.text_secondary),
                                             ),
                                     ),
+                            )
+                            .child(
+                                sidebar_icon_button(
+                                    "new-session-project-close",
+                                    "icons/x.svg",
+                                    13.0,
+                                    &tokens,
+                                    cx.listener(|this, _, window, cx| {
+                                        this.close_sidebar_project_picker(window, cx);
+                                    }),
+                                )
+                                .debug_selector(|| "new-session-project-close".into())
+                                .tooltip(|window, cx| {
+                                    gpui_component::tooltip::Tooltip::new("Close project picker")
+                                        .build(window, cx)
+                                }),
                             ),
                     )
                     .child(
@@ -528,45 +545,35 @@ impl AppState {
                             .flex()
                             .flex_col()
                             .px(px(8.0))
-                            .pb(px(8.0))
+                            .py(px(6.0))
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .px(px(8.0))
+                                    .py(px(4.0))
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(tokens.text_secondary)
+                                    .child("Projects"),
+                            )
                             .child(list),
                     )
                     .child(
                         div()
+                            .debug_selector(|| "new-session-project-hints".into())
                             .flex()
                             .flex_none()
                             .flex_wrap()
                             .items_center()
-                            .justify_between()
-                            .gap(px(6.0))
-                            .px(px(12.0))
-                            .py(px(8.0))
+                            .gap(px(12.0))
+                            .px(px(16.0))
+                            .py(px(9.0))
                             .border_t_1()
                             .border_color(tokens.border_subtle)
-                            .child(
-                                div()
-                                    .debug_selector(|| "new-session-bot".into())
-                                    .child(
-                                        Button::new("new-session-bot")
-                                            .small()
-                                            .ghost()
-                                            .icon(Icon::default().path("ui_icons/settings-gear.svg"))
-                                            .label("Bot")
-                                            .disabled(true)
-                                            .text_color(tokens.text_muted),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_wrap()
-                                    .items_center()
-                                    .gap(px(10.0))
-                                    .pr(px(4.0))
-                                    .text_size(px(11.0))
-                                    .text_color(tokens.text_secondary)
-                                    .children(hints),
-                            ),
+                            .text_xs()
+                            .line_height(px(18.0))
+                            .text_color(tokens.text_secondary)
+                            .children(hints),
                     ),
             )
     }

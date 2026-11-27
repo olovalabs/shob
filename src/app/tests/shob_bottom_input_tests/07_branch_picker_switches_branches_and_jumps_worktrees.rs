@@ -238,14 +238,22 @@ fn sidebar_new_button_chooses_project_before_creating_thread() {
             window.render_to_image().unwrap().save(PathBuf::from(path)).unwrap();
         });
     }
+    let close = cx.debug_bounds("new-session-project-close").unwrap();
+    cx.simulate_click(close.center(), Modifiers::none());
+    cx.draw_frame().unwrap();
+    assert!(cx.debug_bounds("new-session-project-modal").is_none());
+    cx.simulate_click(new_thread.center(), Modifiers::none());
+    cx.draw_frame().unwrap();
 
     cx.simulate_resize(size(px(360.0), px(260.0)));
     cx.draw_frame().unwrap();
     let modal = cx.debug_bounds("new-session-project-modal").unwrap();
-    let bot = cx.debug_bounds("new-session-bot").unwrap();
+    let hints = cx.debug_bounds("new-session-project-hints").unwrap();
     assert!(modal.right() <= px(360.0) && modal.bottom() <= px(260.0));
-    assert!(modal.contains(&bot.center()));
-    cx.simulate_click(bot.center(), Modifiers::none());
+    assert!((modal.center().x - px(180.0)).abs() <= px(1.0));
+    assert!(modal.origin.y >= px(16.0) && modal.origin.y <= px(32.0));
+    assert!(modal.contains(&hints.center()));
+    cx.simulate_click(hints.center(), Modifiers::none());
     cx.draw_frame().unwrap();
     assert!(cx.debug_bounds("new-session-project-modal").is_some());
     assert_eq!(

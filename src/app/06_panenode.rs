@@ -211,6 +211,7 @@ enum SidebarProjectPickerMode {
 struct SidebarProjectPicker {
     mode: SidebarProjectPickerMode,
     selected: usize,
+    scroll: gpui::ScrollHandle,
     input: Entity<InputState>,
     previous_focus: Option<gpui::FocusHandle>,
     _subscription: gpui::Subscription,

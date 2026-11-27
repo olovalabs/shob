@@ -595,6 +595,7 @@ impl AppState {
                                 } else {
                                     picker.selected.min(matches.len() - 1).saturating_sub(1)
                                 };
+                                picker.scroll.scroll_to_item(picker.selected);
                             }
                             cx.stop_propagation();
                             cx.notify();
@@ -814,6 +815,7 @@ impl AppState {
                 |this| {
                     this.child(self.render_new_session_project_modal(
                         self.sidebar_project_picker.as_ref().unwrap(),
+                        _window,
                         cx,
                     ))
                 },

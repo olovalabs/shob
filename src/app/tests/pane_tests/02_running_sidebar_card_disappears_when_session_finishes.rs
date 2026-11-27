@@ -215,14 +215,38 @@ fn new_sidebar_thread_search_filters_projects_from_keyboard_input() {
             expanded: false,
             visible_session_count: 5,
         });
-        state.next_id = 3;
+        for id in 3..10 {
+            let name = format!("Project {id}");
+            state.projects.push(Project {
+                id,
+                path: project.path().with_file_name(&name),
+                name: name.into(),
+                sessions: Vec::new(),
+                active_session_idx: 0,
+                expanded: false,
+                visible_session_count: 5,
+            });
+        }
+        state.next_id = 10;
         state.rebuild_session_index();
         cx.notify();
     });
     cx.draw_frame().unwrap();
     let new_thread = cx.debug_bounds("sidebar-new-thread").unwrap();
     cx.simulate_click(new_thread.center(), Modifiers::none());
+    cx.simulate_resize(size(px(360.0), px(260.0)));
     cx.draw_frame().unwrap();
+    cx.simulate_keystrokes("down down down down down down down down");
+    cx.draw_frame().unwrap();
+    state.read_with(&cx, |state, _| {
+        let picker = state.sidebar_project_picker.as_ref().unwrap();
+        assert_eq!(picker.selected, 8);
+        assert!(picker.scroll.offset().y < px(0.0));
+    });
+    let modal = cx.debug_bounds("new-session-project-modal").unwrap();
+    let hints = cx.debug_bounds("new-session-project-hints").unwrap();
+    assert!(modal.bottom() <= px(260.0));
+    assert!(modal.contains(&hints.center()));
 
     cx.simulate_input("picker-target");
     assert_eq!(
@@ -231,6 +255,11 @@ fn new_sidebar_thread_search_filters_projects_from_keyboard_input() {
     );
     cx.draw_frame().unwrap();
     assert!(cx.debug_bounds("new-session-project-empty").is_none());
+    state.read_with(&cx, |state, _| {
+        let picker = state.sidebar_project_picker.as_ref().unwrap();
+        assert_eq!(picker.selected, 0);
+        assert_eq!(picker.scroll.offset().y, px(0.0));
+    });
 
     let search = cx.debug_bounds("new-session-project-search").unwrap();
     cx.simulate_click(search.center(), Modifiers::none());
