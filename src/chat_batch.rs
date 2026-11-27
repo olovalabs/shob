@@ -61,14 +61,19 @@ pub fn calls(input: Option<&Value>) -> BatchCalls {
 }
 
 pub fn failure_preview(output: &str) -> Option<String> {
+    let output = output.trim_start().trim_start_matches("schema error: ");
     let diagnostics = output
-        .trim_start()
-        .trim_start_matches("schema error: ")
-        .strip_prefix("Validation failed for tool \"batch\":")?;
+        .strip_prefix("Invalid arguments for \"batch\".")
+        .or_else(|| output.strip_prefix("Validation failed for tool \"batch\":"))?;
     let diagnostic = first_line(diagnostics.trim_start()).trim_start_matches("- ");
-    if let Some((_, limit)) = diagnostic
-        .strip_prefix("calls: ")
-        .and_then(|message| message.rsplit_once(" has more than "))
+    if let Some(limit) = diagnostic
+        .strip_prefix("\"calls\": has more than ")
+        .or_else(|| {
+            diagnostic
+                .strip_prefix("calls: ")
+                .and_then(|message| message.rsplit_once(" has more than "))
+                .map(|(_, limit)| limit)
+        })
         && let Some(limit) = limit
             .strip_suffix(" items")
             .and_then(|limit| limit.parse::<usize>().ok())
@@ -491,11 +496,15 @@ mod tests {
 
     #[test]
     fn batch_validation_preview_explains_the_limit_without_echoing_arguments() {
-        let output = "schema error: Validation failed for tool \"batch\":\n  - calls: [{\"tool\":\"read\"}] has more than 4 items\n\nReceived arguments:\n{}";
-        assert_eq!(
-            failure_preview(output).as_deref(),
-            Some("This batch exceeded the 4-call limit. Split the calls into smaller batches.")
-        );
+        for output in [
+            "schema error: Validation failed for tool \"batch\":\n  - calls: [{\"tool\":\"read\"}] has more than 4 items\n\nReceived arguments:\n{}",
+            "schema error: Invalid arguments for \"batch\".\n- \"calls\": has more than 4 items\nCorrect these fields using the advertised tool parameters, then call the tool again.",
+        ] {
+            assert_eq!(
+                failure_preview(output).as_deref(),
+                Some("This batch exceeded the 4-call limit. Split the calls into smaller batches.")
+            );
+        }
     }
 
     #[test]

@@ -485,6 +485,82 @@ fn agent_dynamic_autoscroll_and_user_lock() {
 }
 
 #[test]
+fn streaming_activity_stays_below_growing_code_block() {
+    let mut app = TestAppContext::new();
+    let (mut cx, state) = open_app(&mut app);
+    let id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
+    cx.update_window_entity(&state, |s, window, cx| {
+        window.set_scroll_layers(true);
+        s.set_chat_mode(id, true, window, cx);
+        let chat = &mut s.pane_mut(id).unwrap().chat;
+        chat.running = true;
+        chat.messages.clear();
+        chat.messages.push(Arc::new(ChatMessage::new(
+            ChatRole::User,
+            "Show the file tree.".into(),
+        )));
+        push_chat_event(
+            &mut chat.messages,
+            agent_bridge::AgentEvent::Text("```text\nshob/\n".into()),
+        );
+        cx.notify();
+    });
+    cx.draw_commands();
+    cx.run_until_parked();
+    cx.draw_commands();
+
+    for delta in [
+        "├── file.rs\n".repeat(5),
+        "├── file.rs\n".repeat(12),
+        "├── file.rs\n".repeat(23),
+        "└── Cargo.toml\n```\n\nThis is the project root.".into(),
+    ] {
+        cx.update_window_entity(&state, |s, _, cx| {
+            let chat = &mut s.pane_mut(id).unwrap().chat;
+            let event = agent_bridge::AgentEvent::Text(delta);
+            chat.observe_status(&event);
+            push_chat_event(&mut chat.messages, event);
+            chat.notify_content(cx);
+        });
+        for _ in 0..2 {
+            cx.draw_commands();
+            if let (Some(message), Some(activity)) = (
+                cx.debug_bounds("chat-message-1"),
+                cx.debug_bounds("agent-activity"),
+            ) {
+                assert!(
+                    activity.top() >= message.bottom(),
+                    "activity {activity:?} overlaps the streaming response {message:?}",
+                );
+            }
+            cx.run_until_parked();
+        }
+    }
+
+    cx.draw_commands();
+    let activity = cx.debug_bounds("agent-activity").expect("activity at the tail");
+    let message = cx.debug_bounds("chat-message-1").expect("streaming response");
+    assert!(activity.top() >= message.bottom());
+    state.read_with(&cx, |s, _| {
+        let list = &s.pane_ref(id).unwrap().chat.list_state;
+        assert_eq!(list.item_count(), 2, "the response and activity share a list item");
+        assert!(list.is_following_tail());
+    });
+
+    cx.update_window_entity(&state, |s, _, cx| {
+        let chat = &mut s.pane_mut(id).unwrap().chat;
+        let event = agent_bridge::AgentEvent::Done;
+        chat.observe_status(&event);
+        push_chat_event(&mut chat.messages, event);
+        chat.notify_content(cx);
+    });
+    cx.draw_commands();
+    cx.run_until_parked();
+    cx.draw_commands();
+    assert!(cx.debug_bounds("agent-activity").is_none());
+}
+
+#[test]
 fn streaming_remeasure_preserves_offset_inside_message() {
     let mut app = TestAppContext::new();
     let (mut cx, state) = open_app(&mut app);

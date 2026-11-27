@@ -1885,6 +1885,7 @@ dependencies = [
  "base64 0.22.1",
  "durable",
  "futures",
+ "reqwest 0.12.28",
  "rusqlite",
  "schemars 0.8.22",
  "serde",

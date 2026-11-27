@@ -82,16 +82,20 @@ impl AppState {
         let tokens = self.tokens(cx);
         let conversation = source.conversation_key;
         let row_start = std::time::Instant::now();
+        let activity_changed = source.row_cache.borrow().running != source.running;
         let row_cache = Self::build_chat_rows_from(&source);
         let cached = row_cache.borrow();
         let rows = &cached.rows;
         let active_row = cached.state.active_row;
         crate::stream_timing::record_since("ui.render_rows", row_start);
 
-        let row_count = rows.len();
+        let row_count = cached.list_item_count();
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         std::hash::Hash::hash(conversation, &mut hasher);
         source.sync_rows(row_count, std::hash::Hasher::finish(&hasher));
+        if activity_changed && row_count > 0 {
+            source.remeasure_row(row_count - 1);
+        }
         for index in source.dirty_messages.take() {
             if let Some(row) = rows.iter().position(|row| chat_row_contains(row, index)) {
                 source.remeasure_row(row);
@@ -702,39 +706,25 @@ impl AppState {
                 &snapshot.host,
                 ChatRenderContext { tokens, window, cx, measurement_ready },
             ),
-            ChatRow::Running { label, tooltip } => div()
-                .flex()
-                .items_center()
-                .gap(px(6.0))
-                .py(px(2.0))
-                .id(("agent-activity", snapshot.pane_id))
-                .tooltip({
-                    let tooltip = tooltip.clone();
-                    move |_, cx| {
-                        cx.new(|_| gpui_component::tooltip::Tooltip::new(tooltip.clone()))
-                            .into()
-                    }
-                })
-                .child(animated_agent_loader(
-                    ("chat-activity-loader", snapshot.pane_id),
-                    tokens.text_muted,
-                    window,
-                    cx,
-                ))
-                .child(
-                    div()
-                        .text_color(tokens.text_muted)
-                        .text_size(px(12.0))
-                        .min_w_0()
-                        .truncate()
-                        .child(label.clone()),
-                )
-                .into_any_element(),
+            ChatRow::Running { label, tooltip } => {
+                Self::render_chat_activity(snapshot, label, tooltip, true, window, cx)
+                    .into_any_element()
+            }
         };
         snapshot.unready_row.set((!measurement.ready.get()).then_some(index));
         let live_tools = matches!(row, ChatRow::ToolGroup { live: true, .. });
-        let row_gap = if live_tools { 0.0 } else if matches!(row, ChatRow::Worked { .. } | ChatRow::ToolGroup { .. }) { 14.0 } else { 12.0 };
-        let content = div()
+        let focused_user = snapshot.focused_layout
+            && matches!(row, ChatRow::Message { message, .. } if message.role == ChatRole::User);
+        let row_gap = if focused_user {
+            24.0
+        } else if live_tools {
+            0.0
+        } else if matches!(row, ChatRow::Worked { .. } | ChatRow::ToolGroup { .. }) {
+            14.0
+        } else {
+            12.0
+        };
+        let mut content = div()
             .debug_selector(|| "agent-chat-row".to_string())
             .w_full()
             .min_w_0()
@@ -744,25 +734,80 @@ impl AppState {
             .text_size(agent_appearance::FONT_SIZE)
             .line_height(agent_appearance::LINE_HEIGHT)
             .text_color(tokens.chat().foreground)
-            .when(
-                snapshot.focused_layout && matches!(row, ChatRow::Message { message, .. } if message.role == ChatRole::User),
-                |row| row.pt(px(24.0)).pb(px(24.0)),
-            )
-            .when(
-                !snapshot.focused_layout || !matches!(row, ChatRow::Message { message, .. } if message.role == ChatRole::User),
-                |row| row.pb(px(row_gap)),
-            )
+            .when(focused_user, |row| row.pt(px(24.0)))
             .child(inner);
+        // A provisional Markdown height may differ from the retained list row's height.
+        // Keep the activity in the same layout so it follows the response on every frame.
+        if let Some(ChatRow::Running { label, tooltip }) = cached.rows.get(index + 1) {
+            content = content.flex().flex_col().gap(px(row_gap)).pb(px(12.0)).child(
+                Self::render_chat_activity(
+                    snapshot,
+                    label,
+                    tooltip,
+                    !snapshot.preserve_anchor,
+                    window,
+                    cx,
+                ),
+            );
+        } else {
+            content = content.pb(px(row_gap));
+        }
         div()
             .w_full()
             .flex()
             .justify_center()
             // Keep the insets in the measured content so the scrollbar and wheel share endpoints.
             .when(index == 0, |row| row.pt(px(8.0)))
-            .when(index + 1 == cached.rows.len(), |row| row.pb(px(20.0)))
+            .when(index + 1 == cached.list_item_count(), |row| row.pb(px(20.0)))
             .child(content)
             .into_any_element()
     }
+
+    fn render_chat_activity(
+        snapshot: &ChatSnapshot,
+        label: &SharedString,
+        tooltip: &SharedString,
+        animate: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> impl IntoElement {
+        let tokens = snapshot.tokens;
+        let pane_id = snapshot.pane_id;
+        div()
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .py(px(2.0))
+            .id(("agent-activity", pane_id))
+            .debug_selector(|| "agent-activity".to_string())
+            .tooltip({
+                let tooltip = tooltip.clone();
+                move |_, cx| {
+                    cx.new(|_| gpui_component::tooltip::Tooltip::new(tooltip.clone()))
+                        .into()
+                }
+            })
+            .when(animate, |status| {
+                status.child(animated_agent_loader(
+                    ("chat-activity-loader", pane_id),
+                    tokens.text_muted,
+                    window,
+                    cx,
+                ))
+            })
+            .when(!animate, |status| {
+                status.child(sidebar_loader(0.0, tokens.text_muted).flex_shrink_0())
+            })
+            .child(
+                div()
+                    .text_color(tokens.text_muted)
+                    .text_size(px(12.0))
+                    .min_w_0()
+                    .truncate()
+                    .child(label.clone()),
+            )
+    }
+
     fn open_project_script_form(
         &mut self,
         pane_id: usize,
