@@ -600,48 +600,18 @@ impl AppState {
             .border_t_1()
             .border_color(tokens.sidebar_footer_border)
             .child(
-                div()
-                    .id("layout-switch")
-                    .debug_selector(|| "layout-switch".into())
-                    .h(px(28.0))
-                    .px(px(8.0))
-                    .flex()
-                    .items_center()
-                    .gap(px(5.0))
-                    .rounded(px(7.0))
-                    .when(self.settings.agent_layout, |button| {
-                        button.bg(tokens.sidebar_item_active)
-                    })
-                    .hover(move |button| button.bg(tokens.sidebar_item_hover))
-                    .cursor(CursorStyle::PointingHand)
-                    .tooltip({
-                        let label = if self.settings.agent_layout {
-                            "Agent mode on · Switch to split view"
-                        } else {
-                            "Agent mode off · Switch to Agent mode"
-                        };
-                        move |window, cx| {
-                            gpui_component::tooltip::Tooltip::new(label).build(window, cx)
-                        }
-                    })
-                    .child(
-                        gpui_component::Icon::new(gpui_component::IconName::Bot)
-                            .size(px(15.0))
-                            .text_color(if self.settings.agent_layout {
-                                tokens.ring
-                            } else {
-                                tokens.sidebar_icon
-                            }),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(tokens.sidebar_fg)
-                            .child("Agent"),
-                    )
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.switch_agent_layout(window, cx)),
-                    ),
+                self.sidebar_icon_action(
+                    "layout-switch",
+                    "icons/bot.svg",
+                    if self.settings.agent_layout {
+                        "Agent mode on · Switch to split view"
+                    } else {
+                        "Agent mode off · Switch to Agent mode"
+                    },
+                    self.settings.agent_layout,
+                    tokens,
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.switch_agent_layout(window, cx))),
             )
             .child(div().flex_1())
             .child(
