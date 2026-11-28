@@ -1519,7 +1519,12 @@ async fn run_session(
     };
     if !host_tools.is_empty() {
         if let Err(error) = host_tools::install(&harness, host_tools).await {
-            send_fatal(&events, &wake, format!("Could not install host tools: {error}")).await;
+            send_fatal(
+                &events,
+                &wake,
+                format!("Could not install host tools: {error}"),
+            )
+            .await;
             return;
         }
     }

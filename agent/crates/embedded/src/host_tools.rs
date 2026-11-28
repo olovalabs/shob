@@ -75,7 +75,8 @@ pub(crate) async fn install(harness: &AgentHarness, tools: Vec<HostTool>) -> Res
         .into_iter()
         .map(|tool| (tool.definition, tool.call))
         .unzip();
-    validate_external_tool_definitions(&definitions, &reserved).map_err(|error| error.to_string())?;
+    validate_external_tool_definitions(&definitions, &reserved)
+        .map_err(|error| error.to_string())?;
     let mut active = harness
         .get_active_tools()
         .await
@@ -86,7 +87,10 @@ pub(crate) async fn install(harness: &AgentHarness, tools: Vec<HostTool>) -> Res
             .into_iter()
             .zip(callbacks)
             .map(|(definition, call)| {
-                HarnessTool::new(create_external_tool(definition, Arc::new(HostBackend(call))))
+                HarnessTool::new(create_external_tool(
+                    definition,
+                    Arc::new(HostBackend(call)),
+                ))
             }),
     );
     harness
