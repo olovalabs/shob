@@ -1,6 +1,8 @@
 //! Linux transport for the pinned OpenCode Rune CEF engine. Wire definitions:
 //! https://github.com/anomalyco/opencode-rune/blob/4e90d0ce4530d8a1e13505009558273656e4aa38/apps/browser-engine/src/wire.rs
 
+mod audio;
+
 use anyhow::{Context as _, Result, anyhow, bail, ensure};
 use async_process::{Child, Command};
 use base64_simd::STANDARD;
@@ -167,9 +169,15 @@ async fn run(
     frames: &LatestFrames,
 ) -> Result<()> {
     let guard = commands.clone();
-    let Some((mut child, socket_dir)) = smol::unblock(move || prepare(&guard)).await? else {
+    let Some(EngineProcess {
+        mut child,
+        socket_dir,
+        audio,
+    }) = smol::unblock(move || prepare(&guard)).await?
+    else {
         return Ok(());
     };
+    let _playback = audio.map(|audio| smol::spawn(audio.run()));
     let socket = socket_dir.path().join("engine.sock");
     let mut connected = None;
     let result = async {
@@ -220,7 +228,13 @@ async fn run(
     result
 }
 
-fn prepare(commands: &Receiver<Outbound>) -> Result<Option<(Child, tempfile::TempDir)>> {
+struct EngineProcess {
+    child: Child,
+    socket_dir: tempfile::TempDir,
+    audio: Option<audio::Playback>,
+}
+
+fn prepare(commands: &Receiver<Outbound>) -> Result<Option<EngineProcess>> {
     if commands.is_closed() {
         return Ok(None);
     }
@@ -252,6 +266,7 @@ fn prepare(commands: &Receiver<Outbound>) -> Result<Option<(Child, tempfile::Tem
         .permissions(Permissions::from_mode(0o700))
         .tempdir_in("/tmp")
         .context("creating private browser socket directory")?;
+    let audio = audio::Playback::bind(socket_dir.path()).ok().flatten();
     let mut cmd = Command::new(bwrap);
     // This Linux pin disables CEF's own sandbox. Never execute it outside containment.
     cmd.env_clear().args([
@@ -303,6 +318,9 @@ fn prepare(commands: &Receiver<Outbound>) -> Result<Option<(Child, tempfile::Tem
     ] {
         cmd.args(["--ro-bind-try", path, path]);
     }
+    if audio.is_some() {
+        cmd.args(["--setenv", "PULSE_SERVER", audio::SANDBOX_SERVER]);
+    }
     let child = cmd
         .arg("--ro-bind")
         .arg(bundle)
@@ -332,7 +350,11 @@ fn prepare(commands: &Receiver<Outbound>) -> Result<Option<(Child, tempfile::Tem
         .kill_on_drop(true)
         .spawn()
         .context("starting the browser engine inside Bubblewrap")?;
-    Ok(Some((child, socket_dir)))
+    Ok(Some(EngineProcess {
+        child,
+        socket_dir,
+        audio,
+    }))
 }
 
 async fn negotiate(

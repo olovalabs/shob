@@ -88,6 +88,8 @@ The Files surface restores open files, unsaved drafts, expanded folders, and the
 
 The Browser address bar opens HTTP and HTTPS URLs directly, including local development servers, and sends keywords to Google Search. The first page downloads and verifies the OpenCode Rune Chromium engine (about 130 MB). Install `bubblewrap` and enable unprivileged user namespaces to run it: Shob isolates that engine from your home directory and desktop session because the upstream Linux bundle disables Chromium's own sandbox. The engine shares host networking for localhost access. Shob caps the browser render resolution at roughly 2 megapixels to limit frame memory and keep large panes responsive. Pages can appear softer in a very large pane. Tabs you open yourself and their site data restore from Shob's workspace and browser profile; back/forward history does not.
 
+Browser audio plays through the local PulseAudio server or PipeWire’s PulseAudio compatibility service. The sandbox can play sound but cannot record from your microphone or system audio.
+
 ### Sidebar
 
 The sidebar groups pinned and active threads above the Working, Snoozed, and Settled shelves. In the project filter, Shift-click projects to combine scopes or turn on **Project folders** for collapsible project groups. Ctrl/Cmd-click threads to select multiple rows; Shift-click extends the selection. Drag or right-click to act on the selection. Archived threads can be restored from Settings.
