@@ -407,8 +407,7 @@ impl AgentBridge {
             turn.browser,
             browser_automation::SUPPORTED,
         )?;
-        let Ok(title) =
-            embedded::SessionTitleRequest::spawn(cwd, selector, turn.text, signal_wake)
+        let Ok(title) = embedded::SessionTitleRequest::spawn(cwd, selector, turn.text, signal_wake)
         else {
             return self.send_prepared_prompt(
                 &enriched,

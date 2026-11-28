@@ -106,14 +106,12 @@ impl AppState {
         if let Some(session) = self.active_session()
             && let Some(bot) = self.bots.get(&session.uid)
         {
-            return row
-                .child(bot_avatar::avatar(bot.avatar, px(24.0)))
-                .child(
-                    div()
-                        .truncate()
-                        .text_color(tokens.text_primary)
-                        .child(self.sidebar_thread_title(session).clone()),
-                );
+            return row.child(bot_avatar::avatar(bot.avatar, px(24.0))).child(
+                div()
+                    .truncate()
+                    .text_color(tokens.text_primary)
+                    .child(self.sidebar_thread_title(session).clone()),
+            );
         }
         let Some(project) = self.active_project() else {
             return row.child("Shob");

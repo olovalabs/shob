@@ -1253,7 +1253,11 @@ impl EmbeddedSession {
         let bytes = prompt
             .len()
             .saturating_add(context.as_ref().map_or(0, String::len))
-            .saturating_add(system_prompt_suffix.as_ref().map_or(0, |suffix| suffix.len()));
+            .saturating_add(
+                system_prompt_suffix
+                    .as_ref()
+                    .map_or(0, |suffix| suffix.len()),
+            );
         self.enqueue_command(bytes, false, || Command::Prompt {
             text: prompt.to_owned(),
             fallback: context.map(|context| (resume.map(str::to_owned), context)),
