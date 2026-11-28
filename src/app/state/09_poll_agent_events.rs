@@ -4,6 +4,7 @@ impl AppState {
         let mut changed = false;
         let mut session_changed = false;
         let mut authenticated = false;
+        let mut catalog_invalidated = false;
         let mut streaming = false;
         let mut titled_panes: Vec<usize> = Vec::new();
         let mut done_panes: Vec<usize> = Vec::new();
@@ -32,52 +33,29 @@ impl AppState {
                                             removed_providers.push(provider);
                                         }
                                         pane.chat.auth_refresh_pending = pane.chat.bridge.is_some();
-                                        auth.discover();
+                                        catalog_invalidated = true;
                                     }
                                     Err(error) => auth.error = Some(error),
                                 }
                                 changed = true;
                             }
                         }
-                        if let Some(receiver) = &auth.discovery {
-                            match receiver.try_recv() {
-                                Ok(result) => {
-                                    auth.discovery = None;
-                                    match result {
-                                        Ok(providers) => auth.providers = providers,
-                                        Err(error) => auth.error = Some(error),
-                                    }
-                                    changed = true;
+                        if let Some(receiver) = &auth.methods_discovery {
+                            use std::sync::mpsc::TryRecvError;
+
+                            let result = match receiver.try_recv() {
+                                Ok(result) => Some(result),
+                                Err(TryRecvError::Disconnected) => Some(Err(
+                                    "Authentication method discovery stopped unexpectedly.".into(),
+                                )),
+                                Err(TryRecvError::Empty) => None,
+                            };
+                            if let Some(result) = result {
+                                auth.methods_discovery = None;
+                                if let Err(error) = result {
+                                    auth.error = Some(error);
                                 }
-                                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                                    auth.discovery = None;
-                                    auth.error =
-                                        Some("Provider discovery stopped unexpectedly.".into());
-                                    changed = true;
-                                }
-                                Err(std::sync::mpsc::TryRecvError::Empty) => {}
-                            }
-                        }
-                        if let Some(receiver) = &auth.model_discovery {
-                            match receiver.try_recv() {
-                                Ok(result) => {
-                                    auth.model_discovery = None;
-                                    match result {
-                                        Ok(models) => {
-                                            auth.models = models;
-                                            auth.model_error = None;
-                                        }
-                                        Err(error) => auth.model_error = Some(error),
-                                    }
-                                    changed = true;
-                                }
-                                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                                    auth.model_discovery = None;
-                                    auth.model_error =
-                                        Some("Model discovery stopped unexpectedly.".into());
-                                    changed = true;
-                                }
-                                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                                changed = true;
                             }
                         }
                         let mut finished = None;
@@ -105,7 +83,7 @@ impl AppState {
                                 Ok(()) => {
                                     authenticated = true;
                                     auth.output.push_str("\nAuthentication complete.");
-                                    auth.discover();
+                                    catalog_invalidated = true;
                                 }
                                 Err(error) => auth.error = Some(error),
                             }
@@ -335,10 +313,12 @@ impl AppState {
                                 // session; retry on the next tick instead of
                                 // surfacing a spurious error.
                                 Err(error) if error.contains("still starting") => retry = true,
-                                Err(error) => pane
-                                    .chat
-                                    .messages
-                                    .push(Arc::new(ChatMessage::new(ChatRole::Error, error))),
+                                Err(error) => {
+                                    pane.chat.bridge = None;
+                                    pane.chat
+                                        .messages
+                                        .push(Arc::new(ChatMessage::new(ChatRole::Error, error)));
+                                }
                             }
                         }
                         if !retry {
@@ -350,29 +330,18 @@ impl AppState {
             }
         }
         if !removed_providers.is_empty() {
-            if self
-                .default_agent_model
-                .as_ref()
-                .is_some_and(|model| removed_providers.contains(&model.provider))
-            {
-                self.default_agent_model = None;
+            self.agent_catalog
+                .data
+                .providers
+                .retain(|provider| !removed_providers.contains(&provider.id));
+            for provider in removed_providers {
+                self.refresh_bridges_for_provider(&provider);
             }
-            for project in &mut self.projects {
-                for session in &mut project.sessions {
-                    for pane in &mut session.panes {
-                        if pane
-                            .chat
-                            .selected_model
-                            .as_ref()
-                            .is_some_and(|model| removed_providers.contains(&model.provider))
-                        {
-                            pane.chat.selected_model = None;
-                        }
-                    }
-                }
-            }
-            self.schedule_workspace_save(cx);
         }
+        if catalog_invalidated {
+            self.agent_catalog.invalidate();
+        }
+        changed |= self.agent_catalog.poll();
         for pane_id in ready_follow_ups {
             self.send_queued_follow_up(pane_id, cx);
         }

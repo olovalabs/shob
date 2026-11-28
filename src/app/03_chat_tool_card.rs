@@ -313,13 +313,6 @@ fn load_provider_icons() {
     std::sync::LazyLock::force(&PROVIDER_ICONS);
 }
 
-fn refresh_custom_provider_ids() {
-    if let Ok(config) = agent_cli::config::load_models_config() {
-        let ids = config.providers.into_keys().collect();
-        *CUSTOM_PROVIDER_IDS.write() = ids;
-    }
-}
-
 fn provider_icon_stem(id: &str) -> &str {
     match id {
         "opencode" | "opencode-zen" => "opencode",
@@ -782,6 +775,91 @@ enum ModelPickerFilter {
     Provider(String),
 }
 
+#[derive(Default)]
+struct AgentCatalogData {
+    providers: Vec<agent_auth::Provider>,
+    models: Vec<agent_auth::AgentModel>,
+}
+
+#[derive(Default)]
+struct AgentCatalog {
+    data: AgentCatalogData,
+    loaded: bool,
+    error: Option<String>,
+    pending: Option<std::sync::mpsc::Receiver<Result<AgentCatalogData, String>>>,
+    invalidated: bool,
+}
+
+impl AgentCatalog {
+    fn provider_name(&self, id: &str) -> String {
+        self.data
+            .providers
+            .iter()
+            .find(|p| p.id == id)
+            .and_then(|p| p.name.clone())
+            .unwrap_or_else(|| provider_display_name(id))
+    }
+
+    fn refresh(&mut self) {
+        if self.pending.is_some() {
+            return;
+        }
+        self.error = None;
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        self.pending = Some(receiver);
+        std::thread::spawn(move || {
+            load_provider_icons();
+            let models = agent_auth::available_models();
+            let providers = agent_auth::providers();
+            let result = models.and_then(|models| {
+                providers.map(|providers| AgentCatalogData { providers, models })
+            });
+            let _ = sender.send(result);
+            crate::agent_bridge::signal_wake();
+        });
+    }
+
+    fn invalidate(&mut self) {
+        if self.pending.is_some() {
+            self.invalidated = true;
+        } else {
+            self.refresh();
+        }
+    }
+
+    fn poll(&mut self) -> bool {
+        use std::sync::mpsc::TryRecvError;
+
+        let Some(receiver) = &self.pending else {
+            return false;
+        };
+        let result = match receiver.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return false,
+            Err(TryRecvError::Disconnected) => Err("Model discovery stopped unexpectedly.".into()),
+        };
+        self.pending = None;
+        if std::mem::take(&mut self.invalidated) {
+            self.refresh();
+        } else {
+            match result {
+                Ok(data) => {
+                    *CUSTOM_PROVIDER_IDS.write() = data
+                        .providers
+                        .iter()
+                        .filter(|provider| provider.custom)
+                        .map(|provider| provider.id.clone())
+                        .collect();
+                    self.data = data;
+                    self.loaded = true;
+                }
+                Err(error) => self.error = Some(error),
+            }
+        }
+        true
+    }
+}
+
 struct AuthModal {
     page: AgentDialogPage,
     model_filter: ModelPickerFilter,
@@ -789,11 +867,7 @@ struct AuthModal {
     provider_scroll: VirtualListScrollHandle,
     focus: gpui::FocusHandle,
     cwd: PathBuf,
-    providers: Vec<agent_auth::Provider>,
-    discovery: Option<std::sync::mpsc::Receiver<Result<Vec<agent_auth::Provider>, String>>>,
-    models: Vec<agent_auth::AgentModel>,
-    model_discovery: Option<std::sync::mpsc::Receiver<Result<Vec<agent_auth::AgentModel>, String>>>,
-    model_error: Option<String>,
+    methods_discovery: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
     custom_provider: Option<[Entity<InputState>; 5]>,
     provider_operation: Option<std::sync::mpsc::Receiver<Result<Option<String>, String>>>,
     provider_input: Entity<InputState>,
@@ -806,14 +880,6 @@ struct AuthModal {
 }
 
 impl AuthModal {
-    fn provider_name(&self, id: &str) -> String {
-        self.providers
-            .iter()
-            .find(|p| p.id == id)
-            .and_then(|p| p.name.clone())
-            .unwrap_or_else(|| provider_display_name(id))
-    }
-
     fn filter_models(&mut self, filter: ModelPickerFilter) {
         self.model_filter = if self.model_filter == filter {
             ModelPickerFilter::All
@@ -823,22 +889,17 @@ impl AuthModal {
         self.model_scroll.set_offset(gpui::point(px(0.0), px(0.0)));
     }
 
-    fn discover(&mut self) {
-        self.error = None;
-        self.model_error = None;
-        let (sender, receiver) = std::sync::mpsc::channel();
+    fn discover_auth_methods(&mut self) {
+        if self.methods_discovery.is_some() {
+            return;
+        }
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        self.methods_discovery = Some(receiver);
         let cwd = self.cwd.clone();
         std::thread::spawn(move || {
-            refresh_custom_provider_ids();
-            let _ = sender.send(agent_auth::providers(&cwd));
+            let _ = sender.send(embedded::refresh_auth_methods(&cwd));
+            crate::agent_bridge::signal_wake();
         });
-        self.discovery = Some(receiver);
-        let (sender, receiver) = std::sync::mpsc::channel();
-        let cwd = self.cwd.clone();
-        std::thread::spawn(move || {
-            let _ = sender.send(agent_auth::available_models(&cwd));
-        });
-        self.model_discovery = Some(receiver);
     }
 }
 

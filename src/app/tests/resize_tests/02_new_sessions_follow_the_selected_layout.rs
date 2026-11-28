@@ -33,7 +33,7 @@ fn new_panes_start_without_a_model() {
         s.create_new_session_in_project(0, window, cx);
     });
     state.read_with(&cx, |s, _| {
-        assert_eq!(s.effective_default_agent_model(), None);
+        assert_eq!(s.settings.default_agent_model, None);
         let pane = &s.projects[0].sessions.last().unwrap().panes[0];
         assert_eq!(pane.chat.selected_model, None);
     });

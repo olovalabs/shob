@@ -405,7 +405,7 @@ fn run_gui() -> Result<()> {
                         active_view: ActiveView::Workspace,
                         theme_preference: app_settings.theme,
                         palette_scheme: app_settings.palette_scheme,
-                        default_agent_model: app_settings.default_agent_model.clone(),
+                        agent_catalog: AgentCatalog::default(),
                         integration_panel_visible: false,
                         integration_feedback: SharedString::from("Setup is opt-in. Status becomes Reporting only after a live event arrives."),
                         sidebar_width: px(app_settings.sidebar.width).max(SIDEBAR_MIN_WIDTH),
@@ -415,6 +415,8 @@ fn run_gui() -> Result<()> {
                         persistence_path: persistence_path.clone(),
                         save_generation: Arc::new(AtomicU64::new(0)),
                         workspace_save_task: None,
+                        agent_preferences_generation: Arc::new(AtomicU64::new(0)),
+                        agent_preferences_save_task: None,
                         scrollback_generation: Arc::new(AtomicU64::new(0)),
                         autosave_task: None,
                         pending_session_deletions: HashSet::new(),
@@ -612,15 +614,7 @@ fn run_gui() -> Result<()> {
                     });
                     // Populate model capabilities off the UI thread, including
                     // for a model restored before the picker is opened.
-                    let catalog_updated = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-                    let catalog_ready = catalog_updated.clone();
-                    std::thread::spawn(move || {
-                        load_provider_icons();
-                        refresh_custom_provider_ids();
-                        let _ = agent_auth::available_models(std::path::Path::new("."));
-                        catalog_ready.store(true, std::sync::atomic::Ordering::Release);
-                        crate::agent_bridge::signal_wake();
-                    });
+                    app_state.update(cx, |state, _| state.agent_catalog.refresh());
                     let agent_streaming =
                         std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
                     {
@@ -657,12 +651,7 @@ fn run_gui() -> Result<()> {
                             // The capacity-one channel coalesces pending wakes.
                             // Leave any new wake queued while applying this batch.
                             match agent_state_weak
-                                .update(cx, |state, cx| {
-                                    if catalog_updated.swap(false, std::sync::atomic::Ordering::AcqRel) {
-                                        cx.notify();
-                                    }
-                                    state.poll_agent_events(cx)
-                                })
+                                .update(cx, |state, cx| state.poll_agent_events(cx))
                             {
                                 Ok(active) => agent_streaming
                                     .store(active, std::sync::atomic::Ordering::Relaxed),

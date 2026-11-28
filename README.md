@@ -237,7 +237,7 @@ In native Agent chat with the embedded backend, the agent can delegate independe
 
 ### Agent Permissions
 
-Shob remembers the approval mode selected in native agent chat across restarts.
+Native Agent chat remembers your last selected model and approval mode across tabs and restarts, even when session restore is off. They stay selected until you change them. Disconnecting a provider keeps the model selected; reconnect the provider or pick another model to use it again.
 
 Terminal-based agents manage their own permissions independently.
 

@@ -162,7 +162,7 @@ fn build_app_state(cx: &mut Context<AppState>) -> AppState {
         active_view: ActiveView::Workspace,
         theme_preference: ThemePreference::System,
         palette_scheme: PaletteScheme::default(),
-        default_agent_model: None,
+        agent_catalog: AgentCatalog::default(),
         integration_panel_visible: false,
         integration_feedback: SharedString::from(
             "Setup is opt-in. Status becomes Reporting only after a live event arrives.",
@@ -174,6 +174,8 @@ fn build_app_state(cx: &mut Context<AppState>) -> AppState {
         persistence_path: None,
         save_generation: Arc::new(AtomicU64::new(0)),
         workspace_save_task: None,
+        agent_preferences_generation: Arc::new(AtomicU64::new(0)),
+        agent_preferences_save_task: None,
         scrollback_generation: Arc::new(AtomicU64::new(0)),
         autosave_task: None,
         pending_session_deletions: HashSet::new(),
@@ -316,8 +318,7 @@ fn gradient_ascii_colors_provider_and_model_dialog_inputs() {
         s.apply_theme_preference(Some(window), cx);
         s.open_agent_auth(1, AgentDialogPage::Auth, window, cx);
         let auth = s.pane_mut(1).unwrap().chat.auth.as_mut().unwrap();
-        auth.discovery = None;
-        auth.model_discovery = None;
+        auth.methods_discovery = None;
         cx.notify();
     });
     cx.draw_frame().unwrap();
@@ -491,18 +492,18 @@ fn model_picker_opens_above_trigger_and_sets_reasoning() {
         let trigger = cx.debug_bounds("select-agent-model-pill").unwrap();
         cx.simulate_click(trigger.center(), Modifiers::default());
         cx.update_window_entity(&state, |s, _, cx| {
-            let pane = &mut s.projects[0].sessions[0].panes[0];
-            let auth = pane.chat.auth.as_mut().unwrap();
-            auth.discovery = None;
-            auth.model_discovery = None;
-            auth.providers = vec![agent_auth::Provider {
+            s.agent_catalog.data.providers = vec![agent_auth::Provider {
                 name: None,
                 custom: false,
                 id: "google-antigravity".into(),
                 ready: true,
                 source: None,
             }];
-            auth.models = vec![pane.chat.selected_model.clone().unwrap()];
+            s.agent_catalog.data.models = vec![s.projects[0].sessions[0].panes[0]
+                .chat
+                .selected_model
+                .clone()
+                .unwrap()];
             cx.notify();
         });
         cx.draw_frame().unwrap();
@@ -538,19 +539,19 @@ fn model_picker_opens_above_trigger_and_sets_reasoning() {
     let trigger = cx.debug_bounds("select-agent-model-pill").unwrap();
     cx.simulate_click(trigger.center(), Modifiers::default());
     cx.update_window_entity(&state, |s, _, cx| {
-        let pane = &mut s.projects[0].sessions[0].panes[0];
-        let auth = pane.chat.auth.as_mut().unwrap();
-        auth.discovery = None;
-        auth.model_discovery = None;
-        let selected = pane.chat.selected_model.clone().unwrap();
-        auth.providers = vec![agent_auth::Provider {
+        let selected = s.projects[0].sessions[0].panes[0]
+            .chat
+            .selected_model
+            .clone()
+            .unwrap();
+        s.agent_catalog.data.providers = vec![agent_auth::Provider {
             name: None,
             custom: false,
             id: selected.provider.clone(),
             ready: true,
             source: None,
         }];
-        auth.models = (1..=12)
+        s.agent_catalog.data.models = (1..=12)
             .map(|index| agent_auth::AgentModel {
                 id: format!("Example model {index:02}"),
                 ..selected.clone()

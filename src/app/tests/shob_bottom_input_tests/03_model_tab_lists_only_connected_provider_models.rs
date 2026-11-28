@@ -23,10 +23,7 @@ fn model_tab_lists_only_connected_provider_models() {
         let input = s.pane_ref(id).unwrap().input_state.clone().unwrap();
         input.update(cx, |input, cx| input.set_value("/model", window, cx));
         s.execute_pane_input(id, window, cx);
-        let auth = s.pane_mut(id).unwrap().chat.auth.as_mut().unwrap();
-        auth.discovery = None;
-        auth.model_discovery = None;
-        auth.providers = vec![
+        let providers = vec![
             agent_auth::Provider {
                 name: None,
                 custom: false,
@@ -63,13 +60,23 @@ fn model_tab_lists_only_connected_provider_models() {
                 source: Some("anonymous".into()),
             },
         ];
-        auth.models = vec![disconnected, connected.clone(), local];
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        sender
+            .send(Ok(AgentCatalogData {
+                providers,
+                models: vec![disconnected, connected.clone(), local],
+            }))
+            .unwrap();
+        s.agent_catalog.pending = Some(receiver);
+        s.poll_agent_events(cx);
         s.pane_mut(id).unwrap().chat.selected_model = Some(connected);
+        s.close_agent_auth(id, window, cx);
+        s.open_agent_auth(id, AgentDialogPage::Models, window, cx);
     });
     cx.draw_frame().expect("draw model tab");
     assert!(
         cx.debug_bounds("agent-model-0").is_some(),
-        "connected provider models are listed"
+        "connected provider models are listed immediately after reopening"
     );
     assert!(
         cx.debug_bounds("agent-model-1").is_none(),
@@ -142,10 +149,7 @@ fn provider_page_cards_use_the_two_column_icon_grid() {
     let id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
     cx.update_window_entity(&state, |s, window, cx| {
         s.open_agent_auth(id, AgentDialogPage::Auth, window, cx);
-        let auth = s.pane_mut(id).unwrap().chat.auth.as_mut().unwrap();
-        auth.discovery = None;
-        auth.model_discovery = None;
-        auth.providers = vec![
+        s.agent_catalog.data.providers = vec![
             agent_auth::Provider {
                 name: None,
                 custom: false,
@@ -195,12 +199,15 @@ fn provider_disconnect_pill_button_with_cross_icon_disconnects() {
     let mut app = TestAppContext::new();
     let (mut cx, state) = open_app(&mut app);
     let id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
+    let model = agent_auth::AgentModel {
+        provider: "commandcode".into(),
+        id: "deepseek/deepseek-v4-flash".into(),
+        backend: agent_auth::ModelBackend::Embedded,
+    };
     cx.update_window_entity(&state, |s, window, cx| {
+        s.select_agent_model(id, Some(model.clone()), window, cx);
         s.open_agent_auth(id, AgentDialogPage::Auth, window, cx);
-        let auth = s.pane_mut(id).unwrap().chat.auth.as_mut().unwrap();
-        auth.discovery = None;
-        auth.model_discovery = None;
-        auth.providers = vec![agent_auth::Provider {
+        s.agent_catalog.data.providers = vec![agent_auth::Provider {
             name: None,
             custom: false,
             id: "commandcode".into(),
@@ -220,9 +227,9 @@ fn provider_disconnect_pill_button_with_cross_icon_disconnects() {
     cx.draw_frame().expect("draw after disconnect click");
 
     let is_ready = state.read_with(&cx, |s, _| {
-        let pane = s.pane_ref(id).unwrap();
-        let auth = pane.chat.auth.as_ref().unwrap();
-        auth.providers
+        s.agent_catalog
+            .data
+            .providers
             .iter()
             .any(|p| p.id == "commandcode" && p.ready)
     });
@@ -234,6 +241,13 @@ fn provider_disconnect_pill_button_with_cross_icon_disconnects() {
         cx.debug_bounds("auth-disconnect-0").is_none(),
         "disconnect pill button must disappear once disconnected"
     );
+    state.read_with(&cx, |s, _| {
+        assert_eq!(
+            s.pane_ref(id).unwrap().chat.selected_model.as_ref(),
+            Some(&model)
+        );
+        assert_eq!(s.saved_settings().default_agent_model.as_ref(), Some(&model));
+    });
 }
 
 #[test]
@@ -299,10 +313,7 @@ fn agent_dialog_filters_providers() {
     let id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
     cx.update_window_entity(&state, |s, window, cx| {
         s.open_agent_auth(id, AgentDialogPage::Auth, window, cx);
-        let auth = s.pane_mut(id).unwrap().chat.auth.as_mut().unwrap();
-        auth.discovery = None;
-        auth.model_discovery = None;
-        auth.providers = vec![
+        s.agent_catalog.data.providers = vec![
             agent_auth::Provider {
                 name: None,
                 custom: false,
@@ -341,13 +352,15 @@ fn agent_dialog_filters_providers() {
         cx.debug_bounds("auth-provider-1").is_none(),
         "non-matching providers are filtered out"
     );
-    state.read_with(&cx, |s, _| {
+    cx.update_window_entity(&state, |s, window, cx| {
         let auth = s.pane_ref(id).unwrap().chat.auth.as_ref().unwrap();
-        assert!(
-            auth.providers.iter().any(|p| p.id == "anthropic"),
-            "filtering hides rows without dropping provider data"
-        );
+        auth.filter.update(cx, |input, cx| input.set_value("", window, cx));
     });
+    cx.draw_frame().expect("draw providers after clearing the filter");
+    assert!(
+        cx.debug_bounds("auth-provider-1").is_some(),
+        "clearing the filter restores the hidden provider"
+    );
 }
 
 #[test]

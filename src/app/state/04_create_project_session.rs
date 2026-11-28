@@ -101,7 +101,7 @@ impl AppState {
                 pid,
             );
             pane.cwd = scratch_dir.clone();
-            pane.chat.selected_model = self.effective_default_agent_model().cloned();
+            pane.chat.selected_model = self.settings.default_agent_model.clone();
             pane.chat.permission_mode = self.settings.permission_mode;
             pane.terminal_subscription = Some(terminal_subscription);
             let (input_state, input_subscription) = build_pane_input(next_id, window, cx);

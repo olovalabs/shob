@@ -126,10 +126,10 @@ Shob follows Zed's per-platform directory convention (`src/paths.rs`):
   conversations/<pane-uid>/   # append-only JSONL agent transcripts
   backups/                    # pre-v2 workspace backups
   logs/
-<config>/settings.json        # theme, palette, sidebar, default model, window geometry, restore toggles
+<config>/settings.json        # theme, sidebar, agent preferences, geometry, restore toggles
 ```
 
-- `settings.json` is user-editable and parsed as JSONC (comments allowed). It stores app appearance, window bounds/state, and the `restore` toggles.
+- `settings.json` is user-editable and parsed as JSONC (comments allowed). Agent model and permission selections are app-wide; explicit changes are saved atomically off the UI thread without waiting for the workspace debounce.
 - `workspace.json` is auto-managed and debounced (300 ms) with an atomic temp+rename write and a generation guard. It records project paths, tab titles/logos, the split tree, per-pane cwd, input drafts, command history, and selected agent models/session ids.
 - Scrollback is written separately so the debounced hot path stays small. Periodic autosave snapshots one pane at a time and writes off the UI thread. Scrollback and workspace writers reject older snapshots after deletion. Close and quit still flush synchronously. Restored panes seed the previous buffer; a fresh shell starts in the saved cwd only when shown or sent input.
 - Agent transcripts are appended as raw events and replayed through `push_chat_event`, so the restored UI matches the previous session exactly. Embedded sessions reopen their durable session id. Historical OMP sessions restore their transcript.
@@ -167,9 +167,11 @@ from the upstream library crates.
   queued work stay live. RPC runtimes remain resident without a safe idle proof.
   Stop and pane close cancel active tools through `request_stop_round` +
   `abort_reclaiming`. A stale resumed id falls back to a fresh durable session.
-- **Discovery and login.** Model catalogs and provider readiness are read
-  in-process through `embedded::catalog`/`providers`. shob-only API-key and
-  OAuth logins are driven in-process through the embedded provider configuration.
+- **Discovery and login.** The desktop preloads the embedded chat catalog and
+  provider readiness off the UI thread. Pickers share the last successful
+  snapshot while refreshing; project-scoped extension authentication discovery
+  runs separately when opening provider settings. API-key and OAuth logins
+  are driven in-process through the embedded provider configuration.
 - **Baseline.** `SHOB_AGENT_BACKEND=rpc` runs `shob --mode rpc` as a child process
   for before/after measurements; no separate agent executable is needed.
   `SHOB_STREAM_TIMINGS=1` reports startup, UI drain/apply, render, markdown parse

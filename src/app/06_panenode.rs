@@ -493,7 +493,7 @@ struct AppState {
     pub theme_preference: ThemePreference,
     /// Desktop and terminal color palette.
     pub palette_scheme: PaletteScheme,
-    default_agent_model: Option<agent_auth::AgentModel>,
+    agent_catalog: AgentCatalog,
     pub sidebar_visible: bool,
     compact_sidebar_open: bool,
     sidebar_focus: gpui::FocusHandle,
@@ -528,6 +528,8 @@ struct AppState {
     persistence_path: Option<PathBuf>,
     save_generation: Arc<AtomicU64>,
     workspace_save_task: Option<gpui::Task<()>>,
+    agent_preferences_generation: Arc<AtomicU64>,
+    agent_preferences_save_task: Option<gpui::Task<()>>,
     scrollback_generation: Arc<AtomicU64>,
     autosave_task: Option<gpui::Task<()>>,
     pending_session_deletions: HashSet<usize>,

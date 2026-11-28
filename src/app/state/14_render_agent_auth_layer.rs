@@ -235,7 +235,9 @@ impl AppState {
             .selected_model
             .as_ref()
             .filter(|model| agent_auth::provider_visible_in_chat_ui(&model.provider));
-        let mut providers: Vec<_> = auth
+        let catalog = &self.agent_catalog;
+        let mut providers: Vec<_> = catalog
+            .data
             .providers
             .iter()
             .filter(|p| p.ready && agent_auth::provider_visible_in_chat_ui(&p.id))
@@ -252,7 +254,8 @@ impl AppState {
         };
         let favorites = &self.settings.favorite_agent_models;
         let has_connected_providers = !providers.is_empty();
-        let mut models: Vec<_> = auth
+        let mut models: Vec<_> = catalog
+            .data
             .models
             .iter()
             .filter(|model| {
@@ -265,7 +268,7 @@ impl AppState {
                     && (query.is_empty()
                         || model.id.to_lowercase().contains(&query)
                         || model.provider.to_lowercase().contains(&query)
-                        || auth
+                        || catalog
                             .provider_name(&model.provider)
                             .to_lowercase()
                             .contains(&query))
@@ -283,7 +286,7 @@ impl AppState {
             ))
         });
         let empty = models.is_empty();
-        let loading = auth.discovery.is_some() || auth.model_discovery.is_some();
+        let loading = !catalog.loaded && catalog.pending.is_some();
         let selected_model = selected.cloned();
         let shortcuts: Vec<_> = models.iter().take(9).cloned().collect();
         let item_sizes = Rc::new(models.iter().map(|_| size(px(0.0), row_height)).collect());
@@ -476,7 +479,7 @@ impl AppState {
                 let choice = provider.id.clone();
                 let icon = provider_icons.get(&choice)?;
                 let active = matches!(filter, ModelPickerFilter::Provider(id) if id == &choice);
-                let name = auth.provider_name(&choice);
+                let name = catalog.provider_name(&choice);
                 let selector = format!("model-provider-filter-{choice}");
                 Some(
                     filter_tab(active)
@@ -526,7 +529,7 @@ impl AppState {
         };
         let current = PaneChat::resolve_thinking_level(chat.mode_thinking_level(), levels);
         let heading = if let Some(model) = reasoning_model {
-            let provider = auth.provider_name(&model.provider);
+            let provider = catalog.provider_name(&model.provider);
             let title = format!("{provider} · {}", model.id);
             div()
                 .id(("picker-reasoning-name", pane_id))
@@ -847,18 +850,15 @@ impl AppState {
                         )
                     }),
             )
-            .when_some(
-                auth.model_error.as_ref().or(auth.error.as_ref()),
-                |v, error| {
-                    v.child(
-                        div()
-                            .px(px(13.0))
-                            .truncate()
-                            .text_color(tokens.block_failure)
-                            .child(error.clone()),
-                    )
-                },
-            )
+            .when_some(catalog.error.as_ref(), |v, error| {
+                v.child(
+                    div()
+                        .px(px(13.0))
+                        .truncate()
+                        .text_color(tokens.block_failure)
+                        .child(error.clone()),
+                )
+            })
             .child(reasoning)
             .child(footer)
             .into_any_element()

@@ -184,7 +184,6 @@ impl AppState {
         saved.sidebar.width = f32::from(self.sidebar_width);
         saved.theme = self.theme_preference;
         saved.palette_scheme = self.palette_scheme;
-        saved.default_agent_model = self.default_agent_model.clone();
         if let Some(window) = self.last_window_bounds {
             saved.window = Some(window);
         }
@@ -246,6 +245,32 @@ impl AppState {
         }));
     }
 
+    fn save_agent_preferences(&mut self, cx: &Context<Self>) {
+        self.schedule_workspace_save(cx);
+        if !self.persistence_enabled {
+            return;
+        }
+
+        let revision = self
+            .agent_preferences_generation
+            .fetch_add(1, Ordering::SeqCst)
+            + 1;
+        let generation = self.agent_preferences_generation.clone();
+        let model = self.settings.default_agent_model.clone();
+        let permission = self.settings.permission_mode;
+        self.agent_preferences_save_task = Some(cx.background_executor().spawn(async move {
+            if let Err(error) = settings::save_agent_preferences_if_current(
+                &paths::settings_path(),
+                model,
+                permission,
+                &generation,
+                revision,
+            ) {
+                eprintln!("failed to save agent preferences: {error}");
+            }
+        }));
+    }
+
     fn capture_window_bounds(&mut self, cx: &mut App) {
         let handles = cx.windows();
         for handle in handles {
@@ -281,6 +306,8 @@ impl AppState {
         }
         self.save_generation.fetch_add(1, Ordering::SeqCst);
         self.workspace_save_task = None;
+        self.agent_preferences_generation.fetch_add(1, Ordering::SeqCst);
+        self.agent_preferences_save_task = None;
         if let Some(window) = window {
             self.last_window_bounds =
                 Some(settings::SavedWindow::from_bounds(window.window_bounds()));
@@ -374,7 +401,6 @@ impl AppState {
         self.sidebar_width = px(self.settings.sidebar.width).max(SIDEBAR_MIN_WIDTH);
         self.theme_preference = self.settings.theme;
         self.palette_scheme = self.settings.palette_scheme;
-        self.default_agent_model = self.settings.default_agent_model.clone();
         let mode = self.theme_preference.resolve_mode(cx.window_appearance());
         self.palette = self
             .settings
@@ -545,7 +571,7 @@ impl AppState {
                     pane.chat.model_explicit = false;
                     pane.chat.agent_title = saved_pane.chat.agent_title.clone();
                     pane.chat.prompt_title = saved_pane.chat.prompt_title.clone();
-                    pane.chat.selected_model = self.effective_default_agent_model().cloned();
+                    pane.chat.selected_model = self.settings.default_agent_model.clone();
                     pane.chat.permission_mode = self.settings.permission_mode;
                     pane.chat.first_response_provider =
                         saved_pane.chat.first_response_provider.clone();
@@ -730,7 +756,7 @@ impl AppState {
                 let mut pane =
                     TerminalPane::new(id, generation, terminal, title.clone(), title.clone(), pid);
                 pane.cwd = Some(default_dir.clone());
-                pane.chat.selected_model = self.effective_default_agent_model().cloned();
+                pane.chat.selected_model = self.settings.default_agent_model.clone();
                 pane.chat.permission_mode = self.settings.permission_mode;
                 pane.terminal_subscription = Some(terminal_subscription);
                 let session = Session {

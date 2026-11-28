@@ -187,12 +187,14 @@ impl PaneChat {
     fn ensure_agent(&mut self, cwd: PathBuf) -> Result<(), String> {
         if self.running
             || (self.bridge.is_some()
+                && !self.auth_refresh_pending
                 && self.bridge_model == self.selected_model
                 && self.cwd.as_ref() == Some(&cwd))
         {
             return Ok(());
         }
         self.bridge = None;
+        self.auth_refresh_pending = false;
         let selector = self.selected_model.as_ref().map(agent_model_selector);
         self.bridge_resume = self.shob_session_id.clone();
         let bridge = ModelBridge::spawn_with_permissions(

@@ -81,11 +81,7 @@ impl AppState {
             provider_scroll: VirtualListScrollHandle::new(),
             focus,
             cwd,
-            providers: Vec::new(),
-            discovery: None,
-            models: Vec::new(),
-            model_discovery: None,
-            model_error: None,
+            methods_discovery: None,
             custom_provider: None,
             provider_operation: None,
             provider_input,
@@ -96,22 +92,9 @@ impl AppState {
             output: String::new(),
             error: None,
         };
-        auth.discover();
-        if page == AgentDialogPage::Auth
-            && let Some(first) = auth.providers.first()
-        {
-            let id = first.id.clone();
-            let primary_var = agent_auth::key_label(&id);
-            let input_clone = auth.input.clone();
-            auth.input.update(cx, |state, cx| {
-                state.set_placeholder(format!("Paste {primary_var} here..."), window, cx);
-            });
-            auth.selected = Some(id);
-            window.defer(cx, move |window, cx| {
-                input_clone.update(cx, |state, cx| {
-                    state.focus(window, cx);
-                });
-            });
+        self.agent_catalog.refresh();
+        if page == AgentDialogPage::Auth {
+            auth.discover_auth_methods();
         }
         if let Some(pane) = self.pane_mut(pane_id) {
             pane.permission_menu_open = false;
@@ -170,6 +153,9 @@ impl AppState {
                 state.set_value("", window, cx);
             });
         }
+        if page == AgentDialogPage::Auth && auth.page != page {
+            auth.discover_auth_methods();
+        }
         auth.page = page;
         if page == AgentDialogPage::Models {
             auth.filter.update(cx, |state, cx| state.focus(window, cx));
@@ -193,7 +179,7 @@ impl AppState {
                 }
             }
         }
-        self.schedule_workspace_save(cx);
+        self.save_agent_preferences(cx);
         cx.notify();
     }
 
@@ -214,7 +200,7 @@ impl AppState {
                 .auth
                 .as_ref()
                 .is_some_and(|auth| auth.page == AgentDialogPage::Models);
-        self.default_agent_model = model.clone();
+        self.settings.default_agent_model = model.clone();
         for project in &mut self.projects {
             for session in &mut project.sessions {
                 for pane in &mut session.panes {
@@ -224,7 +210,7 @@ impl AppState {
                 }
             }
         }
-        self.schedule_workspace_save(cx);
+        self.save_agent_preferences(cx);
         if keep_picker_open {
             cx.notify();
         } else {
@@ -450,7 +436,7 @@ impl AppState {
 
                     // Update live readiness in provider list
                     let mut found = false;
-                    for p in &mut auth.providers {
+                    for p in &mut self.agent_catalog.data.providers {
                         if p.id == provider {
                             p.ready = true;
                             p.source = Some("Stored API key".to_string());
@@ -458,7 +444,7 @@ impl AppState {
                         }
                     }
                     if !found {
-                        auth.providers.push(agent_auth::Provider {
+                        self.agent_catalog.data.providers.push(agent_auth::Provider {
                             name: None,
                             custom: false,
                             id: provider.clone(),
@@ -468,7 +454,7 @@ impl AppState {
                     }
 
                     // Refresh the catalog off the UI thread.
-                    auth.discover();
+                    self.agent_catalog.invalidate();
                 }
                 Err(error) => {
                     auth.error = Some(format!("Could not save API key: {error}"));
@@ -479,6 +465,9 @@ impl AppState {
         }
 
         // 3. Fallback: manual provider input
+        if auth.methods_discovery.is_some() {
+            return;
+        }
         let provider = auth.provider_input.read(cx).value().trim().to_string();
         if provider.is_empty() {
             return;
@@ -524,13 +513,13 @@ impl AppState {
             login.cancel();
         }
 
-        let disconnected = match agent_auth::disconnect_provider(&provider) {
+        match agent_auth::disconnect_provider(&provider) {
             Ok(()) => {
                 auth.error = None;
                 auth.output = format!("Disconnected from {provider}.");
 
                 // Mark provider not ready
-                for p in &mut auth.providers {
+                for p in &mut self.agent_catalog.data.providers {
                     if p.id == provider {
                         p.ready = false;
                         p.source = None;
@@ -538,30 +527,32 @@ impl AppState {
                 }
 
                 // Refresh providers and models off the UI thread.
-                auth.discover();
-                true
+                self.agent_catalog.invalidate();
+                self.refresh_bridges_for_provider(&provider);
             }
             Err(error) => {
                 auth.error = Some(format!("Could not disconnect {provider}: {error}"));
-                false
             }
-        };
-        if disconnected
-            && self
-                .default_agent_model
-                .as_ref()
-                .is_some_and(|model| model.provider == provider)
-        {
-            self.default_agent_model = None;
-            for project in &mut self.projects {
-                for session in &mut project.sessions {
-                    for pane in &mut session.panes {
-                        pane.chat.selected_model = None;
-                    }
-                }
-            }
-            self.schedule_workspace_save(cx);
         }
         cx.notify();
+    }
+
+    fn refresh_bridges_for_provider(&mut self, provider: &str) {
+        for pane in self
+            .projects
+            .iter_mut()
+            .flat_map(|project| &mut project.sessions)
+            .flat_map(|session| &mut session.panes)
+        {
+            if pane.chat.bridge.is_some()
+                && pane
+                    .chat
+                    .bridge_model
+                    .as_ref()
+                    .is_some_and(|model| model.provider == provider)
+            {
+                pane.chat.auth_refresh_pending = true;
+            }
+        }
     }
 }

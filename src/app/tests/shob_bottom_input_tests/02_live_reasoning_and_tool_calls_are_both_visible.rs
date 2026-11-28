@@ -628,17 +628,14 @@ fn model_selection_does_not_reauthenticate_ready_provider() {
         let input = s.pane_ref(id).unwrap().input_state.clone().unwrap();
         input.update(cx, |input, cx| input.set_value("/model", window, cx));
         s.execute_pane_input(id, window, cx);
-        let auth = s.pane_mut(id).unwrap().chat.auth.as_mut().unwrap();
-        auth.discovery = None;
-        auth.model_discovery = None;
-        auth.providers = vec![agent_auth::Provider {
+        s.agent_catalog.data.providers = vec![agent_auth::Provider {
             name: None,
             custom: false,
             id: "google-antigravity".into(),
             ready: true,
             source: Some("Shob credential".into()),
         }];
-        auth.models = vec![model.clone()];
+        s.agent_catalog.data.models = vec![model.clone()];
     });
     cx.draw_frame().unwrap();
     state.read_with(&cx, |s, _| {
@@ -708,8 +705,7 @@ fn custom_provider_form_can_be_opened_and_cancelled_without_saving() {
     cx.update_window_entity(&state, |s, window, cx| {
         s.open_agent_auth(id, AgentDialogPage::Auth, window, cx);
         let auth = s.pane_mut(id).unwrap().chat.auth.as_mut().unwrap();
-        auth.discovery = None;
-        auth.model_discovery = None;
+        auth.methods_discovery = None;
         auth.selected = None;
         cx.notify();
     });
@@ -793,19 +789,15 @@ fn model_favorites_filter_the_list_without_hiding_models() {
     cx.update_window_entity(&state, |s, window, cx| {
         s.set_chat_mode(id, true, window, cx);
         s.open_agent_auth(id, AgentDialogPage::Models, window, cx);
-        let pane = s.pane_mut(id).unwrap();
-        pane.chat.selected_model = Some(model.clone());
-        let auth = pane.chat.auth.as_mut().unwrap();
-        auth.discovery = None;
-        auth.model_discovery = None;
-        auth.providers = vec![agent_auth::Provider {
+        s.pane_mut(id).unwrap().chat.selected_model = Some(model.clone());
+        s.agent_catalog.data.providers = vec![agent_auth::Provider {
             name: None,
             custom: false,
             id: "openai".into(),
             ready: true,
             source: None,
         }];
-        auth.models = vec![model.clone()];
+        s.agent_catalog.data.models = vec![model.clone()];
     });
     cx.draw_frame().unwrap();
     assert!(cx.debug_bounds("agent-model-0").is_some());

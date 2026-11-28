@@ -396,6 +396,37 @@ fn save_preserving_theme_in(
     settings: &AppSettings,
     generation: Option<(&AtomicU64, u64)>,
 ) -> io::Result<()> {
+    update_settings_in(path, generation, |disk| {
+        let mut merged = settings.clone();
+        if let Some(disk) = disk {
+            merged.theme_colors = disk.theme_colors;
+            merged.theme = disk.theme;
+            merged.palette_scheme = disk.palette_scheme;
+        }
+        merged
+    })
+}
+
+pub(crate) fn save_agent_preferences_if_current(
+    path: &Path,
+    model: Option<AgentModel>,
+    permission: crate::agent_bridge::PermissionMode,
+    generation: &AtomicU64,
+    expected: u64,
+) -> io::Result<()> {
+    update_settings_in(path, Some((generation, expected)), |disk| {
+        let mut settings = disk.unwrap_or_default();
+        settings.default_agent_model = model;
+        settings.permission_mode = permission;
+        settings
+    })
+}
+
+fn update_settings_in(
+    path: &Path,
+    generation: Option<(&AtomicU64, u64)>,
+    update: impl FnOnce(Option<AppSettings>) -> AppSettings,
+) -> io::Result<()> {
     let _guard = WRITE_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
@@ -405,15 +436,12 @@ fn save_preserving_theme_in(
     {
         return Ok(());
     }
-    let mut merged = settings.clone();
-    if path.exists() {
-        let text = fs::read_to_string(path)?;
-        let disk: AppSettings = parse_jsonc(&text).map_err(io::Error::other)?;
-        merged.theme_colors = disk.theme_colors;
-        merged.theme = disk.theme;
-        merged.palette_scheme = disk.palette_scheme;
-    }
-    save_unlocked(path, &merged)
+    let disk = match fs::read_to_string(path) {
+        Ok(text) => Some(parse_jsonc(&text).map_err(io::Error::other)?),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error),
+    };
+    save_unlocked(path, &update(disk))
 }
 
 /// Read the user's file without silently replacing invalid settings with defaults.
@@ -537,6 +565,56 @@ mod tests {
         save_preserving_theme_in(&path, &stale, Some((&generation, 2))).unwrap();
         assert_eq!(load_from(&path).unwrap().theme, ThemePreference::Dark);
         assert_eq!(load_from(&path).unwrap().restore, stale.restore);
+    }
+
+    #[test]
+    fn agent_preferences_commit_without_a_workspace_and_ignore_stale_choices() {
+        use crate::agent_bridge::PermissionMode;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let mut expected = AppSettings {
+            theme: ThemePreference::Dark,
+            preferred_editor: Some("Zed".into()),
+            restore: RestoreOptions {
+                sessions: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        save_unlocked(&path, &expected).unwrap();
+
+        let generation = AtomicU64::new(0);
+        for (index, (id, permission)) in [
+            ("grok-4.7", PermissionMode::Auto),
+            ("grok-4.3", PermissionMode::Full),
+            ("grok-4.7", PermissionMode::Ask),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let revision = index as u64 + 1;
+            generation.store(revision, Ordering::SeqCst);
+            let model = AgentModel {
+                provider: "xai-oauth".into(),
+                id: id.into(),
+                backend: crate::agent_auth::ModelBackend::Embedded,
+            };
+            save_agent_preferences_if_current(
+                &path,
+                Some(model.clone()),
+                permission,
+                &generation,
+                revision,
+            )
+            .unwrap();
+            save_agent_preferences_if_current(&path, None, PermissionMode::Full, &generation, 0)
+                .unwrap();
+
+            expected.default_agent_model = Some(model);
+            expected.permission_mode = permission;
+            assert_eq!(load_from(&path).unwrap(), expected);
+        }
     }
 
     #[test]

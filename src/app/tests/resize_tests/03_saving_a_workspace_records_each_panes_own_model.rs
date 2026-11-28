@@ -265,7 +265,7 @@ fn restored_pane_adopts_the_global_model() {
         let pane = &s.projects[0].sessions[0].panes[0];
         assert_eq!(
             pane.chat.selected_model.as_ref(),
-            s.default_agent_model.as_ref()
+            s.settings.default_agent_model.as_ref()
         );
         assert!(!pane.chat.model_explicit);
     });

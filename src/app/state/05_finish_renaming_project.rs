@@ -69,7 +69,7 @@ impl AppState {
                 title.clone(),
                 pid,
             );
-            pane.chat.selected_model = self.effective_default_agent_model().cloned();
+            pane.chat.selected_model = self.settings.default_agent_model.clone();
             pane.chat.permission_mode = self.settings.permission_mode;
             pane.terminal_subscription = Some(terminal_subscription);
             let (input_state, input_subscription) = build_pane_input(next_id, window, cx);
@@ -180,7 +180,7 @@ impl AppState {
             pane.one_mode = self
                 .pane_ref(target_pane_id)
                 .is_some_and(|pane| pane.one_mode);
-            pane.chat.selected_model = self.effective_default_agent_model().cloned();
+            pane.chat.selected_model = self.settings.default_agent_model.clone();
             pane.chat.permission_mode = self.settings.permission_mode;
             pane.terminal_subscription = Some(terminal_subscription);
             let (input_state, input_subscription) = build_pane_input(next_id, window, cx);

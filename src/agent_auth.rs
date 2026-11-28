@@ -1,7 +1,6 @@
 //! Provider discovery and authentication through the embedded agent.
 
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::{LazyLock, RwLock};
 
 use serde::{Deserialize, Serialize};
@@ -73,7 +72,7 @@ impl AgentModel {
     }
 }
 
-pub fn available_models(_cwd: &Path) -> Result<Vec<AgentModel>, String> {
+pub fn available_models() -> Result<Vec<AgentModel>, String> {
     let catalog = embedded::chat_catalog()?;
     {
         let mut levels = THINKING_LEVELS
@@ -118,8 +117,7 @@ pub fn provider_visible_in_chat_ui(id: &str) -> bool {
     )
 }
 
-pub fn providers(cwd: &Path) -> Result<Vec<Provider>, String> {
-    embedded::refresh_auth_methods(cwd)?;
+pub fn providers() -> Result<Vec<Provider>, String> {
     Ok(embedded::providers()?
         .into_iter()
         .map(|state| Provider {
@@ -158,8 +156,7 @@ mod tests {
 
     #[test]
     fn discovers_gemini_and_antigravity_models_through_the_embedded_catalog() {
-        let cwd = Path::new(".");
-        let models = available_models(cwd).unwrap();
+        let models = available_models().unwrap();
         assert!(models.iter().all(|model| {
             model
                 .thinking_levels()
@@ -199,7 +196,7 @@ mod tests {
                     && model.id == "gemini-3.1-flash-image")
         );
         assert!(
-            providers(cwd)
+            providers()
                 .unwrap()
                 .iter()
                 .any(|provider| provider.id == "google")

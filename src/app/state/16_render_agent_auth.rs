@@ -18,7 +18,9 @@ impl AppState {
         let credential_focused = auth.input.read(cx).focus_handle().is_focused(window);
         let filter_query = auth.filter.read(cx).value().trim().to_lowercase();
 
-        let mut providers: Vec<&agent_auth::Provider> = auth
+        let catalog = &self.agent_catalog;
+        let mut providers: Vec<&agent_auth::Provider> = catalog
+            .data
             .providers
             .iter()
             .filter(|provider| {
@@ -413,7 +415,7 @@ impl AppState {
                                                 })))))
                                 })
                                 .when(auth.page == AgentDialogPage::Auth && auth.custom_provider.is_none(), |view| {
-                                    view.when(auth.discovery.is_some() && auth.providers.is_empty(), |view| {
+                                    view.when(catalog.pending.is_some() && catalog.data.providers.is_empty(), |view| {
                                         view.child(
                                             div()
                                                 .py(px(8.0))
@@ -433,7 +435,7 @@ impl AppState {
                                     .when(
                                         !filter_query.is_empty()
                                             && !has_matching_providers
-                                            && !auth.providers.is_empty(),
+                                            && !catalog.data.providers.is_empty(),
                                         |view| {
                                             view.child(
                                                 div()
@@ -448,7 +450,7 @@ impl AppState {
                                         },
                                     )
                                     .when(
-                                        auth.discovery.is_none() && auth.providers.is_empty(),
+                                        catalog.pending.is_none() && catalog.data.providers.is_empty(),
                                         |view| {
                                             view.child(
                                                 div()
@@ -468,7 +470,8 @@ impl AppState {
                                                                 .and_then(|pane| pane.chat.auth.as_mut())
                                                             {
                                                                 auth.error = None;
-                                                                auth.discover();
+                                                                auth.discover_auth_methods();
+                                                                this.agent_catalog.refresh();
                                                                 cx.notify();
                                                             }
                                                         }),
@@ -476,7 +479,7 @@ impl AppState {
                                             )
                                         },
                                     )
-                                    .when_some(auth.error.as_ref(), |view, error| {
+                                    .when_some(auth.error.as_ref().or(catalog.error.as_ref()), |view, error| {
                                         view.child(
                                             div()
                                                 .py(px(4.0))
@@ -486,12 +489,12 @@ impl AppState {
                                         )
                                     })
                                     .when_some(auth.selected.as_ref(), |view, selected| {
-                                        let provider_name = auth.provider_name(selected);
+                                        let provider_name = catalog.provider_name(selected);
                                         let methods = agent_auth::auth_methods(selected, &auth.cwd);
                                         let supports_oauth = methods.oauth;
                                         let supports_api_key = methods.api_key;
                                         let primary_var = agent_auth::key_label(selected);
-                                        let is_connected = auth.providers.iter().any(|p| p.id == *selected && p.ready);
+                                        let is_connected = catalog.data.providers.iter().any(|p| p.id == *selected && p.ready);
 
                                         view.child(
                                             div()
@@ -593,7 +596,7 @@ impl AppState {
                                                                 ),
                                                         ),
                                                 )
-                                                .when(auth.providers.iter().any(|p| p.id == *selected && p.custom), |panel| {
+                                                .when(catalog.data.providers.iter().any(|p| p.id == *selected && p.custom), |panel| {
                                                     let provider = selected.clone();
                                                     panel.child(div().id(("remove-custom-provider", pane_id))
                                                         .text_size(px(11.5)).text_color(tokens.block_failure)
@@ -766,9 +769,11 @@ impl AppState {
                                                     div()
                                                         .text_size(px(11.0))
                                                         .text_color(tokens.text_muted)
-                                                        .child(
-                                                            "Select a provider above, or enter an extension provider ID and press Enter.",
-                                                        ),
+                                                        .child(if auth.methods_discovery.is_some() {
+                                                            "Checking extension authentication methods…"
+                                                        } else {
+                                                            "Select a provider above, or enter an extension provider ID and press Enter."
+                                                        }),
                                                 ),
                                         )
                                     })

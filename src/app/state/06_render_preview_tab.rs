@@ -809,11 +809,6 @@ impl AppState {
         cx.notify();
     }
 
-    /// The model selected for all agent panes, if any.
-    fn effective_default_agent_model(&self) -> Option<&agent_auth::AgentModel> {
-        self.default_agent_model.as_ref()
-    }
-
     fn pane_ref(&self, pane_id: usize) -> Option<&TerminalPane> {
         let &(p_idx, s_idx, pane_idx) = self.pane_index.get(&pane_id)?;
         self.projects
