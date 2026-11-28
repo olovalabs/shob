@@ -902,6 +902,7 @@ impl AppState {
 
         // Workspace input must not steal focus from a transient modal.
         if self.active_view == ActiveView::Workspace
+            && !window.has_active_prompt()
             && !self.conversation_header_menu_focus.contains_focused(window, cx)
             && self.history_search.is_none()
             && self.bot_form.is_none()

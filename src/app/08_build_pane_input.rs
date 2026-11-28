@@ -872,6 +872,7 @@ fn run_gui() -> Result<()> {
                         });
                         handled
                     })));
+                    confirmation_prompt::install(app_state.downgrade(), cx);
                     cx.new(|cx| Root::new(app_state, window, cx))
                 },
             ) {

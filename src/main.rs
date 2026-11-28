@@ -67,6 +67,7 @@ mod browser_surface;
 mod chat_batch;
 mod cli;
 mod completion;
+mod confirmation_prompt;
 mod conversation_header;
 mod conversations;
 mod custom_bots;

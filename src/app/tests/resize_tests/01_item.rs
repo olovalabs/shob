@@ -244,6 +244,7 @@ pub(crate) fn open_app(cx: &mut TestAppContext) -> (VisualTestContext, Entity<Ap
                         state.ensure_sidebar_search(window, cx);
                         state.observe_appearance(window, cx);
                     });
+                    confirmation_prompt::install(state.downgrade(), cx);
                     cx.new(|cx| Root::new(state.clone(), window, cx))
                 },
             )

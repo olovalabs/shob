@@ -132,9 +132,13 @@ fn sidebar_thread_menu_exposes_delete_for_the_selected_thread() {
     cx.simulate_click(menu.center(), Modifiers::none());
     cx.draw_frame().unwrap();
     assert!(cx.debug_bounds("sidebar-thread-menu-popover").is_some());
-    assert!(cx.debug_bounds("session-close").is_some());
+    let delete = cx.debug_bounds("session-close").unwrap();
+    cx.simulate_click(delete.center(), Modifiers::none());
+    cx.draw_frame().unwrap();
+    assert!(cx.update(|window, _| window.has_active_prompt()));
     cx.simulate_keystrokes("escape");
     cx.draw_frame().unwrap();
+    assert!(!cx.update(|window, _| window.has_active_prompt()));
     cx.simulate_mouse_down(row.center(), MouseButton::Right, Modifiers::none());
     cx.simulate_mouse_up(row.center(), MouseButton::Right, Modifiers::none());
     cx.draw_frame().unwrap();
