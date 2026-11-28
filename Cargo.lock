@@ -2435,6 +2435,7 @@ version = "0.21.0"
 dependencies = [
  "agent",
  "ai",
+ "async-trait",
  "base64 0.22.1",
  "cli",
  "extensions",
@@ -2446,6 +2447,8 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "tokio",
+ "tokio-util",
+ "tools",
  "uuid",
 ]
 
@@ -8666,7 +8669,9 @@ version = "0.0.3"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
+ "async-process",
  "base64 0.22.1",
+ "base64-simd",
  "cli",
  "directories",
  "embedded",
@@ -8692,6 +8697,7 @@ dependencies = [
  "sha2 0.10.9",
  "smol",
  "sysinfo",
+ "tar",
  "tempfile",
  "terminal",
  "tokio",
@@ -8700,6 +8706,7 @@ dependencies = [
  "unicode-width 0.2.2",
  "url",
  "windows-sys 0.59.0",
+ "zstd",
 ]
 
 [[package]]
@@ -12164,6 +12171,34 @@ dependencies = [
  "crc32fast",
  "log",
  "simd-adler32",
+]
+
+[[package]]
+name = "zstd"
+version = "0.13.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b04655dc7bf4abd8ebe23dac6bef20fceea52a29ad19e37a4101b3951d7e8b45"
+dependencies = [
+ "zstd-safe",
+]
+
+[[package]]
+name = "zstd-safe"
+version = "7.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df2575690b2a3eccad509fe7898cdde32a5afca06a06449ff4dcfb318c7b7281"
+dependencies = [
+ "zstd-sys",
+]
+
+[[package]]
+name = "zstd-sys"
+version = "2.2.0+zstd.1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3f4089cda6dda4dc43c43dd9f8964140064fd2f752f3da46c3a483c3c175160"
+dependencies = [
+ "cc",
+ "pkg-config",
 ]
 
 [[package]]

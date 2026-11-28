@@ -41,6 +41,8 @@ impl AppState {
         static FIRST_RENDER: std::sync::Once = std::sync::Once::new();
         FIRST_RENDER.call_once(|| startup_mark("first root render started"));
         if !self.startup_loaded {
+            #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+            self.sync_browser_visibility(_window, cx);
             return div()
                 .id("startup-splash")
                 .size_full()
@@ -80,6 +82,10 @@ impl AppState {
                 self.close_sidebar_search(_window, cx);
                 self.reset_sidebar_motion();
             }
+            #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+            if let Some(id) = self.focused_browser_pane(_window, cx) {
+                self.focused_pane_id = Some(id);
+            }
             self.ensure_panes_input_state(_window, cx);
         }
 
@@ -109,6 +115,8 @@ impl AppState {
                 .and_then(|s| s.panes.first())
                 .map(|p| p.id);
         }
+        #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+        self.sync_browser_visibility(_window, cx);
 
         // Drain alerts here, where a window exists to take notifications and
         // sounds; the poller has none. A blocked transition while looking only
@@ -373,10 +381,7 @@ impl AppState {
                                                                 )
                                                             } else {
                                                                 panel.map(|tab| {
-                                                                    self.render_terminal_pane(
-                                                                        tab, false, _window, cx,
-                                                                    )
-                                                                    .into_any_element()
+                                                                    self.render_tool_panel_surface(tab, _window, cx)
                                                                 })
                                                             },
                                                         ),
@@ -743,6 +748,11 @@ impl AppState {
                     && !keystroke.modifiers.alt)
                     || (key == "insert" && keystroke.modifiers.shift);
                 if !is_paste {
+                    return;
+                }
+
+                #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+                if this.focused_browser_pane(window, cx).is_some() {
                     return;
                 }
 

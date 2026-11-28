@@ -396,21 +396,11 @@ impl AppState {
     /// The pane entity a top-level action (font size) applies to: the focused
     /// pane, or the first pane of the active session's screen.
     fn active_pane_terminal(&self) -> Option<Entity<TerminalView>> {
-        let focused_pane = self
+        let pane = self
             .focused_pane_id
-            .and_then(|focused| self.pane_index.get(&focused).copied())
-            .and_then(|(p_idx, s_idx, pane_idx)| {
-                self.projects
-                    .get(p_idx)
-                    .and_then(|p| p.sessions.get(s_idx))
-                    .and_then(|s| s.panes.get(pane_idx))
-            })
-            .map(|p| p.terminal.clone());
-        focused_pane.or_else(|| {
-            self.active_session()
-                .and_then(|s| s.panes.first())
-                .map(|p| p.terminal.clone())
-        })
+            .and_then(|id| self.pane_ref(id))
+            .or_else(|| self.active_session()?.panes.first())?;
+        (!pane.is_browser()).then(|| pane.terminal.clone())
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -446,6 +436,10 @@ impl AppState {
                 }
                 _ => {}
             }
+        }
+        #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+        if self.focused_browser_pane(window, cx).is_some() {
+            return;
         }
 
         if keystroke.modifiers.control && (keystroke.key == "+" || keystroke.key == "=") {

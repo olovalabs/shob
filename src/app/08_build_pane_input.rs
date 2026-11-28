@@ -376,6 +376,8 @@ fn run_gui() -> Result<()> {
                         git_worktree_creating: HashSet::new(),
                         palette: palette.clone(),
                         focused_pane_id: None,
+                        #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+                        visible_browser: None,
                         sidebar_visible: app_settings.sidebar.visible,
                         compact_sidebar_open: false,
                         sidebar_focus: cx.focus_handle(),

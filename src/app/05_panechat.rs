@@ -618,6 +618,40 @@ fn diff_counts(
     }
 }
 
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+enum ToolPanelBrowser {
+    Saved(workspace_state::SavedBrowser),
+    Mounted(MountedBrowser),
+}
+
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+struct MountedBrowser {
+    view: Entity<crate::browser_surface::BrowserSurface>,
+    focus: gpui::FocusHandle,
+    _subscription: gpui::Subscription,
+}
+
+impl TerminalPane {
+    fn is_browser(&self) -> bool {
+        #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            self.browser.is_some()
+        }
+        #[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+        {
+            false
+        }
+    }
+
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    fn mounted_browser(&self) -> Option<&MountedBrowser> {
+        match self.browser.as_ref()? {
+            ToolPanelBrowser::Saved(_) => None,
+            ToolPanelBrowser::Mounted(browser) => Some(browser),
+        }
+    }
+}
+
 /// One terminal inside a session's screen. A session (a sidebar tab) owns a
 /// split tree of panes; each pane is a full, independent terminal whose PTY
 /// keeps running while another session's screen is shown.
@@ -643,6 +677,8 @@ pub struct TerminalPane {
     files_surface: Option<(Entity<files_surface::FilesSurface>, gpui::Subscription)>,
     files_active: bool,
     files_restore: Option<files_surface::SavedFiles>,
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    browser: Option<ToolPanelBrowser>,
     /// Agent pane that owns this reusable preview. Preview panes reuse themselves.
     preview_owner: Option<usize>,
     one_mode: bool,
@@ -751,7 +787,12 @@ fn agent_slash_completions(value: &str) -> Vec<completion::CompletionItem> {
             vec![completion::CompletionItem {
                 value: "@browser".into(),
                 display: "@browser".into(),
-                detail: "Use agent-browser for this request".into(),
+                detail: if crate::browser_automation::SUPPORTED {
+                    "Use the Browser pane for this request"
+                } else {
+                    "Use agent-browser for this request"
+                }
+                .into(),
                 kind: completion::CompletionKind::Command,
                 is_dir: false,
             }]
@@ -824,6 +865,8 @@ impl TerminalPane {
             files_surface: None,
             files_active: false,
             files_restore: None,
+            #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+            browser: None,
             preview_owner: None,
             legacy_chat: false,
             one_mode: false,

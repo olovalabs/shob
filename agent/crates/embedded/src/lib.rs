@@ -29,16 +29,22 @@ use std::time::Duration;
 
 use agent::events::AgentEvent as ShobEvent;
 use agent::message::AgentMessage;
+pub use agent::tool_execution_scope::is_child_execution;
 pub use agent::{
     AfterToolCall, AfterToolCallResult, BeforeToolCall, BeforeToolCallContext,
     BeforeToolCallResult, TextContentOrImage,
 };
+pub use ai::types::ImageContent;
 use ai::types::{AssistantMessageEvent, StopReason};
 use cli::args::{Args, Mode};
 use cli::session::BuildError;
 use harness::agent_harness::AgentLane;
 use runtime::config::Credential;
 use runtime::{RuntimeConfig, RuntimeSettings, ValueSource};
+pub use tools::tools::external::ExternalToolDefinition;
+
+mod host_tools;
+pub use host_tools::HostTool;
 
 mod antigravity;
 pub const ANTIGRAVITY: &str = ai::providers::antigravity::ID;
@@ -977,6 +983,7 @@ pub struct SessionOptions {
     pub after_tool_call: Option<agent::AfterToolCall>,
     pub user_input: bool,
     pub subagents: bool,
+    pub host_tools: Vec<HostTool>,
 }
 
 impl SessionOptions {
@@ -995,6 +1002,7 @@ impl SessionOptions {
             after_tool_call: None,
             user_input: false,
             subagents: true,
+            host_tools: Vec::new(),
         }
     }
 
@@ -1413,6 +1421,7 @@ async fn run_session(
         after_tool_call,
         user_input,
         subagents,
+        host_tools,
     } = options;
     let trusted = project_trusted(&cwd);
     let started = std::time::Instant::now();
@@ -1508,6 +1517,12 @@ async fn run_session(
             return;
         }
     };
+    if !host_tools.is_empty() {
+        if let Err(error) = host_tools::install(&harness, host_tools).await {
+            send_fatal(&events, &wake, format!("Could not install host tools: {error}")).await;
+            return;
+        }
+    }
     let harness = Arc::new(harness);
     // Embedded disables extensions. Replace only the unused CLI observer;
     // per-run durable/settling wrappers still wrap this host emitter.
@@ -3228,6 +3243,7 @@ mod tests {
             after_tool_call: None,
             user_input: false,
             subagents: false,
+            host_tools: Vec::new(),
         })
         .expect("worker starts");
 

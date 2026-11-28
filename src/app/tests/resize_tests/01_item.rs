@@ -133,6 +133,8 @@ fn build_app_state(cx: &mut Context<AppState>) -> AppState {
         git_worktree_creating: HashSet::new(),
         palette,
         focused_pane_id: Some(1),
+        #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+        visible_browser: None,
         sidebar_visible: true,
         compact_sidebar_open: false,
         sidebar_focus: cx.focus_handle(),

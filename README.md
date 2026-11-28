@@ -82,9 +82,11 @@ Keep your development environment organized.
 - Restore previous workspaces
 - Preserve terminal scrollback and conversations
 
-An empty right panel in Agent mode opens a surface picker for Terminal, Files, and Diff. **+** opens the same picker from an existing tab. Terminal tabs take input directly at the shell prompt. Hiding the panel keeps its shells running; restarting Shob restores the tabs and their selection, not the shell processes.
+An empty right panel in Agent mode opens a surface picker for Terminal, Files, Diff, and Browser (Linux x86-64 and ARM64). **+** opens the same picker from an existing tab. Terminal tabs take input directly at the shell prompt. Hiding the panel keeps its shells running; restarting Shob restores the tabs and their selection, not the shell processes.
 
 The Files surface restores open files, unsaved drafts, expanded folders, and the commit message. Use Refresh to pick up external changes. Editing supports UTF-8 files up to 1 MiB and eight open tabs; saves refuse to overwrite a file changed on disk. Read-only diff snapshots and scroll positions are transient.
+
+The Browser address bar opens HTTP and HTTPS URLs directly, including local development servers, and sends keywords to Google Search. The first page downloads and verifies the OpenCode Rune Chromium engine (about 130 MB). Install `bubblewrap` and enable unprivileged user namespaces to run it: Shob isolates that engine from your home directory and desktop session because the upstream Linux bundle disables Chromium's own sandbox. The engine shares host networking for localhost access. Shob caps the browser render resolution at roughly 2 megapixels to limit frame memory and keep large panes responsive. Pages can appear softer in a very large pane. Tabs you open yourself and their site data restore from Shob's workspace and browser profile; back/forward history does not.
 
 ### Sidebar
 
@@ -205,7 +207,9 @@ shob integration doctor
 
 To use Shob's native AI chat, switch a terminal pane to **Agent** mode and run `/auth` to connect your model provider.
 
-Browser automation is optional. Open **Settings → Browser → Install browser** to download the verified `agent-browser` helper and set up Chrome for Testing, then use `@browser` in Agent chat. Installation needs an internet connection but no npm or administrator privileges. Removing the helper leaves the shared Chrome for Testing installation intact.
+On Linux x86-64 and ARM64, start an Agent chat request with `@browser`, for example `@browser Open http://localhost:3000 and check that the sign-in form renders`. The agent can open tabs in the right-hand Browser pane, inspect visible page content, take screenshots, click, type, and scroll. Browser actions follow the chat's approval mode. The agent can only use its own private tabs in the visible thread; it cannot access your browser tabs or saved sign-ins. Hiding the Browser pauses access, and interacting with an agent tab takes it over from the agent. Agent tabs are not restored after restarting Shob.
+
+On platforms without the Browser pane, **Settings → Browser → Install browser** offers the separate `agent-browser` helper where supported. It downloads Chrome for Testing; removing the helper leaves the shared Chrome installation intact.
 
 The first message in a native agent conversation triggers a short title request using the selected model. Shob updates the sidebar before streaming the reply, unless the thread was manually renamed. If the title request fails or times out, the reply still starts and Shob uses the prompt text as the generated title.
 

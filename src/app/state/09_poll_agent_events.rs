@@ -206,6 +206,9 @@ impl AppState {
                                 agent_bridge::AgentEvent::Done
                                 | agent_bridge::AgentEvent::Closed => {
                                     pane.chat.requests.clear();
+                                    if let Some(bridge) = &pane.chat.bridge {
+                                        bridge.set_browser_sender(None);
+                                    }
                                 }
                                 _ => {}
                             }
@@ -633,7 +636,8 @@ impl AppState {
     }
 
     fn submit_agent_prompt(&mut self, pane_id: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let browser_installed = self.browser_install.path().is_some();
+        let browser_available =
+            crate::browser_automation::SUPPORTED || self.browser_install.path().is_some();
 
         let Some(pane) = self.pane_ref(pane_id) else {
             return;
@@ -800,7 +804,7 @@ impl AppState {
             cx.notify();
             return;
         }
-        if !browser_installed && agent_bridge::has_browser_mention(trimmed) {
+        if !browser_available && agent_bridge::has_browser_mention(trimmed) {
             self.settings_section = SettingsSection::Browser;
             self.open_settings(window, cx);
             return;
