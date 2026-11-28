@@ -796,6 +796,28 @@ impl AppState {
         let Some(bridge) = pane.chat.bridge.as_ref() else {
             return;
         };
+        #[cfg(all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        ))]
+        let result = if agent_bridge::has_browser_mention(prompt) && !bridge.has_browser_sender() {
+            self.start_browser_access(pane_id, cx)
+                .map_err(str::to_string)
+                .and_then(|sender| {
+                    bridge.set_browser_sender(Some(sender));
+                    let result = bridge.steer(prompt, None);
+                    if result.is_err() {
+                        bridge.set_browser_sender(None);
+                    }
+                    result
+                })
+        } else {
+            bridge.steer(prompt, None)
+        };
+        #[cfg(not(all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )))]
         let result = bridge.steer(prompt, self.browser_install.path());
         let pane = self.pane_mut(pane_id).unwrap();
         match result {

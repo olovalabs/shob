@@ -47,7 +47,11 @@ impl SettingsSection {
             Self::Browser => (
                 "settings-nav-browser",
                 "Browser",
-                "Install optional browser support for @browser in Agent chat.",
+                if crate::browser_automation::SUPPORTED {
+                    "Use the Browser pane from Agent chat."
+                } else {
+                    "Install optional browser support for @browser in Agent chat."
+                },
                 "icons/monitor.svg",
             ),
             Self::Updates => (

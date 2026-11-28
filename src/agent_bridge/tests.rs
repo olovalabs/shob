@@ -23,24 +23,38 @@ fn automatic_approval_only_covers_existing_workspace_files() {
     std::fs::remove_dir_all(base).unwrap();
 }
 #[test]
-fn browser_mentions_require_installation_and_enrich_resumed_context() {
+fn browser_mentions_choose_native_or_installed_fallback_and_enrich_context() {
     let installed = std::path::Path::new("installed-agent-browser");
     for prompt in [
         "@browser open example.com",
         "Please use @browser, then summarize.",
     ] {
         assert_eq!(
-            super::browser_prompt(prompt, None).unwrap_err(),
+            super::browser_prompt(prompt, None, false).unwrap_err(),
             crate::browser::INSTALL_REQUIRED,
         );
         let (prepared, context) = super::prepare_prompt(
             prompt,
             Some(format!("Prior conversation\n{prompt}")),
             Some(installed),
+            false,
         )
         .unwrap();
         assert!(prepared.starts_with(prompt));
         assert!(prepared.contains("installed-agent-browser"));
+        assert_eq!(context.unwrap(), format!("Prior conversation\n{prepared}"));
+    }
+    for prompt in ["@browser open example.com", "  @browser\nInspect the page."] {
+        let (prepared, context) = super::prepare_prompt(
+            prompt,
+            Some(format!("Prior conversation\n{prompt}")),
+            None,
+            true,
+        )
+        .unwrap();
+        assert!(prepared.starts_with(prompt));
+        assert!(prepared.contains("preview_browser"));
+        assert!(!prepared.contains("Settings"));
         assert_eq!(context.unwrap(), format!("Prior conversation\n{prepared}"));
     }
     for prompt in [
@@ -49,7 +63,16 @@ fn browser_mentions_require_installation_and_enrich_resumed_context() {
         "@browser-extension",
         "@browser2",
     ] {
-        assert_eq!(super::browser_prompt(prompt, None).unwrap(), prompt);
+        for native in [true, false] {
+            assert_eq!(super::browser_prompt(prompt, None, native).unwrap(), prompt);
+        }
+    }
+    for prompt in [
+        "Open a page with @browser.",
+        "/project/path/@browser.png",
+        r#""/project/path/file @browser bar.png""#,
+    ] {
+        assert_eq!(super::browser_prompt(prompt, None, true).unwrap(), prompt);
     }
 }
 use super::*;

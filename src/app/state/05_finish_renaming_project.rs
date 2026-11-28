@@ -526,6 +526,219 @@ impl AppState {
         cx.notify();
     }
 
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    fn new_browser_pane(
+        id: usize,
+        owner: usize,
+        dir: PathBuf,
+        saved: workspace_state::SavedBrowser,
+        cx: &mut Context<Self>,
+    ) -> TerminalPane {
+        // Keep the pane tree's shape without creating a PTY or a shell input.
+        let terminal = cx.new(|cx| {
+            TerminalView::new(
+                std::io::sink(),
+                std::io::empty(),
+                TerminalConfig {
+                    cols: 2,
+                    rows: 2,
+                    scrollback: 0,
+                    read_only: true,
+                    ..TerminalConfig::default()
+                },
+                cx,
+            )
+        });
+        let mut pane = TerminalPane::new(
+            id,
+            status_bus::new_generation(),
+            terminal,
+            "browser".into(),
+            "Browser".into(),
+            None,
+        );
+        pane.cwd = Some(dir);
+        pane.tool_panel = true;
+        pane.preview_owner = Some(owner);
+        pane.browser = Some(ToolPanelBrowser::Saved(saved));
+        pane
+    }
+
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    fn open_tool_panel_browser(&mut self, owner: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = self.ensure_tool_panel_browser(owner, cx) {
+            self.select_tool_panel_tab(owner, id, window, cx);
+        }
+    }
+
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    fn ensure_tool_panel_browser(&mut self, owner: usize, cx: &mut Context<Self>) -> Option<usize> {
+        if self.tool_panel_owner(owner) != Some(owner) {
+            return None;
+        }
+        let existing = self
+            .tool_panel_panes(owner)
+            .find(|pane| pane.is_browser())
+            .map(|pane| pane.id);
+        if let Some(id) = existing {
+            return Some(id);
+        }
+        let (project, session, _) = self.pane_index[&owner];
+        let split_id = self.next_id;
+        let id = split_id + 1;
+        self.next_id += 2;
+        let pane = Self::new_browser_pane(
+            id,
+            owner,
+            self.projects[project].path.clone(),
+            workspace_state::SavedBrowser::default(),
+            cx,
+        );
+        let session = &mut self.projects[project].sessions[session];
+        session.panes.push(pane);
+        if let Some(tree) = &mut session.pane_tree {
+            tree.split(owner, id, split_id, gpui::Axis::Horizontal);
+        }
+        self.rebuild_session_index();
+        Some(id)
+    }
+
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    fn mount_browser<'a>(
+        pane: &'a mut TerminalPane,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<&'a MountedBrowser> {
+        if let ToolPanelBrowser::Saved(saved) = pane.browser.as_mut()? {
+            let saved = std::mem::take(saved);
+            let view = cx.new(|cx| crate::browser_surface::BrowserSurface::new(saved, window, cx));
+            let subscription =
+                cx.subscribe(&view, |this, _, _: &crate::browser_surface::Changed, cx| {
+                    this.schedule_workspace_save(cx);
+                });
+            pane.browser = Some(ToolPanelBrowser::Mounted(MountedBrowser {
+                view,
+                focus: cx.focus_handle(),
+                _subscription: subscription,
+            }));
+        }
+        pane.mounted_browser()
+    }
+
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    fn active_browser_pane(&self) -> Option<&TerminalPane> {
+        if !self.startup_loaded
+            || self.active_view != ActiveView::Workspace
+            || !self.settings.agent_layout
+        {
+            return None;
+        }
+        self.active_session()
+            .and_then(|session| self.one_mode_pane(session))
+            .and_then(|owner| self.active_tool_panel(owner))
+            .filter(|pane| pane.is_browser())
+    }
+
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    fn focused_browser_pane(&self, window: &Window, cx: &App) -> Option<usize> {
+        let pane = self.active_browser_pane()?;
+        pane.mounted_browser()?
+            .focus
+            .contains_focused(window, cx)
+            .then_some(pane.id)
+    }
+
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    fn sync_browser_visibility(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let pane = self.active_browser_pane();
+        let mounted_id = pane
+            .and_then(TerminalPane::mounted_browser)
+            .map(|browser| browser.view.entity_id());
+        if self.visible_browser.as_ref().map(|view| view.entity_id()) == mounted_id
+            && (mounted_id.is_some() || pane.is_none())
+        {
+            return;
+        }
+        let pane_id = pane.map(|pane| pane.id);
+        if let Some(view) = self.visible_browser.take().and_then(|view| view.upgrade()) {
+            view.update(cx, |view, cx| view.set_mounted(false, window, cx));
+        }
+        if let Some(id) = pane_id {
+            let focus_new = mounted_id.is_none() && self.focused_pane_id == Some(id);
+            if let Some(browser) = self
+                .pane_mut(id)
+                .and_then(|pane| Self::mount_browser(pane, window, cx))
+            {
+                browser.view.update(cx, |view, cx| {
+                    view.set_mounted(true, window, cx);
+                    if focus_new {
+                        view.focus_address(window, cx);
+                    }
+                });
+                self.visible_browser = Some(browser.view.downgrade());
+            }
+        }
+    }
+
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    fn browser_tool_target(
+        &mut self,
+        owner: usize,
+        generation: &str,
+        opened: &mut bool,
+        command: &crate::browser_automation::Command,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<Option<Entity<crate::browser_surface::BrowserSurface>>, &'static str> {
+        use crate::browser_automation::Command;
+
+        if !self.startup_loaded
+            || self.active_view != ActiveView::Workspace
+            || !self.settings.agent_layout
+            || self
+                .active_session()
+                .and_then(|session| self.one_mode_pane(session))
+                .is_none_or(|pane| {
+                    pane.id != owner
+                        || pane.generation != generation
+                        || !pane.chat.active
+                        || !pane.chat.running
+                        || pane.diff_preview.is_some()
+                        || pane.markdown_preview.is_some()
+                })
+        {
+            return Err("The requesting thread is not active. Return to it to use the Browser pane.");
+        }
+        let mut visible = self
+            .active_browser_pane()
+            .filter(|pane| pane.preview_owner == Some(owner))
+            .map(|pane| pane.id);
+        if visible.is_none() {
+            if matches!(command, Command::List) && !*opened {
+                return Ok(None);
+            }
+            if *opened || !matches!(command, Command::Open { .. }) {
+                return Err("The Browser pane is hidden. Show it before using browser tools.");
+            }
+            let id = self
+                .ensure_tool_panel_browser(owner, cx)
+                .ok_or("This thread cannot open a Browser pane.")?;
+            self.show_tool_panel_tab(owner, id);
+            self.schedule_workspace_save(cx);
+            cx.notify();
+            visible = Some(id);
+        }
+        self.sync_browser_visibility(window, cx);
+        let view = visible
+            .and_then(|id| self.pane_ref(id))
+            .and_then(TerminalPane::mounted_browser)
+            .ok_or("The Browser pane could not be shown.")?
+            .view
+            .clone();
+        *opened = true;
+        Ok(Some(view))
+    }
+
     fn tool_panel_owner(&self, source: usize) -> Option<usize> {
         if !self.settings.agent_layout {
             return None;
@@ -586,13 +799,7 @@ impl AppState {
         Some(id)
     }
 
-    fn select_tool_panel_tab(
-        &mut self,
-        owner: usize,
-        id: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn show_tool_panel_tab(&mut self, owner: usize, id: usize) {
         let position = self.tool_panel_panes(owner).position(|pane| pane.id == id);
         let legacy_ratio = self
             .tool_panel_panes(owner)
@@ -609,6 +816,16 @@ impl AppState {
                     .scroll_to_item(position);
             }
         }
+    }
+
+    fn select_tool_panel_tab(
+        &mut self,
+        owner: usize,
+        id: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_tool_panel_tab(owner, id);
         self.focus_pane(id, window, cx);
         if let Some(view) = self
             .pane_ref(id)

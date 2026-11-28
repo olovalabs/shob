@@ -641,7 +641,7 @@ fn tool_title(name: &str) -> String {
         "question" | "ask" | "questions" => "Questions".into(),
         "skill" => "Skill".into(),
         "todowrite" | "todo_write" | "todos" => "Todos".into(),
-        "browser" => "Browser".into(),
+        "browser" | "preview_browser" => "Browser".into(),
         "batch" => "Batch".into(),
         _ => title_case(name),
     }

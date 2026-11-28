@@ -122,7 +122,7 @@ impl AppState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(pane) = self.pane_mut(pane_id) else {
+        let Some(pane) = self.pane_mut(pane_id).filter(|pane| !pane.is_browser()) else {
             return false;
         };
         if !attachments::push_unique(&mut pane.attachments, attachment) {

@@ -5,6 +5,7 @@
 //! a credentialed machine, without changing the UI or the event contract.
 
 use crate::agent_interaction::{self, Field, Kind, Request, Response};
+use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -14,8 +15,15 @@ use std::thread;
 use embedded::EventQueue;
 use serde_json::{Value, json};
 
-use super::{AgentEvent, coalesce_events, decode_message_update, decode_tool_event};
+use super::{
+    AgentEvent, BROWSER_TURN_REQUIRED, browser_grant, coalesce_events, decode_message_update,
+    decode_tool_event, signal_wake,
+};
 use crate::agent_writer::AgentWriter;
+use crate::browser_automation::{self, Reply, Turn};
+
+const CONFIGURE_BROWSER: &str = "shob-configure-browser";
+const MAX_BROWSER_REQUESTS: usize = 8;
 
 /// Pipe writes wait for startup on the stdin worker, never on the UI thread.
 struct DeferredStdin {
@@ -69,6 +77,7 @@ pub(crate) struct RpcAgentBridge {
     binary: Option<PathBuf>,
     session_id: Arc<Mutex<Option<String>>>,
     model: Arc<Mutex<Option<String>>>,
+    browser: Turn,
 }
 
 impl RpcAgentBridge {
@@ -77,12 +86,21 @@ impl RpcAgentBridge {
         session: Option<&str>,
         model: Option<&str>,
         trace_id: u64,
+        browser: Turn,
     ) -> Result<Self, String> {
         #[cfg(not(test))]
         let binary: Option<PathBuf> = None;
         #[cfg(test)]
         let binary = std::env::var_os("SHOB_BENCH_CLI").map(PathBuf::from);
-        Self::spawn_session_with(binary.as_deref(), cwd, session, model, trace_id, None)
+        Self::spawn_session_with(
+            binary.as_deref(),
+            cwd,
+            session,
+            model,
+            trace_id,
+            None,
+            browser,
+        )
     }
 
     pub(crate) fn poll_requests(&self) -> Vec<Request> {
@@ -108,6 +126,7 @@ impl RpcAgentBridge {
         model: Option<&str>,
         trace_id: u64,
         after_cleanup: Option<Arc<Cleanup>>,
+        browser: Turn,
     ) -> Result<Self, String> {
         let events = Arc::new(EventQueue::default());
         let (request_tx, requests) = smol::channel::bounded(16);
@@ -123,6 +142,13 @@ impl RpcAgentBridge {
             },
         );
         writer.send_json(json!({"type":"get_state","id":"shob-session"}))?;
+        if browser_automation::SUPPORTED {
+            writer.send_json(json!({
+                "type": "configure_external_tools",
+                "id": CONFIGURE_BROWSER,
+                "tools": [browser_automation::tool_definition()],
+            }))?;
+        }
         let session_id = Arc::new(Mutex::new(session.map(str::to_owned)));
         let model_id = Arc::new(Mutex::new(model.map(str::to_owned)));
         let (stop, stopped) = mpsc::channel();
@@ -137,6 +163,7 @@ impl RpcAgentBridge {
         let worker_model = Arc::clone(&model_id);
         let reader_stop = stop.clone();
         let worker_cwd = cwd.to_path_buf();
+        let worker_browser = browser.clone();
         let worker = move || {
             let _cleaned = CleanupSignal(cleaned);
             if let Some(predecessor) = after_cleanup {
@@ -227,7 +254,12 @@ impl RpcAgentBridge {
             let reader_events = Arc::clone(&worker_events);
             let reply_writer = worker_writer.clone();
             let reader = thread::spawn(move || {
-                let mut active_dialogs = std::collections::HashMap::new();
+                let mut active_dialogs = HashMap::new();
+                let mut browser_requests = BrowserRequests {
+                    registered: false,
+                    turn: worker_browser,
+                    pending: HashMap::new(),
+                };
                 let mut reader = BufReader::new(stdout);
                 let mut line = String::new();
                 let started = std::time::Instant::now();
@@ -272,6 +304,13 @@ impl RpcAgentBridge {
                                 Some(format!("{provider}/{model}"));
                         }
                     }
+                    if record["type"] == "response" && record["id"] == CONFIGURE_BROWSER {
+                        browser_requests.registered =
+                            browser_automation::SUPPORTED && record["success"] == true;
+                    }
+                    if record["type"] == "agent_settled" {
+                        browser_requests.pending.clear();
+                    }
                     if record["type"] == "ui_dialog_request" {
                         if let Some((id, close)) =
                             handle_native_dialog(&record, &reply_writer, &request_tx)
@@ -284,6 +323,12 @@ impl RpcAgentBridge {
                         {
                             close.close();
                             super::signal_wake();
+                        }
+                    } else if record["type"] == "external_tool_request" {
+                        browser_requests.start(record, &reply_writer, &request_tx);
+                    } else if record["type"] == "external_tool_request_closed" {
+                        if let Some(id) = record["requestId"].as_str() {
+                            browser_requests.pending.remove(id);
                         }
                     } else if record["type"] == "extension_ui_request" {
                         handle_extension_ui(&record, &reply_writer, &reader_events, &request_tx);
@@ -319,6 +364,7 @@ impl RpcAgentBridge {
                 for (_, pending) in active_dialogs {
                     pending.close();
                 }
+                drop(browser_requests);
                 reply_writer.close();
                 let _ = reader_stop.send(());
                 failure
@@ -364,6 +410,7 @@ impl RpcAgentBridge {
             binary: binary.map(Path::to_path_buf),
             session_id,
             model: model_id,
+            browser,
         })
     }
 
@@ -385,6 +432,7 @@ impl RpcAgentBridge {
             Some(&model),
             self.trace_id,
             predecessor,
+            self.browser.clone(),
         )?;
         *self = replacement;
         Ok(())
@@ -451,6 +499,113 @@ fn emit(events: &EventQueue<AgentEvent>, event: AgentEvent) -> bool {
         super::signal_wake();
     }
     sent
+}
+
+struct BrowserRequests {
+    registered: bool,
+    turn: Turn,
+    pending: HashMap<String, smol::channel::Sender<()>>,
+}
+
+impl BrowserRequests {
+    fn start(
+        &mut self,
+        mut record: Value,
+        writer: &AgentWriter,
+        requests: &smol::channel::Sender<Request>,
+    ) {
+        let Value::String(id) = record["requestId"].take() else {
+            return;
+        };
+        if id.is_empty() || id.len() > 128 || self.pending.contains_key(&id) {
+            return;
+        }
+        let reject = |error: &str| send_browser_response(writer, &id, Err(error.to_owned()));
+        if !self.registered || record["toolName"] != browser_automation::TOOL {
+            return reject("Unknown external tool.");
+        }
+        let sender = browser_grant(&self.turn)
+            .as_ref()
+            .filter(|sender| !sender.is_closed())
+            .cloned();
+        let Some(sender) = sender else {
+            return reject(BROWSER_TURN_REQUIRED);
+        };
+        if self.pending.len() == MAX_BROWSER_REQUESTS {
+            return reject("Too many pending browser requests.");
+        }
+
+        let (cancel, cancelled) = smol::channel::bounded(1);
+        self.pending.insert(id.clone(), cancel);
+        let args = record["arguments"].take();
+        let writer = writer.clone();
+        let requests = requests.clone();
+        // Capture this turn's sender. An old approval must never reach a newer turn.
+        let turn = Arc::new(Mutex::new(Some(sender.clone())));
+        smol::spawn(async move {
+            let operation = async {
+                if cancelled.is_closed() || writer.is_closed() {
+                    return None;
+                }
+                if !browser_automation::read_only(&args) {
+                    let (mut request, reply) = agent_interaction::request(
+                        format!("Allow {}?", browser_automation::TOOL),
+                        Some(serde_json::to_string_pretty(&args).unwrap_or_default()),
+                        Vec::new(),
+                        true,
+                    );
+                    request.allow_session = false;
+                    if requests.try_send(request).is_err() {
+                        return Some(Err("The composer cannot accept more input requests.".into()));
+                    }
+                    signal_wake();
+                    if !matches!(reply.recv().await, Ok(Response::AllowOnce)) {
+                        return Some(Err("The user dismissed or denied the request.".into()));
+                    }
+                }
+                if cancelled.is_closed() || writer.is_closed() {
+                    return None;
+                }
+                Some(browser_automation::execute(&turn, args).await)
+            };
+            let result = smol::future::or(
+                async {
+                    let _ = cancelled.recv().await;
+                    None
+                },
+                smol::future::or(
+                    async {
+                        sender.closed().await;
+                        Some(Err(BROWSER_TURN_REQUIRED.into()))
+                    },
+                    operation,
+                ),
+            )
+            .await;
+            if let Some(result) = result
+                && !cancelled.is_closed()
+            {
+                send_browser_response(&writer, &id, result);
+            }
+            signal_wake();
+        })
+        .detach();
+    }
+}
+
+fn send_browser_response(writer: &AgentWriter, id: &str, result: Result<Reply, String>) {
+    let response = match result {
+        Ok(reply) => {
+            let mut content = Vec::with_capacity(1 + usize::from(reply.jpeg.is_some()));
+            content.push(json!({"type": "text", "text": reply.text}));
+            if let Some(data) = reply.jpeg {
+                content.push(json!({"type": "image", "mimeType": "image/jpeg", "data": data}));
+            }
+            json!({"type": "external_tool_response", "requestId": id, "result": {"content": content}})
+        }
+        Err(error) => json!({"type": "external_tool_response", "requestId": id, "error": error}),
+    };
+    let _ = writer.send_json(response);
 }
 
 fn handle_native_dialog(
@@ -713,6 +868,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn browser_rpc_closed_request_cancels_pending_mutation_approval() {
+        let (sender, calls) = browser_automation::channel();
+        let (request_tx, requests) = smol::channel::bounded(1);
+        let writer = AgentWriter::spawn(io::sink(), |_| {});
+        let mut browser = BrowserRequests {
+            registered: true,
+            turn: Arc::new(Mutex::new(Some(sender))),
+            pending: HashMap::new(),
+        };
+        browser.start(
+            json!({
+                "type": "external_tool_request",
+                "requestId": "request-1",
+                "toolName": browser_automation::TOOL,
+                "arguments": {"action": "open", "url": "https://example.test/"},
+            }),
+            &writer,
+            &request_tx,
+        );
+        let request = requests.recv_blocking().unwrap();
+        assert!(request.approval);
+        assert!(!request.allow_session);
+        assert!(calls.is_empty());
+        assert!(browser.pending.remove("request-1").is_some());
+        smol::block_on(request.reply.closed());
+        assert!(request.reply.try_send(Response::AllowOnce).is_err());
+        assert!(calls.is_empty());
+        writer.shutdown();
+    }
+
+    #[test]
     fn usage_finalized_rpc_message_includes_failed_request_tokens() {
         let events = decode_event(&json!({
             "type": "message_end",
@@ -763,8 +949,16 @@ mod tests {
         .unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-        let mut bridge =
-            RpcAgentBridge::spawn_session_with(Some(&script), &dir, None, None, 1, None).unwrap();
+        let mut bridge = RpcAgentBridge::spawn_session_with(
+            Some(&script),
+            &dir,
+            None,
+            None,
+            1,
+            None,
+            Turn::default(),
+        )
+        .unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
         while std::fs::read_to_string(dir.join("descendant"))
             .ok()
@@ -848,6 +1042,7 @@ mod tests {
             None,
             2,
             None,
+            Turn::default(),
         )
         .unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);

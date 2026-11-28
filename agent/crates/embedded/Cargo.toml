@@ -18,9 +18,12 @@ tempfile = { workspace = true }
 uuid = { workspace = true }
 agent = { workspace = true }
 ai = { workspace = true }
+async-trait = { workspace = true }
 cli = { path = "../cli" }
 extensions = { workspace = true }
 harness = { workspace = true }
 runtime = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
+tools = { workspace = true }

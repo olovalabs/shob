@@ -106,6 +106,14 @@ impl AppState {
                                             saved
                                         })
                                         .or_else(|| pane.files_restore.clone()),
+                                    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+                                    browser: pane.browser.as_ref().map(|browser| match browser {
+                                        ToolPanelBrowser::Saved(saved) => saved.clone(),
+                                        ToolPanelBrowser::Mounted(browser) => {
+                                            browser.view.read(cx).snapshot()
+                                        }
+                                    }),
+                                    #[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
                                     browser: None,
                                     chat: workspace_state::SavedChat {
                                         fast_mode: pane.chat.fast_mode,
@@ -243,6 +251,9 @@ impl AppState {
     }
 
     fn pane_scrollback(&self, pane: &TerminalPane, cx: &App) -> Option<String> {
+        if pane.is_browser() {
+            return None;
+        }
         let terminal = pane.terminal.read(cx);
         if terminal.is_alt_screen() {
             return None;
@@ -384,6 +395,17 @@ impl AppState {
                         .clone()
                         .filter(|cwd| cwd.is_dir())
                         .unwrap_or_else(|| project_path.clone());
+                    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+                    if let Some(owner) = saved_pane.tool_panel_owner
+                        && let Some(browser) = saved_pane.browser
+                    {
+                        let mut pane = Self::new_browser_pane(saved_pane.id, owner, dir, browser, cx);
+                        if !saved_pane.uid.is_empty() {
+                            pane.uid = saved_pane.uid;
+                        }
+                        panes.push(pane);
+                        continue;
+                    }
                     let scrollback = if self.settings.restore.scrollback {
                         scrollbacks.remove(&saved_pane.uid)
                     } else {

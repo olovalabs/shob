@@ -1323,6 +1323,7 @@ version = "0.21.0"
 dependencies = [
  "agent",
  "ai",
+ "async-trait",
  "base64 0.22.1",
  "cli",
  "extensions",
@@ -1334,6 +1335,8 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "tokio",
+ "tokio-util",
+ "tools",
  "uuid",
 ]
 

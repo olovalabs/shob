@@ -221,6 +221,7 @@ impl AppState {
         use BrowserInstallState::*;
         use gpui_component::button::ButtonVariants as _;
         let tokens = self.tokens(cx);
+        let native = crate::browser_automation::SUPPORTED;
         let message: SharedString = match &self.browser_install {
             Checking => "Checking for browser support…".into(),
             Unsupported => "Browser installation is unavailable on this platform.".into(),
@@ -228,6 +229,7 @@ impl AppState {
                 "Not installed. Setup downloads agent-browser and Chrome for Testing.".into()
             }
             Installing => "Downloading and installing browser support…".into(),
+            Installed(_, None) if native => "The old agent-browser helper is no longer needed.".into(),
             Installed(_, None) => format!(
                 "Installed · agent-browser {}. Use @browser in Agent chat.",
                 browser::VERSION
@@ -241,14 +243,24 @@ impl AppState {
             .flex()
             .flex_col()
             .gap(px(12.0))
-            .child(
-                div()
-                    .text_size(px(13.0))
-                    .text_color(tokens.text_secondary)
-                    .child(message),
-            )
+            .when(native, |page| {
+                page.child(
+                    div()
+                        .text_size(px(13.0))
+                        .text_color(tokens.text_secondary)
+                        .child("Start an Agent chat request with @browser to control a private tab in the right-hand Browser pane. The browser engine downloads on first use."),
+                )
+            })
+            .when(!native || matches!(self.browser_install, Installed(..) | Removing), |page| {
+                page.child(
+                    div()
+                        .text_size(px(13.0))
+                        .text_color(tokens.text_secondary)
+                        .child(message),
+                )
+            })
             .when(
-                matches!(self.browser_install, NotInstalled | Failed(_)),
+                !native && matches!(self.browser_install, NotInstalled | Failed(_)),
                 |page| {
                     page.child(
                         div()

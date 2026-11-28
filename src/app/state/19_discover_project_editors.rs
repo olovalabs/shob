@@ -651,6 +651,26 @@ impl AppState {
         )
     }
 
+    fn tool_panel_icon(path: Option<&'static str>, size: Pixels, color: Hsla) -> AnyElement {
+        if let Some(path) = path {
+            svg()
+                .path(path)
+                .size(size)
+                .text_color(color)
+                .flex_shrink_0()
+                .into_any_element()
+        } else {
+            div()
+                .flex_shrink_0()
+                .child(
+                    gpui_component::Icon::new(gpui_component::IconName::Globe)
+                        .size(size)
+                        .text_color(color),
+                )
+                .into_any_element()
+        }
+    }
+
     fn render_tool_panel_chooser(
         &self,
         owner: usize,
@@ -662,7 +682,7 @@ impl AppState {
             (
                 "tool-panel-choose-terminal",
                 "Terminal",
-                "icons/terminal.svg",
+                Some("icons/terminal.svg"),
                 "T",
                 Self::new_tool_panel_terminal
                     as fn(&mut Self, usize, &mut Window, &mut Context<Self>),
@@ -670,16 +690,24 @@ impl AppState {
             (
                 "tool-panel-choose-files",
                 "Files",
-                "ui_icons/file.svg",
+                Some("ui_icons/file.svg"),
                 "F",
                 Self::open_files_surface,
             ),
             (
                 "tool-panel-choose-diff",
                 "Diff",
-                "icons/git-branch.svg",
+                Some("icons/git-branch.svg"),
                 "D",
                 Self::open_project_diff,
+            ),
+            #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+            (
+                "tool-panel-choose-browser",
+                "Browser",
+                None,
+                "B",
+                Self::open_tool_panel_browser,
             ),
         ];
         let click_focus = focus.clone();
@@ -730,13 +758,7 @@ impl AppState {
                             .gap(px(10.0))
                             .cursor_pointer()
                             .hover(|row| row.bg(tokens.card_hover))
-                            .child(
-                                svg()
-                                    .path(icon)
-                                    .size(px(14.0))
-                                    .text_color(tokens.text_secondary)
-                                    .flex_shrink_0(),
-                            )
+                            .child(Self::tool_panel_icon(icon, px(14.0), tokens.text_secondary))
                             .child(div().flex_1().min_w_0().truncate().child(label))
                             .child(
                                 div()
@@ -784,13 +806,16 @@ impl AppState {
             .children(self.tool_panel_panes(owner_id).map(|pane| {
                 let id = pane.id;
                 let selected = Some(id) == active;
-                let icon = if pane.files_active
+                let browser = pane.is_browser();
+                let icon = if browser {
+                    None
+                } else if pane.files_active
                     || pane.diff_preview.is_some()
                     || pane.markdown_preview.is_some()
                 {
-                    "ui_icons/file.svg"
+                    Some("ui_icons/file.svg")
                 } else {
-                    "icons/terminal.svg"
+                    Some("icons/terminal.svg")
                 };
                 let foreground = if selected {
                     tokens.text_primary
@@ -799,6 +824,9 @@ impl AppState {
                 };
                 div()
                     .id(("tool-panel-tab", id))
+                    .when(browser, |tab| {
+                        tab.debug_selector(|| "tool-panel-browser-tab".into())
+                    })
                     .h(px(24.0))
                     .max_w(px(168.0))
                     .min_w(px(64.0))
@@ -813,13 +841,7 @@ impl AppState {
                     .text_color(foreground)
                     .when(selected, |tab| tab.bg(tokens.card_hover))
                     .hover(|tab| tab.bg(tokens.card_hover))
-                    .child(
-                        svg()
-                            .path(icon)
-                            .size(px(13.0))
-                            .text_color(foreground)
-                            .flex_shrink_0(),
-                    )
+                    .child(Self::tool_panel_icon(icon, px(13.0), foreground))
                     .child(div().min_w_0().truncate().child(pane.display_title.clone()))
                     .child(
                         sidebar_icon_button(
@@ -886,5 +908,25 @@ impl AppState {
                     gpui_component::tooltip::Tooltip::new("Hide right panel").build(window, cx)
                 }),
             )
+    }
+
+    fn render_tool_panel_surface(
+        &self,
+        pane: &TerminalPane,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+        if let Some(browser) = pane.mounted_browser() {
+            return div()
+                .id(("tool-panel-browser", pane.id))
+                .debug_selector(|| "tool-panel-browser".into())
+                .track_focus(&browser.focus)
+                .size_full()
+                .child(browser.view.clone())
+                .into_any_element();
+        }
+        self.render_terminal_pane(pane, false, window, cx)
+            .into_any_element()
     }
 }

@@ -164,7 +164,10 @@ fn tool_panel_switches_tabs_without_replacing_terminals() {
     click(&mut cx, "open-tool-panel");
     cx.draw_frame().unwrap();
     assert!(cx.debug_bounds("tool-panel-chooser").is_some());
-    assert!(cx.debug_bounds("tool-panel-choose-browser").is_none());
+    assert_eq!(
+        cx.debug_bounds("tool-panel-choose-browser").is_some(),
+        cfg!(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))
+    );
     app_state.read_with(&cx, |state, _| {
         assert_eq!(state.active_session().unwrap().panes.len(), 2)
     });
@@ -186,10 +189,53 @@ fn tool_panel_switches_tabs_without_replacing_terminals() {
         assert!(!visible.contains(&first));
         assert!(visible.contains(&second));
     });
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    let browser = {
+        click(&mut cx, "add-tool-panel-surface");
+        cx.draw_frame().unwrap();
+        cx.simulate_keystrokes("b");
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("tool-panel-browser").is_some());
+        assert!(cx.debug_bounds("tool-panel-browser-tab").is_some());
+        let id = cx.update_window_entity(&app_state, |state, window, cx| {
+            let id = state.focused_pane_id.unwrap();
+            assert_eq!(state.focused_browser_pane(window, cx), Some(id));
+            let pane = state.pane_ref(id).unwrap();
+            assert_eq!(pane.display_title.as_ref(), "Browser");
+            assert!(pane.pid.is_none());
+            assert!(pane.terminal_subscription.is_none());
+            assert!(pane.input_state.is_none());
+            assert!(state.visible_browser.is_some());
+            id
+        });
+        cx.update_window_entity(&app_state, |state, window, cx| state.open_settings(window, cx));
+        cx.draw_frame().unwrap();
+        app_state.read_with(&cx, |state, _| assert!(state.visible_browser.is_none()));
+        cx.update_window_entity(&app_state, |state, window, cx| state.close_settings(window, cx));
+        cx.draw_frame().unwrap();
+        app_state.read_with(&cx, |state, _| assert!(state.visible_browser.is_some()));
+        click(&mut cx, "hide-tool-panel");
+        cx.draw_frame().unwrap();
+        assert!(cx.debug_bounds("tool-panel-browser").is_none());
+        app_state.read_with(&cx, |state, _| assert!(state.visible_browser.is_none()));
+        click(&mut cx, "open-tool-panel");
+        click(&mut cx, "add-tool-panel-surface");
+        click(&mut cx, "tool-panel-choose-browser");
+        app_state.read_with(&cx, |state, _| {
+            assert_eq!(state.focused_pane_id, Some(id));
+            assert_eq!(
+                state.tool_panel_panes(owner).filter(|pane| pane.is_browser()).count(),
+                1,
+            );
+        });
+        id
+    };
     click(&mut cx, "add-tool-panel-surface");
     click(&mut cx, "tool-panel-choose-files");
     cx.draw_frame().unwrap();
     assert!(cx.debug_bounds("files-workspace").is_some());
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    app_state.read_with(&cx, |state, _| assert!(state.visible_browser.is_none()));
     let files = app_state.read_with(&cx, |state, _| state.focused_pane_id.unwrap());
     click(&mut cx, "hide-tool-panel");
     cx.draw_frame().unwrap();
@@ -212,16 +258,42 @@ fn tool_panel_switches_tabs_without_replacing_terminals() {
         }
         serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap()
     });
-    let legacy_browser = workspace.projects[0].sessions[0]
-        .panes
-        .iter_mut()
-        .find(|pane| pane.id == second)
-        .unwrap();
-    legacy_browser.browser = Some(workspace_state::SavedBrowser {
-        tabs: vec!["https://example.com".into()],
-        active: 0,
-    });
-    legacy_browser.display_title = "Browser".into();
+    let expected = workspace_state::SavedBrowser {
+        tabs: vec!["https://example.com".into(), "https://example.org".into()],
+        active: 1,
+    };
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    let browser_pane = {
+        let saved_browser = workspace.projects[0].sessions[0]
+            .panes
+            .iter_mut()
+            .find(|pane| pane.id == browser)
+            .unwrap();
+        assert_eq!(saved_browser.tool_panel_owner, Some(owner));
+        assert_eq!(saved_browser.display_title, "Browser");
+        assert!(
+            saved_browser
+                .browser
+                .as_ref()
+                .unwrap()
+                .tabs
+                .iter()
+                .all(String::is_empty)
+        );
+        saved_browser.browser = Some(expected.clone());
+        browser
+    };
+    #[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+    let browser_pane = {
+        let legacy_browser = workspace.projects[0].sessions[0]
+            .panes
+            .iter_mut()
+            .find(|pane| pane.id == second)
+            .unwrap();
+        legacy_browser.browser = Some(expected);
+        legacy_browser.display_title = "Browser".into();
+        second
+    };
     cx.update_window_entity(&app_state, |state, window, cx| {
         state.startup_loaded = false;
         state.settings.restore.agent_history = false;
@@ -235,26 +307,47 @@ fn tool_panel_switches_tabs_without_replacing_terminals() {
             cx,
         );
         state.ensure_panes_input_state(window, cx);
-        assert_eq!(
-            state.pane_ref(second).unwrap().display_title.as_ref(),
-            "Terminal"
-        );
+        let pane = state.pane_ref(browser_pane).unwrap();
         let saved = state.saved_workspace(cx);
-        assert!(
-            saved.projects[0].sessions[0]
-                .panes
-                .iter()
-                .find(|pane| pane.id == second)
-                .unwrap()
-                .browser
-                .is_none()
-        );
+        let saved_browser = &saved.projects[0].sessions[0]
+            .panes
+            .iter()
+            .find(|pane| pane.id == browser_pane)
+            .unwrap()
+            .browser;
+        #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            assert_eq!(pane.display_title.as_ref(), "Browser");
+            assert!(pane.input_state.is_none());
+            assert!(pane.terminal_subscription.is_none());
+            assert!(matches!(
+                pane.browser.as_ref(),
+                Some(ToolPanelBrowser::Saved(_))
+            ));
+            assert_eq!(saved_browser.as_ref(), Some(&expected));
+        }
+        #[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+        {
+            assert_eq!(pane.display_title.as_ref(), "Terminal");
+            assert!(saved_browser.is_none());
+        }
     });
     cx.draw_frame().unwrap();
     assert!(cx.debug_bounds("tool-panel-tabs").is_none());
     click(&mut cx, "open-tool-panel");
     cx.draw_frame().unwrap();
     assert!(cx.debug_bounds("files-workspace").is_some());
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    app_state.read_with(&cx, |state, _| {
+        assert!(state.visible_browser.is_none());
+        assert!(state.pane_ref(browser).unwrap().mounted_browser().is_none());
+    });
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    cx.update_window_entity(&app_state, |state, window, cx| {
+        let pane = state.pane_mut(browser).unwrap();
+        let browser = AppState::mount_browser(pane, window, cx).unwrap();
+        assert_eq!(browser.view.read(cx).snapshot(), expected);
+    });
     cx.update_window_entity(&app_state, |state, window, cx| {
         state.select_tool_panel_tab(owner, second, window, cx);
         state.open_project_diff(second, window, cx);
@@ -266,6 +359,12 @@ fn tool_panel_switches_tabs_without_replacing_terminals() {
         assert_eq!(state.focused_pane_id, Some(second));
         state.close_pane(second, window, cx);
         assert_eq!(state.focused_pane_id, Some(first));
+        #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            state.close_pane(browser, window, cx);
+            assert!(state.pane_ref(browser).is_none());
+            assert_eq!(state.focused_pane_id, Some(first));
+        }
         state.switch_agent_layout(window, cx);
         state.focus_pane(first, window, cx);
         assert_eq!(state.focused_pane_id, Some(1));

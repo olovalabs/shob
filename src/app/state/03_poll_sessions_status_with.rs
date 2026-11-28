@@ -37,6 +37,9 @@ impl AppState {
                 let mut primary_fg: Arc<[String]> = status::empty_foreground_names();
 
                 for (pane_idx, pane) in session.panes.iter_mut().enumerate() {
+                    if pane.is_browser() {
+                        continue;
+                    }
                     panes_polled += 1;
                     let focused = focused_id == Some(pane.id);
                     // Reuse the same immutable foreground snapshot for status,

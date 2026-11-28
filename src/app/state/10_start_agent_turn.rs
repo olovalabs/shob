@@ -1,4 +1,72 @@
 impl AppState {
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    fn start_browser_access(
+        &self,
+        pane_id: usize,
+        cx: &mut Context<Self>,
+    ) -> Result<smol::channel::Sender<crate::browser_automation::Call>, &'static str> {
+        use crate::browser_automation::{self, Reply};
+
+        let generation = self
+            .pane_ref(pane_id)
+            .ok_or("This thread is no longer available.")?
+            .generation
+            .clone();
+        let window = cx
+            .windows()
+            .into_iter()
+            .next()
+            .ok_or("No Shob window is available for browser tools.")?;
+        let (sender, receiver) = browser_automation::channel();
+        let mut opened = self
+            .active_browser_pane()
+            .is_some_and(|pane| pane.preview_owner == Some(pane_id));
+        cx.spawn(async move |app, cx| {
+            while let Ok(call) = receiver.recv().await {
+                if receiver.is_closed() {
+                    break;
+                }
+                if call.reply.is_closed() {
+                    continue;
+                }
+                let reply = call.reply.clone();
+                let updated = window.update(cx, |_, window, cx| {
+                    app.update(cx, |app, cx| {
+                        match app.browser_tool_target(
+                            pane_id,
+                            &generation,
+                            &mut opened,
+                            &call.command,
+                            window,
+                            cx,
+                        ) {
+                            Ok(Some(view)) => view.update(cx, |view, cx| {
+                                if !receiver.is_closed() && !call.reply.is_closed() {
+                                    view.run_browser_tool(call, window, cx);
+                                }
+                            }),
+                            Ok(None) => {
+                                let _ = call.reply.try_send(Ok(Reply {
+                                    text: "No visible agent browser pages. Use open with an HTTP or HTTPS URL.".into(),
+                                    jpeg: None,
+                                }));
+                            }
+                            Err(error) => {
+                                let _ = call.reply.try_send(Err(error.into()));
+                            }
+                        }
+                    })
+                });
+                if !matches!(updated, Ok(Ok(()))) {
+                    let _ = reply.try_send(Err("The requesting window or thread closed.".into()));
+                    break;
+                }
+            }
+        })
+        .detach();
+        Ok(sender)
+    }
+
     fn start_agent_turn(
         &mut self,
         pane_id: usize,
@@ -11,17 +79,28 @@ impl AppState {
         let browser = self
             .browser_install
             .path()
-            .filter(|_| uses_browser)
+            .filter(|_| uses_browser && !crate::browser_automation::SUPPORTED)
             .map(Path::to_path_buf);
+        #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+        let browser_access = uses_browser.then(|| self.start_browser_access(pane_id, cx));
         let Some(pane) = self.pane_mut(pane_id) else {
             return false;
         };
         pane.chat.retry_prompt = Some(prompt.clone());
-        if uses_browser && browser.is_none() {
+        if uses_browser && !crate::browser_automation::SUPPORTED && browser.is_none() {
             pane.chat.startup_error = Some(browser::INSTALL_REQUIRED.into());
             cx.notify();
             return false;
         }
+        #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+        let browser_sender = match browser_access.transpose() {
+            Ok(sender) => sender,
+            Err(error) => {
+                pane.chat.startup_error = Some(error.into());
+                cx.notify();
+                return false;
+            }
+        };
         if !cwd.is_dir() {
             pane.chat.startup_error =
                 Some(format!("Project folder unavailable: {}", cwd.display()));
@@ -95,6 +174,8 @@ impl AppState {
                 .iter()
                 .any(|message| message.role == ChatRole::User);
         let bridge = pane.chat.bridge.as_mut().unwrap();
+        #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+        bridge.set_browser_sender(browser_sender);
         let submitted_at = chat_timestamp_ms();
         let sent = if needs_title {
             bridge.send_first_prompt(
@@ -128,6 +209,7 @@ impl AppState {
                 true
             }
             Err(error) => {
+                bridge.set_browser_sender(None);
                 pane.chat.recovery = Some(error.clone());
                 pane.chat.status = SessionStatus::Error;
                 pane.chat
@@ -794,6 +876,9 @@ impl AppState {
         for project in &mut self.projects {
             for session in &mut project.sessions {
                 for pane in &mut session.panes {
+                    if pane.is_browser() {
+                        continue;
+                    }
                     let placeholder = if pane.chat.active {
                         "Message the agent…"
                     } else {
@@ -835,6 +920,7 @@ impl AppState {
             && let Some(pane) = session.panes.get(pane_idx)
         {
             if pane.files_active
+                || pane.is_browser()
                 || pane.chat.auth.is_some()
                 || pane.branch_picker.is_some()
                 || pane.chat.active && !pane.chat.requests.is_empty()

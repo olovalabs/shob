@@ -46,6 +46,24 @@ mod assets;
 mod attachments;
 mod attention;
 mod browser;
+#[cfg_attr(
+    not(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )),
+    allow(dead_code)
+)]
+mod browser_automation;
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+mod browser_engine;
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+mod browser_surface;
 mod chat_batch;
 mod cli;
 mod completion;

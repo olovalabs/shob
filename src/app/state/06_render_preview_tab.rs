@@ -605,15 +605,23 @@ impl AppState {
                 if let Some(closed_pane) = session.panes.iter().find(|pane| pane.id == pane_id) {
                     status::forget_pid(closed_pane.pid);
                 }
-                for pane in &mut session.panes {
+                let tree = &mut session.pane_tree;
+                *tree = tree.take().and_then(|tree| tree.remove(pane_id));
+                session.panes.retain_mut(|pane| {
+                    if pane.id == pane_id {
+                        return false;
+                    }
                     if pane.tool_panel && pane.preview_owner == Some(pane_id) {
+                        if pane.is_browser() {
+                            *tree = tree.take().and_then(|tree| tree.remove(pane.id));
+                            return false;
+                        }
                         pane.one_mode = false;
                         pane.tool_panel = false;
                         pane.preview_owner = None;
                     }
-                }
-                session.pane_tree = session.pane_tree.take().and_then(|t| t.remove(pane_id));
-                session.panes.retain(|p| p.id != pane_id);
+                    true
+                });
                 if session.pane_tree.is_none() || session.panes.is_empty() {
                     session_removed = true;
                 }
@@ -715,6 +723,13 @@ impl AppState {
                 if let Some(session) = p.sessions.get_mut(s_idx)
                     && let Some(pane) = session.panes.iter_mut().find(|p| p.id == pane_id)
                 {
+                    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+                    if let Some(browser) = Self::mount_browser(pane, window, cx) {
+                        browser.view.update(cx, |view, cx| view.focus_address(window, cx));
+                        self.dirty = true;
+                        cx.notify();
+                        return;
+                    }
                     if pane.chat.auth.is_some() || pane.files_active {
                         return;
                     }

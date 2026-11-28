@@ -471,6 +471,8 @@ struct AppState {
     /// Pane that currently owns keyboard focus, tracked every render frame
     /// and consumed by the status poller (Active state, sticky-state clearing).
     focused_pane_id: Option<usize>,
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    visible_browser: Option<gpui::WeakEntity<crate::browser_surface::BrowserSurface>>,
     pub active_view: ActiveView,
     pub theme_preference: ThemePreference,
     /// Desktop and terminal color palette.

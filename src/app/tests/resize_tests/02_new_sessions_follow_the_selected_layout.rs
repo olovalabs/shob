@@ -478,7 +478,18 @@ fn browser_completion_inserts_mention_without_sending() {
         assert!(s.pane_ref(pane_id).unwrap().chat.messages.is_empty());
         s.submit_agent_prompt(pane_id, window, cx);
         assert_eq!(input.read(cx).value().as_str(), "@browser ");
-        assert!(s.pane_ref(pane_id).unwrap().chat.messages.is_empty());
+    });
+}
+
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+#[test]
+fn browser_agent_without_native_pane_opens_helper_setup() {
+    let mut app = TestAppContext::new();
+    let (mut cx, state) = open_app(&mut app);
+    cx.update_window_entity(&state, |s, window, cx| {
+        let pane_id = s.projects[0].sessions[0].panes[0].id;
+        s.set_chat_mode(pane_id, true, window, cx);
+        let input = s.pane_ref(pane_id).unwrap().input_state.clone().unwrap();
         let draft = "@browser open example.com";
         set_input_text(&input, draft.into(), window, cx);
         s.submit_agent_prompt(pane_id, window, cx);
@@ -489,6 +500,51 @@ fn browser_completion_inserts_mention_without_sending() {
     });
     cx.draw_frame().unwrap();
     assert!(cx.debug_bounds("browser-install-action").is_some());
+}
+
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[test]
+fn browser_agent_routes_to_the_visible_thread_without_taking_focus() {
+    use crate::browser_automation::Command;
+
+    let mut app = TestAppContext::new();
+    let (mut cx, state) = open_app(&mut app);
+    cx.draw_frame().unwrap();
+    cx.update_window_entity(&state, |s, window, cx| {
+        let owner = s.projects[0].sessions[0].panes[0].id;
+        s.settings.agent_layout = true;
+        s.set_chat_mode(owner, true, window, cx);
+        let pane = s.pane_mut(owner).unwrap();
+        pane.chat.running = true;
+        let generation = pane.generation.clone();
+        let focused = s.focused_pane_id;
+        let mut opened = false;
+        let open = Command::Open {
+            url: "http://localhost:3000/".into(),
+            new_tab: false,
+        };
+
+        assert!(
+            s.browser_tool_target(owner, "stale", &mut opened, &open, window, cx)
+                .is_err()
+        );
+        assert!(s.active_browser_pane().is_none());
+        assert!(
+            s.browser_tool_target(owner, &generation, &mut opened, &open, window, cx)
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(s.focused_pane_id, focused);
+        assert_eq!(s.active_browser_pane().unwrap().preview_owner, Some(owner));
+
+        s.hide_tool_panel(owner, window, cx);
+        assert!(
+            s.browser_tool_target(owner, &generation, &mut opened, &open, window, cx)
+                .is_err()
+        );
+        assert!(s.active_browser_pane().is_none());
+    });
+    cx.draw_frame().unwrap();
 }
 
 #[test]
