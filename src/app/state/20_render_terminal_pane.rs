@@ -515,9 +515,8 @@ impl AppState {
     /// actual movement is tracked by the root element, which spans the window
     /// and so keeps receiving moves even when the pointer runs past the strip.
     /// A hairline lights up on hover so the edge is discoverable.
-    fn render_sidebar_resize_handle(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_sidebar_resize_handle(&self, tokens: ThemeTokens, cx: &mut Context<Self>) -> AnyElement {
         let active = self.sidebar_resizing;
-        let tokens = self.sidebar_tokens(cx);
         let handle = div()
             .id("sidebar-resize-handle")
             .debug_selector(|| "sidebar-resize-handle".to_string())
@@ -551,8 +550,8 @@ impl AppState {
                 div()
                     .h_full()
                     .w(px(2.0))
-                    .when(active, |this| this.bg(cx.theme().drag_border))
-                    .group_hover("sidebar-resize", |this| this.bg(cx.theme().drag_border)),
+                    .when(active, |this| this.bg(tokens.ring))
+                    .group_hover("sidebar-resize", |this| this.bg(tokens.ring)),
             );
         self.sidebar_tooltip(handle, "sidebar-resize-tooltip", "Resize sidebar", SidebarTooltipSide::Right, tokens, cx)
     }

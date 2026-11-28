@@ -1,41 +1,13 @@
-impl AppState {
-    fn sidebar_tokens(&self, cx: &App) -> ThemeTokens {
-        let mut tokens = self.tokens(cx);
-        if self.palette_scheme != PaletteScheme::Shob {
-            return tokens;
-        }
-        let dark = tokens.is_dark;
-        let mode = if dark {
-            gpui_component::ThemeMode::Dark
-        } else {
-            gpui_component::ThemeMode::Light
-        };
-        let defaults = ThemeTokens::from_mode_with_scheme(mode, self.palette_scheme);
-        let match_default = |current: &mut Hsla, original: Hsla, dark_color, light_color| {
-            if terminal::hsla_to_rgb(*current) == terminal::hsla_to_rgb(original)
-                && (current.a - original.a).abs() < 1.0 / 255.0
-            {
-                *current = rgba(if dark { dark_color } else { light_color }).into();
-            }
-        };
-        macro_rules! sidebar_color {
-            ($field:ident, $dark:expr, $light:expr) => {
-                match_default(&mut tokens.$field, defaults.$field, $dark, $light)
-            };
-        }
-        sidebar_color!(sidebar_bg, 0x111111ff, 0xfafafaff);
-        sidebar_color!(sidebar_fg, 0xf5f5f5ff, 0x18181bff);
-        sidebar_color!(sidebar_muted, 0xa3a3a3ff, 0x71717aff);
-        sidebar_color!(sidebar_border, 0xffffff14, 0xe4e4e7ff);
-        sidebar_color!(sidebar_item_hover, 0xffffff0a, 0xfdfdfdff);
-        sidebar_color!(sidebar_item_active, 0xffffff08, 0xffffffff);
-        sidebar_color!(sidebar_item_active_fg, 0xf5f5f5ff, 0x18181bff);
-        sidebar_color!(sidebar_icon, 0xa3a3a3ff, 0x71717aff);
-        sidebar_color!(sidebar_icon_hover, 0xf5f5f5ff, 0x18181bff);
-        sidebar_color!(sidebar_icon_btn_hover, 0xffffff0a, 0xfdfdfdff);
-        tokens
-    }
+fn sidebar_input(state: &Entity<InputState>, tokens: ThemeTokens) -> Input {
+    Input::new(state).colors(gpui_component::input::InputColors {
+        foreground: tokens.sidebar_fg,
+        placeholder: tokens.sidebar_muted,
+        caret: tokens.ring,
+        selection: tokens.ring.opacity(0.25),
+    })
+}
 
+impl AppState {
     fn render_sidebar_toggle(
         &self,
         open: bool,
@@ -134,8 +106,6 @@ impl AppState {
             .h_full()
             .w_full()
             .flex_shrink_0()
-            .bg(tokens.sidebar_bg)
-            .text_color(tokens.sidebar_fg)
             .child(
                 div()
                     .h(SIDEBAR_CHROME_HEIGHT)
@@ -193,7 +163,7 @@ impl AppState {
                                     .min_w_0()
                                     .when_some(self.sidebar_search.as_ref(), |parent, search| {
                                         parent.child(
-                                            Input::new(&search.input)
+                                            sidebar_input(&search.input, tokens)
                                                 .appearance(false)
                                                 .cleanable(true),
                                         )
@@ -329,7 +299,6 @@ impl AppState {
             .max_h(px(304.0))
             .overflow_y_scroll()
             .rounded(px(8.0))
-            .bg(tokens.sidebar_bg)
             .border_1()
             .border_color(tokens.sidebar_border)
             .child(
@@ -345,16 +314,16 @@ impl AppState {
                     .h(px(30.0))
                     .px(px(8.0))
                     .rounded(px(7.0))
-                    .bg(tokens.sidebar_bg)
-                    .child(Input::new(&picker.input).appearance(false).cleanable(false)),
+                    .child(sidebar_input(&picker.input, tokens).appearance(false).cleanable(false)),
             );
-        panel = panel.child(self.sidebar_picker_row("All projects", None, scoped.is_empty(), cx));
+        panel = panel.child(self.sidebar_picker_row("All projects", None, scoped.is_empty(), tokens, cx));
         let no_matches = matching.is_empty();
         for (project_idx, project) in matching {
             panel = panel.child(self.sidebar_picker_row(
                 project.name.as_str(),
                 Some(project_idx),
                 scoped.contains(&project_idx),
+                tokens,
                 cx,
             ));
         }
@@ -703,9 +672,9 @@ impl AppState {
         label: &str,
         project_idx: Option<usize>,
         active: bool,
+        tokens: ThemeTokens,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        let tokens = self.sidebar_tokens(cx);
         let owned_label = label.to_string();
         let project = project_idx.and_then(|idx| self.projects.get(idx));
         let project_id = project
@@ -744,7 +713,7 @@ impl AppState {
                     div()
                         .flex_1()
                         .min_w_0()
-                        .child(Input::new(&input).cleanable(false)),
+                        .child(sidebar_input(&input, tokens).cleanable(false)),
                 )
                 .child(sidebar_icon_button(
                     ("project-rename-save", id),
@@ -1040,7 +1009,7 @@ impl AppState {
             .rounded(px(6.0))
             .text_xs()
             .font_weight(gpui::FontWeight::MEDIUM)
-            .text_color(tokens.sidebar_muted)
+            .text_color(tokens.sidebar_section_header)
             .border_1()
             .border_color(rgba(0))
             .focus_visible(move |row| row.border_color(tokens.ring))

@@ -101,12 +101,12 @@ impl AppState {
         true
     }
 
-    fn render_sidebar_thread_title(&self, session: &Session) -> Div {
+    fn render_sidebar_thread_title(&self, session: &Session, tokens: ThemeTokens) -> Div {
         let title = self.sidebar_thread_title(session);
         let title_element = div().flex_1().min_w_0().text_sm().line_height(px(20.0));
         if let Some(rename) = self.sidebar_thread_rename.as_ref().filter(|r| r.session_id == session.id) {
             title_element.child(
-                Input::new(&rename.input).appearance(false).cleanable(false),
+                sidebar_input(&rename.input, tokens).appearance(false).cleanable(false),
             )
         } else {
             title_element.truncate().font_weight(gpui::FontWeight::MEDIUM).child(title.clone())
@@ -146,7 +146,7 @@ impl AppState {
             .aria_label(self.sidebar_thread_title(session).clone())
             .when(row.revealed_active, |row| row.aria_description("Current thread"))
             .aria_selected(row.revealed_active || selected)
-            .when(selected, |row| row.bg(tokens.sidebar_item_active))
+            .when(selected, |row| row.bg(tokens.sidebar_item_active).text_color(tokens.sidebar_item_active_fg))
             .border_1()
             .border_color(rgba(0))
             .when(row.revealed_active && !tokens.is_dark, |row| row.border_color(tokens.sidebar_border))
@@ -300,7 +300,7 @@ impl AppState {
             )
             .child(
                 div().w_full().flex().items_center().mt(px(3.0)).child(
-                    self.render_sidebar_thread_title(session),
+                    self.render_sidebar_thread_title(session, tokens),
                 ),
             )
             .when(branch.is_some() || draft, |card| {
@@ -399,7 +399,7 @@ impl AppState {
                     .child(sidebar_bot_icon(bot_avatar::sidebar_avatar("avatar", bot.avatar, SIDEBAR_BOT_ART_SIZE)))
             })
             .child(div().flex_1().min_w_0().flex().flex_col()
-                .child(self.render_sidebar_thread_title(session))
+                .child(self.render_sidebar_thread_title(session, tokens))
                 .when_some(branch, |title, branch| {
                     title.child(div().text_xs().truncate().text_color(tokens.sidebar_muted).child(branch.to_owned()))
                 }))
@@ -782,7 +782,7 @@ impl AppState {
                 popover = popover.child(div().id("sidebar-custom-snooze-field").role(gpui::Role::Group)
                     .aria_label("Snooze duration in minutes")
                     .px(px(8.)).py(px(4.)).flex().flex_col()
-                    .child(Input::new(input).appearance(false).cleanable(false))
+                    .child(sidebar_input(input, tokens).appearance(false).cleanable(false))
                     .when(*invalid, |row| row.text_xs().text_color(tokens.block_failure).child("Enter a positive number of minutes.")));
             } else {
                 popover = popover.child(self.sidebar_thread_menu_row(
@@ -1053,8 +1053,7 @@ impl AppState {
             )
     }
 
-    fn render_sidebar(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
-        let tokens = self.sidebar_tokens(cx);
+    fn render_sidebar(&self, tokens: ThemeTokens, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         div()
             .id("sidebar-root")
             .track_focus(&self.sidebar_focus)
@@ -1069,6 +1068,7 @@ impl AppState {
             .flex()
             .flex_col()
             .bg(tokens.sidebar_bg)
+            .text_color(tokens.sidebar_fg)
             .border_r_1()
             .border_color(tokens.sidebar_border)
             .child(self.render_sidebar_actions(tokens, cx))

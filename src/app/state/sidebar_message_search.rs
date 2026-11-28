@@ -264,7 +264,7 @@ impl AppState {
                 row.child(project_favicon(project, tokens, SIDEBAR_THREAD_ICON_SIZE))
             })
             .child(div().min_w_0().flex_1().flex().flex_col()
-                .child(self.render_sidebar_thread_title(session))
+                .child(self.render_sidebar_thread_title(session, tokens))
                 .child(div().id("sidebar-search-snippet").debug_selector(|| "sidebar-search-snippet".into())
                     .min_w_0().flex().text_xs().text_color(tokens.sidebar_muted)
                     .child(div().flex_none().mr(px(4.0)).text_color(color_hint).child(label))

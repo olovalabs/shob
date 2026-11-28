@@ -124,7 +124,7 @@ impl AppState {
                 .child(project_favicon(project, tokens, px(16.)))
                 .child(div().flex_1().min_w_0().truncate().text_sm().font_weight(gpui::FontWeight::MEDIUM)
                     .child(if let Some(rename) = renaming {
-                        Input::new(&rename.input).appearance(false).into_any_element()
+                        sidebar_input(&rename.input, tokens).appearance(false).into_any_element()
                     } else {
                         project.name.clone().into_any_element()
                     }))

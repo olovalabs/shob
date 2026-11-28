@@ -794,8 +794,8 @@ impl AppState {
                         .h_full()
                         .flex_shrink_0()
                         .relative()
-                        .child(self.render_sidebar(cx))
-                        .child(self.render_sidebar_resize_handle(cx)),
+                        .child(self.render_sidebar(tokens, cx))
+                        .child(self.render_sidebar_resize_handle(tokens, cx)),
                 )
             })
             .child(
@@ -816,7 +816,7 @@ impl AppState {
                         .pl(px(9.0))
                         .flex()
                         .items_center()
-                        .child(self.render_sidebar_toggle(false, self.sidebar_tokens(cx), cx)),
+                        .child(self.render_sidebar_toggle(false, tokens, cx)),
                 )
             })
             .when(compact && self.compact_sidebar_open, |this| {
@@ -839,7 +839,7 @@ impl AppState {
                                 .h_full()
                                 .w((_window.viewport_size().width - px(12.0)).max(px(0.0)))
                                 .occlude()
-                                .child(self.render_sidebar(cx)),
+                                .child(self.render_sidebar(tokens, cx)),
                         ),
                 )
             })
