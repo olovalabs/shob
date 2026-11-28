@@ -134,6 +134,7 @@ fn restored_panes_use_the_global_model() {
             }],
         }],
         threads: Vec::new(),
+        bots: Vec::new(),
     };
     let saved_chat = &mut workspace.projects[0].sessions[0].panes[0].chat;
     let legacy_key = conversations::legacy_conversation_key(saved_chat.selected_model.as_ref());
@@ -241,6 +242,7 @@ fn restored_pane_adopts_the_global_model() {
             }],
         }],
         threads: Vec::new(),
+        bots: Vec::new(),
     };
     let mut cx = TestAppContext::new();
     let (mut cx, state) = open_app(&mut cx);

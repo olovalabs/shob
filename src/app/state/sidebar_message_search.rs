@@ -242,6 +242,7 @@ impl AppState {
         let session = &project.sessions[thread.session_idx];
         let row_id = format!("session-row-{}", session.id);
         let (status, color) = self.sidebar_thread_status(session, now, tokens);
+        let bot = self.bots.get(&session.uid);
         let (label, color_hint) = if hit.role == ChatRole::User {
             ("You: ", tokens.pane_border_focused)
         } else {
@@ -256,14 +257,21 @@ impl AppState {
             .cursor_pointer()
             .when(thread.revealed_active, |row| row.bg(tokens.sidebar_item_active).text_color(tokens.sidebar_item_active_fg))
             .when(!thread.revealed_active, |row| row.hover(move |style| style.bg(tokens.sidebar_item_hover)))
-            .child(project_favicon(project, tokens, px(16.0)))
+            .when_some(bot, |row, bot| {
+                row.child(sidebar_bot_icon(bot_avatar::avatar(bot.avatar, SIDEBAR_BOT_ART_SIZE)))
+            })
+            .when(bot.is_none(), |row| {
+                row.child(project_favicon(project, tokens, SIDEBAR_THREAD_ICON_SIZE))
+            })
             .child(div().min_w_0().flex_1().flex().flex_col()
                 .child(self.render_sidebar_thread_title(session))
                 .child(div().id("sidebar-search-snippet").debug_selector(|| "sidebar-search-snippet".into())
                     .min_w_0().flex().text_xs().text_color(tokens.sidebar_muted)
                     .child(div().flex_none().mr(px(4.0)).text_color(color_hint).child(label))
                     .child(div().min_w_0().truncate().child(hit.snippet.clone()))))
-            .child(session_logo_icon(session.logo.clone(), tokens.sidebar_icon))
+            .when(bot.is_none(), |row| {
+                row.child(session_logo_icon(session.logo.clone(), tokens.sidebar_icon))
+            })
             .child(self.sidebar_thread_status_menu(thread, status, color, "sidebar-search-message", tokens, cx));
         self.sidebar_row_interactions(row, thread, session, tokens, cx)
             .aria_description(format!("{}{}. {}{}",

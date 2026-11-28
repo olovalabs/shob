@@ -443,14 +443,49 @@ impl AppState {
             .flex()
             .flex_col()
             .gap(px(2.0));
-        for (index, &project_idx) in matching.iter().enumerate() {
-            let project = project_idx.map(|index| &self.projects[index]);
+        for (index, &target) in matching.iter().enumerate() {
+            let (project, label, icon) = match target {
+                NewSessionTarget::Project(index) => {
+                    let project = &self.projects[index];
+                    (
+                        Some(project),
+                        project.name.clone(),
+                        project_favicon(project, tokens, px(18.0)).into_any_element(),
+                    )
+                }
+                NewSessionTarget::NoProject => (
+                    None,
+                    NO_PROJECT_LABEL.into(),
+                    no_project_icon(px(18.0), tokens.text_secondary).into_any_element(),
+                ),
+                NewSessionTarget::CreateBot => (
+                    None,
+                    CREATE_BOT_LABEL.into(),
+                    svg()
+                        .path("icons/bot.svg")
+                        .size(px(18.0))
+                        .text_color(tokens.text_secondary)
+                        .into_any_element(),
+                ),
+            };
             let highlighted = index == selected;
             list = list.child(
                 div()
-                    .id(("new-session-project", project_idx.map_or(0, |index| index + 1)))
-                    .when(project.is_none(), |row| {
+                    .id(match target {
+                        NewSessionTarget::Project(index) => {
+                            ElementId::from(("new-session-project", index + 1))
+                        }
+                        NewSessionTarget::NoProject => "new-session-no-project".into(),
+                        NewSessionTarget::CreateBot => "new-session-create-bot".into(),
+                    })
+                    .role(gpui::Role::Button)
+                    .aria_label(label.clone())
+                    .aria_selected(highlighted)
+                    .when(target == NewSessionTarget::NoProject, |row| {
                         row.debug_selector(|| "new-session-no-project".into())
+                    })
+                    .when(target == NewSessionTarget::CreateBot, |row| {
+                        row.debug_selector(|| "new-session-create-bot".into())
                     })
                     .w_full()
                     .px(px(8.0))
@@ -463,10 +498,7 @@ impl AppState {
                     .when(highlighted, |row| row.bg(tokens.sidebar_item_active))
                     .when(!highlighted, |row| row.hover(|row| row.bg(tokens.sidebar_item_hover)))
                     .cursor(CursorStyle::PointingHand)
-                    .child(match project {
-                        Some(project) => project_favicon(project, tokens, px(18.0)).into_any_element(),
-                        None => no_project_icon(px(18.0), tokens.text_secondary).into_any_element(),
-                    })
+                    .child(icon)
                     .child(
                         div()
                             .flex_1()
@@ -479,10 +511,7 @@ impl AppState {
                                     .line_height(px(18.0))
                                     .font_weight(gpui::FontWeight::MEDIUM)
                                     .truncate()
-                                    .child(project.map_or_else(
-                                        || NO_PROJECT_LABEL.into(),
-                                        |project| project.name.clone(),
-                                    )),
+                                    .child(label),
                             )
                             .when_some(project, |column, project| {
                                 column.child(
@@ -495,7 +524,7 @@ impl AppState {
                                 )
                             }),
                     )
-                    .when(project_idx == Some(self.active_project_idx), |row| {
+                    .when(target == NewSessionTarget::Project(self.active_project_idx), |row| {
                         row.child(
                             div()
                                 .flex_none()
@@ -504,7 +533,7 @@ impl AppState {
                                 .child("Current"),
                         )
                     })
-                    .when(project.is_none(), |row| {
+                    .when(target == NewSessionTarget::NoProject, |row| {
                         row.child(
                             div()
                                 .flex_none()
@@ -514,7 +543,7 @@ impl AppState {
                         )
                     })
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.choose_new_session_project(project_idx, window, cx)
+                        this.choose_new_session_target(target, window, cx);
                     })),
             );
         }
@@ -584,6 +613,7 @@ impl AppState {
                     .shadow_lg()
                     .flex()
                     .flex_col()
+                    .tab_group()
                     .child(
                         div()
                             .debug_selector(|| "new-session-project-search".into())

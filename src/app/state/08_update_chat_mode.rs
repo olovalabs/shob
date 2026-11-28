@@ -114,7 +114,11 @@ impl AppState {
                     .update(cx, |state, cx| state.set_value("", window, cx));
             }
         }
-        self.focus_pane(pane_id, window, cx);
+        if let Some(form) = &self.bot_form {
+            form.name.update(cx, |input, cx| input.focus(window, cx));
+        } else {
+            self.focus_pane(pane_id, window, cx);
+        }
         cx.notify();
     }
 
@@ -193,7 +197,8 @@ impl AppState {
         let Some(pane) = self.pane_ref(pane_id) else {
             return;
         };
-        let keep_picker_open = pane.chat.active
+        let keep_picker_open = self.bot_form.is_none()
+            && pane.chat.active
             && pane.model_picker_bounds.get().size.width > px(0.0)
             && pane
                 .chat

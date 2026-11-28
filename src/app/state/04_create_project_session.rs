@@ -30,12 +30,8 @@ impl AppState {
         cx: &mut Context<Self>,
     ) {
         let uid = paths::uid("s");
-        let root = self
-            .projects
-            .iter()
-            .find(|project| project.projectless)
-            .map_or(&self.scratch_dir, |project| &project.path);
-        let dir = root.join(&uid);
+        let project = self.projectless_group();
+        let dir = self.projectless_root(project).join(&uid);
         let path = dir.clone();
         cx.spawn_in(window, async move |this, cx| {
             let result = cx
@@ -53,11 +49,40 @@ impl AppState {
                     );
                     return;
                 }
-                let project_idx = this.projects.iter().position(|project| project.projectless);
+                let project_idx = this.projectless_group();
                 this.spawn_project_session(project_idx, uid, Some(dir), agent_chat, window, cx);
             });
         })
         .detach();
+    }
+
+    fn projectless_group(&self) -> Option<usize> {
+        self.projects.iter().position(|project| project.projectless)
+    }
+
+    fn projectless_root(&self, group: Option<usize>) -> &Path {
+        group.map_or(self.scratch_dir.as_path(), |index| {
+            self.projects[index].path.as_path()
+        })
+    }
+
+    fn append_project_session(&mut self, project_idx: Option<usize>, session: Session) -> usize {
+        let project_idx = project_idx.unwrap_or_else(|| {
+            let index = self.projects.len();
+            self.projects.push(Project {
+                id: session.id,
+                name: NO_PROJECT_LABEL.into(),
+                path: self.scratch_dir.clone(),
+                projectless: true,
+                sessions: Vec::new(),
+                active_session_idx: 0,
+                expanded: true,
+                visible_session_count: SIDEBAR_ACTIVE_INITIAL_COUNT,
+            });
+            index
+        });
+        self.projects[project_idx].sessions.push(session);
+        project_idx
     }
 
     fn spawn_project_session(
@@ -69,88 +94,85 @@ impl AppState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let project = project_idx.and_then(|index| self.projects.get(index));
-        let Some(dir) = scratch_dir
-            .as_ref()
-            .or_else(|| project.map(|project| &project.path))
+        let title = SharedString::from(format!(
+            "terminal {}",
+            project_idx.map_or(0, |index| self.projects[index].sessions.len()) + 1
+        ));
+        let Some(mut session) =
+            self.build_project_session(project_idx, uid, scratch_dir, title, cx)
         else {
             return;
         };
-        let session_count = project.map_or(0, |project| project.sessions.len());
-        let self_weak = cx.entity().downgrade();
-        let next_id = self.next_id;
-        self.next_id += 1;
+        let id = session.id;
+        let (input, subscription) = build_pane_input(id, window, cx);
+        input.update(cx, |state, cx| state.focus(window, cx));
+        session.panes[0].input_state = Some(input);
+        session.panes[0].input_subscription = Some(subscription);
+        let project_idx = self.append_project_session(project_idx, session);
+        let project = &mut self.projects[project_idx];
+        project.active_session_idx = project.sessions.len() - 1;
+        project.expanded = true;
+        self.active_view = ActiveView::Workspace;
+        self.compact_sidebar_open = false;
+        self.clear_sidebar_search(window, cx);
+        self.active_project_idx = project_idx;
+        self.focused_pane_id = Some(id);
+        self.rebuild_session_index();
+        if agent_chat && self.settings.agent_layout {
+            self.focus_one_chat(id, window, cx);
+        }
+        self.schedule_workspace_save(cx);
+        cx.notify();
+    }
 
-        if let Ok((terminal, pid, generation, terminal_subscription)) = Self::spawn_terminal_view(
+    fn build_project_session(
+        &mut self,
+        project_idx: Option<usize>,
+        uid: String,
+        scratch_dir: Option<PathBuf>,
+        title: SharedString,
+        cx: &mut Context<Self>,
+    ) -> Option<Session> {
+        let dir = scratch_dir
+            .as_ref()
+            .or_else(|| project_idx.map(|index| &self.projects[index].path))?;
+        let id = self.next_id;
+        self.next_id += 1;
+        let (terminal, pid, generation, subscription) = Self::spawn_terminal_view(
             Some(dir),
             self.palette.clone(),
-            self_weak,
-            next_id,
+            cx.entity().downgrade(),
+            id,
             None,
             self.settings.memory.scrollback(),
             cx,
-        ) {
-            let title = SharedString::from(format!("terminal {}", session_count + 1));
-            let display_title = truncate_title(&title);
-            let mut pane = TerminalPane::new(
-                next_id,
-                generation,
-                terminal.clone(),
-                title.clone(),
-                display_title.clone(),
-                pid,
-            );
-            pane.cwd = scratch_dir.clone();
-            pane.chat.selected_model = self.settings.default_agent_model.clone();
-            pane.chat.permission_mode = self.settings.permission_mode;
-            pane.terminal_subscription = Some(terminal_subscription);
-            let (input_state, input_subscription) = build_pane_input(next_id, window, cx);
-            input_state.update(cx, |state, cx| state.focus(window, cx));
-            pane.input_state = Some(input_state);
-            pane.input_subscription = Some(input_subscription);
-            let session = Session {
-                id: next_id,
-                uid,
-                scratch_dir,
-                title: title.clone(),
-                display_title: truncate_title(&title),
-                logo: logos::default_logo(),
-                pane_tree: Some(PaneNode::Leaf(next_id)),
-                maximized_pane_id: None,
-                panes: vec![pane],
-                status: SessionStatus::Idle,
-            };
-
-            let project_idx = project_idx.unwrap_or_else(|| {
-                let index = self.projects.len();
-                self.projects.push(Project {
-                    id: next_id,
-                    name: NO_PROJECT_LABEL.into(),
-                    path: self.scratch_dir.clone(),
-                    projectless: true,
-                    sessions: Vec::new(),
-                    active_session_idx: 0,
-                    expanded: true,
-                    visible_session_count: 5,
-                });
-                index
-            });
-            let project = &mut self.projects[project_idx];
-            project.sessions.push(session);
-            project.active_session_idx = project.sessions.len() - 1;
-            project.expanded = true;
-            self.active_view = ActiveView::Workspace;
-            self.compact_sidebar_open = false;
-            self.clear_sidebar_search(window, cx);
-            self.active_project_idx = project_idx;
-            self.focused_pane_id = Some(next_id);
-            self.rebuild_session_index();
-            if agent_chat && self.settings.agent_layout {
-                self.focus_one_chat(next_id, window, cx);
-            }
-            self.schedule_workspace_save(cx);
-            cx.notify();
-        }
+        )
+        .ok()?;
+        let display_title = truncate_title(&title);
+        let mut pane = TerminalPane::new(
+            id,
+            generation,
+            terminal,
+            title.clone(),
+            display_title.clone(),
+            pid,
+        );
+        pane.cwd.clone_from(&scratch_dir);
+        pane.chat.selected_model = self.settings.default_agent_model.clone();
+        pane.chat.permission_mode = self.settings.permission_mode;
+        pane.terminal_subscription = Some(subscription);
+        Some(Session {
+            id,
+            uid,
+            scratch_dir,
+            title,
+            display_title,
+            logo: logos::default_logo(),
+            pane_tree: Some(PaneNode::Leaf(id)),
+            maximized_pane_id: None,
+            panes: vec![pane],
+            status: SessionStatus::Idle,
+        })
     }
 
     #[cfg(test)]
@@ -235,7 +257,13 @@ impl AppState {
         self.sidebar_thread_state(&session.uid)
             .title
             .as_ref()
-            .unwrap_or(&session.title)
+            .unwrap_or_else(|| self.sidebar_default_thread_title(session))
+    }
+
+    fn sidebar_default_thread_title<'a>(&'a self, session: &'a Session) -> &'a SharedString {
+        self.bots
+            .get(&session.uid)
+            .map_or(&session.title, |bot| &bot.name)
     }
 
     fn sidebar_thread_uid(&self, project_idx: usize, session_idx: usize) -> Option<String> {
@@ -281,7 +309,8 @@ impl AppState {
     }
 
     fn sidebar_session_has_title(&self, session: &Session) -> bool {
-        self.sidebar_thread_state(&session.uid).title.is_some()
+        self.bots.contains_key(&session.uid)
+            || self.sidebar_thread_state(&session.uid).title.is_some()
             || !self.settings.agent_layout
             || !self.one_mode_pane(session).is_some_and(|pane| {
                 pane.chat.active
@@ -955,6 +984,7 @@ impl AppState {
         // PTY masters close and the shells go away with them.
         drop(removed);
         self.sidebar_threads.remove(&removed_uid);
+        self.bots.remove(&removed_uid);
         self.settings.sidebar.inbox_order.retain(|uid| uid != &removed_uid);
         cx.notify();
         self.schedule_workspace_save(cx);
@@ -983,7 +1013,9 @@ impl AppState {
                 pane.display_title = "Files".into();
             }
             self.focus_pane(panel_owner.unwrap_or(pane_id), window, cx);
-            if self.settings.agent_layout && let Some(owner) = panel_owner {
+            if let Some(owner) = panel_owner
+                && self.pane_uses_agent_layout(owner)
+            {
                 self.select_tool_panel_tab(owner, pane_id, window, cx);
             }
             return;

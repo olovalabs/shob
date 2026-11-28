@@ -438,13 +438,27 @@ impl RpcAgentBridge {
         Ok(())
     }
 
-    pub(crate) fn send_prompt(&mut self, prompt: &str) -> Result<(), String> {
+    pub(crate) fn send_prompt(
+        &mut self,
+        prompt: &str,
+        system_prompt_suffix: Option<&str>,
+    ) -> Result<(), String> {
         if self.closed {
             return Err("The shob process has exited".into());
         }
         self.next_id = self.next_id.wrapping_add(1);
-        self.writer
-            .send_prompt(format!("shob-{}", self.next_id), prompt.to_owned())
+        let id = format!("shob-{}", self.next_id);
+        if let Some(suffix) = system_prompt_suffix.filter(|suffix| !suffix.is_empty()) {
+            // JSONL keeps these instructions out of argv and never treats them as a path.
+            self.writer.send_json(json!({
+                "type": "prompt",
+                "id": id,
+                "message": prompt,
+                "systemPromptSuffix": suffix,
+            }))
+        } else {
+            self.writer.send_prompt(id, prompt.to_owned())
+        }
     }
 
     pub(crate) fn steer(&self, text: &str) -> Result<(), String> {
@@ -980,7 +994,7 @@ mod tests {
             .unwrap();
         let prompt = "x".repeat(4 * 1024 * 1024);
         let start = Instant::now();
-        bridge.send_prompt(&prompt).unwrap();
+        bridge.send_prompt(&prompt, None).unwrap();
         let prompt_time = start.elapsed();
         let start = Instant::now();
         bridge.cancel().unwrap();

@@ -564,6 +564,11 @@ impl AppState {
     /// removes the session (screen) itself; an emptied project spawns a fresh
     /// session, like before.
     fn close_pane(&mut self, pane_id: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.bot_for_pane(pane_id).is_some()
+            && self.pane_ref(pane_id).is_some_and(|pane| !pane.tool_panel)
+        {
+            return;
+        }
         let panel_owner = self
             .pane_ref(pane_id)
             .filter(|pane| pane.tool_panel)
@@ -578,8 +583,8 @@ impl AppState {
                 pane.files_active = true;
                 pane.display_title = "Files".into();
             }
-            if self.settings.agent_layout
-                && let Some(owner) = panel_owner
+            if let Some(owner) = panel_owner
+                && self.pane_uses_agent_layout(owner)
             {
                 self.select_tool_panel_tab(owner, pane_id, window, cx);
             }
@@ -652,16 +657,17 @@ impl AppState {
 
         self.rebuild_session_index();
         if let Some(owner) = panel_owner {
+            let agent_layout = self.pane_uses_agent_layout(owner);
             let next = self.tool_panel_panes(owner).next().map(|pane| pane.id);
             if let Some(pane) = self.pane_mut(owner)
                 && (closing_selected_tab || pane.tool_panel_tab == Some(pane_id))
             {
                 pane.tool_panel_tab = next;
             }
-            if self.settings.agent_layout && closing_selected_tab && next.is_none() {
+            if agent_layout && closing_selected_tab && next.is_none() {
                 self.show_tool_panel_chooser(owner, window, cx);
             } else if self.focused_pane_id == Some(pane_id) {
-                if self.settings.agent_layout
+                if agent_layout
                     && let Some(next) = next
                 {
                     self.select_tool_panel_tab(owner, next, window, cx);
@@ -681,7 +687,7 @@ impl AppState {
 
     fn focus_pane(&mut self, pane_id: usize, window: &mut Window, cx: &mut Context<Self>) {
         let mut pane_id = pane_id;
-        if !self.settings.agent_layout
+        if !self.pane_uses_agent_layout(pane_id)
             && let Some(pane) = self.pane_ref(pane_id)
         {
             if pane.tool_panel {

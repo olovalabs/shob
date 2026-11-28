@@ -228,10 +228,19 @@ enum FirstPrompt {
     Cancelled,
 }
 
+pub(crate) struct TurnPrompt<'a> {
+    pub(crate) text: &'a str,
+    pub(crate) resume: Option<&'a str>,
+    pub(crate) context: Option<String>,
+    pub(crate) browser: Option<&'a Path>,
+    pub(crate) system_prompt_suffix: Option<Arc<str>>,
+}
+
 struct DeferredPrompt {
     text: String,
     resume: Option<String>,
     context: Option<String>,
+    system_prompt_suffix: Option<Arc<str>>,
 }
 
 enum Backend {
@@ -388,30 +397,39 @@ impl AgentBridge {
 
     pub(crate) fn send_first_prompt(
         &mut self,
-        prompt: &str,
-        resume: Option<&str>,
-        context: Option<String>,
+        turn: TurnPrompt<'_>,
         cwd: &Path,
         selector: &str,
-        browser: Option<&Path>,
     ) -> Result<(), String> {
-        let (enriched, context) =
-            prepare_prompt(prompt, context, browser, browser_automation::SUPPORTED)?;
-        let Ok(title) = embedded::SessionTitleRequest::spawn(cwd, selector, prompt, signal_wake)
+        let (enriched, context) = prepare_prompt(
+            turn.text,
+            turn.context,
+            turn.browser,
+            browser_automation::SUPPORTED,
+        )?;
+        let Ok(title) =
+            embedded::SessionTitleRequest::spawn(cwd, selector, turn.text, signal_wake)
         else {
-            return self.send_prepared_prompt(&enriched, resume, context);
+            return self.send_prepared_prompt(
+                &enriched,
+                turn.resume,
+                context,
+                turn.system_prompt_suffix,
+            );
         };
         self.first_prompt = Some(FirstPrompt::Waiting(
             title,
             DeferredPrompt {
                 text: enriched.into_owned(),
-                resume: resume.map(str::to_owned),
+                resume: turn.resume.map(str::to_owned),
                 context,
+                system_prompt_suffix: turn.system_prompt_suffix,
             },
         ));
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn send_prompt_with_context(
         &mut self,
         prompt: &str,
@@ -419,9 +437,23 @@ impl AgentBridge {
         context: Option<String>,
         browser: Option<&Path>,
     ) -> Result<(), String> {
-        let (prompt, context) =
-            prepare_prompt(prompt, context, browser, browser_automation::SUPPORTED)?;
-        self.send_prepared_prompt(&prompt, resume, context)
+        self.send_turn(TurnPrompt {
+            text: prompt,
+            resume,
+            context,
+            browser,
+            system_prompt_suffix: None,
+        })
+    }
+
+    pub(crate) fn send_turn(&mut self, turn: TurnPrompt<'_>) -> Result<(), String> {
+        let (prompt, context) = prepare_prompt(
+            turn.text,
+            turn.context,
+            turn.browser,
+            browser_automation::SUPPORTED,
+        )?;
+        self.send_prepared_prompt(&prompt, turn.resume, context, turn.system_prompt_suffix)
     }
 
     fn send_prepared_prompt(
@@ -429,15 +461,19 @@ impl AgentBridge {
         prompt: &str,
         resume: Option<&str>,
         context: Option<String>,
+        system_prompt_suffix: Option<Arc<str>>,
     ) -> Result<(), String> {
         match &mut self.backend {
             Backend::Embedded(bridge) => {
                 if bridge.closed {
                     return Err("The agent session has closed".into());
                 }
-                bridge
-                    .session
-                    .send_prompt_with_context(prompt, resume, context)
+                bridge.session.send_prompt_with_system_suffix(
+                    prompt,
+                    resume,
+                    context,
+                    system_prompt_suffix,
+                )
             }
             Backend::Rpc(bridge) => {
                 let prompt = if resume.is_some() {
@@ -445,7 +481,7 @@ impl AgentBridge {
                 } else {
                     context.as_deref().unwrap_or(prompt)
                 };
-                bridge.send_prompt(prompt)
+                bridge.send_prompt(prompt, system_prompt_suffix.as_deref())
             }
         }
     }
@@ -532,9 +568,12 @@ impl AgentBridge {
     }
 
     fn dispatch_first_prompt(&mut self, prompt: DeferredPrompt, events: &mut Vec<AgentEvent>) {
-        if let Err(error) =
-            self.send_prepared_prompt(&prompt.text, prompt.resume.as_deref(), prompt.context)
-        {
+        if let Err(error) = self.send_prepared_prompt(
+            &prompt.text,
+            prompt.resume.as_deref(),
+            prompt.context,
+            prompt.system_prompt_suffix,
+        ) {
             self.set_browser_sender(None);
             events.push(AgentEvent::Error(error));
             events.push(AgentEvent::Done);

@@ -9,3 +9,4 @@
 include!("resize_tests/01_item.rs");
 include!("resize_tests/02_new_sessions_follow_the_selected_layout.rs");
 include!("resize_tests/03_saving_a_workspace_records_each_panes_own_model.rs");
+include!("resize_tests/custom_bots.rs");

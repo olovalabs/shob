@@ -375,6 +375,7 @@ struct SidebarRowPreview {
     title: SharedString,
     project: SharedString,
     logo: SharedString,
+    bot_avatar: Option<bot_avatar::AvatarConfig>,
     selected: bool,
 }
 
@@ -417,11 +418,14 @@ impl SidebarRowExit {
         let slim = self.bounds.size.height <= SIDEBAR_THREAD_SLIM_HEIGHT;
         let title = div().min_w_0().flex_1().truncate().text_sm()
             .font_weight(gpui::FontWeight::MEDIUM).child(self.row.title.clone());
-        let logo = session_logo_icon(self.row.logo.clone(), tokens.sidebar_icon);
+        let logo = self.row.bot_avatar.map_or_else(
+            || session_logo_icon(self.row.logo.clone(), tokens.sidebar_icon),
+            |avatar| sidebar_bot_icon(bot_avatar::avatar(avatar, SIDEBAR_BOT_ART_SIZE)).into_any_element(),
+        );
         let element = div()
             .w(self.bounds.size.width)
             .h(self.bounds.size.height)
-            .px(px(10.0))
+            .px(px(if self.row.bot_avatar.is_some() { 9.0 } else { 10.0 }))
             .rounded(px(6.0))
             .overflow_hidden()
             .flex()
@@ -429,7 +433,11 @@ impl SidebarRowExit {
             .text_color(if self.row.selected { tokens.sidebar_item_active_fg } else { tokens.sidebar_fg })
             .when(self.row.selected, |row| row.bg(tokens.sidebar_item_active))
             .map(|row| if slim {
-                row.items_center().gap(px(8.0)).child(title).child(logo)
+                if self.row.bot_avatar.is_some() {
+                    row.items_center().gap(px(10.0)).child(logo).child(title)
+                } else {
+                    row.items_center().gap(px(8.0)).child(title).child(logo)
+                }
             } else {
                 row.flex_col().justify_center().gap(px(3.0)).child(
                     div().flex().items_center().gap(px(6.0)).text_xs().text_color(tokens.sidebar_muted)
@@ -704,6 +712,7 @@ impl AppState {
             title: self.sidebar_thread_title(session).clone(),
             project: project.name.clone(),
             logo: session.logo.clone(),
+            bot_avatar: self.bots.get(&session.uid).map(|bot| bot.avatar),
             selected: self.sidebar_active_thread_key() == Some((project_index, session_index)),
         })
     }

@@ -812,7 +812,7 @@ impl AppState {
     }
 
     fn focus_workspace_pane(&mut self, id: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if self.settings.agent_layout {
+        if self.pane_uses_agent_layout(id) {
             self.focus_one_chat(id, window, cx);
         } else {
             self.focus_pane(id, window, cx);
@@ -820,7 +820,7 @@ impl AppState {
     }
 
     fn focus_one_chat(&mut self, source: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.settings.agent_layout {
+        if !self.pane_uses_agent_layout(source) {
             return;
         }
         let Some(&(project, session, _)) = self.pane_index.get(&source) else {

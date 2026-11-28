@@ -86,6 +86,9 @@ impl AppState {
             .map(Path::to_path_buf);
         #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
         let browser_access = uses_browser.then(|| self.start_browser_access(pane_id, cx));
+        let system_prompt_suffix = self
+            .bot_for_pane(pane_id)
+            .map(|bot| Arc::clone(&bot.system_prompt));
         let Some(pane) = self.pane_mut(pane_id) else {
             return false;
         };
@@ -180,17 +183,21 @@ impl AppState {
         #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
         bridge.set_browser_sender(browser_sender);
         let submitted_at = chat_timestamp_ms();
-        let sent = if needs_title {
+        let turn = agent_bridge::TurnPrompt {
+            text: &prompt,
+            resume,
+            context,
+            browser: browser.as_deref(),
+            system_prompt_suffix,
+        };
+        let sent = if needs_title && turn.system_prompt_suffix.is_none() {
             bridge.send_first_prompt(
-                &prompt,
-                resume,
-                context,
+                turn,
                 pane.chat.cwd.as_deref().unwrap(),
                 &agent_model_selector(pane.chat.selected_model.as_ref().unwrap()),
-                browser.as_deref(),
             )
         } else {
-            bridge.send_prompt_with_context(&prompt, resume, context, browser.as_deref())
+            bridge.send_turn(turn)
         };
         let sent = match sent {
             Ok(()) => {
@@ -897,6 +904,7 @@ impl AppState {
         if self.active_view == ActiveView::Workspace
             && !self.conversation_header_menu_focus.contains_focused(window, cx)
             && self.history_search.is_none()
+            && self.bot_form.is_none()
             && !self.sidebar_focus.contains_focused(window, cx)
             && !self.sidebar_menu_focus.is_focused(window)
             && !self.sidebar_custom_snooze.as_ref().is_some_and(|(input, _)| input.read(cx).focus_handle().is_focused(window))
@@ -915,7 +923,7 @@ impl AppState {
                 || pane.chat.auth.is_some()
                 || pane.branch_picker.is_some()
                 || pane.chat.active && !pane.chat.requests.is_empty()
-                || (self.settings.agent_layout
+                || (self.session_uses_agent_layout(session)
                     && !pane.tool_panel_hidden
                     && pane
                         .tool_panel_chooser

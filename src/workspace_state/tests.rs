@@ -141,6 +141,16 @@ fn full_workspace_roundtrips() {
             }],
         }],
         threads: Vec::new(),
+        bots: vec![crate::custom_bots::Bot {
+            id: "bot-product-help".into(),
+            name: "Product help".into(),
+            avatar: crate::bot_avatar::AvatarConfig {
+                palette: crate::bot_avatar::Palette::Mint,
+                ..Default::default()
+            },
+            system_prompt: "Answer product questions.\nNever invent stock information.".into(),
+            created_at: 1_700_000_000_000,
+        }],
     };
     let text = serde_json::to_string(&workspace).unwrap();
     let restored = load_from_text(&text);
@@ -198,6 +208,7 @@ fn explicit_automatic_model_survives_a_round_trip() {
             }],
         }],
         threads: Vec::new(),
+        bots: Vec::new(),
     };
     let text = serde_json::to_string(&workspace).unwrap();
     let restored = load_from_text(&text);
@@ -385,6 +396,7 @@ fn atomic_save_and_load_roundtrip() {
             }],
         }],
         threads: Vec::new(),
+        bots: Vec::new(),
     };
     save_atomic(&path, &workspace).expect("save");
     let loaded = load(&path);
@@ -436,6 +448,7 @@ fn workspace_with_session(session_uid: &str) -> SavedWorkspace {
             ..Default::default()
         }],
         threads: Vec::new(),
+        bots: Vec::new(),
     }
 }
 

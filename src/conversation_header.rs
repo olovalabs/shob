@@ -13,10 +13,11 @@ impl AppState {
     }
 
     pub(crate) fn focused_conversation_pane(&self) -> Option<&TerminalPane> {
-        if !self.settings.agent_layout {
+        let session = self.active_session()?;
+        if !self.session_uses_agent_layout(session) {
             return None;
         }
-        let pane = self.one_mode_pane(self.active_session()?)?;
+        let pane = self.one_mode_pane(session)?;
         (pane.chat.active && pane.diff_preview.is_none() && pane.markdown_preview.is_none())
             .then_some(pane)
     }
@@ -102,6 +103,18 @@ impl AppState {
 
     fn render_conversation_breadcrumb(&self, tokens: ThemeTokens, cx: &Context<Self>) -> Div {
         let row = div().flex().min_w_0().items_center().gap(px(8.0));
+        if let Some(session) = self.active_session()
+            && let Some(bot) = self.bots.get(&session.uid)
+        {
+            return row
+                .child(bot_avatar::avatar(bot.avatar, px(24.0)))
+                .child(
+                    div()
+                        .truncate()
+                        .text_color(tokens.text_primary)
+                        .child(self.sidebar_thread_title(session).clone()),
+                );
+        }
         let Some(project) = self.active_project() else {
             return row.child("Shob");
         };

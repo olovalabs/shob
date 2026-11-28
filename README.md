@@ -100,6 +100,8 @@ The sidebar groups pinned and active threads above the Working, Snoozed, and Set
 
 `Ctrl/Cmd+Shift+N` starts a thread in the current context, `Ctrl/Cmd+K` searches titles and saved conversation messages, and `Ctrl/Cmd+B` toggles the sidebar. Use `F6` to move between the sidebar and workspace. Double-click the resize edge to reset its width. Labels, ordering, and shelf state survive restart; the current multi-selection does not.
 
+In the **New thread** picker, choose **Create bot** below **No project**. The bot’s projectless chat can be renamed independently of the bot profile and follows the same drag ordering, pins, and shelves as other threads. Profiles are saved in `workspace.json`; chats follow the session and history restore settings. Editing instructions applies to the next turn. Deleting a bot also deletes its dedicated chat.
+
 ### Make It Yours
 
 Customize Shob to match your workflow.

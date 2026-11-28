@@ -18,8 +18,10 @@ impl AppState {
         let pane = self.pane_ref(pane_id).unwrap();
         let trigger = pane.model_picker_bounds.get();
         let viewport = window.viewport_size();
-        let anchored =
-            page == AgentDialogPage::Models && pane.chat.active && trigger.size.width > px(0.0);
+        let anchored = self.bot_form.is_none()
+            && page == AgentDialogPage::Models
+            && pane.chat.active
+            && trigger.size.width > px(0.0);
         let picker_width = px(420.0).min((viewport.width - px(16.0)).max(px(0.0)));
         let preferred_height = px(436.0);
         let above = trigger.top() - px(12.0);

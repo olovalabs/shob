@@ -1063,6 +1063,7 @@ enum Command {
     Prompt {
         text: String,
         fallback: Option<(Option<String>, String)>,
+        system_prompt_suffix: Option<Arc<str>>,
     },
     Steer(String),
     Abort,
@@ -1235,15 +1236,28 @@ impl EmbeddedSession {
         resume: Option<&str>,
         context: Option<String>,
     ) -> Result<(), String> {
+        self.send_prompt_with_system_suffix(prompt, resume, context, None)
+    }
+
+    /// Attach host instructions to this run only, not to the session or user message.
+    pub fn send_prompt_with_system_suffix(
+        &mut self,
+        prompt: &str,
+        resume: Option<&str>,
+        context: Option<String>,
+        system_prompt_suffix: Option<Arc<str>>,
+    ) -> Result<(), String> {
         if self.closed {
             return Err("The agent session has closed".into());
         }
         let bytes = prompt
             .len()
-            .saturating_add(context.as_ref().map_or(0, String::len));
+            .saturating_add(context.as_ref().map_or(0, String::len))
+            .saturating_add(system_prompt_suffix.as_ref().map_or(0, |suffix| suffix.len()));
         self.enqueue_command(bytes, false, || Command::Prompt {
             text: prompt.to_owned(),
             fallback: context.map(|context| (resume.map(str::to_owned), context)),
+            system_prompt_suffix,
         })
     }
 
@@ -1621,8 +1635,8 @@ async fn run_session(
                     if let Some(error) = error {
                         let _ = forward_tx.send(SessionEvent::Error(error)).await;
                     }
-                    let _ = forward_tx.send(SessionEvent::Done).await;
                     forward_running.store(false, Ordering::SeqCst);
+                    let _ = forward_tx.send(SessionEvent::Done).await;
                     drop(_charge);
                     forward_wake.signal();
                 }
@@ -1655,7 +1669,11 @@ async fn run_session(
             break;
         }
         match command {
-            Command::Prompt { mut text, fallback } => {
+            Command::Prompt {
+                mut text,
+                fallback,
+                system_prompt_suffix,
+            } => {
                 if running.swap(true, Ordering::SeqCst) {
                     let _ = events
                         .send(SessionEvent::Error(
@@ -1671,10 +1689,16 @@ async fn run_session(
                         text = context;
                     }
                 }
-                let lane: Arc<dyn AgentLane> = harness.clone();
+                let prompt_harness = Arc::clone(&harness);
                 let finished = finished.clone();
                 prompt_task = Some(tokio::spawn(async move {
-                    let error = lane.prompt_text(&text, Vec::new()).await.err();
+                    let error = prompt_harness
+                        .prompt_user_content(
+                            ai::types::UserContent::Text(text),
+                            system_prompt_suffix.as_deref(),
+                        )
+                        .await
+                        .err();
                     let _ = finished
                         .send((error.map(|error| error.to_string()), _charge))
                         .await;
