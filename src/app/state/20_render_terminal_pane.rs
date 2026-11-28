@@ -408,7 +408,7 @@ impl AppState {
 
         // The provider/model dialog is modal: no workspace shortcuts fire
         // while it is open. Escape is handled by the capture listener.
-        if self.open_agent_auth_pane().is_some() {
+        if self.bot_form.is_some() || self.open_agent_auth_pane().is_some() {
             return;
         }
 
@@ -771,7 +771,8 @@ impl AppState {
             (
                 picker.input.clone(),
                 picker.previous_focus.clone(),
-                picker.input.read(cx).focus_handle().is_focused(window),
+                picker.mode == SidebarProjectPickerMode::NewSession
+                    || picker.input.read(cx).focus_handle().is_focused(window),
             )
         });
         self.sidebar_project_picker = None;
@@ -794,7 +795,7 @@ impl AppState {
     fn new_session_project_matches<'a>(
         &'a self,
         query: &'a str,
-    ) -> impl Iterator<Item = Option<usize>> + 'a {
+    ) -> impl Iterator<Item = NewSessionTarget> + 'a {
         let mut projects = self.projects.iter().enumerate().filter_map(|(index, project)| {
             (!project.projectless
                 && (sidebar_matches(query, project.name.as_str())
@@ -804,9 +805,10 @@ impl AppState {
         projects
             .next()
             .into_iter()
-            .map(Some)
-            .chain(sidebar_matches(query, NO_PROJECT_LABEL).then_some(None))
-            .chain(projects.map(Some))
+            .map(NewSessionTarget::Project)
+            .chain(sidebar_matches(query, NO_PROJECT_LABEL).then_some(NewSessionTarget::NoProject))
+            .chain(sidebar_matches(query, CREATE_BOT_LABEL).then_some(NewSessionTarget::CreateBot))
+            .chain(projects.map(NewSessionTarget::Project))
     }
 
     fn sidebar_project_picker_focused(&self, window: &Window, cx: &App) -> bool {
@@ -877,6 +879,24 @@ impl AppState {
         self.settled_visible_count = SIDEBAR_SETTLED_INITIAL_COUNT;
         self.schedule_workspace_save(cx);
         cx.notify();
+    }
+
+    fn choose_new_session_target(
+        &mut self,
+        target: NewSessionTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match target {
+            NewSessionTarget::Project(index) => {
+                self.choose_new_session_project(Some(index), window, cx);
+            }
+            NewSessionTarget::NoProject => self.choose_new_session_project(None, window, cx),
+            NewSessionTarget::CreateBot => {
+                self.close_sidebar_project_picker(window, cx);
+                self.open_bot_form(None, window, cx);
+            }
+        }
     }
 
     fn choose_new_session_project(

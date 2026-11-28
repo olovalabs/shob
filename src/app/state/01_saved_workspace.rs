@@ -175,6 +175,7 @@ impl AppState {
             active_project: self.active_project().map(|project| project.path.clone()),
             projects,
             threads,
+            bots: self.bots.values().cloned().collect(),
         }
     }
 
@@ -418,7 +419,12 @@ impl AppState {
         } = restored;
         self.next_id = self.next_id.max(workspace.max_id().saturating_add(1));
         let active_project_path = workspace.active_project.clone();
-        let saved_threads = workspace.threads.clone();
+        let saved_threads = workspace.threads;
+        self.bots = workspace
+            .bots
+            .into_iter()
+            .map(|bot| (bot.id.clone(), bot))
+            .collect();
         let mut focus_by_session: HashMap<usize, Option<usize>> = HashMap::new();
 
         self.sidebar_threads = saved_threads
@@ -794,6 +800,7 @@ impl AppState {
                     .or_else(|| session.panes.first().map(|pane| pane.id))
             });
         }
+        self.restore_missing_bot_threads(cx);
 
         self.rebuild_session_index();
         let restored_changes: Vec<_> = self
@@ -939,7 +946,10 @@ impl AppState {
     /// Panes the person can actually see: the selected screen's panes, minus
     /// the siblings a maximized pane hides.
     fn visible_pane_ids(&self) -> HashSet<usize> {
-        if self.settings.agent_layout {
+        if self
+            .active_session()
+            .is_some_and(|session| self.session_uses_agent_layout(session))
+        {
             return self
                 .active_session()
                 .and_then(|session| self.one_mode_pane(session))

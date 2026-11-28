@@ -404,7 +404,8 @@ where
         std::env::var_os("SHOB_RPC_DIAGNOSTICS").is_some_and(|value| value != "0");
     let setup_timing = RpcPhaseTiming::start(phase_diagnostics, "setup_to_ready_enqueue");
     let mut command_tasks: Vec<RetainedRpcTask<()>> = Vec::new();
-    let lane: Arc<dyn AgentLane> = harness.lane("main");
+    let main = Arc::new(harness.clone());
+    let lane: Arc<dyn AgentLane> = main.clone();
     // One blocking writer owns stdout. Producers only enqueue bounded messages,
     // so pipe backpressure never blocks a Tokio worker on IO or a std mutex.
     let (stdout, writer_task, writer_failed) = start_rpc_writer(output, message_updates);
@@ -774,6 +775,7 @@ where
                     continue;
                 }
                 let lane_task = Arc::clone(&lane);
+                let main_task = Arc::clone(&main);
                 let out_task = stdout.clone();
                 let active_task = Arc::clone(&run_active);
                 let mailbox_task = ui_dialog.clone();
@@ -795,22 +797,23 @@ where
                         let validation_timing =
                             RpcPhaseTiming::start(phase_diagnostics, "validation");
                         let content = if resume || compact {
-                            Ok(crate::rpc::prompt_content::ParsedPrompt::Legacy(
-                                String::new(),
+                            Ok((
+                                crate::rpc::prompt_content::ParsedPrompt::Legacy(String::new()),
+                                None,
                             ))
                         } else {
                             rpc_validate_prompt(&lane_task, msg, &cancel_task).await
                         };
                         validation_timing.finish();
-                        let content = match content {
+                        let (content, system_prompt_suffix) = match content {
                             Ok(content) => content,
                             Err(error) => {
+                                active_task.store(false, std::sync::atomic::Ordering::Release);
                                 write_line(
                                     &out_task,
                                     &rpc_protocol::response(Some(id), &kind, Err(error)),
                                 )
                                 .await;
-                                active_task.store(false, std::sync::atomic::Ordering::Release);
                                 return;
                             }
                         };
@@ -830,7 +833,14 @@ where
                         } else if resume {
                             rpc_resume_cancellable(&lane_task, cancel_task).await
                         } else {
-                            rpc_prompt_cancellable(&lane_task, content, cancel_task).await
+                            rpc_prompt_cancellable(
+                                &lane_task,
+                                &main_task,
+                                content,
+                                system_prompt_suffix.as_deref(),
+                                cancel_task,
+                            )
+                            .await
                         };
                         execute_timing.finish();
                         let flush_timing = RpcPhaseTiming::start(phase_diagnostics, "event_flush");
@@ -887,12 +897,13 @@ where
                                 .and_then(|value| value.get("reclaimed"))
                                 .cloned(),
                         });
+                        // Settlement is the client's signal that it can send the next turn.
+                        mailbox_task.cancel_all();
+                        active_task.store(false, std::sync::atomic::Ordering::Release);
                         let enqueue_timing =
                             RpcPhaseTiming::start(phase_diagnostics, "settled_enqueue");
                         write_line(&out_task, &settled).await;
                         enqueue_timing.finish();
-                        mailbox_task.cancel_all();
-                        active_task.store(false, std::sync::atomic::Ordering::Release);
                     }),
                     run_cancel.clone(),
                 ));
@@ -1227,9 +1238,9 @@ async fn drain_rpc_events(
 /// Bounds are per prompt, and the single run slot bounds workers to one.
 async fn rpc_validate_prompt(
     lane: &Arc<dyn AgentLane>,
-    command: serde_json::Value,
+    mut command: serde_json::Value,
     cancel: &tokio_util::sync::CancellationToken,
-) -> Result<crate::rpc::prompt_content::ParsedPrompt, String> {
+) -> Result<(crate::rpc::prompt_content::ParsedPrompt, Option<String>), String> {
     use crate::rpc::prompt_content::parse_prompt_content;
     if cancel.is_cancelled() {
         return Err("Operation aborted during prompt validation".into());
@@ -1238,7 +1249,18 @@ async fn rpc_validate_prompt(
     // settlement. The identity recheck below is not a model lock: extensions
     // may still mutate the harness after it, pending a harness-owned run API.
     let model = lane.get_model().await.map_err(|e| e.to_string())?;
-    let mut worker = tokio::task::spawn_blocking(move || parse_prompt_content(&command));
+    let mut worker = tokio::task::spawn_blocking(move || {
+        let content = parse_prompt_content(&command)?;
+        let system_prompt_suffix = match command
+            .as_object_mut()
+            .and_then(|fields| fields.remove("systemPromptSuffix"))
+        {
+            Some(serde_json::Value::String(text)) => Some(text),
+            Some(serde_json::Value::Null) | None => None,
+            Some(_) => return Err("systemPromptSuffix must be a string".to_string()),
+        };
+        Ok((content, system_prompt_suffix))
+    });
     let result = tokio::select! {
         biased;
         _ = cancel.cancelled() => {
@@ -1252,7 +1274,7 @@ async fn rpc_validate_prompt(
     if cancel.is_cancelled() {
         return Err("Operation aborted during prompt validation".into());
     }
-    if result.has_images() {
+    if result.0.has_images() {
         let current = lane.get_model().await.map_err(|e| e.to_string())?;
         if current.id != model.id || current.provider != model.provider || current.api != model.api
         {
@@ -1320,13 +1342,15 @@ async fn rpc_configure_file_io(
 /// registered a run. Once active, await its normal aborted outcome and cleanup.
 async fn rpc_prompt_cancellable(
     lane: &Arc<dyn AgentLane>,
+    harness: &AgentHarness,
     content: crate::rpc::prompt_content::ParsedPrompt,
+    system_prompt_suffix: Option<&str>,
     cancel: tokio_util::sync::CancellationToken,
 ) -> Result<serde_json::Value, String> {
     if cancel.is_cancelled() {
         return Err("Operation aborted".into());
     }
-    let prompt = rpc_prompt_content(lane, content);
+    let prompt = rpc_prompt_content(harness, content, system_prompt_suffix);
     tokio::pin!(prompt);
     tokio::select! {
         biased;
@@ -1488,21 +1512,19 @@ fn rpc_outcome_str(outcome: &HarnessRunOutcome) -> (&'static str, Option<String>
 }
 
 async fn rpc_prompt_content(
-    lane: &Arc<dyn AgentLane>,
+    harness: &AgentHarness,
     content: crate::rpc::prompt_content::ParsedPrompt,
+    system_prompt_suffix: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     use crate::rpc::prompt_content::ParsedPrompt;
-    let result = match content {
-        ParsedPrompt::Legacy(text) => lane.prompt_text(&text, Vec::new()).await,
-        ParsedPrompt::Blocks(blocks) => {
-            lane.prompt_message(agent::AgentMessage::User(UserMessage::new(
-                ai::types::UserContent::Blocks(blocks),
-                rpc_now_ms(),
-            )))
-            .await
-        }
-    }
-    .map_err(|e| e.to_string())?;
+    let content = match content {
+        ParsedPrompt::Legacy(text) => ai::types::UserContent::Text(text),
+        ParsedPrompt::Blocks(blocks) => ai::types::UserContent::Blocks(blocks),
+    };
+    let result = harness
+        .prompt_user_content(content, system_prompt_suffix)
+        .await
+        .map_err(|e| e.to_string())?;
     let (outcome, final_text, error) = rpc_outcome_str(&result.outcome);
     Ok(
         serde_json::json!({"runId":result.run_id, "outcome": outcome, "finalText": final_text, "error": error}),

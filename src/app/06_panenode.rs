@@ -216,6 +216,15 @@ enum SidebarProjectPickerMode {
     NewSession,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NewSessionTarget {
+    Project(usize),
+    NoProject,
+    CreateBot,
+}
+
+const CREATE_BOT_LABEL: &str = "Create bot";
+
 struct SidebarProjectPicker {
     mode: SidebarProjectPickerMode,
     selected: usize,
@@ -463,6 +472,8 @@ impl Render for FocusedChatScrollbar {
 
 struct AppState {
     projects: Vec<Project>,
+    bots: std::collections::BTreeMap<String, custom_bots::Bot>,
+    bot_form: Option<BotForm>,
     scratch_dir: PathBuf,
     active_project_idx: usize,
     next_id: usize,
@@ -698,6 +709,7 @@ include!("state/20_render_terminal_pane.rs");
 include!("state/21_render_sidebar_actions.rs");
 include!("state/22_render_sidebar_thread_card.rs");
 include!("state/sidebar_navigation.rs");
+include!("state/custom_bots.rs");
 include!("state/sidebar_folders.rs");
 include!("state/sidebar_message_search.rs");
 include!("state/sidebar_presentation.rs");

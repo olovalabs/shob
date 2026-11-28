@@ -1,3 +1,17 @@
+const SIDEBAR_THREAD_ICON_SIZE: Pixels = px(16.0);
+// The SVG viewBox leaves room around the body for motion.
+const SIDEBAR_BOT_ART_SIZE: Pixels = px(21.0);
+
+fn sidebar_bot_icon(avatar: impl IntoElement) -> Div {
+    div()
+        .size(SIDEBAR_THREAD_ICON_SIZE)
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(avatar)
+}
+
 impl AppState {
     fn start_sidebar_thread_rename(
         &mut self,
@@ -53,7 +67,8 @@ impl AppState {
             let title = value.trim();
             if !title.is_empty() && title != self.sidebar_thread_title(session).as_str() {
                 let uid = session.uid.clone();
-                let title = (title != session.title.as_str()).then(|| SharedString::from(title));
+                let title = (title != self.sidebar_default_thread_title(session).as_str())
+                    .then(|| SharedString::from(title));
                 self.sidebar_threads.entry(uid).or_default().title = title;
                 self.schedule_workspace_save(cx);
             }
@@ -214,6 +229,9 @@ impl AppState {
         else {
             return div().id(("missing-sidebar-card", row.session_idx));
         };
+        if self.bots.contains_key(&session.uid) {
+            return self.render_sidebar_compact_row(row, active_key, now_ms, tokens, false, cx);
+        }
         let project = &self.projects[row.project_idx];
         let active = row.revealed_active
             || self.sidebar_thread_is(row, active_key.unwrap_or((usize::MAX, usize::MAX)));
@@ -255,7 +273,7 @@ impl AppState {
                     .gap(px(6.0))
                     .text_xs()
                     .text_color(tokens.sidebar_muted)
-                    .child(project_favicon(project, tokens, px(16.0)))
+                    .child(project_favicon(project, tokens, SIDEBAR_THREAD_ICON_SIZE))
                     .child(
                         div()
                             .flex_1()
@@ -345,9 +363,10 @@ impl AppState {
         let active = row.revealed_active
             || self.sidebar_thread_is(row, active_key.unwrap_or((usize::MAX, usize::MAX)));
         let (status, status_color) = self.sidebar_thread_status(session, now_ms, tokens);
+        let bot = self.bots.get(&session.uid);
         let row_id = format!("session-row-{}", session.id);
         let project_idx = row.project_idx;
-        let branch = (folder && self.settings.sidebar.multiline_folder_rows)
+        let branch = (bot.is_none() && folder && self.settings.sidebar.multiline_folder_rows)
             .then(|| self.git_snapshots.get(self.projects[project_idx].session_dir(session))
                 .and_then(|snapshot| snapshot.current_branch.as_deref()))
             .flatten();
@@ -372,13 +391,21 @@ impl AppState {
             })
             .when(!active, |row| row.hover(move |style| style.bg(tokens.sidebar_item_hover)))
             .cursor(CursorStyle::PointingHand)
-            .when(!folder, |row| row.child(project_favicon(&self.projects[project_idx], tokens, px(16.))))
+            .when(!folder && bot.is_none(), |row| {
+                row.child(project_favicon(&self.projects[project_idx], tokens, SIDEBAR_THREAD_ICON_SIZE))
+            })
+            .when_some(bot, |row, bot| {
+                row.debug_selector(|| "custom-bot-row".into())
+                    .child(sidebar_bot_icon(bot_avatar::sidebar_avatar("avatar", bot.avatar, SIDEBAR_BOT_ART_SIZE)))
+            })
             .child(div().flex_1().min_w_0().flex().flex_col()
                 .child(self.render_sidebar_thread_title(session))
                 .when_some(branch, |title, branch| {
                     title.child(div().text_xs().truncate().text_color(tokens.sidebar_muted).child(branch.to_owned()))
                 }))
-            .child(session_logo_icon(session.logo.clone(), tokens.sidebar_icon))
+            .when(bot.is_none(), |row| {
+                row.child(session_logo_icon(session.logo.clone(), tokens.sidebar_icon))
+            })
             .child(self.sidebar_thread_status_menu(
                 row,
                 status,
@@ -399,6 +426,7 @@ impl AppState {
         tokens: ThemeTokens,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
+        let bot = self.bots.contains_key(&self.projects[row.project_idx].sessions[row.session_idx].uid);
         let menu_open = self.sidebar_thread_menu.is_some_and(|menu| {
             menu.row.project_idx == row.project_idx && menu.row.session_idx == row.session_idx
         });
@@ -423,7 +451,7 @@ impl AppState {
                     .right_0()
                     .flex()
                     .items_center()
-                    .when(row.section != SidebarSection::Snoozed, |actions| {
+                    .when(!bot && row.section != SidebarSection::Snoozed, |actions| {
                         let label = if row.section == SidebarSection::Settled { "Un-settle thread" } else { "Settle thread" };
                         let button = div()
                                 .id(ElementId::Name(
@@ -474,11 +502,11 @@ impl AppState {
                     })
                     .child(
                         self.sidebar_tooltip(
-                            self.sidebar_thread_menu(row, tokens, cx)
+                            self.sidebar_thread_menu(row, bot, tokens, cx)
                                 .when(!menu_open, |button| button.invisible())
                                 .group_hover(group, |button| button.visible()),
                             ("sidebar-thread-actions-tooltip", self.sidebar_thread_id(row)),
-                            "Thread actions",
+                            if bot { "Bot actions" } else { "Thread actions" },
                             SidebarTooltipSide::Right,
                             tokens,
                             cx,
@@ -490,6 +518,7 @@ impl AppState {
     fn sidebar_thread_menu(
         &self,
         row: SidebarThreadRef,
+        bot: bool,
         tokens: ThemeTokens,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
@@ -497,7 +526,9 @@ impl AppState {
             .id(ElementId::Name(
                 format!("sidebar-thread-menu-{}-{}", row.project_idx, row.session_idx).into(),
             ))
-            .debug_selector(|| "sidebar-thread-menu".into())
+            .debug_selector(move || {
+                if bot { "custom-bot-actions".into() } else { "sidebar-thread-menu".into() }
+            })
             .size(px(24.0))
             .flex()
             .items_center()
@@ -512,7 +543,7 @@ impl AppState {
                     .text_color(tokens.sidebar_muted),
             )
             .role(gpui::Role::Button)
-            .aria_label("Thread actions")
+            .aria_label(if bot { "Bot actions" } else { "Thread actions" })
             .on_click(cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
                 cx.stop_propagation();
                 this.open_sidebar_thread_menu(row, event.position(), window, cx);
@@ -640,6 +671,15 @@ impl AppState {
         };
         let SidebarThreadRef { project_idx, session_idx, section, pinned, .. } = menu.row;
         let session_id = self.sidebar_thread_id(menu.row);
+        let Some(session) = self
+            .projects
+            .get(project_idx)
+            .and_then(|project| project.sessions.get(session_idx))
+        else {
+            return div().into_any_element();
+        };
+        let bot = self.bots.get(&session.uid);
+        let is_bot = bot.is_some();
         let bulk = self.sidebar_action_selection(session_id, &self.sidebar_selection.members).len() > 1;
         let mut popover = self.sidebar_context_panel("sidebar-thread-menu-popover", "Thread actions", tokens, cx);
         if !bulk {
@@ -647,6 +687,13 @@ impl AppState {
                 "sidebar-thread-rename", "Rename thread", "icons/pencil.svg", tokens,
                 move |this, window, cx| this.start_sidebar_thread_rename(session_id, window, cx), cx,
             ).track_focus(&self.sidebar_menu_focus));
+            if let Some(bot) = bot {
+                let id = bot.id.clone();
+                popover = popover.child(self.sidebar_thread_menu_row(
+                    "custom-bot-edit", "Edit bot", "icons/bot.svg", tokens,
+                    move |this, window, cx| this.open_bot_form(Some(&id), window, cx), cx,
+                ));
+            }
         }
         popover = popover.child(self.sidebar_thread_menu_row(
             "sidebar-thread-pin",
@@ -786,15 +833,33 @@ impl AppState {
         ));
         popover = popover.child(self.sidebar_thread_menu_row(
             "session-close",
-            if bulk { "Delete selected threads" } else { "Delete thread" },
+            if bulk {
+                "Delete selected threads"
+            } else if is_bot {
+                "Delete bot"
+            } else {
+                "Delete thread"
+            },
             "icons/pane-close.svg",
             tokens,
             move |this, window, cx| {
                 let ids = this.sidebar_action_selection(session_id, &this.sidebar_selection.members);
                 let answer = window.prompt(
                     gpui::PromptLevel::Warning,
-                    if bulk { "Delete selected threads?" } else { "Delete thread?" },
-                    Some("Selected threads and their panes will be permanently deleted."),
+                    if bulk {
+                        "Delete selected threads?"
+                    } else if is_bot {
+                        "Delete bot?"
+                    } else {
+                        "Delete thread?"
+                    },
+                    Some(if bulk {
+                        "Selected threads and their panes will be permanently deleted, along with any associated bots."
+                    } else if is_bot {
+                        "This permanently deletes the bot and its dedicated chat."
+                    } else {
+                        "This permanently deletes the thread and its panes."
+                    }),
                     &[
                         gpui::PromptButton::Cancel("Cancel".into()),
                         gpui::PromptButton::Ok("Delete".into()),

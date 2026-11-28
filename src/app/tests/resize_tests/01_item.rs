@@ -158,6 +158,8 @@ fn build_app_state(cx: &mut Context<AppState>) -> AppState {
         system_snapshot: system_detection::Snapshot::default(),
         system_monitor_open: false,
         sidebar_threads: HashMap::new(),
+        bots: Default::default(),
+        bot_form: None,
         settled_visible_count: SIDEBAR_SETTLED_INITIAL_COUNT,
         active_view: ActiveView::Workspace,
         theme_preference: ThemePreference::System,

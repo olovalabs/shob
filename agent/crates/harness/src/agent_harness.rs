@@ -1471,7 +1471,7 @@ impl AgentHarness {
         .await;
         // An empty prompt is exactly a continuation: the loop's next action is the
         // provider call the interrupted run never reached.
-        self.run_core_with_admission(Vec::new(), false, admission, Some(pending))
+        self.run_core_with_admission(Vec::new(), false, admission, Some(pending), None)
             .await
             .map(Some)
     }
@@ -1865,7 +1865,7 @@ impl AgentHarness {
             let admission = self.acquire_run_locked(OperationKind::Run)?;
             drop(gate);
             return self
-                .run_core_with_admission(vec![message], false, admission, None)
+                .run_core_with_admission(vec![message], false, admission, None, None)
                 .await
                 .map(SendMessageResult::Run);
         }
@@ -3934,11 +3934,9 @@ impl AgentHarness {
             .collect()
     }
 
-    /// Compose the system prompt: base prompt + skills listing. The base prompt
-    /// the CLI hands the harness already carries the `append` + `context`
-    /// sections (folded in by `session.rs` via `compose_system_prompt` before
-    /// `AgentHarness::create`), so here the harness only appends the
-    /// `<available_skills>` listing — the one section it owns itself.
+    /// Compose the request's system prompt from the session's base prompt,
+    /// optional per-run host instructions, and the skills listing. The base
+    /// already contains the CLI's configured append and context sections.
     ///
     /// **Read-tool gate** (pi `skills.ts:335-336`): the skills listing is
     /// injected only when the `read` tool is in `active_tool_names`. The model
@@ -3948,6 +3946,7 @@ impl AgentHarness {
     /// `format_skills_for_system_prompt`.
     fn compose_prompt(
         base: Option<&str>,
+        system_prompt_suffix: Option<&str>,
         resources: &AgentHarnessResources,
         active_tool_names: &[String],
     ) -> String {
@@ -3957,7 +3956,7 @@ impl AgentHarness {
         } else {
             &[]
         };
-        compose_system_prompt(base, skills, None, None)
+        compose_system_prompt(base, skills, None, system_prompt_suffix)
     }
 
     /// Reserve an entry id. Exposed so a settle observer can name an entry in a
@@ -4391,8 +4390,30 @@ impl AgentHarness {
         }
     }
 
+    /// Start a user turn with optional literal host instructions in its system
+    /// prompt. The suffix is not written into the session or used by utility
+    /// requests such as compaction. It is fixed for the lifetime of this run.
+    pub async fn prompt_user_content(
+        &self,
+        content: UserContent,
+        system_prompt_suffix: Option<&str>,
+    ) -> HarnessResult<RunResult> {
+        let message = AgentMessage::User(UserMessage::new(content, now_ms()));
+        self.run_core(vec![message], system_prompt_suffix).await
+    }
+
     /// The core run loop shared by all prompt overloads + skill + template.
-    async fn run_core(&self, prompts: Vec<AgentMessage>) -> HarnessResult<RunResult> {
+    async fn run_core(
+        &self,
+        prompts: Vec<AgentMessage>,
+        system_prompt_suffix: Option<&str>,
+    ) -> HarnessResult<RunResult> {
+        let system_prompt_suffix = system_prompt_suffix.filter(|suffix| !suffix.trim().is_empty());
+        if system_prompt_suffix.is_some() && self.has_exact_resources() {
+            return Err(HarnessError::io(
+                "exact resources do not allow a per-run system prompt",
+            ));
+        }
         // Image preparation is part of the admitted run: RPC cancellation must
         // find an active signal and await this future, not detach its blocking
         // decoder by dropping a pre-admission prompt. Bridge the lease through
@@ -4419,7 +4440,7 @@ impl AgentHarness {
                 "Operation aborted during image preparation",
             ));
         }
-        self.run_core_with_admission(normalized, false, admission, None)
+        self.run_core_with_admission(normalized, false, admission, None, system_prompt_suffix)
             .await
     }
 
@@ -4436,7 +4457,7 @@ impl AgentHarness {
             self.release_run(parked_run_id);
             self.acquire_run_locked(OperationKind::Run)?
         };
-        self.run_core_with_admission(Vec::new(), true, admission, None)
+        self.run_core_with_admission(Vec::new(), true, admission, None, None)
             .await
     }
 
@@ -4446,9 +4467,16 @@ impl AgentHarness {
         from_assistant: bool,
         admission: (String, CancellationToken, Arc<tokio::sync::Notify>),
         resume: Option<PendingResume>,
+        system_prompt_suffix: Option<&str>,
     ) -> HarnessResult<RunResult> {
         let scope = self.inner.lock().unwrap().execution_scope.clone();
-        let run = self.run_admitted_inner(prompts, from_assistant, admission, resume);
+        let run = self.run_admitted_inner(
+            prompts,
+            from_assistant,
+            admission,
+            resume,
+            system_prompt_suffix,
+        );
         match scope {
             Some(scope) => scope.run(run).await,
             None => run.await,
@@ -4461,6 +4489,7 @@ impl AgentHarness {
         from_assistant: bool,
         admission: (String, CancellationToken, Arc<tokio::sync::Notify>),
         resume: Option<PendingResume>,
+        system_prompt_suffix: Option<&str>,
     ) -> HarnessResult<RunResult> {
         let (run_id, signal, _idle) = admission;
         let _run_lease = ActiveRunLease {
@@ -4755,6 +4784,7 @@ impl AgentHarness {
         };
         let system_prompt = Self::compose_prompt(
             snap.system_prompt.as_deref(),
+            system_prompt_suffix,
             &snap.resources,
             &snap.active_tool_names,
         );
@@ -5610,16 +5640,15 @@ impl AgentLane for AgentHarness {
             }
             UserContent::Blocks(blocks)
         };
-        let message = AgentMessage::User(UserMessage::new(content, now_ms()));
-        self.run_core(vec![message]).await
+        self.prompt_user_content(content, None).await
     }
 
     async fn prompt_message(&self, message: AgentMessage) -> HarnessResult<RunResult> {
-        self.run_core(vec![message]).await
+        self.run_core(vec![message], None).await
     }
 
     async fn prompt_messages(&self, messages: Vec<AgentMessage>) -> HarnessResult<RunResult> {
-        self.run_core(messages).await
+        self.run_core(messages, None).await
     }
 
     async fn skill(
@@ -5639,7 +5668,7 @@ impl AgentLane for AgentHarness {
             let invocation = format_skill_invocation(skill, additional_instructions);
             AgentMessage::User(UserMessage::new(invocation, now_ms()))
         };
-        self.run_core(vec![message]).await
+        self.run_core(vec![message], None).await
     }
 
     async fn prompt_from_template(&self, name: &str, args: &[String]) -> HarnessResult<RunResult> {
@@ -5653,7 +5682,7 @@ impl AgentLane for AgentHarness {
             let invocation = format_prompt_template_invocation(template, args);
             AgentMessage::User(UserMessage::new(invocation, now_ms()))
         };
-        self.run_core(vec![message]).await
+        self.run_core(vec![message], None).await
     }
 
     async fn compact(&self, custom_instructions: Option<&str>) -> HarnessResult<CompactionResult> {
@@ -6483,7 +6512,7 @@ mod admission_window_tests {
         let admission = harness.acquire_run(OperationKind::Run).await.unwrap();
         harness.request_stop_round();
         let _ = harness
-            .run_core_with_admission(Vec::new(), false, admission, None)
+            .run_core_with_admission(Vec::new(), false, admission, None, None)
             .await;
 
         assert_eq!(

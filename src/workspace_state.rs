@@ -269,6 +269,8 @@ pub struct SavedWorkspace {
     pub projects: Vec<SavedProject>,
     #[serde(default)]
     pub threads: Vec<SavedSidebarThread>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub bots: Vec<crate::custom_bots::Bot>,
 }
 
 impl Default for SavedWorkspace {
@@ -278,6 +280,7 @@ impl Default for SavedWorkspace {
             active_project: None,
             projects: Vec::new(),
             threads: Vec::new(),
+            bots: Vec::new(),
         }
     }
 }
@@ -313,6 +316,14 @@ impl SavedWorkspace {
     /// repair indices. Called after every load.
     pub fn normalize(&mut self) {
         self.version = CURRENT_VERSION;
+        let mut bot_ids = HashSet::new();
+        self.bots.retain(|bot| {
+            bot.id.starts_with("bot-")
+                && safe_uid(&bot.id)
+                && !bot.name.trim().is_empty()
+                && !bot.system_prompt.trim().is_empty()
+                && bot_ids.insert(bot.id.clone())
+        });
         self.projects
             .retain(|project| !project.path.as_os_str().is_empty());
         self.projects.dedup_by(|a, b| a.path == b.path);
@@ -532,6 +543,7 @@ fn migrate_legacy(legacy: LegacyWorkspace) -> SavedWorkspace {
         active_project: legacy.active_project,
         projects,
         threads: Vec::new(),
+        bots: Vec::new(),
     }
 }
 
@@ -706,7 +718,9 @@ pub fn remove_saved_session(path: &Path, uid: &str) -> io::Result<()> {
         return Ok(());
     }
     let mut workspace: SavedWorkspace = serde_json::from_value(value).map_err(io::Error::other)?;
-    let mut changed = false;
+    let bot_count = workspace.bots.len();
+    workspace.bots.retain(|bot| bot.id != uid);
+    let mut changed = workspace.bots.len() != bot_count;
     for project in &mut workspace.projects {
         let previous_len = project.sessions.len();
         project.sessions.retain(|session| session.uid != uid);
@@ -853,6 +867,7 @@ pub fn hide_pending_deletions(workspace: &mut SavedWorkspace) -> io::Result<()> 
         }
         let deletion: PendingDeletion =
             serde_json::from_slice(&fs::read(path)?).map_err(io::Error::other)?;
+        workspace.bots.retain(|bot| bot.id != deletion.session_uid);
         for project in &mut workspace.projects {
             project
                 .sessions

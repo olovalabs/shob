@@ -147,6 +147,74 @@ async fn production_ordered_blocks_reach_model_and_native_history_unchanged() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn production_prompt_system_suffix_is_literal_and_scoped_to_one_turn() {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), "must not read this file").unwrap();
+    let original_suffix = file.path().to_str().unwrap();
+    let edited_suffix = "--new instruction\n第二行";
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let script = FauxScript::new();
+    script.set_responses(
+        (0..3)
+            .map(|_| {
+                let captured = Arc::clone(&captured);
+                FauxStep::factory(move |ctx| {
+                    captured.lock().unwrap().push(ctx.system_prompt.clone());
+                    faux_assistant_message("done", StopReason::Stop)
+                })
+            })
+            .collect(),
+    );
+    let provider = FauxProvider::new(script);
+    let harness = AgentHarness::create(harness::types::AgentHarnessOptions {
+        model: provider.default_model().clone(),
+        models: vec![provider],
+        system_prompt: Some("base instructions".into()),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let (mut client, output, task) = start_test_rpc(harness, extensions::UiDialogMailbox::new());
+    let mut runs = std::collections::HashSet::new();
+    for (id, (message, suffix)) in [
+        ("first turn", Some(original_suffix)),
+        ("second turn", Some(edited_suffix)),
+        ("third turn", None),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut command = json!({"type":"prompt","id":id,"message":message});
+        if let Some(suffix) = suffix {
+            command["systemPromptSuffix"] = json!(suffix);
+        }
+        send(&mut client, command).await;
+        assert_eq!(output.wait_for(|m| m["id"] == id).await["success"], true);
+        let settled = output
+            .wait_for(|m| {
+                m["type"] == "agent_settled"
+                    && m["runId"].as_str().is_some_and(|id| !runs.contains(id))
+            })
+            .await;
+        assert_eq!(settled["outcome"], "completed");
+        runs.insert(settled["runId"].as_str().unwrap().to_owned());
+    }
+    assert_eq!(
+        captured.lock().unwrap().as_slice(),
+        [
+            Some(format!("base instructions\n\n{original_suffix}")),
+            Some(format!("base instructions\n\n{edited_suffix}")),
+            Some("base instructions".into()),
+        ]
+    );
+    send(&mut client, json!({"type":"get_messages","id":"history"})).await;
+    let history = output.wait_for(|m| m["id"] == "history").await.to_string();
+    assert!(history.contains("first turn") && history.contains("third turn"));
+    assert!(!history.contains(original_suffix) && !history.contains("--new instruction"));
+    stop(&mut client, task).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn production_prompt_alias_precedence_and_bad_block_shape_never_fall_back() {
     let (harness, provider) = rpc_test_harness("done", 0.0).await;
     let (mut client, output, task) = start_test_rpc(harness, extensions::UiDialogMailbox::new());

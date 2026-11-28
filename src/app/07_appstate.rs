@@ -165,7 +165,7 @@ impl AppState {
             // Each session is its own screen: its pane tree (and maximized
             // pane) is rendered exclusively; other sessions' panes keep
             // running in the background.
-            if self.settings.agent_layout {
+            if self.session_uses_agent_layout(session) {
                 if let Some(pane) = self.one_mode_pane(session) {
                     if pane.chat.active
                         && pane.diff_preview.is_none()
@@ -193,6 +193,7 @@ impl AppState {
                         };
                         let ascii_welcome = self.palette_scheme == PaletteScheme::MidnightGarden
                             && tokens.is_dark
+                            && !self.bots.contains_key(&session.uid)
                             && pane.chat.visible_messages().is_empty()
                             && pane.chat.worker_view.is_none();
                         let chat = div()
@@ -562,6 +563,17 @@ impl AppState {
             )
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 let keystroke = &event.keystroke;
+                if this.bot_form.is_some() {
+                    if keystroke.key == "escape" {
+                        if let Some(pane_id) = this.open_agent_auth_pane() {
+                            this.close_agent_auth(pane_id, window, cx);
+                        } else {
+                            this.close_bot_form(window, cx);
+                        }
+                        cx.stop_propagation();
+                    }
+                    return;
+                }
                 if this.sidebar_custom_snooze_key(keystroke.key.as_str(), window, cx) {
                     return;
                 }
@@ -633,11 +645,11 @@ impl AppState {
                             cx.notify();
                             return;
                         }
-                        "enter" => {
+                        "enter" if this.sidebar_project_picker_focused(window, cx) => {
                             if let Some(target) = this.sidebar_project_picker.as_ref().and_then(|picker| {
                                 matches.take(picker.selected + 1).last()
                             }) {
-                                this.choose_new_session_project(target, window, cx);
+                                this.choose_new_session_target(target, window, cx);
                             }
                             cx.stop_propagation();
                             return;
@@ -843,6 +855,9 @@ impl AppState {
                     ))
                 },
             )
+            .when_some(self.bot_form.as_ref(), |this, form| {
+                this.child(self.render_bot_form(form, cx))
+            })
             .when(self.terminal_context_menu.is_some(), |this| {
                 this.child(self.render_terminal_context_menu_layer(cx))
             })

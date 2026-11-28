@@ -313,8 +313,8 @@ fn run_gui() -> Result<()> {
             }
             let app_settings = settings::load();
             startup_mark("settings loaded");
-            let restore_enabled = app_settings.restore.sessions
-                && std::env::var_os("SHOB_DISABLE_RESTORE").is_none();
+            let restore_disabled = std::env::var_os("SHOB_DISABLE_RESTORE").is_some();
+            let restore_enabled = app_settings.restore.sessions && !restore_disabled;
             let load_history = app_settings.restore.agent_history && restore_enabled;
             let load_scrollback = app_settings.restore.scrollback;
             let window_icon = image::load_from_memory(APP_ICON_PNG).ok().map(|image| Arc::new(image.into_rgba8()));
@@ -401,6 +401,8 @@ fn run_gui() -> Result<()> {
                         system_snapshot: system_detection::Snapshot::default(),
                         system_monitor_open: false,
                         sidebar_threads: HashMap::new(),
+                        bots: Default::default(),
+                        bot_form: None,
                         settled_visible_count: SIDEBAR_SETTLED_INITIAL_COUNT,
                         active_view: ActiveView::Workspace,
                         theme_preference: app_settings.theme,
@@ -483,14 +485,21 @@ fn run_gui() -> Result<()> {
                                 if let Err(error) = workspace_state::retry_pending_deletions(&path) {
                                     eprintln!("failed to retry session deletion: {error}");
                                 }
-                                let mut workspace = if restore_enabled {
-                                    workspace_state::load(&path)
-                                } else {
+                                let mut workspace = if restore_disabled {
                                     workspace_state::SavedWorkspace::default()
+                                } else {
+                                    let mut workspace = workspace_state::load(&path);
+                                    if !restore_enabled {
+                                        workspace.projects.clear();
+                                        workspace.threads.clear();
+                                        workspace.active_project = None;
+                                    }
+                                    workspace
                                 };
                                 if let Err(error) = workspace_state::hide_pending_deletions(&mut workspace) {
                                     eprintln!("failed to read pending session deletions: {error}");
                                 }
+                                AppState::prepare_bot_workspaces(&workspace);
                                 let mut scrollbacks = HashMap::new();
                                 let mut transcripts = HashMap::new();
                                 let mut usage = HashMap::new();
@@ -557,7 +566,7 @@ fn run_gui() -> Result<()> {
                                 cx.defer(move |cx| {
                                     let _ = restore_window.update(cx, |_, window, cx| {
                                         let _ = state.update(cx, |state, cx| {
-                                            if !state.settings.agent_layout
+                                            if !state.pane_uses_agent_layout(id)
                                                 || !state.active_session().and_then(|session| state.one_mode_pane(session)).is_some_and(|pane| pane.chat.active)
                                             {
                                                 state.focus_workspace_pane(id, window, cx);

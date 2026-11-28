@@ -673,11 +673,12 @@ impl AppState {
                 .flex()
                 .flex_col()
                 .gap(px(12.0));
+            let agent_layout = self.pane_uses_agent_layout(pane_id);
             for (index, message) in view.messages.iter().enumerate() {
                 column = column.child(
                     div()
                         .when(
-                            self.settings.agent_layout && message.role == ChatRole::User,
+                            agent_layout && message.role == ChatRole::User,
                             |item| item.pt(px(8.0)).pb(px(12.0)),
                         )
                         .child(Self::render_chat_message(
@@ -818,7 +819,7 @@ impl AppState {
         });
         view.clone()
             .cached(
-                if self.settings.agent_layout
+                if self.pane_uses_agent_layout(pane.id)
                     && pane.chat.visible_messages().is_empty()
                     && pane.chat.worker_view.is_none()
                 {

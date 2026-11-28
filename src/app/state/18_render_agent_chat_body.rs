@@ -22,25 +22,32 @@ impl AppState {
         }
         let tokens = self.tokens(cx);
         let pane_id = pane.id;
+        let bot = self.bot_for_pane(pane_id);
+        let agent_layout = self.settings.agent_layout || bot.is_some();
         let default_screen: Option<AnyElement> = if pane.chat.visible_messages().is_empty() {
             let screen = div()
                 .id(("agent-default-screen", pane_id))
                 .debug_selector(|| "agent-default-screen".to_string())
-                .when(self.settings.agent_layout, |screen| screen.w_full())
-                .when(!self.settings.agent_layout, |screen| screen.size_full())
+                .when(agent_layout, |screen| screen.w_full())
+                .when(!agent_layout, |screen| screen.size_full())
                 .flex()
                 .flex_col()
                 .items_center()
                 .justify_center()
                 .gap(px(16.0))
-                .child(
-                    svg()
-                        .path("shob-agent-wordmark.svg")
-                        .w_full()
-                        .max_w(px(300.0))
-                        .h(px(105.0))
-                        .text_color(tokens.text_primary),
-                );
+                .when_some(bot, |view, bot| {
+                    view.child(bot_avatar::avatar(bot.avatar, px(105.0)))
+                })
+                .when(bot.is_none(), |view| {
+                    view.child(
+                        svg()
+                            .path("shob-agent-wordmark.svg")
+                            .w_full()
+                            .max_w(px(300.0))
+                            .h(px(105.0))
+                            .text_color(tokens.text_primary),
+                    )
+                });
             Some(screen.into_any_element())
         } else {
             None
@@ -49,8 +56,8 @@ impl AppState {
         if let Some(screen) = default_screen {
             return div()
                 .relative()
-                .when(self.settings.agent_layout, |view| view.w_full())
-                .when(!self.settings.agent_layout, |view| view.size_full())
+                .when(agent_layout, |view| view.w_full())
+                .when(!agent_layout, |view| view.size_full())
                 .child(screen)
                 .into_any_element();
         }
@@ -80,6 +87,7 @@ impl AppState {
     ) -> AnyElement {
         let render_start = std::time::Instant::now();
         let tokens = self.tokens(cx);
+        let agent_layout = self.pane_uses_agent_layout(pane_id);
         let conversation = source.conversation_key;
         let row_start = std::time::Instant::now();
         let activity_changed = source.row_cache.borrow().running != source.running;
@@ -128,7 +136,7 @@ impl AppState {
         drop(cached);
         let host = UiHost::new(cx.weak_entity());
         let snapshot = Rc::new(ChatSnapshot {
-            focused_layout: self.settings.agent_layout,
+            focused_layout: agent_layout,
             pane_id,
             conversation: conversation.into(),
             tokens,
@@ -185,19 +193,15 @@ impl AppState {
                     .id(btn_id)
                     .debug_selector(|| "scroll-to-bottom-btn".to_string())
                     .absolute()
-                    .bottom(if self.settings.agent_layout {
-                        px(8.0)
-                    } else {
-                        px(16.0)
-                    })
-                    .when(self.settings.agent_layout, |button| {
+                    .bottom(px(if agent_layout { 8.0 } else { 16.0 }))
+                    .when(agent_layout, |button| {
                         button
                             .left(relative(0.5))
                             .ml(-px(16.0))
                             .size(px(32.0))
                             .justify_center()
                     })
-                    .when(!self.settings.agent_layout, |button| {
+                    .when(!agent_layout, |button| {
                         button.right(px(24.0)).gap(px(5.0)).px(px(10.0)).py(px(5.0))
                     })
                     .cursor(CursorStyle::PointingHand)
@@ -214,19 +218,15 @@ impl AppState {
                     .hover(|s| s.bg(tokens.sidebar_item_hover))
                     .child(
                         svg()
-                            .path(if self.settings.agent_layout {
+                            .path(if agent_layout {
                                 "icons/arrow-down.svg"
                             } else {
                                 "icons/chevron-down.svg"
                             })
-                            .size(if self.settings.agent_layout {
-                                px(16.0)
-                            } else {
-                                px(11.0)
-                            })
+                            .size(px(if agent_layout { 16.0 } else { 11.0 }))
                             .text_color(tokens.text_primary),
                     )
-                    .when(!self.settings.agent_layout, |button| {
+                    .when(!agent_layout, |button| {
                         button.child("Scroll to bottom")
                     })
                     .tooltip(|window, cx| {
@@ -248,7 +248,7 @@ impl AppState {
             None
         };
 
-        let scrollbar = (!self.settings.agent_layout || worker).then(|| {
+        let scrollbar = (!agent_layout || worker).then(|| {
             let scrollbar = ChatScrollbarHandle {
                 list: list_state.clone(),
                 focused_track: None,
@@ -259,7 +259,7 @@ impl AppState {
             } else {
                 ("agent-chat-scrollbar", pane_id)
             });
-            let scrollbar = if self.settings.agent_layout {
+            let scrollbar = if agent_layout {
                 scrollbar.scrollbar_show(gpui_component::scroll::ScrollbarShow::Always)
             } else {
                 scrollbar

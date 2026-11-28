@@ -633,14 +633,14 @@ impl AppState {
 
     #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
     fn active_browser_pane(&self) -> Option<&TerminalPane> {
+        let session = self.active_session()?;
         if !self.startup_loaded
             || self.active_view != ActiveView::Workspace
-            || !self.settings.agent_layout
+            || !self.session_uses_agent_layout(session)
         {
             return None;
         }
-        self.active_session()
-            .and_then(|session| self.one_mode_pane(session))
+        self.one_mode_pane(session)
             .and_then(|owner| self.active_tool_panel(owner))
             .filter(|pane| pane.is_browser())
     }
@@ -700,7 +700,7 @@ impl AppState {
 
         if !self.startup_loaded
             || self.active_view != ActiveView::Workspace
-            || !self.settings.agent_layout
+            || !self.pane_uses_agent_layout(owner)
             || self
                 .active_session()
                 .and_then(|session| self.one_mode_pane(session))
@@ -746,11 +746,12 @@ impl AppState {
     }
 
     fn tool_panel_owner(&self, source: usize) -> Option<usize> {
-        if !self.settings.agent_layout {
+        let &(project, session, _) = self.pane_index.get(&source)?;
+        let session = &self.projects[project].sessions[session];
+        if !self.session_uses_agent_layout(session) {
             return None;
         }
-        let &(project, session, _) = self.pane_index.get(&source)?;
-        let owner = self.one_mode_pane(&self.projects[project].sessions[session])?;
+        let owner = self.one_mode_pane(session)?;
         let pane = self.pane_ref(source)?;
         (owner.chat.active
             && (pane.id == owner.id || (pane.tool_panel && pane.preview_owner == Some(owner.id))))

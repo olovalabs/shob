@@ -24,6 +24,9 @@ pub enum Command {
     Prompt {
         #[serde(flatten)]
         content: PromptPayload,
+        /// Literal per-run instructions for host-managed conversations.
+        #[serde(rename = "systemPromptSuffix")]
+        system_prompt_suffix: Option<String>,
     },
     Abort,
     GetState,
@@ -580,7 +583,7 @@ mod tests {
             }))
             .unwrap();
             assert!(
-                matches!(request.command, Command::Prompt { content: PromptPayload::Legacy(message) } if message == "legacy text")
+                matches!(request.command, Command::Prompt { content: PromptPayload::Legacy(message), system_prompt_suffix: None } if message == "legacy text")
             );
         }
     }

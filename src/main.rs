@@ -44,6 +44,7 @@ mod ascii_glow;
 mod assets;
 mod attachments;
 mod attention;
+mod bot_avatar;
 mod browser;
 #[cfg_attr(
     not(all(
@@ -68,6 +69,7 @@ mod cli;
 mod completion;
 mod conversation_header;
 mod conversations;
+mod custom_bots;
 mod diagnostics;
 mod file_icons;
 mod file_preview;
