@@ -100,7 +100,7 @@ impl AppState {
                 .on_click(cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
                     if let Some(index) = this.projects.iter().position(|project| project.id == id) {
-                        this.create_new_sidebar_session(index, window, cx);
+                        this.create_new_sidebar_session(Some(index), window, cx);
                     }
                 }));
             let header = div()
@@ -194,14 +194,19 @@ impl AppState {
     fn render_sidebar_folder_menu(&self, tokens: ThemeTokens, cx: &mut Context<Self>) -> AnyElement {
         let Some((id, position)) = self.sidebar_folder_menu else { return div().into_any_element() };
         let Some(project) = self.projects.iter().find(|project| project.id == id) else { return div().into_any_element() };
-        let pinned = self.settings.sidebar.pinned_projects.contains(&project.path);
-        let path = project.path.clone();
         let new = self.sidebar_thread_menu_row("sidebar-folder-menu-new", "New thread", "icons/square-pen.svg", tokens,
             move |this, window, cx| {
                 if let Some(index) = this.projects.iter().position(|project| project.id == id) {
-                    this.create_new_sidebar_session(index, window, cx);
+                    this.create_new_sidebar_session(Some(index), window, cx);
                 }
             }, cx).track_focus(&self.sidebar_menu_focus);
+        let panel = self.sidebar_context_panel("sidebar-folder-menu", "Project actions", tokens, cx)
+            .child(new);
+        if project.projectless {
+            return gpui::anchored().position(position).snap_to_window_with_margin(px(8.)).child(panel).into_any_element();
+        }
+        let pinned = self.settings.sidebar.pinned_projects.contains(&project.path);
+        let path = project.path.clone();
         let copy = self.sidebar_thread_menu_row("sidebar-folder-menu-copy", "Copy path", "icons/copy.svg", tokens,
             move |_, _, cx| cx.write_to_clipboard(gpui::ClipboardItem::new_string(path.to_string_lossy().into_owned())), cx);
         let pin = self.sidebar_thread_menu_row("sidebar-folder-menu-pin", if pinned { "Unpin project" } else { "Pin project" }, "ui_icons/pin.svg", tokens,
@@ -219,8 +224,7 @@ impl AppState {
             }, cx);
         let rename = self.sidebar_thread_menu_row("sidebar-folder-menu-rename", "Rename project", "icons/pencil.svg", tokens,
             move |this, window, cx| this.start_renaming_project(id, window, cx), cx);
-        let panel = self.sidebar_context_panel("sidebar-folder-menu", "Project actions", tokens, cx)
-            .child(new).child(copy).child(pin).child(rename);
+        let panel = panel.child(copy).child(pin).child(rename);
         gpui::anchored().position(position).snap_to_window_with_margin(px(8.)).child(panel).into_any_element()
     }
 }

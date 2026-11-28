@@ -364,6 +364,7 @@ fn run_gui() -> Result<()> {
                     startup_mark("window created");
                     let app_state = cx.new(|cx| AppState {
                         projects: Vec::new(),
+                        scratch_dir: paths::scratch_dir(),
                         active_project_idx: 0,
                         next_id: 1,
                         session_index: HashMap::new(),
@@ -494,6 +495,11 @@ fn run_gui() -> Result<()> {
                                 let mut live_uids = HashSet::new();
                                 for project in &workspace.projects {
                                     for session in &project.sessions {
+                                        if project.projectless
+                                            && let Err(error) = std::fs::create_dir_all(project.path.join(&session.uid))
+                                        {
+                                            eprintln!("failed to restore scratch directory: {error}");
+                                        }
                                         for pane in &session.panes {
                                             live_uids.insert(pane.uid.clone());
                                             if load_scrollback && let Some(text) =

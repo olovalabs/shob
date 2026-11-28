@@ -164,6 +164,7 @@ pub struct Project {
     /// Shared (cheap to clone) because the render pass copies it every frame.
     pub name: SharedString,
     pub path: PathBuf,
+    projectless: bool,
     pub sessions: Vec<Session>,
     pub active_session_idx: usize,
     /// Whether this project's session list is expanded in the sidebar. Every
@@ -173,6 +174,19 @@ pub struct Project {
     /// Number of newest session titles revealed in the sidebar; reset on launch.
     visible_session_count: usize,
 }
+
+impl Project {
+    fn session_dir<'a>(&'a self, session: &'a Session) -> &'a PathBuf {
+        session.scratch_dir.as_ref().unwrap_or(&self.path)
+    }
+}
+
+const NO_PROJECT_LABEL: &str = "No project";
+const NO_PROJECT_SHORTCUT: &str = if cfg!(target_os = "macos") {
+    "⌘⌥N"
+} else {
+    "Ctrl+Alt+N"
+};
 
 /// Storage order is oldest-first so restore, selection, and close indices stay
 /// stable. The sidebar shows the newest `visible_count` sessions, newest first.
@@ -449,6 +463,7 @@ impl Render for FocusedChatScrollbar {
 
 struct AppState {
     projects: Vec<Project>,
+    scratch_dir: PathBuf,
     active_project_idx: usize,
     next_id: usize,
     palette: ColorPalette,

@@ -593,31 +593,39 @@ impl AppState {
                     cx.notify();
                     return;
                 }
+                let shortcut = if cfg!(target_os = "macos") {
+                    keystroke.modifiers.platform
+                } else {
+                    keystroke.modifiers.control
+                };
+                if shortcut
+                    && keystroke.modifiers.alt
+                    && !keystroke.modifiers.shift
+                    && keystroke.key == "n"
+                    && this.open_agent_auth_pane().is_none()
+                {
+                    if !event.is_held {
+                        this.choose_new_session_project(None, window, cx);
+                    }
+                    cx.stop_propagation();
+                    return;
+                }
                 if this
                     .sidebar_project_picker
                     .as_ref()
                     .is_some_and(|picker| picker.mode == SidebarProjectPickerMode::NewSession)
                 {
                     let query = this.sidebar_project_picker_query(cx);
-                    let matches: Vec<usize> = this
-                        .projects
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, project)| {
-                            sidebar_matches(&query, project.name.as_str())
-                                || sidebar_matches(&query, &project.path.to_string_lossy())
-                        })
-                        .map(|(index, _)| index)
-                        .collect();
+                    let matches = this.new_session_project_matches(&query);
                     match keystroke.key.as_str() {
                         "up" | "down" => {
+                            let count = matches.count();
                             if let Some(picker) = this.sidebar_project_picker.as_mut() {
-                                picker.selected = if matches.is_empty() {
-                                    0
-                                } else if keystroke.key == "down" {
-                                    (picker.selected + 1).min(matches.len() - 1)
+                                let last = count.saturating_sub(1);
+                                picker.selected = if keystroke.key == "down" {
+                                    (picker.selected + 1).min(last)
                                 } else {
-                                    picker.selected.min(matches.len() - 1).saturating_sub(1)
+                                    picker.selected.min(last).saturating_sub(1)
                                 };
                                 picker.scroll.scroll_to_item(picker.selected);
                             }
@@ -626,16 +634,10 @@ impl AppState {
                             return;
                         }
                         "enter" => {
-                            if let Some(index) = this
-                                .sidebar_project_picker
-                                .as_ref()
-                                .and_then(|picker| {
-                                    matches
-                                        .get(picker.selected.min(matches.len().saturating_sub(1)))
-                                })
-                                .copied()
-                            {
-                                this.choose_new_session_project(Some(index), window, cx);
+                            if let Some(target) = this.sidebar_project_picker.as_ref().and_then(|picker| {
+                                matches.take(picker.selected + 1).last()
+                            }) {
+                                this.choose_new_session_project(target, window, cx);
                             }
                             cx.stop_propagation();
                             return;
@@ -649,11 +651,6 @@ impl AppState {
                     cx.stop_propagation();
                     return;
                 }
-                let shortcut = if cfg!(target_os = "macos") {
-                    keystroke.modifiers.platform
-                } else {
-                    keystroke.modifiers.control
-                };
                 if (shortcut || keystroke.modifiers.control)
                     && !keystroke.modifiers.alt
                     && keystroke.key == ","

@@ -810,7 +810,7 @@ fn display_p3_hex(value: &str) -> Option<String> {
 
 #[derive(IntoElement)]
 struct ProjectFavicon {
-    root: PathBuf,
+    root: Option<PathBuf>,
     initials: SharedString,
     tokens: ThemeTokens,
     size: Pixels,
@@ -825,7 +825,10 @@ impl gpui::RenderOnce for ProjectFavicon {
             .flex_none()
             .rounded(self.size * 0.24)
             .overflow_hidden();
-        if let Some(Ok(favicon)) = window.use_asset::<ProjectFaviconAsset>(&self.root, cx) {
+        let Some(root) = self.root else {
+            return frame.child(no_project_icon(self.size, self.tokens.text_secondary));
+        };
+        if let Some(Ok(favicon)) = window.use_asset::<ProjectFaviconAsset>(&root, cx) {
             return frame
                 .when(favicon.needs_backdrop(self.tokens.is_dark), |frame| {
                     frame
@@ -843,7 +846,7 @@ impl gpui::RenderOnce for ProjectFavicon {
         }
 
         let mut hasher = DefaultHasher::new();
-        self.root.hash(&mut hasher);
+        root.hash(&mut hasher);
         let accent = Hsla {
             h: (hasher.finish() % 360) as f32 / 360.0,
             s: 0.72,
@@ -862,7 +865,23 @@ impl gpui::RenderOnce for ProjectFavicon {
     }
 }
 
+fn no_project_icon(size: Pixels, color: Hsla) -> impl IntoElement {
+    svg()
+        .path("icons/square-dashed.svg")
+        .size(size)
+        .flex_none()
+        .text_color(color)
+}
+
 fn project_favicon(project: &Project, tokens: ThemeTokens, size: Pixels) -> ProjectFavicon {
+    if project.projectless {
+        return ProjectFavicon {
+            root: None,
+            initials: SharedString::default(),
+            tokens,
+            size,
+        };
+    }
     let mut initials: String = project
         .name
         .chars()
@@ -875,7 +894,7 @@ fn project_favicon(project: &Project, tokens: ThemeTokens, size: Pixels) -> Proj
         initials.push('?');
     }
     ProjectFavicon {
-        root: project.path.clone(),
+        root: Some(project.path.clone()),
         initials: SharedString::from(initials),
         tokens,
         size,

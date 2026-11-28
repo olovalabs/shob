@@ -106,8 +106,13 @@ impl AppState {
     }
 
     fn pane_project_path(&self, pane: &TerminalPane) -> Option<&Path> {
-        let &(index, _, _) = self.pane_index.get(&pane.id)?;
-        self.projects.get(index).map(|project| project.path.as_path())
+        self.pane_session_dir(pane.id).map(PathBuf::as_path)
+    }
+
+    fn pane_session_dir(&self, pane_id: usize) -> Option<&PathBuf> {
+        let &(project, session, _) = self.pane_index.get(&pane_id)?;
+        let project = self.projects.get(project)?;
+        Some(project.session_dir(project.sessions.get(session)?))
     }
 
     fn pane_path_sample<'a>(&self, pane: &'a TerminalPane) -> Option<&'a PanePathSample> {
@@ -134,10 +139,11 @@ impl AppState {
             return Vec::new();
         }
         let Some(project) = self.active_project() else { return Vec::new() };
-        self.active_session().into_iter().flat_map(|session| &session.panes)
+        let Some(session) = self.active_session() else { return Vec::new() };
+        session.panes.iter()
             .filter(|pane| !pane.is_browser())
             .map(|pane| (pane.id, PanePathProbe {
-                project: project.path.clone(),
+                project: project.session_dir(session).clone(),
                 cwd: pane.cwd.clone(),
                 workspace_override: pane.chat.workspace_override.clone(),
                 pid: pane.pid,

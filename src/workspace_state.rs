@@ -222,6 +222,8 @@ pub struct SavedProject {
     pub id: usize,
     pub path: PathBuf,
     pub name: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub projectless: bool,
     #[serde(default = "default_true")]
     pub expanded: bool,
     pub active_session: usize,
@@ -234,6 +236,7 @@ impl Default for SavedProject {
             id: 0,
             path: PathBuf::new(),
             name: String::new(),
+            projectless: false,
             expanded: true,
             active_session: 0,
             sessions: Vec::new(),
@@ -350,7 +353,7 @@ impl SavedWorkspace {
 
             for session in &mut project.sessions {
                 repair_id(&mut session.id, &mut seen_sessions, &mut next_id);
-                if session.uid.is_empty() {
+                if session.uid.is_empty() || project.projectless && !safe_uid(&session.uid) {
                     session.uid = paths::uid("s");
                 }
                 let mut pane_ids = HashMap::with_capacity(session.panes.len());
@@ -499,6 +502,7 @@ fn migrate_legacy(legacy: LegacyWorkspace) -> SavedWorkspace {
             id: project_id,
             path: project.path.clone(),
             name,
+            projectless: false,
             expanded: project.expanded,
             active_session: 0,
             sessions: vec![SavedSession {

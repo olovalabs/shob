@@ -223,10 +223,10 @@ impl AppState {
             .pane_index
             .get(&pane_id)
             .and_then(|&(project, _, _)| self.projects.get(project));
-        let project_path = owner.map(|project| project.path.clone());
-        let scripts = project_path
-            .as_ref()
-            .and_then(|path| self.settings.project_scripts.get(path));
+        let folder_backed = owner.is_some_and(|project| !project.projectless);
+        let scripts = owner
+            .filter(|project| !project.projectless)
+            .and_then(|project| self.settings.project_scripts.get(&project.path));
         let project = owner
             .map(|project| project.name.clone())
             .unwrap_or_else(|| SharedString::from("Environment"));
@@ -290,10 +290,7 @@ impl AppState {
                                         MouseButton::Left,
                                         cx.listener(move |this, _, _, cx| {
                                             cx.stop_propagation();
-                                            if let Some(&(project, _, _)) =
-                                                this.pane_index.get(&pane_id)
-                                            {
-                                                let path = this.projects[project].path.clone();
+                                            if let Some(path) = this.pane_session_dir(pane_id).cloned() {
                                                 cx.background_executor()
                                                     .spawn(async move {
                                                         let _ = paths::open_in_file_manager(&path);
@@ -357,26 +354,28 @@ impl AppState {
                                 )
                         },
                     ))
-                    .child(
-                        div()
-                            .id(("add-project-script", pane_id))
-                            .h(px(30.0))
-                            .px(px(6.0))
-                            .flex()
-                            .items_center()
-                            .gap(px(10.0))
-                            .cursor_pointer()
-                            .text_color(tokens.text_secondary)
-                            .text_size(px(12.0))
-                            .child("+   Add project script")
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _, window, cx| {
-                                    cx.stop_propagation();
-                                    this.open_project_script_form(pane_id, window, cx);
-                                }),
-                            ),
-                    )
+                    .when(folder_backed, |panel| {
+                        panel.child(
+                            div()
+                                .id(("add-project-script", pane_id))
+                                .h(px(30.0))
+                                .px(px(6.0))
+                                .flex()
+                                .items_center()
+                                .gap(px(10.0))
+                                .cursor_pointer()
+                                .text_color(tokens.text_secondary)
+                                .text_size(px(12.0))
+                                .child("+   Add project script")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _, window, cx| {
+                                        cx.stop_propagation();
+                                        this.open_project_script_form(pane_id, window, cx);
+                                    }),
+                                ),
+                        )
+                    })
                     .when_some(
                         self.project_script_form
                             .as_ref()

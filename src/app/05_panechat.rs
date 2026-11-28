@@ -983,6 +983,8 @@ pub struct Session {
     pub id: usize,
     /// Stable identity across restarts.
     pub uid: String,
+    /// Projectless sessions have their own working directory inside the scratch group.
+    scratch_dir: Option<PathBuf>,
     /// OSC title of the focus pane (synced in the poller / title callback).
     pub title: SharedString,
     /// Title as shown in the sidebar (truncated), cached.

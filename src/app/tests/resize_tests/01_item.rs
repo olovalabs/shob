@@ -104,9 +104,11 @@ fn build_app_state(cx: &mut Context<AppState>) -> AppState {
             id: 1,
             name: SharedString::from("shob"),
             path: dir,
+            projectless: false,
             sessions: vec![Session {
                 id: 1,
                 uid: paths::uid("s"),
+                scratch_dir: None,
                 title: title.clone(),
                 display_title: title,
                 logo: logos::default_logo(),
@@ -119,6 +121,7 @@ fn build_app_state(cx: &mut Context<AppState>) -> AppState {
             expanded: true,
             visible_session_count: 5,
         }],
+        scratch_dir: paths::scratch_dir(),
         active_project_idx: 0,
         next_id: 2,
         session_index: HashMap::from([(1, (0, 0))]),
@@ -1074,6 +1077,7 @@ fn sidebar_show_more_reveals_the_rest_of_the_active_threads() {
             s.projects[0].sessions.push(Session {
                 id: idx,
                 uid: paths::uid("s"),
+                scratch_dir: None,
                 title: title.clone(),
                 display_title: title,
                 logo: logos::default_logo(),

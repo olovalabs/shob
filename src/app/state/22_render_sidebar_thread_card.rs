@@ -223,7 +223,7 @@ impl AppState {
             .first()
             .and_then(|pane| pane.chat.workspace_override.as_ref().or(pane.cwd.as_ref()))
             .and_then(|path| self.git_snapshots.get(path))
-            .or_else(|| self.git_snapshots.get(&project.path))
+            .or_else(|| self.git_snapshots.get(project.session_dir(session)))
             .and_then(|snapshot| snapshot.current_branch.as_deref());
         let draft = self.sidebar_has_unsent_draft(session, cx);
         let row_id = format!("session-row-{}", session.id);
@@ -348,7 +348,7 @@ impl AppState {
         let row_id = format!("session-row-{}", session.id);
         let project_idx = row.project_idx;
         let branch = (folder && self.settings.sidebar.multiline_folder_rows)
-            .then(|| self.git_snapshots.get(&self.projects[project_idx].path)
+            .then(|| self.git_snapshots.get(self.projects[project_idx].session_dir(session))
                 .and_then(|snapshot| snapshot.current_branch.as_deref()))
             .flatten();
         let element = div()
@@ -754,7 +754,7 @@ impl AppState {
             let session = &project.sessions[session_idx];
             let workspace = session.panes.first()
                 .and_then(|pane| pane.chat.workspace_override.as_ref().or(pane.cwd.as_ref()))
-                .unwrap_or(&project.path);
+                .unwrap_or_else(|| project.session_dir(session));
             let branch = self.git_snapshots.get(workspace).and_then(|git| git.current_branch.as_ref());
             for (id, label, value) in [
                 ("sidebar-copy-path", "Copy path", Some(workspace.to_string_lossy().into_owned())),

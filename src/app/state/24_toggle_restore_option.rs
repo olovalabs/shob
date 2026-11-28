@@ -296,8 +296,8 @@ impl AppState {
     }
 
     fn render_empty_terminal(&self, cx: &mut Context<Self>) -> gpui::Div {
-        let has_project = self.active_project().is_some();
-        let project_idx = self.active_project_idx;
+        let has_project = self.active_project().is_some_and(|project| !project.projectless);
+        let project_idx = has_project.then_some(self.active_project_idx);
         let tokens = self.tokens(cx);
         div()
             .size_full()
@@ -339,7 +339,7 @@ impl AppState {
                     .child(if has_project {
                         "Create a session to start a terminal in this project."
                     } else {
-                        "Open a folder to start a project with its own sessions."
+                        "Start a session without a project, or open a folder."
                     }),
             )
             .child(
@@ -358,18 +358,16 @@ impl AppState {
                             this.select_folder_and_add_project(window, cx);
                         }),
                     ))
-                    .when(has_project, |this| {
-                        this.child(sidebar_text_button(
-                            "empty-terminal-new-session",
-                            "New session",
-                            "icons/plus.svg",
-                            false,
-                            &tokens,
-                            cx.listener::<MouseDownEvent>(move |this, _, window, cx| {
-                                this.create_new_session_in_project(project_idx, window, cx);
-                            }),
-                        ))
-                    }),
+                    .child(sidebar_text_button(
+                        "empty-terminal-new-session",
+                        "New session",
+                        "icons/plus.svg",
+                        false,
+                        &tokens,
+                        cx.listener::<MouseDownEvent>(move |this, _, window, cx| {
+                            this.choose_new_session_project(project_idx, window, cx);
+                        }),
+                    )),
             )
     }
 

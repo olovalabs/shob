@@ -115,6 +115,10 @@ pub fn worktrees_dir() -> PathBuf {
     data_dir().join("worktrees")
 }
 
+pub fn scratch_dir() -> PathBuf {
+    data_dir().join("scratch")
+}
+
 /// Create every directory the app writes to. Safe to call on every launch.
 pub fn ensure_dirs() -> io::Result<()> {
     for dir in [
@@ -125,6 +129,7 @@ pub fn ensure_dirs() -> io::Result<()> {
         sessions_dir(),
         conversations_dir(),
         backups_dir(),
+        scratch_dir(),
     ] {
         std::fs::create_dir_all(dir)?;
     }
@@ -223,6 +228,7 @@ mod tests {
             sessions_dir(),
             conversations_dir(),
             backups_dir(),
+            scratch_dir(),
         ] {
             assert!(dir.is_dir(), "{} should exist", dir.display());
             assert!(dir.starts_with(&root));

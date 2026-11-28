@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Restored CI formatting compliance and removed a non-looping PTY benchmark readiness loop rejected by Clippy.
 
 ### Added
+- Start agent chats or terminal sessions without opening a project. Choose **No project** in the new-thread picker or press `Ctrl+Alt+N` (`Cmd+Option+N` on macOS). Each session gets a separate scratch folder and restores on restart.
 - Add flat **New chat** and **Search** rows above the sidebar projects. Search opens in place and matches session titles across all open projects, including collapsed projects and sessions below the preview limit.
 - Show conversation input/output tokens, cache reads/writes, and estimated USD cost beneath the Agent input. Totals update after each model response, survive history restoration, and show unavailable pricing as unknown rather than free; hover for exact token counts.
 - Added native provider/model discovery for all 67 OMP README integrations while preserving existing provider/model identities: 104 catalog providers, 6,279 frozen model entries, and real local/account model discovery. Chat selection excludes non-chat task models without deleting their metadata.

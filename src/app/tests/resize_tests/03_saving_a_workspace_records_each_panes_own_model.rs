@@ -78,6 +78,7 @@ fn restored_panes_use_the_global_model() {
             id: 1,
             path: std::env::current_dir().unwrap(),
             name: "shob".into(),
+            projectless: false,
             expanded: true,
             active_session: 0,
             sessions: vec![workspace_state::SavedSession {
@@ -213,6 +214,7 @@ fn restored_pane_adopts_the_global_model() {
             id: 1,
             path: std::env::current_dir().unwrap(),
             name: "shob".into(),
+            projectless: false,
             expanded: true,
             active_session: 0,
             sessions: vec![workspace_state::SavedSession {

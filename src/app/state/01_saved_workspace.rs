@@ -163,6 +163,7 @@ impl AppState {
                     id: project.id,
                     path: project.path.clone(),
                     name: project.name.to_string(),
+                    projectless: project.projectless,
                     expanded: project.expanded,
                     active_session: project.active_session_idx,
                     sessions,
@@ -423,13 +424,18 @@ impl AppState {
             let mut sessions = Vec::new();
 
             for saved_session in project.sessions {
+                let scratch_dir = project
+                    .projectless
+                    .then(|| project_path.join(&saved_session.uid))
+                    .filter(|dir| dir.is_dir());
+                let session_dir = scratch_dir.as_ref().unwrap_or(&project_path);
                 let mut panes = Vec::new();
                 for saved_pane in saved_session.panes {
                     let dir = saved_pane
                         .cwd
                         .clone()
                         .filter(|cwd| cwd.is_dir())
-                        .unwrap_or_else(|| project_path.clone());
+                        .unwrap_or_else(|| session_dir.clone());
                     #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
                     if let Some(owner) = saved_pane.tool_panel_owner
                         && let Some(browser) = saved_pane.browser
@@ -506,7 +512,7 @@ impl AppState {
                         .map(|ratio| ratio.clamp(0.0, 1.0));
                     if pane.tool_panel && saved_pane.tool_panel_changes {
                         pane.diff_preview = Some(DiffPreview {
-                            directory: project_path.clone(),
+                            directory: session_dir.clone(),
                             result: None,
                             expanded: HashSet::new(),
                             tracked_collapsed: false,
@@ -650,6 +656,7 @@ impl AppState {
                     } else {
                         saved_session.uid.clone()
                     },
+                    scratch_dir,
                     title,
                     display_title,
                     logo: if saved_session.logo.is_empty() {
@@ -673,8 +680,13 @@ impl AppState {
                 } else {
                     project.id
                 },
-                name: SharedString::from(project.name),
+                name: if project.projectless {
+                    NO_PROJECT_LABEL.into()
+                } else {
+                    project.name.into()
+                },
                 path: project.path,
+                projectless: project.projectless,
                 sessions,
                 active_session_idx,
                 expanded: project.expanded,
@@ -724,6 +736,7 @@ impl AppState {
                 let session = Session {
                     id,
                     uid: paths::uid("s"),
+                    scratch_dir: None,
                     title: title.clone(),
                     display_title: title,
                     logo: logos::default_logo(),
@@ -736,6 +749,7 @@ impl AppState {
                     id,
                     name: SharedString::from(name),
                     path: default_dir,
+                    projectless: false,
                     sessions: vec![session],
                     active_session_idx: 0,
                     expanded: true,

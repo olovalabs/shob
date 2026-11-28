@@ -313,7 +313,6 @@ impl AppState {
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let query = self.sidebar_project_picker_query(cx);
-        let mode = picker.mode;
         let scoped = self.sidebar_scope_indices();
         let matching = self
             .projects
@@ -321,10 +320,6 @@ impl AppState {
             .enumerate()
             .filter(|(_, project)| sidebar_matches(&query, project.name.as_str()))
             .collect::<Vec<_>>();
-        let label = match mode {
-            SidebarProjectPickerMode::Scope => "Filter sidebar to",
-            SidebarProjectPickerMode::NewSession => "New thread in",
-        };
         let mut panel = div()
             .id("sidebar-project-picker")
             .debug_selector(|| "sidebar-project-picker".into())
@@ -341,7 +336,7 @@ impl AppState {
                 div()
                     .text_xs()
                     .text_color(tokens.sidebar_muted)
-                    .child(label),
+                    .child("Filter sidebar to"),
             )
             .child(
                 div()
@@ -353,22 +348,13 @@ impl AppState {
                     .bg(tokens.sidebar_bg)
                     .child(Input::new(&picker.input).appearance(false).cleanable(false)),
             );
-        if mode == SidebarProjectPickerMode::Scope {
-            panel = panel.child(self.sidebar_picker_row(
-                "All projects",
-                None,
-                scoped.is_empty(),
-                mode,
-                cx,
-            ));
-        }
+        panel = panel.child(self.sidebar_picker_row("All projects", None, scoped.is_empty(), cx));
         let no_matches = matching.is_empty();
         for (project_idx, project) in matching {
             panel = panel.child(self.sidebar_picker_row(
                 project.name.as_str(),
                 Some(project_idx),
                 scoped.contains(&project_idx),
-                mode,
                 cx,
             ));
         }
@@ -445,15 +431,7 @@ impl AppState {
         let tokens = self.tokens(cx);
         let top = (window.viewport_size().height * 0.08).clamp(px(16.0), px(64.0));
         let query = self.sidebar_project_picker_query(cx);
-        let matching: Vec<_> = self
-            .projects
-            .iter()
-            .enumerate()
-            .filter(|(_, project)| {
-                sidebar_matches(&query, project.name.as_str())
-                    || sidebar_matches(&query, &project.path.to_string_lossy())
-            })
-            .collect();
+        let matching: Vec<_> = self.new_session_project_matches(&query).collect();
         let selected = picker.selected.min(matching.len().saturating_sub(1));
         let mut list = div()
             .id("new-session-project-list")
@@ -465,12 +443,15 @@ impl AppState {
             .flex()
             .flex_col()
             .gap(px(2.0));
-        for (index, (project_idx, project)) in matching.iter().enumerate() {
-            let project_idx = *project_idx;
+        for (index, &project_idx) in matching.iter().enumerate() {
+            let project = project_idx.map(|index| &self.projects[index]);
             let highlighted = index == selected;
             list = list.child(
                 div()
-                    .id(("new-session-project", project_idx))
+                    .id(("new-session-project", project_idx.map_or(0, |index| index + 1)))
+                    .when(project.is_none(), |row| {
+                        row.debug_selector(|| "new-session-no-project".into())
+                    })
                     .w_full()
                     .px(px(8.0))
                     .py(px(6.0))
@@ -482,7 +463,10 @@ impl AppState {
                     .when(highlighted, |row| row.bg(tokens.sidebar_item_active))
                     .when(!highlighted, |row| row.hover(|row| row.bg(tokens.sidebar_item_hover)))
                     .cursor(CursorStyle::PointingHand)
-                    .child(project_favicon(project, tokens, px(18.0)))
+                    .child(match project {
+                        Some(project) => project_favicon(project, tokens, px(18.0)).into_any_element(),
+                        None => no_project_icon(px(18.0), tokens.text_secondary).into_any_element(),
+                    })
                     .child(
                         div()
                             .flex_1()
@@ -495,18 +479,23 @@ impl AppState {
                                     .line_height(px(18.0))
                                     .font_weight(gpui::FontWeight::MEDIUM)
                                     .truncate()
-                                    .child(project.name.clone()),
+                                    .child(project.map_or_else(
+                                        || NO_PROJECT_LABEL.into(),
+                                        |project| project.name.clone(),
+                                    )),
                             )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .line_height(px(16.0))
-                                    .text_color(tokens.text_secondary)
-                                    .truncate()
-                                    .child(project.path.to_string_lossy().to_string()),
-                            ),
+                            .when_some(project, |column, project| {
+                                column.child(
+                                    div()
+                                        .text_xs()
+                                        .line_height(px(16.0))
+                                        .text_color(tokens.text_secondary)
+                                        .truncate()
+                                        .child(project.path.to_string_lossy().into_owned()),
+                                )
+                            }),
                     )
-                    .when(project_idx == self.active_project_idx, |row| {
+                    .when(project_idx == Some(self.active_project_idx), |row| {
                         row.child(
                             div()
                                 .flex_none()
@@ -515,8 +504,17 @@ impl AppState {
                                 .child("Current"),
                         )
                     })
+                    .when(project.is_none(), |row| {
+                        row.child(
+                            div()
+                                .flex_none()
+                                .text_xs()
+                                .text_color(tokens.text_secondary)
+                                .child(NO_PROJECT_SHORTCUT),
+                        )
+                    })
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.choose_new_session_project(Some(project_idx), window, cx)
+                        this.choose_new_session_project(project_idx, window, cx)
                     })),
             );
         }
@@ -675,13 +673,13 @@ impl AppState {
         label: &str,
         project_idx: Option<usize>,
         active: bool,
-        mode: SidebarProjectPickerMode,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let tokens = self.sidebar_tokens(cx);
         let owned_label = label.to_string();
-        let project_id = project_idx
-            .and_then(|idx| self.projects.get(idx))
+        let project = project_idx.and_then(|idx| self.projects.get(idx));
+        let project_id = project
+            .filter(|project| !project.projectless)
             .map(|project| project.id);
         let renaming = project_id.and_then(|id| {
             self.renaming_project
@@ -738,11 +736,11 @@ impl AppState {
         } else {
             row = row
                 .gap(px(7.0))
-                .when_some(project_idx.and_then(|idx| self.projects.get(idx)), |row, project| {
+                .when_some(project, |row, project| {
                     row.child(project_favicon(project, tokens, px(16.0)))
                 })
                 .child(div().flex_1().min_w_0().truncate().child(owned_label));
-            if let Some(id) = project_id.filter(|_| mode == SidebarProjectPickerMode::Scope) {
+            if let Some(id) = project_id {
                 row = row
                     .child(
                         sidebar_icon_button(
@@ -780,17 +778,10 @@ impl AppState {
                     );
             }
             row = row.on_click(cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
-                match mode {
-                    SidebarProjectPickerMode::Scope => {
-                        if let Some(index) = project_idx.filter(|_| event.modifiers().shift) {
-                            this.toggle_sidebar_project_scope(index, cx);
-                        } else {
-                            this.set_sidebar_project_scope(project_idx, window, cx);
-                        }
-                    }
-                    SidebarProjectPickerMode::NewSession => {
-                        this.choose_new_session_project(project_idx, window, cx)
-                    }
+                if let Some(index) = project_idx.filter(|_| event.modifiers().shift) {
+                    this.toggle_sidebar_project_scope(index, cx);
+                } else {
+                    this.set_sidebar_project_scope(project_idx, window, cx);
                 }
             }));
         }

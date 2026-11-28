@@ -72,6 +72,7 @@ fn full_workspace_roundtrips() {
             id: 1,
             path: PathBuf::from("/tmp/one"),
             name: "one".into(),
+            projectless: false,
             expanded: true,
             active_session: 0,
             sessions: vec![SavedSession {
@@ -170,6 +171,7 @@ fn explicit_automatic_model_survives_a_round_trip() {
             id: 1,
             path: PathBuf::from("/tmp/one"),
             name: "one".into(),
+            projectless: false,
             expanded: true,
             active_session: 0,
             sessions: vec![SavedSession {
@@ -354,6 +356,7 @@ fn atomic_save_and_load_roundtrip() {
             id: 1,
             path: PathBuf::from("/tmp/one"),
             name: "one".into(),
+            projectless: false,
             expanded: true,
             active_session: 0,
             sessions: vec![SavedSession {

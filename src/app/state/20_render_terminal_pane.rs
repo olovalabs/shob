@@ -791,6 +791,24 @@ impl AppState {
             .unwrap_or_default()
     }
 
+    fn new_session_project_matches<'a>(
+        &'a self,
+        query: &'a str,
+    ) -> impl Iterator<Item = Option<usize>> + 'a {
+        let mut projects = self.projects.iter().enumerate().filter_map(|(index, project)| {
+            (!project.projectless
+                && (sidebar_matches(query, project.name.as_str())
+                    || sidebar_matches(query, &project.path.to_string_lossy())))
+            .then_some(index)
+        });
+        projects
+            .next()
+            .into_iter()
+            .map(Some)
+            .chain(sidebar_matches(query, NO_PROJECT_LABEL).then_some(None))
+            .chain(projects.map(Some))
+    }
+
     fn sidebar_project_picker_focused(&self, window: &Window, cx: &App) -> bool {
         self.sidebar_project_picker
             .as_ref()
@@ -867,14 +885,13 @@ impl AppState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let project_idx = project_idx.unwrap_or(self.active_project_idx);
+        let project_idx = project_idx
+            .or_else(|| self.projects.iter().position(|project| project.projectless));
         let scope = self.sidebar_scope_indices();
-        if !scope.is_empty() && !scope.contains(&project_idx)
-        {
+        if !scope.is_empty() && project_idx.is_none_or(|index| !scope.contains(&index)) {
             self.settings.sidebar.project_scope = None;
             self.settings.sidebar.extra_project_scopes.clear();
         }
-        self.close_sidebar_project_picker(window, cx);
         self.create_new_sidebar_session(project_idx, window, cx);
     }
 

@@ -158,7 +158,7 @@ impl AppState {
                             .overflow_y_scroll()
                             .flex()
                             .flex_col()
-                            .children(self.projects.iter().enumerate().map(|(idx, project)| {
+                            .children(self.projects.iter().enumerate().filter(|(_, project)| !project.projectless).map(|(idx, project)| {
                                 let is_active = idx == current_project_idx;
                                 let path_display = Self::format_path_display(&project.path);
                                 div()
@@ -215,7 +215,32 @@ impl AppState {
                                             this.switch_agent_project(idx, window, cx);
                                         }),
                                     )
-                            })),
+                            }))
+                            .child(
+                                div()
+                                    .id(("project-option-no-project", pane_id))
+                                    .debug_selector(|| "project-option-no-project".into())
+                                    .flex_shrink_0()
+                                    .px(px(8.0))
+                                    .py(px(5.0))
+                                    .min_h(px(28.0))
+                                    .rounded(px(6.0))
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.0))
+                                    .cursor_pointer()
+                                    .hover(move |s| s.bg(hover_bg))
+                                    .child(no_project_icon(px(18.0), tokens.text_secondary))
+                                    .child(NO_PROJECT_LABEL)
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(move |this, _, window, cx| {
+                                            cx.stop_propagation();
+                                            this.close_workspace_popovers(pane_id, cx);
+                                            this.choose_new_session_project(None, window, cx);
+                                        }),
+                                    ),
+                            ),
                     )
                     .child(
                         div()

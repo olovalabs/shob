@@ -6,15 +6,83 @@ impl AppState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(project) = self.projects.get(project_idx) else {
+            return;
+        };
+        if project.projectless {
+            self.create_projectless_session(agent_chat, window, cx);
+        } else {
+            self.spawn_project_session(
+                Some(project_idx),
+                paths::uid("s"),
+                None,
+                agent_chat,
+                window,
+                cx,
+            );
+        }
+    }
+
+    fn create_projectless_session(
+        &mut self,
+        agent_chat: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let uid = paths::uid("s");
+        let root = self
+            .projects
+            .iter()
+            .find(|project| project.projectless)
+            .map_or(&self.scratch_dir, |project| &project.path);
+        let dir = root.join(&uid);
+        let path = dir.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { std::fs::create_dir_all(path) })
+                .await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if let Err(error) = result {
+                    window.push_notification(
+                        Notification::new()
+                            .title("Could not start without a project")
+                            .message(error.to_string())
+                            .with_type(NotificationType::Error),
+                        cx,
+                    );
+                    return;
+                }
+                let project_idx = this.projects.iter().position(|project| project.projectless);
+                this.spawn_project_session(project_idx, uid, Some(dir), agent_chat, window, cx);
+            });
+        })
+        .detach();
+    }
+
+    fn spawn_project_session(
+        &mut self,
+        project_idx: Option<usize>,
+        uid: String,
+        scratch_dir: Option<PathBuf>,
+        agent_chat: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let project = project_idx.and_then(|index| self.projects.get(index));
+        let Some(dir) = scratch_dir
+            .as_ref()
+            .or_else(|| project.map(|project| &project.path))
+        else {
+            return;
+        };
+        let session_count = project.map_or(0, |project| project.sessions.len());
         let self_weak = cx.entity().downgrade();
         let next_id = self.next_id;
         self.next_id += 1;
 
-        let Some(dir) = self.projects.get(project_idx).map(|p| p.path.clone()) else {
-            return;
-        };
         if let Ok((terminal, pid, generation, terminal_subscription)) = Self::spawn_terminal_view(
-            Some(&dir),
+            Some(dir),
             self.palette.clone(),
             self_weak,
             next_id,
@@ -22,11 +90,6 @@ impl AppState {
             self.settings.memory.scrollback(),
             cx,
         ) {
-            let session_count = self
-                .projects
-                .get(project_idx)
-                .map(|p| p.sessions.len())
-                .unwrap_or(0);
             let title = SharedString::from(format!("terminal {}", session_count + 1));
             let display_title = truncate_title(&title);
             let mut pane = TerminalPane::new(
@@ -37,6 +100,7 @@ impl AppState {
                 display_title.clone(),
                 pid,
             );
+            pane.cwd = scratch_dir.clone();
             pane.chat.selected_model = self.effective_default_agent_model().cloned();
             pane.chat.permission_mode = self.settings.permission_mode;
             pane.terminal_subscription = Some(terminal_subscription);
@@ -46,7 +110,8 @@ impl AppState {
             pane.input_subscription = Some(input_subscription);
             let session = Session {
                 id: next_id,
-                uid: paths::uid("s"),
+                uid,
+                scratch_dir,
                 title: title.clone(),
                 display_title: truncate_title(&title),
                 logo: logos::default_logo(),
@@ -56,11 +121,24 @@ impl AppState {
                 status: SessionStatus::Idle,
             };
 
-            if let Some(project) = self.projects.get_mut(project_idx) {
-                project.sessions.push(session);
-                project.active_session_idx = project.sessions.len() - 1;
-                project.expanded = true;
-            }
+            let project_idx = project_idx.unwrap_or_else(|| {
+                let index = self.projects.len();
+                self.projects.push(Project {
+                    id: next_id,
+                    name: NO_PROJECT_LABEL.into(),
+                    path: self.scratch_dir.clone(),
+                    projectless: true,
+                    sessions: Vec::new(),
+                    active_session_idx: 0,
+                    expanded: true,
+                    visible_session_count: 5,
+                });
+                index
+            });
+            let project = &mut self.projects[project_idx];
+            project.sessions.push(session);
+            project.active_session_idx = project.sessions.len() - 1;
+            project.expanded = true;
             self.active_view = ActiveView::Workspace;
             self.compact_sidebar_open = false;
             self.clear_sidebar_search(window, cx);
@@ -118,23 +196,19 @@ impl AppState {
 
     fn create_new_sidebar_session(
         &mut self,
-        project_idx: usize,
+        project_idx: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.projects.is_empty() {
-            self.select_folder_and_add_project(window, cx);
-            return;
-        }
-        self.sidebar_project_picker = None;
+        self.close_sidebar_project_picker(window, cx);
         self.sidebar_thread_menu = None;
-        let project_idx = project_idx.min(self.projects.len() - 1);
-        // The sidebar always opens a fresh thread, even if the current chat is empty.
+        self.sidebar_folder_menu = None;
         let agent_chat = self.settings.agent_layout;
-        self.create_project_session(project_idx, agent_chat, window, cx);
-        self.compact_sidebar_open = false;
-        self.active_view = ActiveView::Workspace;
-        cx.notify();
+        if let Some(project_idx) = project_idx {
+            self.create_project_session(project_idx, agent_chat, window, cx);
+        } else {
+            self.create_projectless_session(agent_chat, window, cx);
+        }
     }
 
     fn handle_sidebar_new_session(
@@ -143,15 +217,9 @@ impl AppState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let scoped = self.sidebar_scope_indices();
-        if self.projects.is_empty() {
-            self.select_folder_and_add_project(window, cx);
-        } else if let Some(project_idx) = (scoped.len() == 1 && !self.settings.sidebar.project_folders)
-            .then(|| scoped[0])
-            .or_else(|| local.then_some(self.active_project_idx))
-            .or_else(|| (self.projects.len() == 1).then_some(0))
-        {
-            self.choose_new_session_project(Some(project_idx), window, cx);
+        if local {
+            let project_idx = self.active_project().map(|_| self.active_project_idx);
+            self.choose_new_session_project(project_idx, window, cx);
         } else {
             self.open_sidebar_project_picker(SidebarProjectPickerMode::NewSession, window, cx);
         }

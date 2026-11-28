@@ -192,6 +192,7 @@ fn sidebar_working_section_counts_and_keeps_active_when_collapsed() {
         state.projects[0].sessions.push(Session {
             id: 999,
             uid: "working-test".into(),
+            scratch_dir: None,
             title: title.clone(),
             display_title: title,
             logo: logos::default_logo(),
@@ -231,6 +232,7 @@ fn sidebar_new_button_chooses_project_before_creating_thread() {
             id: 2,
             name: "Second project".into(),
             path: state.projects[0].path.join("second"),
+            projectless: false,
             sessions: Vec::new(),
             active_session_idx: 0,
             expanded: false,
@@ -286,13 +288,105 @@ fn sidebar_new_button_chooses_project_before_creating_thread() {
     });
     cx.draw_frame().unwrap();
     let new_thread = cx.debug_bounds("sidebar-new-thread").unwrap();
-    cx.simulate_click(new_thread.center(), Modifiers::none());
+    cx.simulate_click(
+        new_thread.center(),
+        Modifiers {
+            shift: true,
+            ..Modifiers::none()
+        },
+    );
     cx.draw_frame().unwrap();
     assert!(cx.debug_bounds("new-session-project-modal").is_none());
     assert_eq!(
         state.read_with(&cx, |state, _| state.projects[0].sessions.len()),
         3
     );
+}
+
+#[test]
+fn sidebar_new_projectless_sessions_use_separate_workspaces_and_restore() {
+    let scratch = tempfile::tempdir().unwrap();
+    let mut app = TestAppContext::new();
+    let (mut cx, state) = open_app(&mut app);
+    cx.update_window_entity(&state, |state, _, cx| {
+        state.scratch_dir = scratch.path().join("scratch");
+        state.settings.agent_layout = true;
+        state.settings.sidebar.project_scope = Some(state.projects[0].path.clone());
+        cx.notify();
+    });
+    cx.draw_frame().unwrap();
+    let new_thread = cx.debug_bounds("sidebar-new-thread").unwrap();
+    cx.simulate_click(new_thread.center(), Modifiers::none());
+    cx.simulate_input("NO PRO");
+    cx.draw_frame().unwrap();
+    let no_project = cx.debug_bounds("new-session-no-project").unwrap();
+    cx.simulate_click(no_project.center(), Modifiers::none());
+    cx.run_until_parked();
+    let (chat_uid, chat_dir) = state.read_with(&cx, |state, _| {
+        assert_eq!(state.projects[0].sessions.len(), 1);
+        assert!(state.settings.sidebar.project_scope.is_none());
+        let chat = state.active_session().unwrap();
+        let pane = state.one_mode_pane(chat).unwrap();
+        assert!(pane.chat.active);
+        (chat.uid.clone(), state.agent_working_directory(pane))
+    });
+
+    cx.update_window_entity(&state, |state, window, cx| {
+        state.switch_agent_layout(window, cx);
+    });
+    cx.draw_frame().unwrap();
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+        "cmd-alt-n"
+    } else {
+        "ctrl-alt-n"
+    });
+    cx.run_until_parked();
+    let (terminal_uid, terminal_dir, saved) = cx.update_window_entity(&state, |state, window, cx| {
+        let terminal = state.active_session().unwrap();
+        assert!(!terminal.panes[0].chat.active);
+        let terminal_uid = terminal.uid.clone();
+        let terminal_dir = state.pane_cwd_path(&terminal.panes[0]).unwrap();
+        let pane_id = terminal.panes[0].id;
+        state.split_pane(pane_id, gpui::Axis::Horizontal, window, cx);
+        (terminal_uid, terminal_dir, state.saved_workspace(cx))
+    });
+    assert_eq!(chat_dir, scratch.path().join("scratch").join(&chat_uid));
+    assert_eq!(terminal_dir, scratch.path().join("scratch").join(&terminal_uid));
+    assert_ne!(chat_dir, terminal_dir);
+    assert!(chat_dir.is_dir() && terminal_dir.is_dir());
+
+    let workspace = workspace_state::load_from_text(&serde_json::to_string(&saved).unwrap());
+    cx.update_window_entity(&state, |state, _, cx| {
+        state.startup_loaded = false;
+        state.apply_saved_workspace(
+            RestoreData {
+                workspace,
+                scrollbacks: HashMap::new(),
+                transcripts: HashMap::new(),
+                usage: HashMap::new(),
+            },
+            cx,
+        );
+    });
+    cx.draw_frame().unwrap();
+    state.read_with(&cx, |state, _| {
+        let project = state.active_project().unwrap();
+        assert!(project.projectless);
+        let [chat, terminal] = project.sessions.as_slice() else {
+            panic!("expected one chat and one terminal session without a project");
+        };
+        assert_eq!(chat.uid, chat_uid);
+        let pane = state.one_mode_pane(chat).unwrap();
+        assert_eq!(state.agent_working_directory(pane), chat_dir);
+        assert_eq!(state.active_session().unwrap().uid, terminal_uid);
+        assert_eq!(terminal.panes.len(), 2);
+        assert!(
+            terminal
+                .panes
+                .iter()
+                .all(|pane| state.pane_cwd_ref(pane) == Some(terminal_dir.as_path()))
+        );
+    });
 }
 
 #[test]

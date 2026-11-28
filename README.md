@@ -96,7 +96,9 @@ Browser audio plays through the local PulseAudio server or PipeWire’s PulseAud
 
 The sidebar groups pinned and active threads above the Working, Snoozed, and Settled shelves. In the project filter, Shift-click projects to combine scopes or turn on **Project folders** for collapsible project groups. Ctrl/Cmd-click threads to select multiple rows; Shift-click extends the selection. Drag or right-click to act on the selection. Archived threads can be restored from Settings.
 
-**New thread** skips the chooser when one project is in scope or only one is open. `Ctrl/Cmd+N` starts a thread, `Ctrl/Cmd+Shift+N` starts one in the current context, `Ctrl/Cmd+K` searches titles and saved conversation messages, and `Ctrl/Cmd+B` toggles the sidebar. Use `F6` to move between the sidebar and workspace. Double-click the resize edge to reset its width. Labels, ordering, and shelf state survive restart; the current multi-selection does not.
+**New thread** (`Ctrl/Cmd+N`) opens the project picker. Choose **No project**, or press `Ctrl+Alt+N` (`Cmd+Option+N` on macOS), to start an agent chat or terminal session without opening a folder. Each projectless session gets its own working directory under `scratch/` in the Shob data directory. It restores like any other session.
+
+`Ctrl/Cmd+Shift+N` starts a thread in the current context, `Ctrl/Cmd+K` searches titles and saved conversation messages, and `Ctrl/Cmd+B` toggles the sidebar. Use `F6` to move between the sidebar and workspace. Double-click the resize edge to reset its width. Labels, ordering, and shelf state survive restart; the current multi-selection does not.
 
 ### Make It Yours
 

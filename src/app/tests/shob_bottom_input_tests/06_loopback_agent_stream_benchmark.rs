@@ -812,6 +812,7 @@ fn project_switcher_switches_projects_and_preserves_sessions() {
     let pane_a = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
 
     cx.update_window_entity(&state, |s, window, cx| {
+        s.scratch_dir = temp.path().join("scratch");
         s.projects[0].path = repo_a.clone();
         s.projects[0].name = SharedString::from("alpha");
         s.settings.agent_layout = true;
@@ -845,6 +846,22 @@ fn project_switcher_switches_projects_and_preserves_sessions() {
     let open_folder = cx.debug_bounds("project-option-open-folder").unwrap();
     assert!(menu.contains(&open_folder.origin));
     assert!(menu.contains(&open_folder.bottom_right()));
+    let no_project = cx.debug_bounds("project-option-no-project").unwrap();
+    cx.simulate_click(no_project.center(), Modifiers::none());
+    cx.run_until_parked();
+    cx.draw_frame().unwrap();
+    state.read_with(&cx, |s, _| {
+        let session = s.active_session().unwrap();
+        let pane = s.one_mode_pane(session).unwrap();
+        assert!(pane.chat.active);
+        assert_eq!(
+            s.agent_working_directory(pane),
+            temp.path().join("scratch").join(&session.uid)
+        );
+    });
+    let proj_btn = cx.debug_bounds("agent-project-selector").unwrap();
+    cx.simulate_click(proj_btn.center(), Modifiers::none());
+    cx.draw_frame().unwrap();
     let opt_alpha = cx.debug_bounds("project-option-0").unwrap();
     cx.simulate_click(opt_alpha.center(), Modifiers::none());
     cx.run_until_parked();

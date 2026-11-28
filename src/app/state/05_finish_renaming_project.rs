@@ -25,10 +25,14 @@ impl AppState {
     /// sidebar focuses that project (and revives it if it has no sessions)
     /// rather than creating a duplicate.
     fn open_project_path(&mut self, folder: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        if folder == self.scratch_dir {
+            self.choose_new_session_project(None, window, cx);
+            return;
+        }
         if let Some(existing) = self
             .projects
             .iter()
-            .position(|p| git_workspace::paths_equal(&p.path, &folder))
+            .position(|p| !p.projectless && git_workspace::paths_equal(&p.path, &folder))
         {
             if self.projects[existing].sessions.is_empty() {
                 self.create_new_session_in_project(existing, window, cx);
@@ -75,6 +79,7 @@ impl AppState {
             let session = Session {
                 id: next_id,
                 uid: paths::uid("s"),
+                scratch_dir: None,
                 title: title.clone(),
                 display_title: title,
                 logo: logos::default_logo(),
@@ -87,6 +92,7 @@ impl AppState {
                 id: next_id,
                 name: SharedString::from(name),
                 path: folder,
+                projectless: false,
                 sessions: vec![session],
                 active_session_idx: 0,
                 expanded: true,
@@ -146,15 +152,13 @@ impl AppState {
             return;
         };
 
-        let dir = self.projects.get(p_idx).map(|p| p.path.clone());
-        let pane_count = self
-            .projects
-            .get(p_idx)
-            .and_then(|p| p.sessions.get(s_idx))
-            .map(|s| s.panes.len())
-            .unwrap_or(0);
+        let project = &self.projects[p_idx];
+        let session = &project.sessions[s_idx];
+        let dir = project.session_dir(session);
+        let scratch_cwd = session.scratch_dir.clone();
+        let pane_count = session.panes.len();
         if let Ok((terminal, pid, generation, terminal_subscription)) = Self::spawn_terminal_view(
-            dir.as_ref(),
+            Some(dir),
             self.palette.clone(),
             self_weak,
             next_id,
@@ -172,6 +176,7 @@ impl AppState {
                 display_title,
                 pid,
             );
+            pane.cwd = scratch_cwd;
             pane.one_mode = self
                 .pane_ref(target_pane_id)
                 .is_some_and(|pane| pane.one_mode);
@@ -286,19 +291,18 @@ impl AppState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(&(project, _, _)) = self.pane_index.get(&source) else {
-            return false;
-        };
         let Some(pane) = self.pane_ref(source) else {
             return false;
         };
-        let base = pane
+        let Some(base) = pane
             .markdown_preview
             .as_ref()
             .and_then(|(path, _)| path.parent().map(Path::to_path_buf))
             .or_else(|| pane.chat.cwd.as_ref().map(PathBuf::from))
             .or_else(|| self.pane_cwd_path(pane))
-            .unwrap_or_else(|| self.projects[project].path.clone());
+        else {
+            return false;
+        };
         let Some(path) = file_preview::local_link_path(target, &base) else {
             return false;
         };
@@ -307,7 +311,9 @@ impl AppState {
         {
             return true;
         }
-        let root = self.projects[project].path.clone();
+        let Some(root) = self.pane_session_dir(source).cloned() else {
+            return false;
+        };
         let display_path = path
             .strip_prefix(&root)
             .unwrap_or(&path)
@@ -372,7 +378,7 @@ impl AppState {
         if !file_preview::is_markdown_path(&path) {
             return false;
         }
-        let Some(&(project, _, _)) = self.pane_index.get(&source) else {
+        let Some(root) = self.pane_session_dir(source) else {
             return false;
         };
         let Some(pane) = self.pane_ref(source) else {
@@ -385,7 +391,7 @@ impl AppState {
                 .as_ref()
                 .and_then(|(path, _)| path.parent().map(|p| p.to_path_buf()))
                 .or_else(|| self.pane_cwd_path(pane))
-                .unwrap_or_else(|| self.projects[project].path.clone())
+                .unwrap_or_else(|| root.clone())
                 .join(path)
         };
         let Some(new_id) = self.prepare_preview_pane(source, window, cx) else {
@@ -429,14 +435,14 @@ impl AppState {
     }
 
     fn open_project_diff(&mut self, source: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(&(project, _, _)) = self.pane_index.get(&source) else {
+        let Some(root) = self.pane_session_dir(source) else {
             return;
         };
         let directory = self
             .pane_ref(source)
             .filter(|pane| pane.chat.active)
             .map(|pane| self.agent_working_directory(pane))
-            .unwrap_or_else(|| self.projects[project].path.clone());
+            .unwrap_or_else(|| root.clone());
         let Some(new_id) = self.prepare_preview_pane(source, window, cx) else {
             return;
         };
@@ -477,14 +483,14 @@ impl AppState {
     }
 
     fn open_files_surface(&mut self, source: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(&(project, _, _)) = self.pane_index.get(&source) else {
+        let Some(root) = self.pane_session_dir(source) else {
             return;
         };
         let root = self
             .pane_ref(source)
             .filter(|pane| pane.chat.active)
             .map(|pane| self.agent_working_directory(pane))
-            .unwrap_or_else(|| self.projects[project].path.clone());
+            .unwrap_or_else(|| root.clone());
         let panel_owner = self.tool_panel_owner(source);
         let Some(id) = (if let Some(owner) = panel_owner {
             let existing = self
@@ -590,7 +596,7 @@ impl AppState {
         let pane = Self::new_browser_pane(
             id,
             owner,
-            self.projects[project].path.clone(),
+            self.projects[project].session_dir(&self.projects[project].sessions[session]).clone(),
             workspace_state::SavedBrowser::default(),
             cx,
         );

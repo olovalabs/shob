@@ -854,12 +854,13 @@ impl AppState {
         if let Some(project) = self.projects.get_mut(self.active_project_idx)
             && let Some(session) = project.sessions.get_mut(project.active_session_idx)
         {
+            let root = session.scratch_dir.as_ref().unwrap_or(&project.path);
             for pane in &mut session.panes {
                 if let Some(path) = pane.tool_panel_file_restore.take() {
-                    previews.push((pane.id, project.path.clone(), path));
+                    previews.push((pane.id, root.clone(), path));
                 }
                 if let Some(saved) = pane.files_restore.take() {
-                    files.push((pane.id, project.path.clone(), saved));
+                    files.push((pane.id, root.clone(), saved));
                 }
             }
         }
