@@ -212,7 +212,10 @@ impl SearchState {
     }
 
     pub(crate) fn invalidate_matches(&mut self) {
-        self.released_anchor = self.current_match().map(|m| *m.start()).or(self.released_anchor);
+        self.released_anchor = self
+            .current_match()
+            .map(|m| *m.start())
+            .or(self.released_anchor);
         self.current = None;
         if !self.matches.is_empty() {
             self.matches = Arc::from([]);
@@ -244,7 +247,10 @@ impl SearchState {
     }
 
     pub(crate) fn set_matches(&mut self, matches: Arc<[Match]>) {
-        let anchor = self.current_match().map(|m| *m.start()).or(self.released_anchor.take());
+        let anchor = self
+            .current_match()
+            .map(|m| *m.start())
+            .or(self.released_anchor.take());
         self.matches = matches;
         self.current =
             anchor.and_then(|point| self.matches.iter().position(|m| *m.start() == point));
@@ -315,7 +321,9 @@ mod tests {
 
     #[test]
     fn search_snapshot_keeps_wrapped_matches_and_scrollback_coordinates() {
-        let state = state_with(b"012345678901234567890123456789012345678wrap\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\nhit");
+        let state = state_with(
+            b"012345678901234567890123456789012345678wrap\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\nhit",
+        );
         let mut regex = RegexSearch::new("wrap|hit").unwrap();
         let expected = state.all_matches(&mut regex);
         assert_eq!(expected.len(), 2);

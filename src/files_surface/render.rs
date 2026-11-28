@@ -379,12 +379,16 @@ impl Render for FilesSurface {
                     ),
             );
         }
-        let input = self.diff.as_ref().map(|diff| diff.input.clone()).or_else(|| {
-            self.editors
-                .iter()
-                .find(|e| Some(&e.path) == self.selected.as_ref())
-                .map(|e| e.input.clone())
-        });
+        let input = self
+            .diff
+            .as_ref()
+            .map(|diff| diff.input.clone())
+            .or_else(|| {
+                self.editors
+                    .iter()
+                    .find(|e| Some(&e.path) == self.selected.as_ref())
+                    .map(|e| e.input.clone())
+            });
         let body = if let Some(input) = input {
             div()
                 .flex_1()
@@ -494,10 +498,13 @@ impl Render for FilesSurface {
                                 .text_size(px(11.0))
                                 .text_color(tokens.text_secondary)
                                 .child(
-                                    self.diff.as_ref()
+                                    self.diff
+                                        .as_ref()
                                         .map(|diff| &diff.repository_path)
                                         .or(self.selected.as_ref())
-                                    .map_or(String::new(), |p| p.to_string_lossy().into_owned()),
+                                        .map_or(String::new(), |p| {
+                                            p.to_string_lossy().into_owned()
+                                        }),
                                 )
                                 .child(tools),
                         )

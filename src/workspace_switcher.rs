@@ -66,11 +66,18 @@ impl AppState {
     }
 
     fn begin_git_request(&mut self, dir: &Path, mutation: bool) -> Option<GitRequest> {
-        if self.git_requests.get(dir).is_some_and(|request| request.mutation || !mutation) {
+        if self
+            .git_requests
+            .get(dir)
+            .is_some_and(|request| request.mutation || !mutation)
+        {
             return None;
         }
         self.git_request_serial = self.git_request_serial.wrapping_add(1);
-        let request = GitRequest { serial: self.git_request_serial, mutation };
+        let request = GitRequest {
+            serial: self.git_request_serial,
+            mutation,
+        };
         self.git_requests.insert(dir.to_path_buf(), request);
         Some(request)
     }
@@ -111,9 +118,16 @@ impl AppState {
         if self.git_snapshots.get(&dir) == Some(&snapshot) {
             return false;
         }
-        let affected: Vec<_> = self.projects.iter().flat_map(|project| &project.sessions)
+        let affected: Vec<_> = self
+            .projects
+            .iter()
+            .flat_map(|project| &project.sessions)
             .flat_map(|session| &session.panes)
-            .filter(|pane| pane.branch_picker.as_ref().is_some_and(|picker| picker.directory == dir))
+            .filter(|pane| {
+                pane.branch_picker
+                    .as_ref()
+                    .is_some_and(|picker| picker.directory == dir)
+            })
             .map(|pane| pane.id)
             .collect();
         self.git_snapshots.insert(dir, snapshot);
@@ -244,7 +258,9 @@ impl AppState {
             .git_snapshots
             .get(&source_dir)
             .and_then(|snap| snap.current_branch.clone());
-        let Some(request) = self.begin_git_request(&source_dir, true) else { return };
+        let Some(request) = self.begin_git_request(&source_dir, true) else {
+            return;
+        };
 
         if let Some(pane) = self.pane_mut(pane_id) {
             pane.workspace_menu_open = false;
@@ -279,7 +295,10 @@ impl AppState {
                     Ok((src_snapshot, wt, wt_snapshot)) => {
                         this.apply_git_snapshot(source_dir, src_snapshot, cx);
                         this.apply_git_snapshot(wt.path.clone(), wt_snapshot, cx);
-                        if this.pane_ref(pane_id).is_some_and(|pane| pane.workspace_choice == workspace_choice) {
+                        if this
+                            .pane_ref(pane_id)
+                            .is_some_and(|pane| pane.workspace_choice == workspace_choice)
+                        {
                             this.apply_workspace_override(pane_id, Some(wt.path), cx);
                         }
                     }
@@ -344,12 +363,18 @@ impl AppState {
     }
 
     fn update_branch_choices(&mut self, pane_id: usize, reset: bool, cx: &mut Context<Self>) {
-        let Some(picker) = self.pane_ref(pane_id).and_then(|pane| pane.branch_picker.as_ref()) else {
+        let Some(picker) = self
+            .pane_ref(pane_id)
+            .and_then(|pane| pane.branch_picker.as_ref())
+        else {
             return;
         };
         let query = picker.input.read(cx).value();
         let choices = filtered_branch_items(self.git_snapshots.get(&picker.directory), &query);
-        let Some(picker) = self.pane_mut(pane_id).and_then(|pane| pane.branch_picker.as_mut()) else {
+        let Some(picker) = self
+            .pane_mut(pane_id)
+            .and_then(|pane| pane.branch_picker.as_mut())
+        else {
             return;
         };
         if reset {
@@ -400,7 +425,9 @@ impl AppState {
             && let Some(picker) = pane.branch_picker.as_mut()
         {
             picker.selected = next;
-            picker.scroll.scroll_to_item(next, gpui::ScrollStrategy::Top);
+            picker
+                .scroll
+                .scroll_to_item(next, gpui::ScrollStrategy::Top);
             cx.notify();
         }
     }
@@ -460,37 +487,50 @@ impl AppState {
             return;
         }
         let Some(request) = self.begin_git_request(&active_dir, true) else {
-            window.push_notification(Notification::new().title("Git operation in progress")
-                .message("Wait for the current operation before switching branches.")
-                .with_type(NotificationType::Warning), cx);
+            window.push_notification(
+                Notification::new()
+                    .title("Git operation in progress")
+                    .message("Wait for the current operation before switching branches.")
+                    .with_type(NotificationType::Warning),
+                cx,
+            );
             return;
         };
         cx.spawn_in(window, async move |this, cx| {
             let dir = active_dir.clone();
-            let result = cx.background_executor().spawn(async move {
-                match item {
-                    BranchPickerItem::Existing(branch) => {
-                        git_workspace::checkout_branch(&dir, &branch.name, branch.is_remote)?;
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    match item {
+                        BranchPickerItem::Existing(branch) => {
+                            git_workspace::checkout_branch(&dir, &branch.name, branch.is_remote)?;
+                        }
+                        BranchPickerItem::Create(name) => {
+                            git_workspace::create_and_checkout_branch(&dir, &name)?;
+                        }
                     }
-                    BranchPickerItem::Create(name) => {
-                        git_workspace::create_and_checkout_branch(&dir, &name)?;
-                    }
-                }
-                Ok::<_, String>(git_workspace::inspect(&dir))
-            }).await;
+                    Ok::<_, String>(git_workspace::inspect(&dir))
+                })
+                .await;
             let _ = this.update_in(cx, |this, window, cx| {
                 if !this.finish_git_request(&active_dir, request) {
                     return;
                 }
                 match result {
-                    Ok(snapshot) => { this.apply_git_snapshot(active_dir, snapshot, cx); }
-                    Err(error) => window.push_notification(Notification::new()
-                        .title("Could not switch branch")
-                        .message(error)
-                        .with_type(NotificationType::Error), cx),
+                    Ok(snapshot) => {
+                        this.apply_git_snapshot(active_dir, snapshot, cx);
+                    }
+                    Err(error) => window.push_notification(
+                        Notification::new()
+                            .title("Could not switch branch")
+                            .message(error)
+                            .with_type(NotificationType::Error),
+                        cx,
+                    ),
                 };
             });
-        }).detach();
+        })
+        .detach();
     }
 
     fn switch_agent_project(

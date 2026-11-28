@@ -706,7 +706,9 @@ impl AppState {
             .or(pane.chat.startup_error.as_ref())?;
         let short = clip_tool_text(error, 240).0;
         let id = pane.id;
-        let missing_folder = self.pane_path_sample(pane).is_some_and(|sample| !sample.working_dir_exists);
+        let missing_folder = self
+            .pane_path_sample(pane)
+            .is_some_and(|sample| !sample.working_dir_exists);
         Some(
             div().pb(px(8.0)).child(
                 panel(tokens).child(short).child(

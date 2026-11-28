@@ -657,10 +657,7 @@ detached
 
         let created = create_and_checkout_branch(&wt.path, "feat new api").expect("new branch");
         assert_eq!(created, "feat-new-api");
-        assert_eq!(
-            detect_git_branch(&wt.path).as_deref(),
-            Some("feat-new-api")
-        );
+        assert_eq!(detect_git_branch(&wt.path).as_deref(), Some("feat-new-api"));
 
         // `main` cannot be checked out directly while checked out in main worktree.
         assert!(checkout_branch(&wt.path, "main", false).is_err());

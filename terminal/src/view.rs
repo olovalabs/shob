@@ -210,7 +210,11 @@ struct HoveredLink {
     link: HyperlinkMatch,
 }
 
-fn update_selection_endpoint(selection: &mut GridSelection, point: GridPoint, side: GridSide) -> bool {
+fn update_selection_endpoint(
+    selection: &mut GridSelection,
+    point: GridPoint,
+    side: GridSide,
+) -> bool {
     // Alacritty's endpoints are private; compare the small, allocation-free
     // value rather than materializing a range (which can scan a wrapped line).
     let previous = selection.clone();
@@ -625,7 +629,11 @@ impl TerminalView {
                             batch.extend_from_slice(more.bytes());
                             let _ = recycle_tx.try_send(more.buffer);
                         }
-                        let bytes = if batch.is_empty() { chunk.bytes() } else { batch.as_slice() };
+                        let bytes = if batch.is_empty() {
+                            chunk.bytes()
+                        } else {
+                            batch.as_slice()
+                        };
                         let read_at = chunk.read_at;
 
                         let result = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
@@ -955,7 +963,9 @@ impl TerminalView {
         recycle_rx: flume::Receiver<Vec<u8>>,
     ) {
         loop {
-            let mut buffer = recycle_rx.try_recv().unwrap_or_else(|_| vec![0; PTY_READ_BYTES]);
+            let mut buffer = recycle_rx
+                .try_recv()
+                .unwrap_or_else(|_| vec![0; PTY_READ_BYTES]);
             match stdout_reader.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(n) => {
@@ -1273,7 +1283,10 @@ impl TerminalView {
 
     pub fn next_match(&mut self, cx: &mut Context<Self>) {
         if !self.search.matches().is_empty()
-            && self.search.advance(GridDirection::Right, &self.state).is_some()
+            && self
+                .search
+                .advance(GridDirection::Right, &self.state)
+                .is_some()
         {
             cx.notify();
         }
@@ -1281,7 +1294,10 @@ impl TerminalView {
 
     pub fn previous_match(&mut self, cx: &mut Context<Self>) {
         if !self.search.matches().is_empty()
-            && self.search.advance(GridDirection::Left, &self.state).is_some()
+            && self
+                .search
+                .advance(GridDirection::Left, &self.state)
+                .is_some()
         {
             cx.notify();
         }
@@ -1313,72 +1329,95 @@ impl TerminalView {
         let remaining = self.search_last_refresh.map_or(Duration::ZERO, |last| {
             SEARCH_REFRESH_MIN_INTERVAL.saturating_sub(last.elapsed())
         });
-        self.search_refresh_task = Some(cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let executor = cx.background_executor().clone();
-            if !remaining.is_zero() {
-                executor.timer(remaining).await;
-            }
-            let Ok(Some((mut regex, epoch, revision, columns, lines, top))) = this.update(cx, |view, _| {
-                if !view.search_refresh_pending || !(view.search_select_first || view.visible_recently()) {
-                    return None;
+        self.search_refresh_task = Some(cx.spawn(
+            async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let executor = cx.background_executor().clone();
+                if !remaining.is_zero() {
+                    executor.timer(remaining).await;
                 }
-                let regex = view.search.take_regex()?;
-                view.search_refresh_pending = false;
-                view.search_last_refresh = Some(std::time::Instant::now());
-                let (columns, lines, top) = view.state.with_term(|term| {
-                    (term.columns(), term.total_lines(), term.topmost_line().0)
-                });
-                Some((regex, view.search_epoch, view.screen_revision(), columns, lines, top))
-            }) else {
-                let _ = this.update(cx, |view, _| view.search_refresh_task = None);
-                return;
-            };
-            let mut snapshot = executor.spawn(async move { SearchSnapshot::new(columns, lines, top) }).await;
-            let total = columns * lines;
-            let mut complete = true;
-            for start in (0..total).step_by(SEARCH_SNAPSHOT_CELLS_PER_SLICE) {
-                let copied = this.update(cx, |view, _| {
-                    if epoch != view.search_epoch || revision != view.screen_revision() {
-                        return false;
-                    }
-                    view.state.with_term(|term| {
-                        snapshot.copy_cells(term, start, (total - start).min(SEARCH_SNAPSHOT_CELLS_PER_SLICE));
-                    });
-                    true
-                });
-                if !matches!(copied, Ok(true)) {
-                    complete = false;
-                    break;
-                }
-                if total - start > SEARCH_SNAPSHOT_CELLS_PER_SLICE {
-                    yield_to_ui().await;
-                }
-            }
-            let (regex, matches) = executor
-                .spawn(async move {
-                    let matches = complete.then(|| snapshot.matches(&mut regex));
-                    (regex, matches)
-                })
-                .await;
-            let _ = this.update(cx, |view, cx| {
-                view.search_refresh_task = None;
-                if epoch == view.search_epoch {
-                    view.search.finish_scan(regex);
-                    if let Some(matches) = matches.filter(|_| revision == view.screen_revision()) {
-                        view.search.set_matches(matches);
-                        if std::mem::take(&mut view.search_select_first) {
-                            view.search.advance(GridDirection::Right, &view.state);
+                let Ok(Some((mut regex, epoch, revision, columns, lines, top))) =
+                    this.update(cx, |view, _| {
+                        if !view.search_refresh_pending
+                            || !(view.search_select_first || view.visible_recently())
+                        {
+                            return None;
                         }
-                        cx.notify();
-                    } else {
-                        view.search_refresh_pending = true;
+                        let regex = view.search.take_regex()?;
+                        view.search_refresh_pending = false;
+                        view.search_last_refresh = Some(std::time::Instant::now());
+                        let (columns, lines, top) = view.state.with_term(|term| {
+                            (term.columns(), term.total_lines(), term.topmost_line().0)
+                        });
+                        Some((
+                            regex,
+                            view.search_epoch,
+                            view.screen_revision(),
+                            columns,
+                            lines,
+                            top,
+                        ))
+                    })
+                else {
+                    let _ = this.update(cx, |view, _| view.search_refresh_task = None);
+                    return;
+                };
+                let mut snapshot = executor
+                    .spawn(async move { SearchSnapshot::new(columns, lines, top) })
+                    .await;
+                let total = columns * lines;
+                let mut complete = true;
+                for start in (0..total).step_by(SEARCH_SNAPSHOT_CELLS_PER_SLICE) {
+                    let copied = this.update(cx, |view, _| {
+                        if epoch != view.search_epoch || revision != view.screen_revision() {
+                            return false;
+                        }
+                        view.state.with_term(|term| {
+                            snapshot.copy_cells(
+                                term,
+                                start,
+                                (total - start).min(SEARCH_SNAPSHOT_CELLS_PER_SLICE),
+                            );
+                        });
+                        true
+                    });
+                    if !matches!(copied, Ok(true)) {
+                        complete = false;
+                        break;
+                    }
+                    if total - start > SEARCH_SNAPSHOT_CELLS_PER_SLICE {
+                        yield_to_ui().await;
                     }
                 }
-                if view.search_refresh_pending && (view.search_select_first || view.visible_recently()) {
-                    view.refresh_streaming_search(cx);
-                }
-            });
-        }));
+                let (regex, matches) = executor
+                    .spawn(async move {
+                        let matches = complete.then(|| snapshot.matches(&mut regex));
+                        (regex, matches)
+                    })
+                    .await;
+                let _ = this.update(cx, |view, cx| {
+                    view.search_refresh_task = None;
+                    if epoch == view.search_epoch {
+                        view.search.finish_scan(regex);
+                        if let Some(matches) =
+                            matches.filter(|_| revision == view.screen_revision())
+                        {
+                            view.search.set_matches(matches);
+                            if std::mem::take(&mut view.search_select_first) {
+                                view.search.advance(GridDirection::Right, &view.state);
+                            }
+                            cx.notify();
+                        } else {
+                            view.search_refresh_pending = true;
+                        }
+                    }
+                    if view.search_refresh_pending
+                        && (view.search_select_first || view.visible_recently())
+                    {
+                        view.refresh_streaming_search(cx);
+                    }
+                });
+            },
+        ));
     }
 
     // -----------------------------------------------------------------------
@@ -1529,9 +1568,11 @@ impl TerminalView {
 
         let revision = self.hover_revision();
         let (point, _) = self.grid_point_and_side(position, revision.display_offset);
-        if self.hovered_link.as_ref().is_some_and(|hovered| {
-            hovered.revision == revision && hovered.link.contains(point)
-        }) {
+        if self
+            .hovered_link
+            .as_ref()
+            .is_some_and(|hovered| hovered.revision == revision && hovered.link.contains(point))
+        {
             return;
         }
 
@@ -1778,7 +1819,8 @@ impl TerminalView {
 
         match event.button {
             MouseButton::Left => {
-                let (point, side) = self.grid_point_and_side(event.position, self.state.display_offset());
+                let (point, side) =
+                    self.grid_point_and_side(event.position, self.state.display_offset());
                 let ty = match event.click_count {
                     0 | 1 => {
                         if event.modifiers.alt {
@@ -1921,7 +1963,10 @@ impl TerminalView {
                     let keep_going = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
                         let position = view.last_mouse_position;
                         if view.mouse_down_button == Some(MouseButton::Left)
-                            && scroll_lines_if_changed(&view.state, view.drag_scroll_lines(position))
+                            && scroll_lines_if_changed(
+                                &view.state,
+                                view.drag_scroll_lines(position),
+                            )
                         {
                             view.extend_selection_to(position);
                             cx.notify();
@@ -2186,7 +2231,8 @@ impl TerminalView {
             match event {
                 TerminalEvent::Title(title) => {
                     if title.len() <= MAX_DEFERRED_WINDOW_TEXT_BYTES {
-                        self.deferred_events.push(TerminalEvent::Title(title.clone()));
+                        self.deferred_events
+                            .push(TerminalEvent::Title(title.clone()));
                     }
                     self.title = Some(title);
                     state_changed = true;
@@ -2450,7 +2496,8 @@ impl Render for TerminalView {
             self.state.set_focused(is_focused);
             self.report_focus_change(is_focused);
         }
-        if focus_changed || self.blink_restart_pending || (was_hidden && self.blink_task.is_none()) {
+        if focus_changed || self.blink_restart_pending || (was_hidden && self.blink_task.is_none())
+        {
             self.restart_blink(cx);
         }
 
@@ -2467,7 +2514,10 @@ impl Render for TerminalView {
         let selection: Option<SelectionRange> = self.state.selection_range();
         let search_matches: Arc<[GridMatch]> = self.search.matches_arc();
         let active_match_index = self.search.current_index();
-        let hovered_link = self.hovered_link.as_ref().map(|hovered| hovered.link.range.clone());
+        let hovered_link = self
+            .hovered_link
+            .as_ref()
+            .map(|hovered| hovered.link.range.clone());
         let cursor_visible = self.cursor_visible && !self.read_only;
         let show_scrollbar = self.config.show_scrollbar;
         let scrollbar_active = self.scrollbar_dragging || self.scrollbar_hovered;
@@ -2660,7 +2710,9 @@ mod terminal_interaction_tests {
         }
         assert!(matches!(queue.pop(), Some(TerminalEvent::Exit)));
         for index in 1..MAX_DEFERRED_WINDOW_EVENTS {
-            assert!(matches!(queue.pop(), Some(TerminalEvent::Title(title)) if title == index.to_string()));
+            assert!(
+                matches!(queue.pop(), Some(TerminalEvent::Title(title)) if title == index.to_string())
+            );
         }
         assert!(queue.pop().is_none());
     }
@@ -2669,8 +2721,12 @@ mod terminal_interaction_tests {
     fn deferred_fifo_bounds_text_and_does_not_evict_for_oversized_event() {
         let mut queue = DeferredWindowEvents::default();
         queue.push(TerminalEvent::Exit);
-        queue.push(TerminalEvent::Title("x".repeat(MAX_DEFERRED_WINDOW_TEXT_BYTES)));
-        queue.push(TerminalEvent::Title("y".repeat(MAX_DEFERRED_WINDOW_TEXT_BYTES + 1)));
+        queue.push(TerminalEvent::Title(
+            "x".repeat(MAX_DEFERRED_WINDOW_TEXT_BYTES),
+        ));
+        queue.push(TerminalEvent::Title(
+            "y".repeat(MAX_DEFERRED_WINDOW_TEXT_BYTES + 1),
+        ));
         assert_eq!(queue.text_bytes, MAX_DEFERRED_WINDOW_TEXT_BYTES);
         queue.push(TerminalEvent::Title(String::from("latest")));
         queue.push(TerminalEvent::ResetTitle);
@@ -2685,9 +2741,21 @@ mod terminal_interaction_tests {
     fn same_selection_endpoint_is_unchanged_but_crossing_cell_side_is_not() {
         let point = GridPoint::new(GridLine(0), GridColumn(0));
         let mut selection = GridSelection::new(GridSelectionType::Simple, point, GridSide::Left);
-        assert!(!update_selection_endpoint(&mut selection, point, GridSide::Left));
-        assert!(update_selection_endpoint(&mut selection, point, GridSide::Right));
-        assert!(!update_selection_endpoint(&mut selection, point, GridSide::Right));
+        assert!(!update_selection_endpoint(
+            &mut selection,
+            point,
+            GridSide::Left
+        ));
+        assert!(update_selection_endpoint(
+            &mut selection,
+            point,
+            GridSide::Right
+        ));
+        assert!(!update_selection_endpoint(
+            &mut selection,
+            point,
+            GridSide::Right
+        ));
     }
 
     #[test]

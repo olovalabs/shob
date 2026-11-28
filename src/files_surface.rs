@@ -482,7 +482,10 @@ impl FilesSurface {
         }
         if self.loading.is_none()
             && self.selected.is_some()
-            && !self.editors.iter().any(|editor| Some(&editor.path) == self.selected.as_ref())
+            && !self
+                .editors
+                .iter()
+                .any(|editor| Some(&editor.path) == self.selected.as_ref())
         {
             self.selected = self.editors.first().map(|editor| editor.path.clone());
             if self.owns_focus(cx) {

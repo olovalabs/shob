@@ -177,8 +177,8 @@ impl LatestFrames {
                 },
             );
         }
-        let visible = (removed.is_some() || inserted.is_some())
-            .then(|| tabs.slots.keys().copied().collect());
+        let visible =
+            (removed.is_some() || inserted.is_some()).then(|| tabs.slots.keys().copied().collect());
         drop(tabs);
         drop(removed);
         visible
@@ -234,7 +234,11 @@ impl LatestFrames {
                     tab_id,
                     generation: slot.generation,
                 };
-                updates.push(FrameUpdate { request, schedule, image });
+                updates.push(FrameUpdate {
+                    request,
+                    schedule,
+                    image,
+                });
             }
         }
         true
@@ -271,9 +275,16 @@ impl LatestFrames {
         Some((request, pending))
     }
 
-    fn finish(&self, request: FrameRequest, buffer: Vec<u8>, image: Result<Arc<gpui::RenderImage>>) {
+    fn finish(
+        &self,
+        request: FrameRequest,
+        buffer: Vec<u8>,
+        image: Result<Arc<gpui::RenderImage>>,
+    ) {
         let mut tabs = self.tabs.lock();
-        let Some(slot) = tabs.slot(request) else { return };
+        let Some(slot) = tabs.slot(request) else {
+            return;
+        };
         slot.phase = FramePhase::Ready(image);
         slot.spare = buffer;
         drop(tabs);
@@ -713,7 +724,11 @@ impl Incoming<'_> {
 
 impl Paint {
     fn decode(self, line: &[u8]) -> Result<Arc<gpui::RenderImage>> {
-        let Self { width, height, bgra } = self;
+        let Self {
+            width,
+            height,
+            bgra,
+        } = self;
         let pixels = STANDARD
             .decode_to_vec(&line[bgra])
             .context("decoding browser frame")?;
@@ -756,7 +771,9 @@ async fn read_events(
             continue;
         }
         if incoming.kind == "cpu_frame" {
-            let id = incoming.tab_id.context("browser frame is missing a tab ID")?;
+            let id = incoming
+                .tab_id
+                .context("browser frame is missing a tab ID")?;
             let paint = incoming.paint(line);
             frames.replace(id, paint, &mut buffer)?;
             continue;
@@ -965,7 +982,12 @@ mod tests {
                 bgra_b64: Some(bgra_b64),
             };
             let line = bgra_b64.as_bytes();
-            assert!(message.paint(line).and_then(|paint| paint.decode(line)).is_err());
+            assert!(
+                message
+                    .paint(line)
+                    .and_then(|paint| paint.decode(line))
+                    .is_err()
+            );
         }
     }
 
@@ -974,7 +996,11 @@ mod tests {
         let frames = LatestFrames::default();
         let publish = |id, payload: &str| {
             let mut buffer = payload.as_bytes().to_vec();
-            let paint = Paint { width: 1, height: 1, bgra: 0..buffer.len() };
+            let paint = Paint {
+                width: 1,
+                height: 1,
+                bgra: 0..buffer.len(),
+            };
             frames.replace(id, Ok(paint), &mut buffer).unwrap();
         };
         let queued = || {

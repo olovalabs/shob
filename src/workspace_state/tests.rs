@@ -261,14 +261,18 @@ fn load_repairs_duplicate_and_out_of_range_ids_without_losing_drafts() {
     assert_ne!(first.id, second.id);
     assert_ne!(first.sessions[0].id, second.sessions[0].id);
     let session = &second.sessions[0];
-    let [pane, panel] = session.panes.as_slice() else { panic!("lost a pane") };
+    let [pane, panel] = session.panes.as_slice() else {
+        panic!("lost a pane")
+    };
     assert_ne!(pane.id, first.sessions[0].panes[0].id);
     assert_eq!(pane.draft, "keep me");
     assert_eq!(pane.tool_panel_tab, Some(panel.id));
     assert_eq!(panel.tool_panel_owner, Some(pane.id));
     assert_eq!(session.focused_pane, Some(pane.id));
     assert_eq!(session.maximized_pane_id, Some(panel.id));
-    let SavedPaneNode::Split { left, right, .. } = &session.tree else { panic!("lost split") };
+    let SavedPaneNode::Split { left, right, .. } = &session.tree else {
+        panic!("lost split")
+    };
     assert_eq!(**left, SavedPaneNode::Leaf { pane: pane.id });
     assert_eq!(**right, SavedPaneNode::Leaf { pane: panel.id });
     assert!(saved.max_id() < 10_000);

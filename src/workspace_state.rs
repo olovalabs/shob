@@ -65,7 +65,10 @@ impl SavedPaneNode {
                 axis,
                 left,
                 right,
-            } => match (left.validate(panes, next_id), right.validate(panes, next_id)) {
+            } => match (
+                left.validate(panes, next_id),
+                right.validate(panes, next_id),
+            ) {
                 (Some(left), Some(right)) => Some(Self::Split {
                     id: if valid_id(id) { id } else { take_id(next_id) },
                     axis,
@@ -799,7 +802,10 @@ pub fn finish_deletion(path: &Path, deletion: &PendingDeletion) -> io::Result<()
         }
         crate::conversations::delete_pane(uid)?;
         let _guard = write_lock();
-        remove_if_exists(fs::remove_file(scrollback_path_in(&paths::sessions_dir(), uid)))?;
+        remove_if_exists(fs::remove_file(scrollback_path_in(
+            &paths::sessions_dir(),
+            uid,
+        )))?;
     }
     fs::remove_file(path)
 }

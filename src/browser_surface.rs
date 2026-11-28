@@ -96,7 +96,9 @@ impl Engine {
         let control_engine = weak.clone();
         cx.spawn(async move |cx| {
             while let Ok(event) = inbox.recv().await {
-                let Some(engine) = control_engine.upgrade() else { return };
+                let Some(engine) = control_engine.upgrade() else {
+                    return;
+                };
                 let mut message = match event {
                     Event::Message(message) => message,
                     Event::Error(error) => {
@@ -139,26 +141,30 @@ impl Engine {
                     let tab_id = update.request.tab_id;
                     let route = engine.routes.borrow().get(&tab_id).cloned();
                     let active = route.is_some_and(|route| {
-                        route.window.update(cx, |_, window, cx| {
-                            if let Some(image) = update.image {
-                                match image {
-                                    Ok(image) => {
-                                        let _ = route.viewport.update(cx, |viewport, cx| {
-                                            viewport.present(image, window, cx);
-                                        });
-                                    }
-                                    Err(error) => {
-                                        engine.fail(&format!("{error:#}"), cx);
-                                        return;
+                        route
+                            .window
+                            .update(cx, |_, window, cx| {
+                                if let Some(image) = update.image {
+                                    match image {
+                                        Ok(image) => {
+                                            let _ = route.viewport.update(cx, |viewport, cx| {
+                                                viewport.present(image, window, cx);
+                                            });
+                                        }
+                                        Err(error) => {
+                                            engine.fail(&format!("{error:#}"), cx);
+                                            return;
+                                        }
                                     }
                                 }
-                            }
-                            if update.schedule {
-                                let frames = frames.clone();
-                                let request = update.request;
-                                window.on_next_frame(move |_, _| frames.request_decode(request));
-                            }
-                        }).is_ok()
+                                if update.schedule {
+                                    let frames = frames.clone();
+                                    let request = update.request;
+                                    window
+                                        .on_next_frame(move |_, _| frames.request_decode(request));
+                                }
+                            })
+                            .is_ok()
                     });
                     if !active {
                         cx.update(|cx| engine.show(Some(tab_id), None, cx));
@@ -180,7 +186,9 @@ impl Engine {
         self.outbox.close();
         self.frames.clear();
         for route in self.routes.take().into_values() {
-            let _ = route.surface.update(cx, |view, cx| view.engine_failed(error, cx));
+            let _ = route
+                .surface
+                .update(cx, |view, cx| view.engine_failed(error, cx));
         }
     }
 
@@ -322,7 +330,10 @@ impl BrowserSurface {
             pages.push(Page::new(String::new()));
         }
         let selected = saved.active.min(pages.len() - 1);
-        let address_baseline = (pages[selected].id, SharedString::from(pages[selected].url.clone()));
+        let address_baseline = (
+            pages[selected].id,
+            SharedString::from(pages[selected].url.clone()),
+        );
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search or enter URL"));
         input.update(cx, |input, cx| {
             input.set_value(address_baseline.1.clone(), window, cx)
@@ -336,7 +347,10 @@ impl BrowserSurface {
             });
         let view = cx.weak_entity();
         let parent = view.clone();
-        let viewport = cx.new(|_| BrowserViewport { parent, frame: None });
+        let viewport = cx.new(|_| BrowserViewport {
+            parent,
+            frame: None,
+        });
         let window_visibility = window.observe_window_visibility(move |visibility, _, cx| {
             let _ = view.update(cx, |this, cx| {
                 this.update_visibility(visibility.is_visible(), cx)
@@ -612,9 +626,15 @@ impl BrowserSurface {
             self.address_baseline.1 = page.url.clone().into();
         }
         self.address_baseline.0 = page.id;
-        if !self.input.read(cx).text().eq(self.address_baseline.1.as_str()) {
+        if !self
+            .input
+            .read(cx)
+            .text()
+            .eq(self.address_baseline.1.as_str())
+        {
             let address = self.address_baseline.1.clone();
-            self.input.update(cx, |input, cx| input.set_value(address, window, cx));
+            self.input
+                .update(cx, |input, cx| input.set_value(address, window, cx));
         }
     }
 
@@ -1377,9 +1397,18 @@ impl Render for BrowserViewport {
             }));
         for button in [MouseButton::Left, MouseButton::Right, MouseButton::Middle] {
             viewport = viewport
-                .on_mouse_down(button, window.listener_for(&surface, BrowserSurface::mouse_down))
-                .on_mouse_up(button, window.listener_for(&surface, BrowserSurface::mouse_up))
-                .on_mouse_up_out(button, window.listener_for(&surface, BrowserSurface::mouse_up));
+                .on_mouse_down(
+                    button,
+                    window.listener_for(&surface, BrowserSurface::mouse_down),
+                )
+                .on_mouse_up(
+                    button,
+                    window.listener_for(&surface, BrowserSurface::mouse_up),
+                )
+                .on_mouse_up_out(
+                    button,
+                    window.listener_for(&surface, BrowserSurface::mouse_up),
+                );
         }
         viewport = viewport.when(empty && notice.is_none(), |viewport| {
             viewport.child(browser_empty_state(cx))
@@ -1587,10 +1616,16 @@ mod tests {
         let mut app = TestAppContext::new();
         let (mut app, root) = crate::resize_tests::open_app(&mut app);
         app.update_window_entity(&root, |_, window, cx| {
-            let view = cx.new(|cx| BrowserSurface::new(SavedBrowser {
-                tabs: vec!["https://example.com/".into()],
-                active: 0,
-            }, window, cx));
+            let view = cx.new(|cx| {
+                BrowserSurface::new(
+                    SavedBrowser {
+                        tabs: vec!["https://example.com/".into()],
+                        active: 0,
+                    },
+                    window,
+                    cx,
+                )
+            });
             view.update(cx, |view, cx| {
                 let id = view.pages[view.selected].id;
                 let update = |url| json!({"type": "tab_update", "tab": {"tab_id": id, "url": url}});
@@ -1600,10 +1635,14 @@ mod tests {
                 assert_eq!(view.input.read(cx).value().as_str(), "https://example.com/");
                 window.blur(cx);
                 view.reconcile_address(window, cx);
-                assert_eq!(view.input.read(cx).value().as_str(), "https://example.com/two");
+                assert_eq!(
+                    view.input.read(cx).value().as_str(),
+                    "https://example.com/two"
+                );
 
                 view.focus_address(window, cx);
-                view.input.update(cx, |input, cx| input.set_value("in progress", window, cx));
+                view.input
+                    .update(cx, |input, cx| input.set_value("in progress", window, cx));
                 view.receive(&update("https://example.com/three"), window, cx);
                 window.blur(cx);
                 view.reconcile_address(window, cx);

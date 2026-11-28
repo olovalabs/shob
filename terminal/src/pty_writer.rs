@@ -341,7 +341,8 @@ impl QueuedWriter {
     }
 
     pub(crate) fn send_with_completion(&self, bytes: &[u8]) -> Result<WriteCompletion, String> {
-        self.enqueue(Cow::Borrowed(bytes), true).map_err(|error| error.to_string())
+        self.enqueue(Cow::Borrowed(bytes), true)
+            .map_err(|error| error.to_string())
     }
 }
 

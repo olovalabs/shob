@@ -167,22 +167,33 @@ fn files_workspace_restores_drafts_and_renders_both_themes() {
     cx.update_window_entity(&view, |view, _, cx| assert!(!view.prepare_close(cx)));
     cx.update_window_entity(&state, |state, window, cx| {
         state.close_project(0, window, cx);
-        assert_eq!(state.projects.len(), 1, "a dirty Files draft blocks project close");
+        assert_eq!(
+            state.projects.len(),
+            1,
+            "a dirty Files draft blocks project close"
+        );
     });
     let saved = view.read_with(&cx, |view, cx| view.snapshot(cx));
     assert_eq!(saved.tabs[0].baseline.as_deref(), Some("fn main() {}\n"));
     assert!(saved.tabs[0].draft.as_ref().unwrap().contains("draft"));
-    let mut saved: SavedFiles = serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
+    let mut saved: SavedFiles =
+        serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
     saved.selected = Some("missing.rs".into());
-    saved.tabs.insert(0, SavedFile {
-        path: "missing.rs".into(),
-        ..Default::default()
-    });
+    saved.tabs.insert(
+        0,
+        SavedFile {
+            path: "missing.rs".into(),
+            ..Default::default()
+        },
+    );
     #[cfg(unix)]
-    saved.tabs.insert(0, SavedFile {
-        path: std::ffi::OsString::from_vec(vec![0xff]).into(),
-        ..Default::default()
-    });
+    saved.tabs.insert(
+        0,
+        SavedFile {
+            path: std::ffi::OsString::from_vec(vec![0xff]).into(),
+            ..Default::default()
+        },
+    );
     cx.update_window_entity(&state, |state, window, cx| {
         let panel = state.focused_pane_id.unwrap();
         state.projects[0].path = other_checkout.path().to_path_buf();
@@ -293,7 +304,10 @@ fn files_workspace_restores_drafts_and_renders_both_themes() {
     restored.read_with(&cx, |view, cx| {
         let displayed = view.diff.as_ref().unwrap();
         assert_eq!(displayed.repository_path, Path::new("src/main.rs"));
-        assert_eq!(displayed.edit_path.as_deref(), Some(Path::new("src/main.rs")));
+        assert_eq!(
+            displayed.edit_path.as_deref(),
+            Some(Path::new("src/main.rs"))
+        );
         assert!(displayed.input.read(cx).value().contains("+fn main()"));
     });
 

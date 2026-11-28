@@ -346,22 +346,10 @@ pub(crate) fn rasterize_box_or_block(
 
         0x2501 | 0x2505 | 0x2509 => emit![rect(0.0, hmy, w, ht)],
         0x2503 | 0x2507 | 0x250B => emit![rect(hmx, 0.0, ht, h)],
-        0x250F => emit![
-            rect(hmx, hmy, w - hmx, ht),
-            rect(hmx, hmy, ht, h - hmy),
-        ],
-        0x2513 => emit![
-            rect(0.0, hmy, hmx + ht, ht),
-            rect(hmx, hmy, ht, h - hmy),
-        ],
-        0x2517 => emit![
-            rect(hmx, hmy, w - hmx, ht),
-            rect(hmx, 0.0, ht, hmy + ht),
-        ],
-        0x251B => emit![
-            rect(0.0, hmy, hmx + ht, ht),
-            rect(hmx, 0.0, ht, hmy + ht),
-        ],
+        0x250F => emit![rect(hmx, hmy, w - hmx, ht), rect(hmx, hmy, ht, h - hmy),],
+        0x2513 => emit![rect(0.0, hmy, hmx + ht, ht), rect(hmx, hmy, ht, h - hmy),],
+        0x2517 => emit![rect(hmx, hmy, w - hmx, ht), rect(hmx, 0.0, ht, hmy + ht),],
+        0x251B => emit![rect(0.0, hmy, hmx + ht, ht), rect(hmx, 0.0, ht, hmy + ht),],
         0x2523 => emit![rect(hmx, 0.0, ht, h), rect(hmx, hmy, w - hmx, ht)],
         0x252B => emit![rect(hmx, 0.0, ht, h), rect(0.0, hmy, hmx + ht, ht)],
         0x2533 => emit![rect(0.0, hmy, w, ht), rect(hmx, hmy, ht, h - hmy)],
@@ -379,17 +367,11 @@ pub(crate) fn rasterize_box_or_block(
 
         0x2550 => {
             let offset = (t * 1.3).max(2.0);
-            emit![
-                rect(0.0, my - offset, w, t),
-                rect(0.0, my + offset, w, t),
-            ]
+            emit![rect(0.0, my - offset, w, t), rect(0.0, my + offset, w, t),]
         }
         0x2551 => {
             let offset = (t * 1.3).max(2.0);
-            emit![
-                rect(mx - offset, 0.0, t, h),
-                rect(mx + offset, 0.0, t, h),
-            ]
+            emit![rect(mx - offset, 0.0, t, h), rect(mx + offset, 0.0, t, h),]
         }
         0x2554 => {
             let offset = (t * 1.3).max(2.0);
@@ -1056,12 +1038,14 @@ impl TerminalRenderer {
                         }
                         match_cursor += 1;
                     };
-                    let match_state =
-                        matched.map(|matched| ctx.active_match.is_some_and(|active| active == matched));
+                    let match_state = matched
+                        .map(|matched| ctx.active_match.is_some_and(|active| active == matched));
                     match match_state {
                         Some(is_active) => {
                             let extend = match match_run {
-                                Some((start, end, active)) if active == is_active && end == col_idx => {
+                                Some((start, end, active))
+                                    if active == is_active && end == col_idx =>
+                                {
                                     Some((start, col_idx + 1, active))
                                 }
                                 _ => None,
@@ -1348,7 +1332,12 @@ impl TerminalRenderer {
                 }
 
                 if let Some((start, end)) = selection_run.take() {
-                    selection_rects.push(cell_rect(start, line_idx, end - start, ctx.selection_color));
+                    selection_rects.push(cell_rect(
+                        start,
+                        line_idx,
+                        end - start,
+                        ctx.selection_color,
+                    ));
                 }
                 if let Some((start, end, active)) = match_run.take() {
                     match_rects.push(cell_rect(
@@ -1971,7 +1960,13 @@ mod tests {
         assert_eq!(quads[0].bounds.size.height, cell_h);
 
         for (glyph, count) in [
-            ('▀', 1), ('▄', 1), ('─', 1), ('│', 1), ('┌', 2), ('╬', 4), ('A', 0),
+            ('▀', 1),
+            ('▄', 1),
+            ('─', 1),
+            ('│', 1),
+            ('┌', 2),
+            ('╬', 4),
+            ('A', 0),
         ] {
             let before = quads.len();
             assert_eq!(
