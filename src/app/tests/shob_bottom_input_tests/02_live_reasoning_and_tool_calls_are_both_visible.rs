@@ -711,8 +711,11 @@ fn custom_provider_form_can_be_opened_and_cancelled_without_saving() {
     });
     cx.draw_frame().unwrap();
     let button = cx.debug_bounds("add-compatible-provider").unwrap();
+    let panel = cx.debug_bounds("agent-provider-panel").unwrap();
+    assert!((button.center().x - panel.center().x).abs() < px(1.0));
     cx.simulate_click(button.center(), Modifiers::default());
     cx.draw_frame().unwrap();
+    assert!(cx.debug_bounds("agent-dialog-filter").is_none());
     cx.simulate_input("my-gateway");
     state.read_with(&cx, |s, cx| {
         let auth = s.pane_ref(id).unwrap().chat.auth.as_ref().unwrap();
@@ -731,6 +734,11 @@ fn custom_provider_form_can_be_opened_and_cancelled_without_saving() {
         assert!(auth.provider_operation.is_none());
     });
     assert!(cx.debug_bounds("add-compatible-provider").is_some());
+    cx.simulate_input("openai");
+    state.read_with(&cx, |s, cx| {
+        let auth = s.pane_ref(id).unwrap().chat.auth.as_ref().unwrap();
+        assert_eq!(auth.filter.read(cx).value().as_str(), "openai");
+    });
 }
 
 #[test]

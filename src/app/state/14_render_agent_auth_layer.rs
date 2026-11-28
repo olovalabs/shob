@@ -87,10 +87,16 @@ impl AppState {
                         .when(page == AgentDialogPage::Models, |panel| {
                             panel.w(picker_width).h(picker_height)
                         })
-                        .when(page == AgentDialogPage::Auth, |panel| panel.w(px(520.0)))
+                        .when(page == AgentDialogPage::Auth, |panel| {
+                            panel.w(px(620.0)).shadow_lg()
+                        })
                         .max_w(relative(0.97))
                         .max_h(relative(0.98))
-                        .rounded(px(10.0))
+                        .rounded(px(if page == AgentDialogPage::Auth {
+                            12.0
+                        } else {
+                            10.0
+                        }))
                         .border_1()
                         .border_color(if page == AgentDialogPage::Models {
                             tokens
@@ -122,7 +128,7 @@ impl AppState {
                         .when(page == AgentDialogPage::Auth, |panel| {
                             panel.child(
                                 div()
-                                    .h(px(48.0))
+                                    .h(px(60.0))
                                     .flex_shrink_0()
                                     .px(px(20.0))
                                     .flex()
@@ -132,66 +138,70 @@ impl AppState {
                                         div()
                                             .flex()
                                             .items_center()
-                                            .gap(px(8.0))
-                                            .when(page == AgentDialogPage::Auth, |header| {
-                                                header.child(
-                                                    div()
-                                                        .id(("models-tab", pane_id))
-                                                        .debug_selector(|| {
-                                                            "agent-model-back".into()
-                                                        })
-                                                        .size(px(24.0))
-                                                        .rounded(px(4.0))
-                                                        .flex()
-                                                        .items_center()
-                                                        .justify_center()
-                                                        .cursor(CursorStyle::PointingHand)
-                                                        .hover(move |view| {
-                                                            view.bg(tokens.card_hover)
-                                                        })
-                                                        .child(
-                                                            svg()
-                                                                .path("icons/arrow-left.svg")
-                                                                .size(px(14.0))
-                                                                .text_color(tokens.text_muted),
+                                            .gap(px(9.0))
+                                            .child(
+                                                div()
+                                                    .id(("models-tab", pane_id))
+                                                    .debug_selector(|| "agent-model-back".into())
+                                                    .size(px(30.0))
+                                                    .rounded(px(6.0))
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .cursor(CursorStyle::PointingHand)
+                                                    .hover(move |view| view.bg(tokens.card_hover))
+                                                    .tooltip(|window, cx| {
+                                                        gpui_component::tooltip::Tooltip::new(
+                                                            "Back to models",
                                                         )
-                                                        .on_mouse_down(
-                                                            MouseButton::Left,
-                                                            cx.listener(
-                                                                move |this, _, window, cx| {
-                                                                    cx.stop_propagation();
-                                                                    this.set_agent_dialog_page(
-                                                                        pane_id,
-                                                                        AgentDialogPage::Models,
-                                                                        window,
-                                                                        cx,
-                                                                    );
-                                                                },
-                                                            ),
-                                                        ),
-                                                )
-                                            })
-                                            .child(div().text_size(px(15.0)).child(match page {
-                                                AgentDialogPage::Models => "Select model",
-                                                AgentDialogPage::Auth => "Manage providers",
-                                            })),
+                                                        .build(window, cx)
+                                                    })
+                                                    .child(
+                                                        svg()
+                                                            .path("icons/arrow-left.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(tokens.text_secondary),
+                                                    )
+                                                    .on_mouse_down(
+                                                        MouseButton::Left,
+                                                        cx.listener(move |this, _, window, cx| {
+                                                            cx.stop_propagation();
+                                                            this.set_agent_dialog_page(
+                                                                pane_id,
+                                                                AgentDialogPage::Models,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        }),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(16.0))
+                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                    .child("Manage providers"),
+                                            ),
                                     )
                                     .child(
                                         div()
                                             .id(("auth-close", pane_id))
                                             .debug_selector(|| "agent-dialog-close".into())
-                                            .size(px(24.0))
-                                            .rounded(px(4.0))
+                                            .size(px(30.0))
+                                            .rounded(px(6.0))
                                             .flex()
                                             .items_center()
                                             .justify_center()
                                             .cursor(CursorStyle::PointingHand)
                                             .hover(move |view| view.bg(tokens.card_hover))
+                                            .tooltip(|window, cx| {
+                                                gpui_component::tooltip::Tooltip::new("Close")
+                                                    .build(window, cx)
+                                            })
                                             .child(
                                                 svg()
                                                     .path("icons/x.svg")
                                                     .size(px(14.0))
-                                                    .text_color(tokens.text_muted),
+                                                    .text_color(tokens.text_secondary),
                                             )
                                             .on_mouse_down(
                                                 MouseButton::Left,

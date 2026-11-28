@@ -870,7 +870,6 @@ struct AuthModal {
     methods_discovery: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
     custom_provider: Option<[Entity<InputState>; 5]>,
     provider_operation: Option<std::sync::mpsc::Receiver<Result<Option<String>, String>>>,
-    provider_input: Entity<InputState>,
     filter: Entity<InputState>,
     input: Entity<InputState>,
     login: Option<agent_auth::Login>,

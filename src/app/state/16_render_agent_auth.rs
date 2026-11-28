@@ -7,16 +7,23 @@ impl AppState {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let tokens = self.tokens(cx);
-        let themed_input = self.palette_scheme.is_imported()
-            || self.palette_scheme == PaletteScheme::MidnightGarden && tokens.is_dark;
-        let filter_focused = auth.filter.read(cx).focus_handle().is_focused(window);
-        let provider_focused = auth
-            .provider_input
-            .read(cx)
-            .focus_handle()
-            .is_focused(window);
+        let filter_focus = auth.filter.read(cx).focus_handle().clone();
+        let filter_focused = filter_focus.is_focused(window);
         let credential_focused = auth.input.read(cx).focus_handle().is_focused(window);
         let filter_query = auth.filter.read(cx).value().trim().to_lowercase();
+
+        let columns = if window.viewport_size().width < px(480.0) {
+            1
+        } else {
+            2
+        };
+        let tile_height = px(54.0);
+        let tile_gap = px(8.0);
+        let row_height = tile_height + tile_gap;
+        let model_provider = self
+            .pane_ref(pane_id)
+            .and_then(|pane| pane.chat.selected_model.as_ref())
+            .map(|model| model.provider.as_str());
 
         let catalog = &self.agent_catalog;
         let mut providers: Vec<&agent_auth::Provider> = catalog
@@ -51,34 +58,67 @@ impl AppState {
         let modal_divider = tokens.border_subtle;
 
         let background = tokens.card_bg;
-        let inset = tokens.card_hover;
-        let card = tokens.pane_bg;
-        let border = tokens.card_border;
-        let muted = tokens.text_muted;
         let foreground = tokens.text_primary;
+        let accent = tokens.primary_btn_bg;
+        let tile_bg = background.blend(foreground.opacity(0.035));
+        let tile_border = tile_bg.blend(foreground.opacity(0.105));
+        let tile_hover = background.blend(foreground.opacity(0.07));
+        let selected_bg = background.blend(accent.opacity(0.11));
+        let selected_hover = background.blend(accent.opacity(0.17));
+        let icon_bg = background.blend(foreground.opacity(0.075));
+        let selected_icon_bg = background.blend(accent.opacity(0.21));
+        let disconnect_hover = background.blend(tokens.block_failure.opacity(0.16));
 
-        let mut badge_success_bg = tokens.block_success;
-        badge_success_bg.a = if tokens.is_dark { 0.18 } else { 0.14 };
-        let mut badge_success_border = tokens.block_success;
-        badge_success_border.a = if tokens.is_dark { 0.38 } else { 0.28 };
-
-        let mut badge_failure_bg = tokens.block_failure;
-        badge_failure_bg.a = if tokens.is_dark { 0.18 } else { 0.14 };
-        let mut badge_failure_border = tokens.block_failure;
-        badge_failure_border.a = if tokens.is_dark { 0.38 } else { 0.28 };
-
-        let btn_contrast_bg = tokens.pane_bg;
-        let btn_contrast_hover = tokens.pane_header_btn_hover;
-
-        let card_sub_bg = tokens.card_hover;
-        let disconnect_bg = tokens.card_hover;
+        let form_action = |id: &'static str, label: &'static str, primary, enabled| {
+            let (bg, fg, hover, border) = if primary {
+                (
+                    accent,
+                    tokens.primary_btn_fg,
+                    tokens.primary_btn_hover,
+                    accent,
+                )
+            } else {
+                (
+                    tokens.secondary_btn_bg,
+                    tokens.secondary_btn_fg,
+                    tokens.secondary_btn_hover,
+                    tokens.card_border,
+                )
+            };
+            div()
+                .id((id, pane_id))
+                .debug_selector(move || id.into())
+                .role(gpui::Role::Button)
+                .h(px(34.0))
+                .px(px(12.0))
+                .rounded(px(6.0))
+                .border_1()
+                .border_color(border)
+                .bg(bg)
+                .text_color(fg)
+                .text_size(px(12.0))
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .flex()
+                .items_center()
+                .justify_center()
+                .when(enabled, |button| {
+                    button
+                        .tab_index(0)
+                        .cursor_pointer()
+                        .hover(move |button| button.bg(hover))
+                        .focus_visible(move |button| button.border_color(tokens.ring))
+                })
+                .when(!enabled, |button| button.opacity(0.65))
+                .child(label)
+        };
 
         struct ProviderCardItem {
             index: usize,
             id: String,
-            name: String,
-            description: String,
+            name: SharedString,
+            description: &'static str,
             ready: bool,
+            current: bool,
             selected: bool,
             icon: SharedString,
         }
@@ -87,335 +127,359 @@ impl AppState {
             .iter()
             .enumerate()
             .map(|(index, provider)| {
-                let id = provider.id.clone();
-                let (meta_name, meta_desc) = provider_metadata(&id);
-                let name = if let Some(name) = &provider.name {
-                    name.clone()
-                } else if !meta_name.is_empty() {
-                    meta_name.to_string()
+                let (meta_name, description) = provider_metadata(&provider.id);
+                let name = provider.name.as_deref().unwrap_or(if meta_name.is_empty() {
+                    &provider.id
                 } else {
-                    id.clone()
-                };
-                let description = meta_desc.to_string();
-                let ready = provider.ready;
-                let selected = auth.selected.as_deref() == Some(id.as_str());
-                let icon = provider_icon_path_for(&id, provider.custom);
+                    meta_name
+                });
+                let current = provider.ready && model_provider == Some(provider.id.as_str());
+                let selected = auth
+                    .selected
+                    .as_deref()
+                    .map_or(current, |id| id == provider.id);
                 ProviderCardItem {
                     index,
-                    id,
-                    name,
+                    id: provider.id.clone(),
+                    name: SharedString::from(name.to_owned()),
                     description,
-                    ready,
+                    ready: provider.ready,
+                    current,
                     selected,
-                    icon,
+                    icon: picker_provider_icon(&provider.id, provider.custom),
                 }
             })
             .collect();
 
-        let has_matching_providers = !card_items.is_empty();
-        let provider_sizes: Vec<_> = card_items
-            .chunks(2)
-            .map(|pair| {
-                let height = if pair.iter().any(|item| !item.description.is_empty()) {
-                    58.0
-                } else {
-                    40.0
-                };
-                size(px(0.0), px(height + 8.0))
-            })
-            .collect();
-        let provider_height: f32 = provider_sizes
-            .iter()
-            .map(|size| f32::from(size.height))
-            .sum();
-        let provider_list =
-            v_virtual_list(
-                cx.entity(),
-                ("auth-provider-list", pane_id),
-                Rc::new(provider_sizes),
-                move |_, range, _, cx| {
-                    range
-                        .map(|row_index| {
-                            let pair = &card_items
-                                [row_index * 2..(row_index * 2 + 2).min(card_items.len())];
-                            let row_has_description =
-                                pair.iter().any(|item| !item.description.is_empty());
-                            let row_height = if row_has_description { 58.0 } else { 40.0 };
-                            let is_single = pair.len() == 1;
-
-                            let mut row_children = Vec::new();
-                            for item in pair {
+        let result_count = card_items.len();
+        let rows = card_items.len().div_ceil(columns);
+        let visible_rows = rows.min(4);
+        let scrollable = rows > visible_rows;
+        let provider_sizes = Rc::new(vec![size(px(0.0), row_height); rows]);
+        let provider_height = row_height * visible_rows as f32;
+        let provider_list = v_virtual_list(
+            cx.entity(),
+            ("auth-provider-list", pane_id),
+            provider_sizes,
+            move |_, range, _, cx| {
+                range
+                    .map(|row_index| {
+                        let start = row_index * columns;
+                        let pair = &card_items[start..(start + columns).min(card_items.len())];
+                        div()
+                            .w_full()
+                            .h(row_height)
+                            .pb(tile_gap)
+                            .when(scrollable, |row| row.pr(px(12.0)))
+                            .flex()
+                            .gap(tile_gap)
+                            .children(pair.iter().map(|item| {
                                 let index = item.index;
                                 let id = item.id.clone();
-                                let name = item.name.clone();
-                                let description = item.description.clone();
-                                let described = !description.is_empty();
                                 let ready = item.ready;
                                 let selected = item.selected;
-                                let icon = item.icon.clone();
+                                let subtitle = if item.current {
+                                    "Current model"
+                                } else if ready {
+                                    "Connected"
+                                } else if selected {
+                                    "Configuring"
+                                } else {
+                                    item.description
+                                };
 
-                                row_children.push(
-                                    div()
-                                        .id(("auth-provider", index))
-                                        .debug_selector(move || format!("auth-provider-{index}"))
-                                        .flex_1()
-                                        .min_w_0()
-                                        .h(px(row_height))
-                                        .px(px(12.0))
-                                        .rounded(px(6.0))
-                                        .border_1()
-                                        .border_color(if selected { tokens.ring } else { border })
-                                        .bg(if selected { inset } else { card })
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(10.0))
-                                        .cursor(CursorStyle::PointingHand)
-                                        .hover(move |view| {
-                                            if !selected {
-                                                view.bg(background)
-                                            } else {
-                                                view.bg(inset)
-                                            }
-                                        })
-                                        .child(
-                                            svg()
-                                                .path(icon)
-                                                .size(px(16.0))
-                                                .flex_shrink_0()
-                                                .text_color(foreground),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .flex()
-                                                .flex_col()
-                                                .justify_center()
-                                                .gap(px(1.0))
-                                                .child(
-                                                    div()
-                                                        .truncate()
-                                                        .text_size(px(13.0))
-                                                        .font_weight(gpui::FontWeight::MEDIUM)
-                                                        .text_color(foreground)
-                                                        .child(name),
-                                                )
-                                                .when(described, |view| {
-                                                    view.child(
-                                                        div()
-                                                            .truncate()
-                                                            .text_size(px(12.0))
-                                                            .text_color(muted)
-                                                            .child(description),
-                                                    )
-                                                }),
-                                        )
-                                        .when(ready, |view| {
-                                            let disconnect_id = id.clone();
-                                            view.child(
                                 div()
+                                    .id(("auth-provider", index))
+                                    .debug_selector(move || format!("auth-provider-{index}"))
+                                    .flex_1()
+                                    .min_w_0()
+                                    .h(tile_height)
+                                    .px(px(12.0))
+                                    .rounded(px(8.0))
+                                    .border_1()
+                                    .border_color(if selected { accent } else { tile_border })
+                                    .bg(if selected { selected_bg } else { tile_bg })
                                     .flex()
                                     .items_center()
-                                    .gap(px(4.0))
-                                    .flex_shrink_0()
-                                    .child(
-                                        div()
-                                            .px(px(6.0))
-                                            .py(px(1.5))
-                                            .rounded(px(4.0))
-                                            .bg(badge_success_bg)
-                                            .border_1()
-                                            .border_color(badge_success_border)
-                                            .text_size(px(10.5))
-                                            .font_weight(gpui::FontWeight::MEDIUM)
-                                            .text_color(tokens.block_success)
-                                            .child("Connected"),
-                                    )
-                                    .child(
-                                        div()
-                                            .id(("auth-disconnect", index))
-                                            .debug_selector(move || {
-                                                format!("auth-disconnect-{index}")
+                                    .gap(px(10.0))
+                                    .cursor_pointer()
+                                    .hover(move |tile| {
+                                        tile.bg(if selected { selected_hover } else { tile_hover })
+                                            .border_color(if selected {
+                                                accent
+                                            } else {
+                                                tokens.card_border
                                             })
-                                            .px(px(6.0))
-                                            .py(px(2.5))
-                                            .rounded(px(4.0))
-                                            .bg(badge_failure_bg)
-                                            .border_1()
-                                            .border_color(badge_failure_border)
+                                    })
+                                    .child(
+                                        div()
+                                            .size(px(32.0))
+                                            .flex_shrink_0()
+                                            .rounded(px(8.0))
+                                            .bg(if selected { selected_icon_bg } else { icon_bg })
                                             .flex()
                                             .items_center()
                                             .justify_center()
-                                            .cursor(CursorStyle::PointingHand)
-                                            .hover(|view| view.opacity(0.8))
-                                            .tooltip(|window, cx| {
-                                                gpui_component::tooltip::Tooltip::new("Disconnect")
-                                                    .build(window, cx)
-                                            })
                                             .child(
                                                 svg()
-                                                    .path("icons/x.svg")
-                                                    .size(px(9.0))
-                                                    .text_color(tokens.block_failure),
-                                            )
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                cx.listener(move |this, _, window, cx| {
-                                                    cx.stop_propagation();
-                                                    this.disconnect_agent_provider(
-                                                        pane_id,
-                                                        disconnect_id.clone(),
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }),
+                                                    .path(item.icon.clone())
+                                                    .size(px(17.0))
+                                                    .text_color(foreground),
                                             ),
-                                    ),
-                            )
-                                        })
-                                        .when(!ready, |card| {
-                                            card.child(
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .flex()
+                                            .flex_col()
+                                            .gap(px(1.0))
+                                            .child(
                                                 div()
-                                                    .debug_selector(move || {
-                                                        format!("auth-connect-{index}")
-                                                    })
-                                                    .flex_shrink_0()
-                                                    .text_size(px(12.0))
-                                                    .text_color(muted)
-                                                    .child("Connect"),
+                                                    .truncate()
+                                                    .text_size(px(13.0))
+                                                    .line_height(px(17.0))
+                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                    .child(item.name.clone()),
                                             )
-                                        })
-                                        .on_mouse_down(
-                                            MouseButton::Left,
-                                            cx.listener(move |this, _, window, cx| {
-                                                cx.stop_propagation();
-                                                if ready {
-                                                    this.set_agent_dialog_page(
-                                                        pane_id,
-                                                        AgentDialogPage::Models,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                } else {
-                                                    this.select_provider_for_auth(
-                                                        pane_id,
-                                                        id.clone(),
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }
+                                            .when(!subtitle.is_empty(), |label| {
+                                                label.child(
+                                                    div()
+                                                        .truncate()
+                                                        .text_size(px(11.0))
+                                                        .line_height(px(14.0))
+                                                        .text_color(tokens.text_secondary)
+                                                        .child(subtitle),
+                                                )
                                             }),
-                                        ),
-                                );
-                            }
-                            if is_single {
-                                row_children.push(
-                                    div()
-                                        .id(("auth-provider-spacer", pair[0].index))
-                                        .flex_1()
-                                        .min_w_0(),
-                                );
-                            }
-
-                            div()
-                                .w_full()
-                                .h(px(row_height + 8.0))
-                                .pb(px(8.0))
-                                .flex()
-                                .gap(px(8.0))
-                                .children(row_children)
-                        })
-                        .collect::<Vec<_>>()
-                },
-            )
-            .track_scroll(&auth.provider_scroll);
+                                    )
+                                    .child(
+                                        div()
+                                            .id(("auth-provider-state", index))
+                                            .debug_selector(move || {
+                                                let state = if selected {
+                                                    "selected"
+                                                } else if ready {
+                                                    "connected"
+                                                } else {
+                                                    "available"
+                                                };
+                                                format!("auth-provider-{state}-{index}")
+                                            })
+                                            .flex_shrink_0()
+                                            .child(
+                                                svg()
+                                                    .path(if ready {
+                                                        "icons/status-check.svg"
+                                                    } else if selected {
+                                                        "icons/chevron-down.svg"
+                                                    } else {
+                                                        "icons/chevron-right.svg"
+                                                    })
+                                                    .size(px(14.0))
+                                                    .text_color(if ready {
+                                                        tokens.block_success
+                                                    } else {
+                                                        tokens.text_secondary
+                                                    }),
+                                            ),
+                                    )
+                                    .when(ready, |tile| {
+                                        let disconnect_id = id.clone();
+                                        tile.child(
+                                            div()
+                                                .id(("auth-disconnect", index))
+                                                .debug_selector(move || {
+                                                    format!("auth-disconnect-{index}")
+                                                })
+                                                .size(px(28.0))
+                                                .rounded(px(6.0))
+                                                .flex()
+                                                .flex_shrink_0()
+                                                .items_center()
+                                                .justify_center()
+                                                .cursor_pointer()
+                                                .hover(move |button| button.bg(disconnect_hover))
+                                                .tooltip(|window, cx| {
+                                                    gpui_component::tooltip::Tooltip::new(
+                                                        "Disconnect provider",
+                                                    )
+                                                    .build(window, cx)
+                                                })
+                                                .child(
+                                                    svg()
+                                                        .path("icons/x.svg")
+                                                        .size(px(12.0))
+                                                        .text_color(tokens.text_secondary),
+                                                )
+                                                .on_mouse_down(
+                                                    MouseButton::Left,
+                                                    cx.listener(move |this, _, window, cx| {
+                                                        cx.stop_propagation();
+                                                        this.disconnect_agent_provider(
+                                                            pane_id,
+                                                            disconnect_id.clone(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }),
+                                                ),
+                                        )
+                                    })
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(move |this, _, window, cx| {
+                                            cx.stop_propagation();
+                                            if ready {
+                                                this.set_agent_dialog_page(
+                                                    pane_id,
+                                                    AgentDialogPage::Models,
+                                                    window,
+                                                    cx,
+                                                );
+                                            } else {
+                                                this.select_provider_for_auth(
+                                                    pane_id,
+                                                    id.clone(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                        }),
+                                    )
+                            }))
+                            .when(pair.len() < columns, |row| {
+                                row.child(div().flex_1().min_w_0())
+                            })
+                    })
+                    .collect::<Vec<_>>()
+            },
+        )
+        .track_scroll(&auth.provider_scroll);
         div()
             .id(("agent-auth-content", pane_id))
             .flex().flex_col().flex_1().min_h_0().overflow_hidden()
             .on_action(cx.listener(move |this, _: &gpui_component::input::Enter, window, cx| {
                 cx.stop_propagation();
-                this.submit_agent_auth(pane_id, window, cx);
+                if !filter_focus.is_focused(window) {
+                    this.submit_agent_auth(pane_id, window, cx);
+                }
             }))
-                        .child(
-                            div()
-                                .id(("auth-filter", pane_id))
-                                .debug_selector(|| "agent-dialog-filter".into())
-                                .mx(px(20.0))
-                                .mb(px(10.0))
-                                .flex_shrink_0()
-                                .child(
-                                    Input::new(&auth.filter)
-                                        .prefix(
-                                            div()
-                                                .pl(px(2.0))
-                                                .pr(px(6.0))
-                                                .flex()
-                                                .items_center()
-                                                .child(
-                                                    svg()
-                                                        .path("ui_icons/search.svg")
-                                                        .size(px(13.5))
-                                                        .text_color(tokens.text_muted),
-                                                ),
-                                        )
-                                        .appearance(true)
-                                        .bordered(true)
-                                        .cleanable(true)
-                                        .when(themed_input, |input| style_auth_input(input, tokens, filter_focused)),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .w_full()
-                                .h(px(1.0))
-                                .bg(modal_divider),
-                        )
+                        .when(auth.custom_provider.is_none(), |view| {
+                            let search = style_auth_input(
+                                Input::new(&auth.filter)
+                                    .prefix(
+                                        div()
+                                            .pl(px(3.0))
+                                            .pr(px(4.0))
+                                            .flex()
+                                            .items_center()
+                                            .child(
+                                                svg()
+                                                    .path("ui_icons/search.svg")
+                                                    .size(px(15.0))
+                                                    .text_color(tokens.text_secondary),
+                                            ),
+                                    )
+                                    .cleanable(true),
+                                tokens,
+                                filter_focused,
+                            )
+                            .rounded(px(8.0));
+                            view.child(
+                                div()
+                                    .id(("auth-filter", pane_id))
+                                    .debug_selector(|| "agent-dialog-filter".into())
+                                    .mx(px(20.0))
+                                    .mb(px(6.0))
+                                    .flex_shrink_0()
+                                    .child(gpui::Styled::h(search, px(38.0))),
+                            )
+                        })
+                        .when(auth.custom_provider.is_some(), |view| {
+                            view.child(div().h(px(1.0)).bg(modal_divider).flex_shrink_0())
+                        })
                         .child(
                             div()
                                 .id(("auth-provider-body", pane_id))
-                                .px(px(16.0))
-                                .py(px(8.0))
+                                .px(px(20.0))
+                                .py(px(12.0))
                                 .flex_1()
                                 .min_h_0()
                                 .overflow_y_scrollbar()
                                 .flex()
                                 .flex_col()
-                                .gap(px(4.0))
+                                .gap(px(6.0))
                                 .when_some(auth.custom_provider.as_ref(), |view, fields| {
                                     let labels = ["ID", "Name", "Endpoint URL", "API key", "Models"];
-                                    let mut form = div().flex().flex_col().gap(px(8.0))
-                                        .child(div().text_size(px(14.0)).child("OpenAI-compatible API"))
-                                        .child(div().text_size(px(11.0)).text_color(tokens.text_muted)
-                                            .child("Use a Chat Completions base URL, including /v1 when required. Enter exact model IDs separated by commas."));
+                                    let saving = auth.provider_operation.is_some();
+                                    let mut form = div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap(px(10.0))
+                                        .child(
+                                            div().flex().flex_col().gap(px(4.0))
+                                                .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child("OpenAI-compatible API"))
+                                                .child(div().text_size(px(12.0)).text_color(tokens.text_secondary)
+                                                    .child("Use a Chat Completions base URL, including /v1 when required. Enter exact model IDs separated by commas.")),
+                                        );
                                     for (label, field) in labels.into_iter().zip(fields) {
                                         let focused = field.read(cx).focus_handle().is_focused(window);
-                                        form = form.child(div().flex().flex_col().gap(px(3.0))
-                                            .child(div().text_size(px(11.5)).text_color(tokens.text_secondary).child(label))
-                                            .child(Input::new(field).appearance(true).bordered(true)
-                                                .when(themed_input, |input| style_auth_input(input, tokens, focused))));
+                                        form = form.child(
+                                            div().flex().flex_col().gap(px(4.0))
+                                                .child(div().text_size(px(12.0)).text_color(tokens.text_secondary).child(label))
+                                                .child(style_auth_input(Input::new(field), tokens, focused)),
+                                        );
                                     }
-                                    view.child(form
-                                        .when_some(auth.error.as_ref(), |view, error| view.child(div().text_color(tokens.block_failure).child(error.clone())))
-                                        .child(div().flex().justify_end().gap(px(12.0))
-                                            .child(div().id(("cancel-compatible-provider", pane_id)).debug_selector(|| "cancel-compatible-provider".into()).py(px(8.0)).cursor(CursorStyle::PointingHand).child("Cancel")
-                                                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                                    cx.stop_propagation();
-                                                    if let Some(auth) = this.pane_mut(pane_id).and_then(|p| p.chat.auth.as_mut())
-                                                        && auth.provider_operation.is_none() {
-                                                        auth.custom_provider = None;
-                                                        auth.error = None;
-                                                    }
-                                                    cx.notify();
-                                                })))
-                                            .child(div().id(("save-compatible-provider", pane_id)).px(px(12.0)).py(px(8.0)).rounded(px(5.0)).bg(btn_contrast_bg)
-                                                .cursor(CursorStyle::PointingHand)
-                                                .child(if auth.provider_operation.is_some() { "Saving…" } else { "Save & Connect" })
-                                                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                                    cx.stop_propagation(); this.save_custom_provider(pane_id, cx);
-                                                })))))
+                                    view.child(
+                                        form
+                                            .when_some(auth.error.as_ref(), |form, error| {
+                                                form.child(div().text_color(tokens.block_failure).child(error.clone()))
+                                            })
+                                            .child(
+                                                div().mt(px(4.0)).flex().justify_end().gap(px(8.0))
+                                                    .child(
+                                                        form_action("cancel-compatible-provider", "Cancel", false, !saving)
+                                                            .when(!saving, |button| button.on_click(cx.listener(move |this, _, window, cx| {
+                                                                if let Some(auth) = this.pane_mut(pane_id).and_then(|p| p.chat.auth.as_mut())
+                                                                    && auth.provider_operation.is_none()
+                                                                {
+                                                                    auth.custom_provider = None;
+                                                                    auth.error = None;
+                                                                    auth.filter.update(cx, |state, cx| state.focus(window, cx));
+                                                                    cx.notify();
+                                                                }
+                                                            }))),
+                                                    )
+                                                    .child(
+                                                        form_action(
+                                                            "save-compatible-provider",
+                                                            if saving { "Saving…" } else { "Save & Connect" },
+                                                            true,
+                                                            !saving,
+                                                        )
+                                                        .when(!saving, |button| button.on_click(cx.listener(move |this, _, _, cx| {
+                                                            this.save_custom_provider(pane_id, cx);
+                                                        }))),
+                                                    ),
+                                            ),
+                                    )
                                 })
                                 .when(auth.page == AgentDialogPage::Auth && auth.custom_provider.is_none(), |view| {
-                                    view.when(catalog.pending.is_some() && catalog.data.providers.is_empty(), |view| {
+                                    view.when(!filter_query.is_empty() && result_count > 0, |view| {
+                                        view.child(
+                                            div()
+                                                .pb(px(4.0))
+                                                .text_size(px(12.0))
+                                                .text_color(tokens.text_secondary)
+                                                .child(if result_count == 1 {
+                                                    "1 provider found".to_owned()
+                                                } else {
+                                                    format!("{result_count} providers found")
+                                                }),
+                                        )
+                                    })
+                                    .when(catalog.pending.is_some() && catalog.data.providers.is_empty(), |view| {
                                         view.child(
                                             div()
                                                 .py(px(8.0))
@@ -424,28 +488,51 @@ impl AppState {
                                                 .child("Checking providers…"),
                                         )
                                     })
-                                    .child(
-                                        div()
-                                            .id(("auth-providers", pane_id))
-                                            .relative()
-                                            .h(px(provider_height.min(if auth.selected.is_some() { 180.0 } else { 320.0 })))
-                                            .child(provider_list)
-                                            .child(KitScrollbar::vertical(&auth.provider_scroll)),
-                                    )
+                                    .when(result_count > 0, |view| {
+                                        view.child(
+                                            div()
+                                                .id(("auth-providers", pane_id))
+                                                .relative()
+                                                .flex_shrink_0()
+                                                .h(provider_height)
+                                                .child(provider_list)
+                                                .when(scrollable, |list| {
+                                                    list.child(
+                                                        KitScrollbar::vertical(&auth.provider_scroll)
+                                                            .mode(gpui_kit::base::ScrollbarMode::Always),
+                                                    )
+                                                }),
+                                        )
+                                    })
                                     .when(
                                         !filter_query.is_empty()
-                                            && !has_matching_providers
+                                            && result_count == 0
                                             && !catalog.data.providers.is_empty(),
                                         |view| {
                                             view.child(
                                                 div()
-                                                    .py(px(12.0))
+                                                    .py(px(20.0))
+                                                    .px(px(12.0))
+                                                    .rounded(px(8.0))
+                                                    .bg(tile_bg)
+                                                    .border_1()
+                                                    .border_color(tile_border)
                                                     .flex()
+                                                    .flex_col()
                                                     .items_center()
-                                                    .justify_center()
-                                                    .text_size(px(12.5))
-                                                    .text_color(tokens.text_muted)
-                                                    .child("No matching providers."),
+                                                    .gap(px(4.0))
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(13.0))
+                                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                            .child("No matching providers"),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(12.0))
+                                                            .text_color(tokens.text_secondary)
+                                                            .child("Try a provider name or ID."),
+                                                    ),
                                             )
                                         },
                                     )
@@ -501,7 +588,7 @@ impl AppState {
                                                 .mt(px(8.0))
                                                 .p(px(14.0))
                                                 .rounded(px(8.0))
-                                                .bg(card_sub_bg)
+                                                .bg(tokens.card_hover)
                                                 .border_1()
                                                 .border_color(modal_divider)
                                                 .flex()
@@ -527,13 +614,12 @@ impl AppState {
                                                                 .when(is_connected, |header| {
                                                                     header.child(
                                                                         div()
-                                                                            .px(px(6.0))
-                                                                            .py(px(1.5))
-                                                                            .rounded(px(4.0))
-                                                                            .bg(badge_success_bg)
-                                                                            .text_size(px(10.5))
-                                                                            .font_weight(gpui::FontWeight::MEDIUM)
-                                                                            .text_color(tokens.block_success)
+                                                                            .flex()
+                                                                            .items_center()
+                                                                            .gap(px(4.0))
+                                                                            .text_size(px(11.0))
+                                                                            .text_color(tokens.text_secondary)
+                                                                            .child(svg().path("icons/status-check.svg").size(px(12.0)).text_color(tokens.text_secondary))
                                                                             .child("Connected"),
                                                                     )
                                                                 }),
@@ -551,8 +637,7 @@ impl AppState {
                                                                             .px(px(8.0))
                                                                             .py(px(3.0))
                                                                             .rounded(px(4.0))
-                                                                            .bg(disconnect_bg)
-                                                                            .hover(|v| v.opacity(0.85))
+                                                                            .hover(move |button| button.bg(tokens.pane_header_btn_hover))
                                                                             .text_color(tokens.block_failure)
                                                                             .text_size(px(11.0))
                                                                             .font_weight(gpui::FontWeight::MEDIUM)
@@ -608,25 +693,15 @@ impl AppState {
                                                 .when(supports_oauth && auth.login.is_none(), |panel| {
                                                     let login_id = selected.clone();
                                                     panel.child(
-                                                        div()
-                                                            .id(("start-oauth-btn", pane_id))
-                                                            .px(px(12.0))
-                                                            .py(px(6.5))
-                                                            .rounded(px(6.0))
-                                                            .bg(tokens.primary_btn_bg)
-                                                            .text_color(tokens.primary_btn_fg)
-                                                            .text_size(px(12.0))
-                                                            .font_weight(gpui::FontWeight::MEDIUM)
-                                                            .cursor(CursorStyle::PointingHand)
-                                                            .hover(|v| v.bg(tokens.primary_btn_hover))
-                                                            .flex()
-                                                            .items_center()
-                                                            .justify_center()
-                                                            .child(if is_connected { "Re-authenticate with OAuth" } else { "Connect with OAuth" })
-                                                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
-                                                                cx.stop_propagation();
-                                                                this.start_agent_oauth(pane_id, login_id.clone(), window, cx);
-                                                            })),
+                                                        form_action(
+                                                            "start-oauth-btn",
+                                                            if is_connected { "Re-authenticate with OAuth" } else { "Connect with OAuth" },
+                                                            true,
+                                                            true,
+                                                        )
+                                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                                            this.start_agent_oauth(pane_id, login_id.clone(), window, cx);
+                                                        })),
                                                     )
                                                 })
                                                 .when(supports_api_key && auth.login.is_none(), |panel| {
@@ -670,35 +745,22 @@ impl AppState {
                                                                     .child(format!("API Key ({primary_var}):")),
                                                             )
                                                             .child(
-                                                                Input::new(&auth.input)
-                                                                    .appearance(true)
-                                                                    .bordered(true)
-                                                                    .cleanable(true)
-                                                                    .when(themed_input, |input| style_auth_input(input, tokens, credential_focused)),
+                                                                style_auth_input(Input::new(&auth.input).cleanable(true), tokens, credential_focused),
                                                             )
                                                             .child(
                                                                 div()
                                                                     .flex()
                                                                     .justify_end()
                                                                     .child(
-                                                                        div()
-                                                                            .id(("save-api-key-btn", pane_id))
-                                                                            .px(px(12.0))
-                                                                            .py(px(5.0))
-                                                                            .rounded(px(5.0))
-                                                                            .bg(btn_contrast_bg)
-                                                                            .hover(move |v| {
-                                                                                v.bg(btn_contrast_hover)
-                                                                            })
-                                                                            .text_color(tokens.text_primary)
-                                                                            .text_size(px(11.5))
-                                                                            .font_weight(gpui::FontWeight::MEDIUM)
-                                                                            .cursor(CursorStyle::PointingHand)
-                                                                            .child(if is_connected { "Update API Key" } else { "Save Key & Connect" })
-                                                                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
-                                                                                cx.stop_propagation();
-                                                                                this.submit_agent_auth(pane_id, window, cx);
-                                                                            })),
+                                                                        form_action(
+                                                                            "save-api-key-btn",
+                                                                            if is_connected { "Update API Key" } else { "Save Key & Connect" },
+                                                                            !supports_oauth,
+                                                                            true,
+                                                                        )
+                                                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                                                            this.submit_agent_auth(pane_id, window, cx);
+                                                                        })),
                                                                     ),
                                                             ),
                                                     )
@@ -722,11 +784,7 @@ impl AppState {
                                                                 )
                                                             })
                                                             .child(
-                                                                Input::new(&auth.input)
-                                                                    .appearance(true)
-                                                                    .bordered(true)
-                                                                    .cleanable(true)
-                                                                    .when(themed_input, |input| style_auth_input(input, tokens, credential_focused)),
+                                                                style_auth_input(Input::new(&auth.input).cleanable(true), tokens, credential_focused),
                                                             )
                                                             .child(
                                                                 div()
@@ -738,42 +796,20 @@ impl AppState {
                                                 }),
                                         )
                                     })
-                                    .when(auth.selected.is_none() && auth.custom_provider.is_none(), |view| {
+                                    .when(auth.selected.is_none(), |view| {
                                         view.child(
                                             div()
-                                                .mt(px(8.0))
-                                                .pt(px(8.0))
+                                                .mt(px(4.0))
+                                                .pt(px(12.0))
                                                 .border_t_1()
                                                 .border_color(modal_divider)
                                                 .flex()
-                                                .flex_col()
-                                                .gap(px(4.0))
+                                                .justify_center()
                                                 .child(
-                                                    div().id(("add-compatible-provider", pane_id)).debug_selector(|| "add-compatible-provider".into())
-                                                        .py(px(8.0)).text_color(tokens.text_primary)
-                                                        .cursor(CursorStyle::PointingHand)
-                                                        .child("+ OpenAI-compatible API")
-                                                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
-                                                            cx.stop_propagation();
+                                                    form_action("add-compatible-provider", "+ Add OpenAI-compatible provider", false, true)
+                                                        .on_click(cx.listener(move |this, _, window, cx| {
                                                             this.open_custom_provider(pane_id, window, cx);
                                                         })),
-                                                )
-                                                .child(
-                                                    div().debug_selector(|| "auth-provider-id-input".into())
-                                                        .child(Input::new(&auth.provider_input)
-                                                            .appearance(true)
-                                                            .bordered(true)
-                                                            .when(themed_input, |input| style_auth_input(input, tokens, provider_focused))),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_size(px(11.0))
-                                                        .text_color(tokens.text_muted)
-                                                        .child(if auth.methods_discovery.is_some() {
-                                                            "Checking extension authentication methods…"
-                                                        } else {
-                                                            "Select a provider above, or enter an extension provider ID and press Enter."
-                                                        }),
                                                 ),
                                         )
                                     })

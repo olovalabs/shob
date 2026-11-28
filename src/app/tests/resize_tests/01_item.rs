@@ -324,22 +324,18 @@ fn gradient_ascii_colors_provider_and_model_dialog_inputs() {
         cx.notify();
     });
     cx.draw_frame().unwrap();
-    for selector in ["agent-dialog-filter", "auth-provider-id-input"] {
-        let bounds = cx.debug_bounds(selector).expect("dialog input");
-        let pixel = cx.update(|window, _| {
-            let image = window.render_to_image().unwrap();
-            let scale = window.scale_factor();
-            let x = (f32::from(bounds.left() + px(5.0)) * scale) as u32;
-            let y = (f32::from(bounds.center().y) * scale) as u32;
-            *image.get_pixel(x, y)
-        });
-        assert!(
-            pixel[2] > pixel[0] + 20 && pixel[2] > pixel[1],
-            "{selector} should have the blue theme background: {pixel:?}"
-        );
-    }
     let filter = cx.debug_bounds("agent-dialog-filter").unwrap();
-    cx.simulate_click(filter.center(), Modifiers::default());
+    let pixel = cx.update(|window, _| {
+        let image = window.render_to_image().unwrap();
+        let scale = window.scale_factor();
+        let x = (f32::from(filter.left() + px(5.0)) * scale) as u32;
+        let y = (f32::from(filter.center().y) * scale) as u32;
+        *image.get_pixel(x, y)
+    });
+    assert!(
+        pixel[2] > pixel[0] + 20 && pixel[2] > pixel[1],
+        "the provider search should have the blue theme background: {pixel:?}"
+    );
     cx.simulate_input("openai");
     cx.draw_frame().unwrap();
     state.read_with(&cx, |s, cx| {

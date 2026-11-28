@@ -59,8 +59,6 @@ impl AppState {
         self.focused_pane_id = Some(pane_id);
         let input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Enter API key or credential"));
-        let provider_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Other provider ID"));
         let filter = cx.new(|cx| {
             InputState::new(window, cx).placeholder(if page == AgentDialogPage::Models {
                 "Search models..."
@@ -69,11 +67,7 @@ impl AppState {
             })
         });
         let focus = cx.focus_handle();
-        if page == AgentDialogPage::Auth {
-            provider_input.update(cx, |state, cx| state.focus(window, cx));
-        } else {
-            filter.update(cx, |state, cx| state.focus(window, cx));
-        }
+        filter.update(cx, |state, cx| state.focus(window, cx));
         let mut auth = AuthModal {
             page,
             model_filter: ModelPickerFilter::All,
@@ -84,7 +78,6 @@ impl AppState {
             methods_discovery: None,
             custom_provider: None,
             provider_operation: None,
-            provider_input,
             filter,
             input,
             login: None,
@@ -161,12 +154,7 @@ impl AppState {
             auth.discover_auth_methods();
         }
         auth.page = page;
-        if page == AgentDialogPage::Models {
-            auth.filter.update(cx, |state, cx| state.focus(window, cx));
-        } else {
-            auth.provider_input
-                .update(cx, |state, cx| state.focus(window, cx));
-        }
+        auth.filter.update(cx, |state, cx| state.focus(window, cx));
         cx.notify();
     }
 
@@ -303,27 +291,6 @@ impl AppState {
         cx.notify();
     }
 
-    fn start_agent_auth(
-        &mut self,
-        pane_id: usize,
-        provider: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(auth) = self
-            .pane_ref(pane_id)
-            .and_then(|pane| pane.chat.auth.as_ref())
-        else {
-            return;
-        };
-        let methods = agent_auth::auth_methods(&provider, &auth.cwd);
-        if methods.oauth && !methods.api_key {
-            self.start_agent_oauth(pane_id, provider, window, cx);
-        } else {
-            self.select_provider_for_auth(pane_id, provider, window, cx);
-        }
-    }
-
     fn open_custom_provider(
         &mut self,
         pane_id: usize,
@@ -404,10 +371,6 @@ impl AppState {
             self.save_custom_provider(pane_id, cx);
             return;
         }
-        // Enter while searching filters the list; it must not submit a key.
-        if auth.filter.read(cx).focus_handle().is_focused(window) {
-            return;
-        }
 
         // Forward input to an interactive login while it is active.
         if let Some(login) = auth.login.as_mut() {
@@ -422,7 +385,7 @@ impl AppState {
             return;
         }
 
-        // 2. If a provider is selected and input contains an API key, save it!
+        // Save a key for the provider being configured.
         if let Some(provider) = auth.selected.clone() {
             let key = auth.input.read(cx).value().trim().to_string();
             if key.is_empty() {
@@ -466,23 +429,7 @@ impl AppState {
                 }
             }
             cx.notify();
-            return;
         }
-
-        // 3. Fallback: manual provider input
-        if auth.methods_discovery.is_some() {
-            return;
-        }
-        let provider = auth.provider_input.read(cx).value().trim().to_string();
-        if provider.is_empty() {
-            return;
-        }
-        if !agent_auth::provider_visible_in_chat_ui(&provider) {
-            auth.error = Some("Local providers are unavailable in Shob agent chat.".into());
-            cx.notify();
-            return;
-        }
-        self.start_agent_auth(pane_id, provider, window, cx);
     }
 
     fn remove_custom_provider(&mut self, pane_id: usize, provider: String, cx: &mut Context<Self>) {

@@ -114,12 +114,19 @@ fn model_tab_lists_only_connected_provider_models() {
     cx.draw_frame().unwrap();
     assert!(cx.debug_bounds("agent-provider-panel").is_some());
     assert!(cx.debug_bounds("auth-provider-3").is_none());
-    let connect = cx.debug_bounds("auth-connect-2").unwrap();
+    assert!(cx.debug_bounds("auth-provider-selected-0").is_some());
+    assert!(cx.debug_bounds("auth-provider-connected-1").is_some());
+    assert!(cx.debug_bounds("auth-provider-connected-2").is_none());
+    let connect = cx.debug_bounds("auth-provider-2").unwrap();
     cx.simulate_click(connect.center(), Modifiers::default());
     state.read_with(&cx, |s, _| {
         let auth = s.pane_ref(id).unwrap().chat.auth.as_ref().unwrap();
         assert_eq!(auth.selected.as_deref(), Some("anthropic"));
     });
+    cx.draw_frame().unwrap();
+    assert!(cx.debug_bounds("auth-provider-selected-0").is_none());
+    assert!(cx.debug_bounds("auth-provider-connected-0").is_some());
+    assert!(cx.debug_bounds("auth-provider-selected-2").is_some());
 }
 
 #[test]
@@ -195,7 +202,7 @@ fn provider_page_cards_use_the_two_column_icon_grid() {
 }
 
 #[test]
-fn provider_disconnect_pill_button_with_cross_icon_disconnects() {
+fn provider_disconnect_button_disconnects_without_switching_models() {
     let mut app = TestAppContext::new();
     let (mut cx, state) = open_app(&mut app);
     let id = state.read_with(&cx, |s, _| s.projects[0].sessions[0].panes[0].id);
@@ -220,7 +227,7 @@ fn provider_disconnect_pill_button_with_cross_icon_disconnects() {
 
     let disconnect_btn = cx
         .debug_bounds("auth-disconnect-0")
-        .expect("disconnect pill button renders");
+        .expect("disconnect button renders");
     let center = disconnect_btn.center();
     cx.simulate_mouse_move(center, None, Modifiers::default());
     cx.simulate_click(center, Modifiers::default());
@@ -235,12 +242,13 @@ fn provider_disconnect_pill_button_with_cross_icon_disconnects() {
     });
     assert!(
         !is_ready,
-        "provider must be disconnected after clicking disconnect pill button"
+        "provider must be disconnected after clicking the disconnect button"
     );
     assert!(
         cx.debug_bounds("auth-disconnect-0").is_none(),
-        "disconnect pill button must disappear once disconnected"
+        "disconnect button must disappear once disconnected"
     );
+    assert!(cx.debug_bounds("auth-provider-selected-0").is_none());
     state.read_with(&cx, |s, _| {
         assert_eq!(
             s.pane_ref(id).unwrap().chat.selected_model.as_ref(),
