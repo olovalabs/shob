@@ -57,7 +57,9 @@ impl Playback {
 fn host_socket() -> Option<PathBuf> {
     if let Some(server) = std::env::var_os("PULSE_SERVER") {
         let server = server.as_bytes();
-        let path = Path::new(OsStr::from_bytes(server.strip_prefix(b"unix:").unwrap_or(server)));
+        let path = Path::new(OsStr::from_bytes(
+            server.strip_prefix(b"unix:").unwrap_or(server),
+        ));
         return path.is_absolute().then(|| path.to_owned());
     }
     let runtime = std::env::var_os("PULSE_RUNTIME_PATH")
@@ -143,8 +145,8 @@ fn authorize(command: u32, args: &mut [u8]) -> io::Result<bool> {
             args[1..].copy_from_slice(&mask.to_be_bytes());
         }
         3 | 4 | 12 | 14 | 41..=43 | 46 | 60 | 72 | 74 | 81 | 84 => {} // Own playback streams
-        10 | 20..=22 => {} // Playback device discovery
-        9 | 82 | 85 => {} // Own client metadata
+        10 | 20..=22 => {}                                            // Playback device discovery
+        9 | 82 | 85 => {}                                             // Own client metadata
         _ => return Ok(false),
     }
     Ok(true)
@@ -167,7 +169,11 @@ async fn browser_to_host(
             let command = native_u32(&fields[..5])?;
             let tag = native_u32(&fields[5..])?;
             if !authorize(command, args)? {
-                browser_write.lock().await.write_all(&access_denied(tag)).await?;
+                browser_write
+                    .lock()
+                    .await
+                    .write_all(&access_denied(tag))
+                    .await?;
                 continue;
             }
         } else if word(&packet.bytes[16..HEADER]) > 3 {
