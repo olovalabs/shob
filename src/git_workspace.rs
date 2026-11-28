@@ -1,23 +1,15 @@
 //! Non-blocking Git workspace inspection and mutations for worktree and branch switching.
 //!
 //! All `git` subprocess calls set `GIT_OPTIONAL_LOCKS=0` and `GIT_TERMINAL_PROMPT=0`
-//! and must be invoked off the GPUI main thread (except fast `.git/HEAD` reads in
-//! [`detect_git_branch`]).
+//! and must be invoked off the GPUI main thread, as must `.git/HEAD` reads.
 
 use crate::paths;
-use parking_lot::Mutex;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-const BRANCH_CACHE_TTL: Duration = Duration::from_secs(1);
-
-type BranchCache = HashMap<PathBuf, (Instant, Option<String>)>;
-
-static BRANCH_CACHE: LazyLock<Mutex<BranchCache>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 static WORKTREE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,7 +48,7 @@ impl GitWorkspaceSnapshot {
     pub fn secondary_worktrees(&self) -> Vec<&WorktreeInfo> {
         self.worktrees
             .iter()
-            .filter(|wt| !wt.is_main && !wt.is_bare && !wt.is_prunable && wt.path.is_dir())
+            .filter(|wt| !wt.is_main && !wt.is_bare && !wt.is_prunable)
             .collect()
     }
 }
@@ -71,29 +63,7 @@ pub fn paths_equal(a: &Path, b: &Path) -> bool {
     }
 }
 
-pub fn invalidate_branch_cache(dir: &Path) {
-    let mut cache = BRANCH_CACHE.lock();
-    cache.remove(dir);
-    if let Ok(canon) = std::fs::canonicalize(dir) {
-        cache.remove(&canon);
-    }
-}
-
 pub fn detect_git_branch(dir: &Path) -> Option<String> {
-    let now = Instant::now();
-    if let Some((at, branch)) = BRANCH_CACHE.lock().get(dir)
-        && now.duration_since(*at) < BRANCH_CACHE_TTL
-    {
-        return branch.clone();
-    }
-    let branch = detect_git_branch_uncached(dir);
-    BRANCH_CACHE
-        .lock()
-        .insert(dir.to_path_buf(), (now, branch.clone()));
-    branch
-}
-
-pub fn detect_git_branch_uncached(dir: &Path) -> Option<String> {
     let mut current = dir;
     loop {
         let git_path = current.join(".git");
@@ -135,12 +105,7 @@ fn parse_head_file(content: &str) -> Option<String> {
     if let Some(branch) = trimmed.strip_prefix("ref: refs/heads/") {
         Some(branch.to_string())
     } else if !trimmed.is_empty() {
-        let short = if trimmed.len() > 7 {
-            &trimmed[..7]
-        } else {
-            trimmed
-        };
-        Some(short.to_string())
+        Some(trimmed[..trimmed.floor_char_boundary(7)].to_owned())
     } else {
         None
     }
@@ -195,9 +160,14 @@ pub fn inspect(dir: &Path) -> GitWorkspaceSnapshot {
         .ok()
         .filter(|s| !s.is_empty());
 
-    let worktrees = run_git(&repo_root, &["worktree", "list", "--porcelain"])
+    let mut worktrees = run_git(&repo_root, &["worktree", "list", "--porcelain"])
         .map(|out| parse_worktree_porcelain(&out))
         .unwrap_or_default();
+    for worktree in &mut worktrees {
+        if !worktree.is_main && !worktree.is_bare && !worktree.path.is_dir() {
+            worktree.is_prunable = true;
+        }
+    }
 
     let main_worktree_path = worktrees
         .iter()
@@ -541,9 +511,6 @@ pub fn create_worktree(
     )?;
 
     let head_sha = run_git(&chosen_path, &["rev-parse", "--short", "HEAD"]).ok();
-    invalidate_branch_cache(dir);
-    invalidate_branch_cache(repo_root);
-    invalidate_branch_cache(&chosen_path);
 
     Ok(WorktreeInfo {
         path: chosen_path,
@@ -573,7 +540,6 @@ pub fn checkout_branch(dir: &Path, branch: &str, is_remote: bool) -> Result<Stri
         branch.to_string()
     };
 
-    invalidate_branch_cache(dir);
     Ok(checked_out)
 }
 
@@ -586,13 +552,17 @@ pub fn create_and_checkout_branch(dir: &Path, raw_name: &str) -> Result<String, 
     run_git(dir, &["check-ref-format", &full_ref])
         .map_err(|_| format!("Invalid branch name: {name}"))?;
     run_git(dir, &["checkout", "-b", &name])?;
-    invalidate_branch_cache(dir);
     Ok(name)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn malformed_detached_head_does_not_split_unicode() {
+        assert_eq!(parse_head_file("  éééé\n").as_deref(), Some("ééé"));
+    }
 
     fn git(dir: &Path, args: &[&str]) {
         let status = Command::new("git")
@@ -673,7 +643,7 @@ detached
         let wt = create_worktree(&repo, &wt_root, None).expect("create worktree");
         assert!(wt.path.is_dir());
         assert!(wt.branch.as_deref().is_some_and(|b| b.starts_with("shob/")));
-        assert_eq!(detect_git_branch_uncached(&wt.path), wt.branch);
+        assert_eq!(detect_git_branch(&wt.path), wt.branch);
 
         let wt_snap = inspect(&wt.path);
         assert!(wt_snap.is_git_repo);
@@ -688,7 +658,7 @@ detached
         let created = create_and_checkout_branch(&wt.path, "feat new api").expect("new branch");
         assert_eq!(created, "feat-new-api");
         assert_eq!(
-            detect_git_branch_uncached(&wt.path).as_deref(),
+            detect_git_branch(&wt.path).as_deref(),
             Some("feat-new-api")
         );
 

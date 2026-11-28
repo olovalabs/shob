@@ -148,15 +148,6 @@ impl TextWrapper {
         let start_row = start_row.min(self.lines.len().saturating_sub(1));
         let end_row = self.text.offset_to_point(range.end).row;
         let end_row = end_row.min(self.lines.len().saturating_sub(1));
-        let rows_range = start_row..=end_row;
-
-        if rows_range.contains(&self.longest_row.row) {
-            self.longest_row = LongestRow::default();
-        }
-
-        let mut longest_row_ix = self.longest_row.row;
-        let mut longest_row_len = self.longest_row.len;
-
         let new_start_row = changed_text.offset_to_point(range.start).row;
         let new_start_offset = changed_text.line_start_offset(new_start_row);
         let new_end_row = changed_text
@@ -166,6 +157,8 @@ impl TextWrapper {
         let new_range = new_start_offset..new_end_offset;
 
         let mut new_lines = vec![];
+        let mut longest_row = LongestRow { row: start_row, len: 0 };
+        let mut added_soft_lines = 0;
         let wrap_width = self.wrap_width;
 
         for (ix, line) in Rope::from(changed_text.slice(new_range))
@@ -176,9 +169,8 @@ impl TextWrapper {
             let mut wrapped_lines = vec![];
             let mut prev_boundary_ix = 0;
 
-            if line_str.len() > longest_row_len {
-                longest_row_ix = new_start_row + ix;
-                longest_row_len = line_str.len();
+            if line.len() > longest_row.len {
+                longest_row = LongestRow { row: start_row + ix, len: line.len() };
             }
 
             if let Some(wrap_width) = wrap_width {
@@ -193,24 +185,50 @@ impl TextWrapper {
                 wrapped_lines.push(prev_boundary_ix..line.len());
             }
 
+            added_soft_lines += wrapped_lines.len();
             new_lines.push(LineItem {
                 line: Rope::from(line),
                 wrapped_lines,
             });
         }
 
-        if self.lines.len() == 0 {
+        if self.lines.is_empty() {
             self.lines = new_lines;
         } else {
-            self.lines.splice(rows_range, new_lines);
+            let old_rows_end = end_row + 1;
+            let new_rows_end = start_row + new_lines.len();
+            let rows_range = start_row..old_rows_end;
+            let replaced_longest = rows_range.contains(&self.longest_row.row);
+            self.soft_lines -= self.lines.splice(rows_range, new_lines)
+                .map(|line| line.lines_len())
+                .sum::<usize>();
+
+            if !replaced_longest && self.longest_row.len >= longest_row.len {
+                let mut row = self.longest_row.row;
+                if row >= old_rows_end {
+                    row = new_rows_end + (row - old_rows_end);
+                }
+                longest_row = LongestRow { row, len: self.longest_row.len };
+            } else if replaced_longest && longest_row.len < self.longest_row.len {
+                // Only a shorter replacement of the cached winner can make a
+                // previously untracked row the longest.
+                let prefix = self.lines.iter().enumerate().take(start_row);
+                let suffix = self.lines.iter().enumerate().skip(new_rows_end);
+                for (row, line) in prefix.chain(suffix) {
+                    let len = line.len();
+                    if len > longest_row.len {
+                        longest_row = LongestRow { row, len };
+                        if len == self.longest_row.len {
+                            break;
+                        }
+                    }
+                }
+            }
         }
 
         self.text = changed_text.clone();
-        self.soft_lines = self.lines.iter().map(|l| l.lines_len()).sum();
-        self.longest_row = LongestRow {
-            row: longest_row_ix,
-            len: longest_row_len,
-        }
+        self.soft_lines += added_soft_lines;
+        self.longest_row = longest_row;
     }
 
     fn update_all(&mut self, text: &Rope, cx: &mut App) {
@@ -642,6 +660,35 @@ mod tests {
             "This is a full text.\nThis is a second line."
         );
         assert_eq!(wrapper.lines.len(), 2);
+    }
+
+    #[test]
+    fn test_wrapper_splice_bookkeeping() {
+        let mut wrapper = TextWrapper::new(gpui::font("Arial"), px(14.), Some(px(100.)));
+        let mut text = Rope::new();
+        let mut wrap = |line: &str, _: Pixels| {
+            line.char_indices()
+                .filter_map(|(ix, _)| {
+                    (ix > 0 && ix % 2 == 0).then_some(Boundary { ix, next_indent: 0 })
+                })
+                .collect()
+        };
+        let mut replace = |range: Range<usize>, replacement: &str, expected| {
+            text.replace(range.clone(), replacement);
+            wrapper._update(&text, &range, &Rope::from(replacement), &mut wrap);
+            let actual = (wrapper.longest_row.row, wrapper.longest_row.len, wrapper.len());
+            assert_eq!(actual, expected);
+        };
+
+        replace(0..0, "abcde\nq\néé\nw", (0, 5, 7));
+        replace(0..0, "z\n", (1, 5, 8));
+        replace(0..2, "", (0, 5, 7));
+        replace(0..5, "x", (2, 4, 5));
+        replace(0..0, "zzzz\n", (3, 4, 7));
+        replace(0..5, "", (2, 4, 5));
+        replace(10..10, "12345", (3, 6, 7));
+        replace(10..15, "", (2, 4, 5));
+        replace(0..10, "", (0, 0, 1));
     }
 
     #[test]

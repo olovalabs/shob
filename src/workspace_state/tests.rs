@@ -7,6 +7,24 @@ fn legacy_chat_defaults_to_presets_without_an_effort_override() {
     assert!(chat.thinking_override.is_none());
 }
 
+#[test]
+fn clearing_workspace_fences_older_layout_and_scrollback_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("workspace.json");
+    let scrollbacks = dir.path().join("sessions");
+    let generation = AtomicU64::new(1);
+    let state = SavedWorkspace::default();
+    assert!(save_if_current(&workspace, &state, &generation, 1).unwrap());
+    write_scrollback_if_current_in(&scrollbacks, "pane", "old", &generation, 1).unwrap();
+
+    generation.store(2, Ordering::SeqCst);
+    remove_saved_workspace(&workspace, &scrollbacks).unwrap();
+    assert!(!save_if_current(&workspace, &state, &generation, 1).unwrap());
+    write_scrollback_if_current_in(&scrollbacks, "pane", "old", &generation, 1).unwrap();
+    assert!(!workspace.exists());
+    assert!(!scrollbacks.exists());
+}
+
 const LEGACY: &str = r#"{
         "projects": [
             {"path": "/tmp/one", "name": "one", "expanded": true},
@@ -216,6 +234,44 @@ fn malformed_workspace_falls_back_to_default() {
     let empty = load_from_text("{}");
     assert_eq!(empty.version, CURRENT_VERSION);
     assert!(empty.projects.is_empty());
+}
+
+#[test]
+fn load_repairs_duplicate_and_out_of_range_ids_without_losing_drafts() {
+    let huge = usize::MAX;
+    let text = serde_json::json!({
+        "version": 2,
+        "projects": [
+            {"id": 1, "path": "/first", "sessions": [{
+                "id": 2, "panes": [{"id": 3}], "tree": {"type": "leaf", "pane": 3}
+            }]},
+            {"id": 1, "path": "/second", "sessions": [{
+                "id": 2, "focused_pane": 3, "maximized_pane_id": huge,
+                "panes": [{"id": 3, "draft": "keep me", "tool_panel_tab": huge},
+                          {"id": huge, "tool_panel_owner": 3}],
+                "tree": {"type": "split", "id": huge,
+                         "left": {"type": "leaf", "pane": 3},
+                         "right": {"type": "leaf", "pane": huge}}
+            }]}
+        ]
+    });
+    let saved = load_from_text(&text.to_string());
+    let first = &saved.projects[0];
+    let second = &saved.projects[1];
+    assert_ne!(first.id, second.id);
+    assert_ne!(first.sessions[0].id, second.sessions[0].id);
+    let session = &second.sessions[0];
+    let [pane, panel] = session.panes.as_slice() else { panic!("lost a pane") };
+    assert_ne!(pane.id, first.sessions[0].panes[0].id);
+    assert_eq!(pane.draft, "keep me");
+    assert_eq!(pane.tool_panel_tab, Some(panel.id));
+    assert_eq!(panel.tool_panel_owner, Some(pane.id));
+    assert_eq!(session.focused_pane, Some(pane.id));
+    assert_eq!(session.maximized_pane_id, Some(panel.id));
+    let SavedPaneNode::Split { left, right, .. } = &session.tree else { panic!("lost split") };
+    assert_eq!(**left, SavedPaneNode::Leaf { pane: pane.id });
+    assert_eq!(**right, SavedPaneNode::Leaf { pane: panel.id });
+    assert!(saved.max_id() < 10_000);
 }
 
 #[test]

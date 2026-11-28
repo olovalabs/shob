@@ -23,11 +23,19 @@ const MAX_GIT_BYTES: u64 = 4 * 1024 * 1024;
 #[serde(default)]
 pub struct SavedFiles {
     pub active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    root: Option<PathBuf>,
     expanded: BTreeSet<PathBuf>,
     tabs: Vec<SavedFile>,
     selected: Option<PathBuf>,
     git: bool,
     commit_message: String,
+}
+
+impl SavedFiles {
+    pub(crate) fn has_drafts(&self) -> bool {
+        self.tabs.iter().any(|tab| tab.draft.is_some())
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -65,7 +73,14 @@ struct Editor {
     baseline: String,
     saving: bool,
     dirty: bool,
+    last_reported_cursor: (u32, u32),
     _subscription: Subscription,
+}
+
+struct DisplayedDiff {
+    input: Entity<InputState>,
+    repository_path: PathBuf,
+    edit_path: Option<PathBuf>,
 }
 
 pub struct Changed;
@@ -80,8 +95,8 @@ pub struct FilesSurface {
     selected: Option<PathBuf>,
     pending: Vec<SavedFile>,
     git: bool,
-    diff: Option<Entity<InputState>>,
-    diff_path: Option<PathBuf>,
+    diff: Option<DisplayedDiff>,
+    diff_task: Option<Task<()>>,
     message: String,
     commit: Entity<InputState>,
     _commit_subscription: Subscription,
@@ -116,14 +131,15 @@ fn tree(root: &Path, expanded: &BTreeSet<PathBuf>) -> Result<(Vec<Entry>, bool),
                 break;
             }
             let child = child.map_err(|e| e.to_string())?;
-            if child.file_name() == ".git" {
+            let name = child.file_name();
+            if name == ".git" {
                 continue;
             }
             *remaining -= 1;
-            let directory = child.file_type().map_err(|e| e.to_string())?.is_dir();
+            let is_dir = child.file_type().map_err(|e| e.to_string())?.is_dir();
             children.push(Entry {
-                path: child.path().strip_prefix(root).unwrap().to_path_buf(),
-                directory,
+                path: directory.join(name),
+                directory: is_dir,
                 depth,
             });
         }
@@ -296,8 +312,8 @@ fn save(root: &Path, path: &Path, baseline: &str, text: &str) -> Result<(), Stri
     let permissions = std::fs::metadata(&destination)
         .map_err(|e| e.to_string())?
         .permissions();
-    let mut temporary = tempfile::NamedTempFile::new_in(destination.parent().unwrap())
-        .map_err(|e| e.to_string())?;
+    let parent = destination.parent().ok_or("File has no parent directory")?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
     use std::io::Write;
     temporary
         .write_all(text.as_bytes())
@@ -326,11 +342,13 @@ impl FilesSurface {
                 .validate(|text, _| text.len() <= 16 * 1024)
                 .default_value(saved.commit_message)
         });
-        let subscription = cx.subscribe(&commit, |_, _, _: &InputEvent, cx| {
-            cx.emit(Changed);
+        let subscription = cx.subscribe(&commit, |_, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.emit(Changed);
+            }
         });
         let mut this = Self {
-            root,
+            root: saved.root.unwrap_or(root),
             owner,
             pane_id,
             expanded: saved
@@ -351,7 +369,7 @@ impl FilesSurface {
                 .collect(),
             git: saved.git,
             diff: None,
-            diff_path: None,
+            diff_task: None,
             message: "Loading files…".into(),
             commit,
             _commit_subscription: subscription,
@@ -392,14 +410,14 @@ impl FilesSurface {
             .editors
             .iter()
             .map(|editor| {
-                let text = editor.input.read(cx).value().to_string();
-                let dirty = text != editor.baseline;
+                let input = editor.input.read(cx);
+                let dirty = input.text() != editor.baseline.as_str();
                 SavedFile {
                     path: editor.path.clone(),
-                    draft: dirty.then_some(text),
+                    draft: dirty.then(|| input.text().to_string()),
                     baseline: dirty.then(|| editor.baseline.clone()),
                     cursor: {
-                        let p = editor.input.read(cx).cursor_position();
+                        let p = input.cursor_position();
                         (p.line, p.character)
                     },
                 }
@@ -409,11 +427,12 @@ impl FilesSurface {
         tabs.extend(self.loading.iter().cloned());
         SavedFiles {
             active: true,
+            root: Some(self.root.clone()),
             expanded: self.expanded.clone(),
             tabs,
             selected: self.selected.clone(),
             git: self.git,
-            commit_message: self.commit.read(cx).value().to_string(),
+            commit_message: self.commit.read(cx).text().to_string(),
         }
     }
     fn changed(&mut self, cx: &mut Context<Self>) {
@@ -457,9 +476,19 @@ impl FilesSurface {
         }));
     }
     fn restore_next(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.pending.is_empty() {
+        while self.loading.is_none() && !self.pending.is_empty() {
             let file = self.pending.remove(0);
             self.open(file, false, window, cx);
+        }
+        if self.loading.is_none()
+            && self.selected.is_some()
+            && !self.editors.iter().any(|editor| Some(&editor.path) == self.selected.as_ref())
+        {
+            self.selected = self.editors.first().map(|editor| editor.path.clone());
+            if self.owns_focus(cx) {
+                self.focus_selected(window, cx);
+            }
+            self.changed(cx);
         }
     }
     fn open(
@@ -477,15 +506,12 @@ impl FilesSurface {
             cx.notify();
             return;
         }
+        if select {
+            self.diff_task = None;
+        }
         if self.editors.iter().any(|e| e.path == saved.path) {
-            self.selected = Some(saved.path);
-            self.diff = None;
-            if select || self.owns_focus(cx) {
-                self.focus_selected(window, cx);
-            }
-            self.changed(cx);
-            if !select {
-                self.restore_next(window, cx);
+            if select {
+                self.select_editor(saved.path, window, cx);
             }
             return;
         }
@@ -545,25 +571,33 @@ impl FilesSurface {
                                     window.blur(cx);
                                 }
                             }
+                            let position = input.read(cx).cursor_position();
                             let subscription =
-                                cx.subscribe(&input, |_, input, event: &InputEvent, cx| {
-                                    let target = cx.entity().downgrade();
-                                    let input = input.clone();
-                                    let changed = matches!(event, InputEvent::Change);
-                                    cx.defer(move |cx| {
-                                        let _ = target.update(cx, |this, cx| {
-                                            if changed
-                                                && let Some(editor) = this
-                                                    .editors
-                                                    .iter_mut()
-                                                    .find(|e| e.input == input)
-                                            {
-                                                editor.dirty = input.read(cx).text()
-                                                    != editor.baseline.as_str();
-                                            }
-                                            this.changed(cx);
-                                        });
-                                    });
+                                cx.subscribe(&input, |this, input, event: &InputEvent, cx| {
+                                    let content_changed = matches!(event, InputEvent::Change);
+                                    if !content_changed && !matches!(event, InputEvent::Blur) {
+                                        return;
+                                    }
+                                    let Some(editor) =
+                                        this.editors.iter_mut().find(|e| e.input == input)
+                                    else {
+                                        return;
+                                    };
+                                    let state = input.read(cx);
+                                    let position = state.cursor_position();
+                                    let cursor = (position.line, position.character);
+                                    let cursor_changed = editor.last_reported_cursor != cursor;
+                                    editor.last_reported_cursor = cursor;
+                                    if content_changed {
+                                        let dirty = state.text() != editor.baseline.as_str();
+                                        if editor.dirty != dirty {
+                                            editor.dirty = dirty;
+                                            cx.notify();
+                                        }
+                                    }
+                                    if content_changed || cursor_changed {
+                                        cx.emit(Changed);
+                                    }
                                 });
                             if select || this.selected.is_none() {
                                 this.selected = Some(path.clone());
@@ -574,6 +608,7 @@ impl FilesSurface {
                                 baseline,
                                 saving: false,
                                 dirty,
+                                last_reported_cursor: (position.line, position.character),
                                 _subscription: subscription,
                             });
                             this.diff = None;
@@ -589,6 +624,14 @@ impl FilesSurface {
                 });
             });
         }));
+    }
+
+    fn select_editor(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.diff_task = None;
+        self.diff = None;
+        self.selected = Some(path);
+        self.focus_selected(window, cx);
+        self.changed(cx);
     }
     fn owns_focus(&self, cx: &App) -> bool {
         self.owner.upgrade().is_some_and(|owner| {
@@ -617,17 +660,18 @@ impl FilesSurface {
         else {
             return;
         };
-        let text = editor.input.read(cx).value().to_string();
+        let text = editor.input.read(cx).text().to_string();
         let baseline = editor.baseline.clone();
         let path = editor.path.clone();
         let root = self.root.clone();
         editor.saving = true;
         self.operation = Some(cx.spawn(async move |this, cx| {
-            let saved_text = text.clone();
-            let saved_path = path.clone();
-            let result = cx
+            let (path, text, result) = cx
                 .background_executor()
-                .spawn(async move { save(&root, &saved_path, &baseline, &saved_text) })
+                .spawn(async move {
+                    let result = save(&root, &path, &baseline, &text);
+                    (path, text, result)
+                })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 if let Some(editor) = this.editors.iter_mut().find(|e| e.path == path) {
@@ -683,9 +727,15 @@ impl FilesSurface {
             return;
         };
         let root = repo.root.clone();
-        self.diff_path = Some(change.path.clone());
+        let repository_path = change.path.clone();
+        let edit_path = root
+            .join(&repository_path)
+            .strip_prefix(&self.root)
+            .ok()
+            .filter(|path| valid_relative(path))
+            .map(Path::to_path_buf);
         let target = window.window_handle();
-        self.open_task = Some(cx.spawn(async move |this, cx| {
+        self.diff_task = Some(cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move {
@@ -731,14 +781,20 @@ impl FilesSurface {
                 let _ = this.update(cx, |this, cx| {
                     match result {
                         Ok(text) => {
-                            this.diff = Some(cx.new(|cx| {
+                            let input = cx.new(|cx| {
                                 InputState::new(window, cx)
                                     .code_editor("diff")
                                     .line_number(true)
                                     .soft_wrap(false)
                                     .read_only(true)
                                     .default_value(text)
-                            }))
+                            });
+                            this.diff = Some(DisplayedDiff {
+                                input,
+                                repository_path,
+                                edit_path,
+                            });
+                            this.message.clear();
                         }
                         Err(error) => this.message = error,
                     }

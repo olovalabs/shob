@@ -1164,17 +1164,19 @@ impl Element for TextElement {
             }
         }
 
-        window.on_next_frame({
+        if !focused && Root::read(window, cx).focused_input.as_ref() == Some(&self.state) {
             let state = self.state.clone();
-            move |window, cx| {
-                if !focused && Root::read(window, cx).focused_input.as_ref() == Some(&state) {
+            window.on_next_frame(move |window, cx| {
+                if !focus_handle.is_focused(window)
+                    && Root::read(window, cx).focused_input.as_ref() == Some(&state)
+                {
                     Root::update(window, cx, |root, _, cx| {
                         root.focused_input = None;
                         cx.notify();
                     });
                 }
-            }
-        });
+            });
+        }
 
         let line_height = window.line_height();
         let origin = bounds.origin;

@@ -287,9 +287,11 @@ fn run_gui() -> Result<()> {
     embedded::set_tool_arrival_hook(crate::stream_timing::tool_arrived);
     embedded::set_tool_end_hook(crate::stream_timing::tool_finished);
     embedded::set_tool_output_hook(crate::stream_timing::tool_output_arrived);
+    let startup_error = Rc::new(std::cell::Cell::new(None));
+    let report_error = Rc::clone(&startup_error);
     gpui_platform::application()
         .with_assets(CombinedAssets)
-        .run(|cx: &mut App| {
+        .run(move |cx: &mut App| {
             #[cfg(target_os = "linux")]
             std::thread::spawn(ensure_linux_desktop_entry);
             if let Err(error) = paths::ensure_dirs() {
@@ -349,7 +351,7 @@ fn run_gui() -> Result<()> {
                 .map(|display| display.visible_bounds())
                 .collect();
             let bounds = settings::window_bounds(app_settings.window, &displays);
-            cx.open_window(
+            if let Err(error) = cx.open_window(
                 WindowOptions {
                     window_bounds: Some(bounds),
                     window_min_size: Some(settings::minimum_window_size()),
@@ -368,11 +370,13 @@ fn run_gui() -> Result<()> {
                         navigation_history: Vec::new(),
                         navigation_position: 0,
                         pane_index: HashMap::new(),
+                        mounted_chat_panes: std::cell::RefCell::new(Vec::new()),
                         project_change_counts: HashMap::new(),
                         git_snapshots: HashMap::new(),
                         conversation_header_branch: None,
                         conversation_header_menu_focus: cx.focus_handle(),
-                        git_refreshing: HashSet::new(),
+                        git_requests: HashMap::new(),
+                        git_request_serial: 0,
                         git_worktree_creating: HashSet::new(),
                         palette: palette.clone(),
                         focused_pane_id: None,
@@ -410,6 +414,11 @@ fn run_gui() -> Result<()> {
                         persistence_path: persistence_path.clone(),
                         save_generation: Arc::new(AtomicU64::new(0)),
                         workspace_save_task: None,
+                        scrollback_generation: Arc::new(AtomicU64::new(0)),
+                        autosave_task: None,
+                        pending_session_deletions: HashSet::new(),
+                        workspace_cleared: false,
+                        clear_data_running: false,
                         startup_loaded: false,
                         quit_subscription: None,
                         window_active: true,
@@ -600,6 +609,8 @@ fn run_gui() -> Result<()> {
                     let catalog_updated = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
                     let catalog_ready = catalog_updated.clone();
                     std::thread::spawn(move || {
+                        load_provider_icons();
+                        refresh_custom_provider_ids();
                         let _ = agent_auth::available_models(std::path::Path::new("."));
                         catalog_ready.store(true, std::sync::atomic::Ordering::Release);
                         crate::agent_bridge::signal_wake();
@@ -694,6 +705,24 @@ fn run_gui() -> Result<()> {
                     })
                     .detach();
 
+                    let path_state = app_state.downgrade();
+                    cx.spawn(async move |cx: &mut gpui::AsyncApp| {
+                        loop {
+                            let Ok(requests) = path_state.update(cx, |state, _| state.active_path_requests()) else {
+                                break;
+                            };
+                            if !requests.is_empty() {
+                                let samples = cx.background_executor().spawn(async move {
+                                    requests.into_iter().map(|(id, probe)| (id, probe.sample())).collect::<Vec<_>>()
+                                }).await;
+                                if path_state.update(cx, |state, cx| state.apply_path_samples(samples, cx)).is_err() {
+                                    break;
+                                }
+                            }
+                            cx.background_executor().timer(std::time::Duration::from_secs(1)).await;
+                        }
+                    }).detach();
+
                     let system_state = app_state.downgrade();
                     cx.spawn(async move |cx: &mut gpui::AsyncApp| {
                         let mut sampler = cx.background_executor().spawn(async { system_detection::Sampler::new() }).await;
@@ -717,7 +746,7 @@ fn run_gui() -> Result<()> {
                     let changes_state = app_state.downgrade();
                     cx.spawn(async move |cx: &mut gpui::AsyncApp| {
                         loop {
-                            let Ok(directories) = changes_state.update(cx, |state, _| {
+                            let Ok(directories) = changes_state.update(cx, |state, cx| {
                                 if state.active_view != ActiveView::Workspace { return None; }
                                 let header_dir = state.conversation_header_directory().map(Path::to_path_buf);
                                 let agent_dir = state.active_session().and_then(|session| {
@@ -726,6 +755,9 @@ fn run_gui() -> Result<()> {
                                         .or_else(|| panes.next())
                                         .map(|pane| state.agent_working_directory(pane))
                                 });
+                                if let Some(dir) = &agent_dir {
+                                    state.schedule_git_refresh(dir.clone(), cx);
+                                }
                                 Some((header_dir, agent_dir))
                             }) else { break; };
                             if let Some((header_dir, agent_dir)) = directories
@@ -733,13 +765,12 @@ fn run_gui() -> Result<()> {
                             {
                                 let (branch, agent) = cx.background_executor().spawn(async move {
                                     let branch = header_dir.and_then(|dir| {
-                                        git_workspace::detect_git_branch_uncached(&dir)
+                                        git_workspace::detect_git_branch(&dir)
                                             .map(|branch| (dir, SharedString::from(branch)))
                                     });
                                     let agent = agent_dir.map(|dir| {
-                                        let snapshot = git_workspace::inspect(&dir);
                                         let summary = project_diff::summary(dir.clone()).ok();
-                                        (dir, summary, snapshot)
+                                        (dir, summary)
                                     });
                                     (branch, agent)
                                 }).await;
@@ -748,12 +779,11 @@ fn run_gui() -> Result<()> {
                                         state.conversation_header_branch = branch;
                                         cx.notify();
                                     }
-                                    if let Some((directory, summary, snapshot)) = agent {
+                                    if let Some((directory, summary)) = agent {
                                         if state.project_change_counts.get(&directory) != Some(&summary) {
-                                            state.project_change_counts.insert(directory.clone(), summary);
+                                            state.project_change_counts.insert(directory, summary);
                                             cx.notify();
                                         }
-                                        state.apply_git_snapshot(directory, snapshot, cx);
                                     }
                                 }).is_err() { break; }
                             }
@@ -840,11 +870,14 @@ fn run_gui() -> Result<()> {
                     })));
                     cx.new(|cx| Root::new(app_state, window, cx))
                 },
-            )
-            .expect("Failed to open window");
+            ) {
+                report_error.set(Some(error.context("Could not open the Shob window")));
+                cx.quit();
+                return;
+            }
 
             cx.activate(true);
         });
 
-    Ok(())
+    startup_error.take().map_or(Ok(()), Err)
 }

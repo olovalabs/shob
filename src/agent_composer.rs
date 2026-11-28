@@ -481,10 +481,7 @@ impl AppState {
             return None;
         }
         let id = pane.id;
-        let can_edit = pane
-            .input_state
-            .as_ref()
-            .is_some_and(|input| input.read(cx).value().trim().is_empty());
+        let can_edit = pane.input_state.is_some() && pane.input_prompt_empty;
         let rows = pane
             .chat
             .follow_ups
@@ -709,7 +706,7 @@ impl AppState {
             .or(pane.chat.startup_error.as_ref())?;
         let short = clip_tool_text(error, 240).0;
         let id = pane.id;
-        let missing_folder = !self.agent_working_directory(pane).is_dir();
+        let missing_folder = self.pane_path_sample(pane).is_some_and(|sample| !sample.working_dir_exists);
         Some(
             div().pb(px(8.0)).child(
                 panel(tokens).child(short).child(

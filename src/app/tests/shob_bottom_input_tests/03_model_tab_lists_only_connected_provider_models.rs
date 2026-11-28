@@ -117,6 +117,7 @@ fn model_tab_lists_only_connected_provider_models() {
 
 #[test]
 fn provider_icons_resolve_to_the_downloaded_set() {
+    load_provider_icons();
     assert_eq!(
         provider_icon_path("openai").as_ref(),
         "icons/provider/openai.svg"
@@ -602,13 +603,23 @@ fn git_branch_detection_and_badges() {
 
     // Verify git branch detection on the current repo
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let branch = AppState::detect_git_branch(manifest_dir);
+    let branch = git_workspace::detect_git_branch(manifest_dir);
     assert!(branch.is_some(), "Should detect git branch for repo");
 
     // Temporary directory without git should return None
     let tmp = std::env::temp_dir();
-    let non_git = AppState::detect_git_branch(&tmp);
+    let non_git = git_workspace::detect_git_branch(&tmp);
     assert!(non_git.is_none() || tmp.join(".git").exists());
+
+    cx.update_window_entity(&app_state, |state, _, cx| {
+        let samples = state.active_path_requests().into_iter()
+            .map(|(id, probe)| (id, probe.sample())).collect();
+        state.apply_path_samples(samples, cx);
+        let pane = state.pane_ref(1).unwrap();
+        assert_eq!(state.pane_git_branch(pane).as_deref(), branch.as_deref());
+        state.pane_mut(1).unwrap().cwd = Some(tmp);
+        assert!(state.pane_git_branch(state.pane_ref(1).unwrap()).is_none());
+    });
 
     // Verify placeholder is "Run commands"
     let placeholder_is_run_commands = app_state.read_with(&cx, |state, cx| {

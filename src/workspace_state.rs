@@ -8,7 +8,7 @@
 use crate::agent_auth::AgentModel;
 use crate::paths;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -19,6 +19,7 @@ pub const CURRENT_VERSION: u32 = 2;
 const MAX_SCROLLBACK_BYTES: usize = 256 * 1024;
 const MAX_SCROLLBACK_LINES: usize = 2_000;
 const MAX_COMMAND_HISTORY: usize = 200;
+const MAX_RESTORED_ID: usize = usize::MAX / 2;
 
 static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -56,17 +57,17 @@ impl Default for SavedPaneNode {
 }
 
 impl SavedPaneNode {
-    fn validate(self, panes: &HashSet<usize>) -> Option<Self> {
+    fn validate(self, panes: &HashMap<usize, usize>, next_id: &mut usize) -> Option<Self> {
         match self {
-            Self::Leaf { pane } => panes.contains(&pane).then_some(Self::Leaf { pane }),
+            Self::Leaf { pane } => panes.get(&pane).map(|&pane| Self::Leaf { pane }),
             Self::Split {
                 id,
                 axis,
                 left,
                 right,
-            } => match (left.validate(panes), right.validate(panes)) {
+            } => match (left.validate(panes, next_id), right.validate(panes, next_id)) {
                 (Some(left), Some(right)) => Some(Self::Split {
-                    id,
+                    id: if valid_id(id) { id } else { take_id(next_id) },
                     axis,
                     left: Box::new(left),
                     right: Box::new(right),
@@ -283,15 +284,20 @@ impl SavedWorkspace {
     /// Highest numeric id in the file, used to keep `AppState::next_id` from
     /// reissuing an id that is still referenced by a restored split tree.
     pub fn max_id(&self) -> usize {
+        self.max_id_through(usize::MAX)
+    }
+
+    fn max_id_through(&self, limit: usize) -> usize {
+        let usable = |id| if id <= limit { id } else { 0 };
         let mut max = 0;
         for project in &self.projects {
-            max = max.max(project.id);
+            max = max.max(usable(project.id));
             for session in &project.sessions {
-                max = max.max(session.id);
+                max = max.max(usable(session.id));
                 for pane in &session.panes {
-                    max = max.max(pane.id);
+                    max = max.max(usable(pane.id));
                 }
-                max = max.max(max_split_id(&session.tree));
+                max = max.max(max_split_id(&session.tree, limit));
             }
         }
         max
@@ -325,7 +331,12 @@ impl SavedWorkspace {
             }
         }
 
+        let mut next_id = self.max_id_through(MAX_RESTORED_ID) + 1;
+        let mut seen_projects = HashSet::new();
+        let mut seen_sessions = HashSet::new();
+        let mut seen_panes = HashSet::new();
         for project in &mut self.projects {
+            repair_id(&mut project.id, &mut seen_projects, &mut next_id);
             if project.name.is_empty() {
                 project.name = project
                     .path
@@ -334,18 +345,26 @@ impl SavedWorkspace {
                     .unwrap_or_else(|| "project".to_string());
             }
 
-            let mut seen_pane_ids = HashSet::new();
             for session in &mut project.sessions {
+                repair_id(&mut session.id, &mut seen_sessions, &mut next_id);
                 if session.uid.is_empty() {
                     session.uid = paths::uid("s");
                 }
-                session.panes.retain(|pane| {
-                    if pane.id == 0 || !seen_pane_ids.insert(pane.id) {
+                let mut pane_ids = HashMap::with_capacity(session.panes.len());
+                session.panes.retain_mut(|pane| {
+                    let std::collections::hash_map::Entry::Vacant(entry) = pane_ids.entry(pane.id)
+                    else {
                         return false;
-                    }
+                    };
+                    repair_id(&mut pane.id, &mut seen_panes, &mut next_id);
+                    entry.insert(pane.id);
                     true
                 });
                 for pane in &mut session.panes {
+                    let remap = |id: usize| pane_ids.get(&id).copied();
+                    pane.regular_focus = pane.regular_focus.and_then(remap);
+                    pane.tool_panel_owner = pane.tool_panel_owner.and_then(remap);
+                    pane.tool_panel_tab = pane.tool_panel_tab.and_then(remap);
                     if pane.uid.is_empty() {
                         pane.uid = paths::uid("p");
                     }
@@ -361,30 +380,17 @@ impl SavedWorkspace {
                     }
                 }
 
-                let pane_ids: HashSet<usize> = session.panes.iter().map(|pane| pane.id).collect();
-                if pane_ids.is_empty() {
-                    session.tree = SavedPaneNode::default();
-                } else {
-                    session.tree = session.tree.clone().validate(&pane_ids).unwrap_or_else(|| {
-                        SavedPaneNode::Leaf {
-                            pane: session.panes[0].id,
-                        }
+                session.tree = std::mem::take(&mut session.tree)
+                    .validate(&pane_ids, &mut next_id)
+                    .unwrap_or_else(|| SavedPaneNode::Leaf {
+                        pane: session.panes.first().map_or(0, |pane| pane.id),
                     });
-                    if let Some(maximized) = session.maximized_pane_id
-                        && !pane_ids.contains(&maximized)
-                    {
-                        session.maximized_pane_id = None;
-                    }
-                    if session
-                        .focused_pane
-                        .is_some_and(|id| !pane_ids.contains(&id))
-                    {
-                        session.focused_pane = None;
-                    }
-                    if session.focused_pane.is_none() {
-                        session.focused_pane = Some(session.panes[0].id);
-                    }
-                }
+                let remap = |id: usize| pane_ids.get(&id).copied();
+                session.maximized_pane_id = session.maximized_pane_id.and_then(remap);
+                session.focused_pane = session
+                    .focused_pane
+                    .and_then(remap)
+                    .or_else(|| session.panes.first().map(|pane| pane.id));
             }
             project.sessions.retain(|session| !session.panes.is_empty());
             if project.sessions.is_empty() {
@@ -413,12 +419,30 @@ impl SavedWorkspace {
     }
 }
 
-fn max_split_id(node: &SavedPaneNode) -> usize {
+fn valid_id(id: usize) -> bool {
+    id > 0 && id <= MAX_RESTORED_ID
+}
+
+fn take_id(next: &mut usize) -> usize {
+    let id = *next;
+    *next += 1;
+    id
+}
+
+fn repair_id(id: &mut usize, seen: &mut HashSet<usize>, next: &mut usize) {
+    if !valid_id(*id) || !seen.insert(*id) {
+        *id = take_id(next);
+    }
+}
+
+fn max_split_id(node: &SavedPaneNode, limit: usize) -> usize {
     match node {
         SavedPaneNode::Leaf { .. } => 0,
         SavedPaneNode::Split {
             id, left, right, ..
-        } => (*id).max(max_split_id(left)).max(max_split_id(right)),
+        } => (if *id <= limit { *id } else { 0 })
+            .max(max_split_id(left, limit))
+            .max(max_split_id(right, limit)),
     }
 }
 
@@ -561,11 +585,15 @@ pub fn load(path: &Path) -> SavedWorkspace {
     load_from_text(&text)
 }
 
-pub fn save_atomic(path: &Path, state: &SavedWorkspace) -> io::Result<()> {
-    let _guard = WRITE_LOCK
+fn write_lock() -> std::sync::MutexGuard<'static, ()> {
+    WRITE_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .unwrap_or_else(|error| error.into_inner());
+        .unwrap_or_else(|error| error.into_inner())
+}
+
+pub fn save_atomic(path: &Path, state: &SavedWorkspace) -> io::Result<()> {
+    let _guard = write_lock();
     save_locked(path, state)
 }
 
@@ -575,10 +603,7 @@ pub fn save_if_current(
     generation: &AtomicU64,
     expected: u64,
 ) -> io::Result<bool> {
-    let _guard = WRITE_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
+    let _guard = write_lock();
     if generation.load(Ordering::SeqCst) != expected {
         return Ok(false);
     }
@@ -626,8 +651,69 @@ fn cap_scrollback(text: &str, max_bytes: usize) -> &str {
     }
 }
 
-pub fn write_scrollback(uid: &str, text: &str) -> io::Result<()> {
-    write_scrollback_in(&paths::sessions_dir(), uid, text)
+pub fn write_scrollback_if_current(
+    uid: &str,
+    text: &str,
+    counter: &AtomicU64,
+    generation: u64,
+) -> io::Result<()> {
+    write_scrollback_if_current_in(&paths::sessions_dir(), uid, text, counter, generation)
+}
+
+fn write_scrollback_if_current_in(
+    dir: &Path,
+    uid: &str,
+    text: &str,
+    counter: &AtomicU64,
+    generation: u64,
+) -> io::Result<()> {
+    let _guard = write_lock();
+    if counter.load(Ordering::SeqCst) == generation {
+        write_scrollback_in(dir, uid, text)?;
+    }
+    Ok(())
+}
+
+fn remove_if_exists(result: io::Result<()>) -> io::Result<()> {
+    match result {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    }
+}
+
+pub fn remove_saved_workspace(path: &Path, scrollbacks: &Path) -> io::Result<()> {
+    let _guard = write_lock();
+    remove_if_exists(fs::remove_file(path))?;
+    remove_if_exists(fs::remove_dir_all(scrollbacks))
+}
+
+pub fn remove_saved_session(path: &Path, uid: &str) -> io::Result<()> {
+    let _guard = write_lock();
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let value: serde_json::Value = serde_json::from_str(&text).map_err(io::Error::other)?;
+    if value.get("version").and_then(|v| v.as_u64()).unwrap_or(1) < u64::from(CURRENT_VERSION) {
+        return Ok(());
+    }
+    let mut workspace: SavedWorkspace = serde_json::from_value(value).map_err(io::Error::other)?;
+    let mut changed = false;
+    for project in &mut workspace.projects {
+        let previous_len = project.sessions.len();
+        project.sessions.retain(|session| session.uid != uid);
+        if previous_len != project.sessions.len() {
+            project.active_session = project
+                .active_session
+                .min(project.sessions.len().saturating_sub(1));
+            changed = true;
+        }
+    }
+    if changed {
+        save_locked(path, &workspace)?;
+    }
+    Ok(())
 }
 
 fn write_scrollback_in(dir: &Path, uid: &str, text: &str) -> io::Result<()> {
@@ -712,10 +798,8 @@ pub fn finish_deletion(path: &Path, deletion: &PendingDeletion) -> io::Result<()
             ));
         }
         crate::conversations::delete_pane(uid)?;
-        match fs::remove_file(scrollback_path_in(&paths::sessions_dir(), uid)) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-            _ => {}
-        }
+        let _guard = write_lock();
+        remove_if_exists(fs::remove_file(scrollback_path_in(&paths::sessions_dir(), uid)))?;
     }
     fs::remove_file(path)
 }
@@ -740,25 +824,7 @@ pub fn retry_pending_deletions(workspace_path: &Path) -> io::Result<()> {
                 "invalid pending deletion",
             ));
         }
-        if workspace_path.exists() {
-            let text = fs::read_to_string(workspace_path)?;
-            let value: serde_json::Value = serde_json::from_str(&text).map_err(io::Error::other)?;
-            if value.get("version").and_then(|v| v.as_u64()).unwrap_or(1)
-                >= u64::from(CURRENT_VERSION)
-            {
-                let mut workspace: SavedWorkspace =
-                    serde_json::from_value(value).map_err(io::Error::other)?;
-                for project in &mut workspace.projects {
-                    project
-                        .sessions
-                        .retain(|session| session.uid != deletion.session_uid);
-                    project.active_session = project
-                        .active_session
-                        .min(project.sessions.len().saturating_sub(1));
-                }
-                save_atomic(workspace_path, &workspace)?;
-            }
-        }
+        remove_saved_session(workspace_path, &deletion.session_uid)?;
         finish_deletion(&path, &deletion)?;
     }
     Ok(())

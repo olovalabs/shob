@@ -747,7 +747,7 @@ fn workspace_switcher_creates_switches_worktree_and_preserves_chat() {
         assert!(override_path.starts_with(data_dir.join("worktrees")));
         assert_eq!(s.agent_working_directory(pane), override_path);
         assert!(
-            AppState::detect_git_branch(&override_path)
+            git_workspace::detect_git_branch(&override_path)
                 .as_deref()
                 .is_some_and(|b| b.starts_with("shob/"))
         );
@@ -783,6 +783,19 @@ fn workspace_switcher_creates_switches_worktree_and_preserves_chat() {
     state.read_with(&cx, |s, _| {
         let pane = s.pane_ref(pane_id).unwrap();
         assert_eq!(pane.chat.workspace_override.as_ref(), Some(&wt_path));
+    });
+
+    // The user may pick another checkout while a worktree is being created.
+    // The completed operation must not switch back over that newer choice.
+    cx.update_window_entity(&state, |s, window, cx| {
+        s.create_and_switch_worktree(pane_id, window, cx);
+        s.apply_workspace_override(pane_id, None, cx);
+    });
+    cx.run_until_parked();
+    state.read_with(&cx, |s, _| {
+        let pane = s.pane_ref(pane_id).unwrap();
+        assert_eq!(s.agent_working_directory(pane), repo);
+        assert!(!s.git_worktree_creating.contains(&pane_id));
     });
 }
 

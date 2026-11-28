@@ -196,6 +196,8 @@ fn tool_panel_switches_tabs_without_replacing_terminals() {
         cx.simulate_keystrokes("b");
         cx.draw_frame().unwrap();
         assert!(cx.debug_bounds("tool-panel-browser").is_some());
+        let bounds = cx.debug_bounds("browser-page").expect("mounted browser viewport");
+        assert!(bounds.size.width > px(0.0) && bounds.size.height > px(0.0));
         assert!(cx.debug_bounds("tool-panel-browser-tab").is_some());
         let id = cx.update_window_entity(&app_state, |state, window, cx| {
             let id = state.focused_pane_id.unwrap();

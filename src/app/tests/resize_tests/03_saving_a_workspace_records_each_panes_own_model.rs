@@ -32,6 +32,42 @@ fn saving_a_workspace_records_each_panes_own_model() {
 }
 
 #[test]
+fn an_empty_project_remains_selected_after_workspace_restore() {
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().to_path_buf();
+    let workspace = workspace_state::SavedWorkspace {
+        active_project: Some(path.clone()),
+        projects: vec![workspace_state::SavedProject {
+            id: 7,
+            name: "Empty project".into(),
+            path: path.clone(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let mut app = TestAppContext::new();
+    let (mut cx, state) = open_app(&mut app);
+    cx.update_window_entity(&state, |state, _, cx| {
+        state.startup_loaded = false;
+        state.apply_saved_workspace(
+            RestoreData {
+                workspace,
+                scrollbacks: HashMap::new(),
+                transcripts: HashMap::new(),
+                usage: HashMap::new(),
+            },
+            cx,
+        );
+    });
+    cx.draw_frame().unwrap();
+    state.read_with(&cx, |state, _| {
+        assert_eq!(state.active_project().unwrap().path, path);
+        assert!(state.active_session().is_none());
+        assert!(state.focused_pane_id.is_none());
+    });
+}
+
+#[test]
 fn restored_panes_use_the_global_model() {
     // The reported bug: pick deepseek in pane A and grok in pane B, restart,
     // and both came back pinned to the app default instead of their own.

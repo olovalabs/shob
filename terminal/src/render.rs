@@ -25,7 +25,9 @@ pub struct PaintContext<'a> {
     /// Active selection, already resolved to grid coordinates (block aware).
     pub selection: Option<SelectionRange>,
     /// All search matches to highlight.
-    pub search_matches: &'a [Match],
+    pub search_matches: Option<&'a Arc<[Match]>>,
+    /// A revision supplied by the grid owner; omit it when painting an untracked grid.
+    pub screen_revision: Option<u64>,
     /// The currently focused search match, highlighted more strongly.
     pub active_match: Option<&'a Match>,
     /// Range of the hyperlink under the mouse, underlined while hovered.
@@ -45,7 +47,8 @@ impl Default for PaintContext<'_> {
     fn default() -> Self {
         Self {
             selection: None,
-            search_matches: &[],
+            search_matches: None,
+            screen_revision: None,
             active_match: None,
             hovered_link: None,
             is_focused: true,
@@ -175,7 +178,8 @@ pub fn is_decorative_symbol(ch: char) -> bool {
     )
 }
 
-pub fn rasterize_box_or_block(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn rasterize_box_or_block(
     ch: char,
     col: usize,
     row: usize,
@@ -183,7 +187,14 @@ pub fn rasterize_box_or_block(
     origin: Point<Pixels>,
     cell_width: Pixels,
     cell_height: Pixels,
-) -> Option<Vec<BlockElementRect>> {
+    out: &mut Vec<BlockElementRect>,
+) -> bool {
+    macro_rules! emit {
+        ($($rect:expr),+ $(,)?) => {{
+            out.extend([$($rect),+]);
+            true
+        }};
+    }
     let cx = origin.x + cell_width * (col as f32);
     let cy = origin.y + cell_height * (row as f32);
     let w: f32 = cell_width.into();
@@ -206,25 +217,25 @@ pub fn rasterize_box_or_block(
     let code = ch as u32;
 
     match code {
-        0x2580 => return Some(vec![rect(0.0, 0.0, w, h * 0.5)]),
-        0x2581 => return Some(vec![rect(0.0, h * 0.875, w, h * 0.125)]),
-        0x2582 => return Some(vec![rect(0.0, h * 0.75, w, h * 0.25)]),
-        0x2583 => return Some(vec![rect(0.0, h * 0.625, w, h * 0.375)]),
-        0x2584 => return Some(vec![rect(0.0, h * 0.5, w, h * 0.5)]),
-        0x2585 => return Some(vec![rect(0.0, h * 0.375, w, h * 0.625)]),
-        0x2586 => return Some(vec![rect(0.0, h * 0.25, w, h * 0.75)]),
-        0x2587 => return Some(vec![rect(0.0, h * 0.125, w, h * 0.875)]),
-        0x2588 => return Some(vec![rect(0.0, 0.0, w, h)]),
-        0x2589 => return Some(vec![rect(0.0, 0.0, w * 0.875, h)]),
-        0x258A => return Some(vec![rect(0.0, 0.0, w * 0.75, h)]),
-        0x258B => return Some(vec![rect(0.0, 0.0, w * 0.625, h)]),
-        0x258C => return Some(vec![rect(0.0, 0.0, w * 0.5, h)]),
-        0x258D => return Some(vec![rect(0.0, 0.0, w * 0.375, h)]),
-        0x258E => return Some(vec![rect(0.0, 0.0, w * 0.25, h)]),
-        0x258F => return Some(vec![rect(0.0, 0.0, w * 0.125, h)]),
-        0x2590 => return Some(vec![rect(w * 0.5, 0.0, w * 0.5, h)]),
+        0x2580 => return emit![rect(0.0, 0.0, w, h * 0.5)],
+        0x2581 => return emit![rect(0.0, h * 0.875, w, h * 0.125)],
+        0x2582 => return emit![rect(0.0, h * 0.75, w, h * 0.25)],
+        0x2583 => return emit![rect(0.0, h * 0.625, w, h * 0.375)],
+        0x2584 => return emit![rect(0.0, h * 0.5, w, h * 0.5)],
+        0x2585 => return emit![rect(0.0, h * 0.375, w, h * 0.625)],
+        0x2586 => return emit![rect(0.0, h * 0.25, w, h * 0.75)],
+        0x2587 => return emit![rect(0.0, h * 0.125, w, h * 0.875)],
+        0x2588 => return emit![rect(0.0, 0.0, w, h)],
+        0x2589 => return emit![rect(0.0, 0.0, w * 0.875, h)],
+        0x258A => return emit![rect(0.0, 0.0, w * 0.75, h)],
+        0x258B => return emit![rect(0.0, 0.0, w * 0.625, h)],
+        0x258C => return emit![rect(0.0, 0.0, w * 0.5, h)],
+        0x258D => return emit![rect(0.0, 0.0, w * 0.375, h)],
+        0x258E => return emit![rect(0.0, 0.0, w * 0.25, h)],
+        0x258F => return emit![rect(0.0, 0.0, w * 0.125, h)],
+        0x2590 => return emit![rect(w * 0.5, 0.0, w * 0.5, h)],
         0x2591 => {
-            return Some(vec![BlockElementRect {
+            return emit![BlockElementRect {
                 bounds: Bounds {
                     origin: Point { x: cx, y: cy },
                     size: Size {
@@ -236,10 +247,10 @@ pub fn rasterize_box_or_block(
                     a: color.a * 0.25,
                     ..color
                 },
-            }]);
+            }];
         }
         0x2592 => {
-            return Some(vec![BlockElementRect {
+            return emit![BlockElementRect {
                 bounds: Bounds {
                     origin: Point { x: cx, y: cy },
                     size: Size {
@@ -251,10 +262,10 @@ pub fn rasterize_box_or_block(
                     a: color.a * 0.50,
                     ..color
                 },
-            }]);
+            }];
         }
         0x2593 => {
-            return Some(vec![BlockElementRect {
+            return emit![BlockElementRect {
                 bounds: Bounds {
                     origin: Point { x: cx, y: cy },
                     size: Size {
@@ -266,49 +277,49 @@ pub fn rasterize_box_or_block(
                     a: color.a * 0.75,
                     ..color
                 },
-            }]);
+            }];
         }
-        0x2594 => return Some(vec![rect(0.0, 0.0, w, h * 0.125)]),
-        0x2595 => return Some(vec![rect(w * 0.875, 0.0, w * 0.125, h)]),
-        0x2596 => return Some(vec![rect(0.0, h * 0.5, w * 0.5, h * 0.5)]),
-        0x2597 => return Some(vec![rect(w * 0.5, h * 0.5, w * 0.5, h * 0.5)]),
-        0x2598 => return Some(vec![rect(0.0, 0.0, w * 0.5, h * 0.5)]),
+        0x2594 => return emit![rect(0.0, 0.0, w, h * 0.125)],
+        0x2595 => return emit![rect(w * 0.875, 0.0, w * 0.125, h)],
+        0x2596 => return emit![rect(0.0, h * 0.5, w * 0.5, h * 0.5)],
+        0x2597 => return emit![rect(w * 0.5, h * 0.5, w * 0.5, h * 0.5)],
+        0x2598 => return emit![rect(0.0, 0.0, w * 0.5, h * 0.5)],
         0x2599 => {
-            return Some(vec![
+            return emit![
                 rect(0.0, 0.0, w * 0.5, h),
                 rect(w * 0.5, h * 0.5, w * 0.5, h * 0.5),
-            ]);
+            ];
         }
         0x259A => {
-            return Some(vec![
+            return emit![
                 rect(0.0, 0.0, w * 0.5, h * 0.5),
                 rect(w * 0.5, h * 0.5, w * 0.5, h * 0.5),
-            ]);
+            ];
         }
         0x259B => {
-            return Some(vec![
+            return emit![
                 rect(0.0, 0.0, w, h * 0.5),
                 rect(0.0, h * 0.5, w * 0.5, h * 0.5),
-            ]);
+            ];
         }
         0x259C => {
-            return Some(vec![
+            return emit![
                 rect(0.0, 0.0, w, h * 0.5),
                 rect(w * 0.5, h * 0.5, w * 0.5, h * 0.5),
-            ]);
+            ];
         }
-        0x259D => return Some(vec![rect(w * 0.5, 0.0, w * 0.5, h * 0.5)]),
+        0x259D => return emit![rect(w * 0.5, 0.0, w * 0.5, h * 0.5)],
         0x259E => {
-            return Some(vec![
+            return emit![
                 rect(w * 0.5, 0.0, w * 0.5, h * 0.5),
                 rect(0.0, h * 0.5, w * 0.5, h * 0.5),
-            ]);
+            ];
         }
         0x259F => {
-            return Some(vec![
+            return emit![
                 rect(0.0, h * 0.5, w, h * 0.5),
                 rect(w * 0.5, 0.0, w * 0.5, h * 0.5),
-            ]);
+            ];
         }
         _ => {}
     }
@@ -321,148 +332,148 @@ pub fn rasterize_box_or_block(
     let hmy = (h - ht) * 0.5;
 
     match code {
-        0x2500 | 0x2504 | 0x2508 => Some(vec![rect(0.0, my, w, t)]),
-        0x2502 | 0x2506 | 0x250A => Some(vec![rect(mx, 0.0, t, h)]),
-        0x250C | 0x256D => Some(vec![rect(mx, my, w - mx, t), rect(mx, my, t, h - my)]),
-        0x2510 | 0x256E => Some(vec![rect(0.0, my, mx + t, t), rect(mx, my, t, h - my)]),
-        0x2514 | 0x2570 => Some(vec![rect(mx, my, w - mx, t), rect(mx, 0.0, t, my + t)]),
-        0x2518 | 0x256F => Some(vec![rect(0.0, my, mx + t, t), rect(mx, 0.0, t, my + t)]),
-        0x251C => Some(vec![rect(mx, 0.0, t, h), rect(mx, my, w - mx, t)]),
-        0x2524 => Some(vec![rect(mx, 0.0, t, h), rect(0.0, my, mx + t, t)]),
-        0x252C => Some(vec![rect(0.0, my, w, t), rect(mx, my, t, h - my)]),
-        0x2534 => Some(vec![rect(0.0, my, w, t), rect(mx, 0.0, t, my + t)]),
-        0x253C => Some(vec![rect(0.0, my, w, t), rect(mx, 0.0, t, h)]),
+        0x2500 | 0x2504 | 0x2508 => emit![rect(0.0, my, w, t)],
+        0x2502 | 0x2506 | 0x250A => emit![rect(mx, 0.0, t, h)],
+        0x250C | 0x256D => emit![rect(mx, my, w - mx, t), rect(mx, my, t, h - my)],
+        0x2510 | 0x256E => emit![rect(0.0, my, mx + t, t), rect(mx, my, t, h - my)],
+        0x2514 | 0x2570 => emit![rect(mx, my, w - mx, t), rect(mx, 0.0, t, my + t)],
+        0x2518 | 0x256F => emit![rect(0.0, my, mx + t, t), rect(mx, 0.0, t, my + t)],
+        0x251C => emit![rect(mx, 0.0, t, h), rect(mx, my, w - mx, t)],
+        0x2524 => emit![rect(mx, 0.0, t, h), rect(0.0, my, mx + t, t)],
+        0x252C => emit![rect(0.0, my, w, t), rect(mx, my, t, h - my)],
+        0x2534 => emit![rect(0.0, my, w, t), rect(mx, 0.0, t, my + t)],
+        0x253C => emit![rect(0.0, my, w, t), rect(mx, 0.0, t, h)],
 
-        0x2501 | 0x2505 | 0x2509 => Some(vec![rect(0.0, hmy, w, ht)]),
-        0x2503 | 0x2507 | 0x250B => Some(vec![rect(hmx, 0.0, ht, h)]),
-        0x250F => Some(vec![
+        0x2501 | 0x2505 | 0x2509 => emit![rect(0.0, hmy, w, ht)],
+        0x2503 | 0x2507 | 0x250B => emit![rect(hmx, 0.0, ht, h)],
+        0x250F => emit![
             rect(hmx, hmy, w - hmx, ht),
             rect(hmx, hmy, ht, h - hmy),
-        ]),
-        0x2513 => Some(vec![
+        ],
+        0x2513 => emit![
             rect(0.0, hmy, hmx + ht, ht),
             rect(hmx, hmy, ht, h - hmy),
-        ]),
-        0x2517 => Some(vec![
+        ],
+        0x2517 => emit![
             rect(hmx, hmy, w - hmx, ht),
             rect(hmx, 0.0, ht, hmy + ht),
-        ]),
-        0x251B => Some(vec![
+        ],
+        0x251B => emit![
             rect(0.0, hmy, hmx + ht, ht),
             rect(hmx, 0.0, ht, hmy + ht),
-        ]),
-        0x2523 => Some(vec![rect(hmx, 0.0, ht, h), rect(hmx, hmy, w - hmx, ht)]),
-        0x252B => Some(vec![rect(hmx, 0.0, ht, h), rect(0.0, hmy, hmx + ht, ht)]),
-        0x2533 => Some(vec![rect(0.0, hmy, w, ht), rect(hmx, hmy, ht, h - hmy)]),
-        0x253B => Some(vec![rect(0.0, hmy, w, ht), rect(hmx, 0.0, ht, hmy + ht)]),
-        0x254B => Some(vec![rect(0.0, hmy, w, ht), rect(hmx, 0.0, ht, h)]),
+        ],
+        0x2523 => emit![rect(hmx, 0.0, ht, h), rect(hmx, hmy, w - hmx, ht)],
+        0x252B => emit![rect(hmx, 0.0, ht, h), rect(0.0, hmy, hmx + ht, ht)],
+        0x2533 => emit![rect(0.0, hmy, w, ht), rect(hmx, hmy, ht, h - hmy)],
+        0x253B => emit![rect(0.0, hmy, w, ht), rect(hmx, 0.0, ht, hmy + ht)],
+        0x254B => emit![rect(0.0, hmy, w, ht), rect(hmx, 0.0, ht, h)],
 
-        0x2574 => Some(vec![rect(0.0, my, mx + t, t)]),
-        0x2575 => Some(vec![rect(mx, 0.0, t, my + t)]),
-        0x2576 => Some(vec![rect(mx, my, w - mx, t)]),
-        0x2577 => Some(vec![rect(mx, my, t, h - my)]),
-        0x2578 => Some(vec![rect(0.0, hmy, hmx + ht, ht)]),
-        0x2579 => Some(vec![rect(hmx, 0.0, ht, hmy + ht)]),
-        0x257A => Some(vec![rect(hmx, hmy, w - hmx, ht)]),
-        0x257B => Some(vec![rect(hmx, hmy, ht, h - hmy)]),
+        0x2574 => emit![rect(0.0, my, mx + t, t)],
+        0x2575 => emit![rect(mx, 0.0, t, my + t)],
+        0x2576 => emit![rect(mx, my, w - mx, t)],
+        0x2577 => emit![rect(mx, my, t, h - my)],
+        0x2578 => emit![rect(0.0, hmy, hmx + ht, ht)],
+        0x2579 => emit![rect(hmx, 0.0, ht, hmy + ht)],
+        0x257A => emit![rect(hmx, hmy, w - hmx, ht)],
+        0x257B => emit![rect(hmx, hmy, ht, h - hmy)],
 
         0x2550 => {
             let offset = (t * 1.3).max(2.0);
-            Some(vec![
+            emit![
                 rect(0.0, my - offset, w, t),
                 rect(0.0, my + offset, w, t),
-            ])
+            ]
         }
         0x2551 => {
             let offset = (t * 1.3).max(2.0);
-            Some(vec![
+            emit![
                 rect(mx - offset, 0.0, t, h),
                 rect(mx + offset, 0.0, t, h),
-            ])
+            ]
         }
         0x2554 => {
             let offset = (t * 1.3).max(2.0);
-            Some(vec![
+            emit![
                 rect(mx - offset, my - offset, w - (mx - offset), t),
                 rect(mx + offset, my + offset, w - (mx + offset), t),
                 rect(mx - offset, my - offset, t, h - (my - offset)),
                 rect(mx + offset, my + offset, t, h - (my + offset)),
-            ])
+            ]
         }
         0x2557 => {
             let offset = (t * 1.3).max(2.0);
-            Some(vec![
+            emit![
                 rect(0.0, my - offset, mx + offset + t, t),
                 rect(0.0, my + offset, mx - offset + t, t),
                 rect(mx + offset, my - offset, t, h - (my - offset)),
                 rect(mx - offset, my + offset, t, h - (my + offset)),
-            ])
+            ]
         }
         0x255A => {
             let offset = (t * 1.3).max(2.0);
-            Some(vec![
+            emit![
                 rect(mx - offset, my + offset, w - (mx - offset), t),
                 rect(mx + offset, my - offset, w - (mx + offset), t),
                 rect(mx - offset, 0.0, t, my + offset + t),
                 rect(mx + offset, 0.0, t, my - offset + t),
-            ])
+            ]
         }
         0x255D => {
             let offset = (t * 1.3).max(2.0);
-            Some(vec![
+            emit![
                 rect(0.0, my + offset, mx + offset + t, t),
                 rect(0.0, my - offset, mx - offset + t, t),
                 rect(mx + offset, 0.0, t, my + offset + t),
                 rect(mx - offset, 0.0, t, my - offset + t),
-            ])
+            ]
         }
         0x2560 => {
             let offset = (t * 1.3).max(2.0);
-            Some(vec![
+            emit![
                 rect(mx - offset, 0.0, t, h),
                 rect(mx + offset, 0.0, t, h),
                 rect(mx + offset, my - offset, w - (mx + offset), t),
                 rect(mx + offset, my + offset, w - (mx + offset), t),
-            ])
+            ]
         }
         0x2563 => {
             let offset = (t * 1.3).max(2.0);
-            Some(vec![
+            emit![
                 rect(mx - offset, 0.0, t, h),
                 rect(mx + offset, 0.0, t, h),
                 rect(0.0, my - offset, mx - offset + t, t),
                 rect(0.0, my + offset, mx - offset + t, t),
-            ])
+            ]
         }
         0x2566 => {
             let offset = (t * 1.3).max(2.0);
-            Some(vec![
+            emit![
                 rect(0.0, my - offset, w, t),
                 rect(0.0, my + offset, w, t),
                 rect(mx - offset, my + offset, t, h - (my + offset)),
                 rect(mx + offset, my + offset, t, h - (my + offset)),
-            ])
+            ]
         }
         0x2569 => {
             let offset = (t * 1.3).max(2.0);
-            Some(vec![
+            emit![
                 rect(0.0, my - offset, w, t),
                 rect(0.0, my + offset, w, t),
                 rect(mx - offset, 0.0, t, my - offset + t),
                 rect(mx + offset, 0.0, t, my - offset + t),
-            ])
+            ]
         }
         0x256C => {
             let offset = (t * 1.3).max(2.0);
-            Some(vec![
+            emit![
                 rect(0.0, my - offset, w, t),
                 rect(0.0, my + offset, w, t),
                 rect(mx - offset, 0.0, t, h),
                 rect(mx + offset, 0.0, t, h),
-            ])
+            ]
         }
 
-        _ => None,
+        _ => false,
     }
 }
 
@@ -474,10 +485,31 @@ fn clear_for_reuse<T>(buffer: &mut Vec<T>, expected_capacity: usize) {
     }
 }
 
+struct PaintStamp {
+    revision: u64,
+    origin: Point<Pixels>,
+    display_offset: usize,
+    selection: Option<SelectionRange>,
+    matches: Option<Arc<[Match]>>,
+    active_match: Option<Match>,
+    link: Option<RangeInclusive<GridPoint>>,
+    highlight_colors: [Hsla; 3],
+}
+
+struct PreparedTextRun {
+    text: SharedString,
+    style: TextRun,
+    origin: Point<Pixels>,
+    force_width: Option<Pixels>,
+}
+
 #[derive(Default)]
 struct PaintScratch {
+    stamp: Option<PaintStamp>,
     row_backgrounds: Vec<BackgroundRect>,
     text_runs: Vec<BatchedTextRun>,
+    prepared_text: Vec<PreparedTextRun>,
+    text_bytes: usize,
     block_rects: Vec<BlockElementRect>,
     selection_rects: Vec<BlockElementRect>,
     match_rects: Vec<BlockElementRect>,
@@ -486,7 +518,7 @@ struct PaintScratch {
 
 #[derive(Clone)]
 pub struct TerminalRenderer {
-    pub font_family: String,
+    pub font_family: SharedString,
 
     pub font_size: Pixels,
 
@@ -515,7 +547,7 @@ impl TerminalRenderer {
         let cell_height = font_size * 1.4;
 
         Self {
-            font_family,
+            font_family: font_family.into(),
             font_size,
             cell_width,
             cell_height,
@@ -525,7 +557,7 @@ impl TerminalRenderer {
         }
     }
 
-    pub(crate) fn release_idle_resources(&mut self) {
+    pub(crate) fn release_idle_resources(&self) {
         *self.paint_scratch.lock() = PaintScratch::default();
     }
 
@@ -536,6 +568,8 @@ impl TerminalRenderer {
         let scratch = self.paint_scratch.lock();
         scratch.row_backgrounds.capacity() * std::mem::size_of::<BackgroundRect>()
             + scratch.text_runs.capacity() * std::mem::size_of::<BatchedTextRun>()
+            + scratch.prepared_text.capacity() * std::mem::size_of::<PreparedTextRun>()
+            + scratch.text_bytes
             + (scratch.block_rects.capacity()
                 + scratch.selection_rects.capacity()
                 + scratch.match_rects.capacity()
@@ -545,7 +579,7 @@ impl TerminalRenderer {
 
     pub fn measure_cell(&mut self, window: &mut Window) {
         let font = Font {
-            family: self.font_family.clone().into(),
+            family: self.font_family.clone(),
             features: FontFeatures::default(),
             fallbacks: None,
             weight: FontWeight::NORMAL,
@@ -895,114 +929,162 @@ impl TerminalRenderer {
         // pin that high-water allocation after the view shrinks.
         let cell_count = num_lines.saturating_mul(num_cols);
         let mut scratch = self.paint_scratch.lock();
+        let highlight_colors = [ctx.selection_color, ctx.match_color, ctx.active_match_color];
+        let reuse = scratch.stamp.as_ref().is_some_and(|stamp| {
+            ctx.screen_revision == Some(stamp.revision)
+                && stamp.origin == origin
+                && stamp.display_offset == display_offset
+                && stamp.selection == ctx.selection
+                && match (stamp.matches.as_ref(), ctx.search_matches) {
+                    (Some(previous), Some(current)) => Arc::ptr_eq(previous, current),
+                    (None, None) => true,
+                    _ => false,
+                }
+                && stamp.active_match.as_ref() == ctx.active_match
+                && stamp.link.as_ref() == ctx.hovered_link
+                && stamp.highlight_colors == highlight_colors
+        });
+        if !reuse {
+            scratch.stamp = ctx.screen_revision.map(|revision| PaintStamp {
+                revision,
+                origin,
+                display_offset,
+                selection: ctx.selection,
+                matches: ctx.search_matches.cloned(),
+                active_match: ctx.active_match.cloned(),
+                link: ctx.hovered_link.cloned(),
+                highlight_colors,
+            });
+        }
         let PaintScratch {
+            stamp: _,
             row_backgrounds,
             text_runs: batched_text_runs,
+            prepared_text,
+            text_bytes,
             block_rects,
             selection_rects,
             match_rects,
             decoration_rects,
         } = &mut *scratch;
-        clear_for_reuse(row_backgrounds, cell_count);
-        clear_for_reuse(batched_text_runs, cell_count);
-        clear_for_reuse(block_rects, cell_count);
-        clear_for_reuse(selection_rects, cell_count);
-        clear_for_reuse(match_rects, cell_count);
-        clear_for_reuse(decoration_rects, cell_count);
+        if !reuse {
+            let search_matches: &[Match] = ctx.search_matches.map_or(&[], |matches| matches);
+            clear_for_reuse(row_backgrounds, cell_count);
+            clear_for_reuse(batched_text_runs, cell_count);
+            clear_for_reuse(block_rects, cell_count);
+            clear_for_reuse(selection_rects, cell_count);
+            clear_for_reuse(match_rects, cell_count);
+            clear_for_reuse(decoration_rects, cell_count);
 
-        let underline_thickness = ((f32::from(self.font_size) * 0.07).round()).max(1.0);
+            let underline_thickness = ((f32::from(self.font_size) * 0.07).round()).max(1.0);
 
-        for line_idx in 0..num_lines {
-            let buffer_line = (line_idx as i32) - (display_offset as i32);
+            for line_idx in 0..num_lines {
+                let buffer_line = (line_idx as i32) - (display_offset as i32);
 
-            // A binary-search range preserves multiline matches crossing this
-            // row, while ignoring thousands of offscreen scrollback matches.
-            let row_matches = &ctx.search_matches[row_match_range(ctx.search_matches, buffer_line)];
-            let mut match_cursor = 0;
+                // A binary-search range preserves multiline matches crossing this
+                // row, while ignoring thousands of offscreen scrollback matches.
+                let row_matches = &search_matches[row_match_range(search_matches, buffer_line)];
+                let mut match_cursor = 0;
 
-            let mut current_bg: Option<BackgroundRect> = None;
-            let mut current_run: Option<BatchedTextRun> = None;
+                let mut current_bg: Option<BackgroundRect> = None;
+                let mut current_run: Option<BatchedTextRun> = None;
 
-            // Track contiguous runs of selected / matched / hovered cells so we
-            // emit one quad per run instead of one per cell.
-            let mut selection_run: Option<(usize, usize)> = None;
-            let mut match_run: Option<(usize, usize, bool)> = None;
-            let mut link_run: Option<(usize, usize)> = None;
+                // Track contiguous runs of selected / matched / hovered cells so we
+                // emit one quad per run instead of one per cell.
+                let mut selection_run: Option<(usize, usize)> = None;
+                let mut match_run: Option<(usize, usize, bool)> = None;
+                let mut link_run: Option<(usize, usize)> = None;
 
-            for col_idx in 0..num_cols {
-                let point = GridPoint::new(GridLine(buffer_line), GridColumn(col_idx));
-                let cell = &grid[point];
-                let ch = if cell.c == ' ' || cell.c == '\0' {
-                    ' '
-                } else {
-                    cell.c
-                };
-
-                let mut fg_color = self.palette.resolve(cell.fg, colors);
-                let mut bg_color = self.palette.resolve(cell.bg, colors);
-
-                if cell.flags.contains(Flags::INVERSE) {
-                    std::mem::swap(&mut fg_color, &mut bg_color);
-                }
-                bg_color = self.palette.map_background(bg_color);
-
-                // `DIM_BOLD` means "dim applied to a bold cell": alacritty
-                // encodes it as DIM | BOLD, so checking DIM alone is correct.
-                if cell.flags.contains(Flags::DIM) {
-                    fg_color.a *= 0.65;
-                }
-
-                if cell.flags.contains(Flags::HIDDEN) {
-                    fg_color = gpui::transparent_black();
-                }
-
-                let bold = cell.flags.contains(Flags::BOLD);
-                let italic = cell.flags.contains(Flags::ITALIC);
-                let strikethrough = cell.flags.contains(Flags::STRIKEOUT);
-
-                // -- selection / search / link decorations -------------------
-                let is_selected = ctx
-                    .selection
-                    .as_ref()
-                    .map(|range| range.contains(point))
-                    .unwrap_or(false);
-                accumulate_run(&mut selection_run, col_idx, is_selected, |start, end| {
-                    selection_rects.push(cell_rect(
-                        start,
-                        line_idx,
-                        end - start,
-                        ctx.selection_color,
-                    ));
-                });
-
-                let matched = loop {
-                    let Some(candidate) = row_matches.get(match_cursor) else {
-                        break None;
+                for col_idx in 0..num_cols {
+                    let point = GridPoint::new(GridLine(buffer_line), GridColumn(col_idx));
+                    let cell = &grid[point];
+                    let ch = if cell.c == ' ' || cell.c == '\0' {
+                        ' '
+                    } else {
+                        cell.c
                     };
-                    if candidate.contains(&point) {
-                        break Some(candidate);
+
+                    let mut fg_color = self.palette.resolve(cell.fg, colors);
+                    let mut bg_color = self.palette.resolve(cell.bg, colors);
+
+                    if cell.flags.contains(Flags::INVERSE) {
+                        std::mem::swap(&mut fg_color, &mut bg_color);
                     }
-                    // Matches are produced in grid order by RegexIter. Once a
-                    // match starts before this cell and no longer contains it,
-                    // it can never match a later column on this row.
-                    if *candidate.start() > point {
-                        break None;
+                    bg_color = self.palette.map_background(bg_color);
+
+                    // `DIM_BOLD` means "dim applied to a bold cell": alacritty
+                    // encodes it as DIM | BOLD, so checking DIM alone is correct.
+                    if cell.flags.contains(Flags::DIM) {
+                        fg_color.a *= 0.65;
                     }
-                    match_cursor += 1;
-                };
-                let match_state =
-                    matched.map(|matched| ctx.active_match.is_some_and(|active| active == matched));
-                match match_state {
-                    Some(is_active) => {
-                        let extend = match match_run {
-                            Some((start, end, active)) if active == is_active && end == col_idx => {
-                                Some((start, col_idx + 1, active))
-                            }
-                            _ => None,
+
+                    if cell.flags.contains(Flags::HIDDEN) {
+                        fg_color = gpui::transparent_black();
+                    }
+
+                    let bold = cell.flags.contains(Flags::BOLD);
+                    let italic = cell.flags.contains(Flags::ITALIC);
+                    let strikethrough = cell.flags.contains(Flags::STRIKEOUT);
+
+                    // -- selection / search / link decorations -------------------
+                    let is_selected = ctx
+                        .selection
+                        .as_ref()
+                        .map(|range| range.contains(point))
+                        .unwrap_or(false);
+                    accumulate_run(&mut selection_run, col_idx, is_selected, |start, end| {
+                        selection_rects.push(cell_rect(
+                            start,
+                            line_idx,
+                            end - start,
+                            ctx.selection_color,
+                        ));
+                    });
+
+                    let matched = loop {
+                        let Some(candidate) = row_matches.get(match_cursor) else {
+                            break None;
                         };
-                        if let Some(next) = extend {
-                            match_run = Some(next);
-                        } else {
+                        if candidate.contains(&point) {
+                            break Some(candidate);
+                        }
+                        // Matches are produced in grid order by RegexIter. Once a
+                        // match starts before this cell and no longer contains it,
+                        // it can never match a later column on this row.
+                        if *candidate.start() > point {
+                            break None;
+                        }
+                        match_cursor += 1;
+                    };
+                    let match_state =
+                        matched.map(|matched| ctx.active_match.is_some_and(|active| active == matched));
+                    match match_state {
+                        Some(is_active) => {
+                            let extend = match match_run {
+                                Some((start, end, active)) if active == is_active && end == col_idx => {
+                                    Some((start, col_idx + 1, active))
+                                }
+                                _ => None,
+                            };
+                            if let Some(next) = extend {
+                                match_run = Some(next);
+                            } else {
+                                if let Some((start, end, active)) = match_run.take() {
+                                    match_rects.push(cell_rect(
+                                        start,
+                                        line_idx,
+                                        end - start,
+                                        if active {
+                                            ctx.active_match_color
+                                        } else {
+                                            ctx.match_color
+                                        },
+                                    ));
+                                }
+                                match_run = Some((col_idx, col_idx + 1, is_active));
+                            }
+                        }
+                        None => {
                             if let Some((start, end, active)) = match_run.take() {
                                 match_rects.push(cell_rect(
                                     start,
@@ -1015,310 +1097,357 @@ impl TerminalRenderer {
                                     },
                                 ));
                             }
-                            match_run = Some((col_idx, col_idx + 1, is_active));
                         }
                     }
-                    None => {
-                        if let Some((start, end, active)) = match_run.take() {
-                            match_rects.push(cell_rect(
-                                start,
+
+                    let is_link = ctx
+                        .hovered_link
+                        .map(|range| range.contains(&point))
+                        .unwrap_or(false);
+                    accumulate_run(&mut link_run, col_idx, is_link, |start, end| {
+                        decoration_rects.push(line_rect(
+                            start,
+                            line_idx,
+                            (end - start) as f32,
+                            underline_thickness + 1.0,
+                            underline_thickness,
+                            fg_color,
+                        ));
+                    });
+
+                    // -- background ---------------------------------------------
+                    if bg_color != default_bg {
+                        if let Some(ref mut bg) = current_bg {
+                            if bg.color == bg_color && bg.end_col == col_idx {
+                                bg.end_col = col_idx + 1;
+                            } else {
+                                let finished = std::mem::replace(
+                                    bg,
+                                    BackgroundRect::new(col_idx, col_idx + 1, line_idx, bg_color),
+                                );
+                                row_backgrounds.push(finished);
+                            }
+                        } else {
+                            current_bg = Some(BackgroundRect::new(
+                                col_idx,
+                                col_idx + 1,
                                 line_idx,
-                                end - start,
-                                if active {
-                                    ctx.active_match_color
-                                } else {
-                                    ctx.match_color
-                                },
+                                bg_color,
                             ));
                         }
+                    } else if let Some(bg) = current_bg.take() {
+                        row_backgrounds.push(bg);
+                    }
+
+                    // The trailing half of a double-width glyph carries no content.
+                    if cell.flags.contains(Flags::WIDE_CHAR_SPACER)
+                        || cell.flags.contains(Flags::LEADING_WIDE_CHAR_SPACER)
+                    {
+                        continue;
+                    }
+
+                    // -- underline / strikethrough decorations -------------------
+                    let underline_color = cell
+                        .underline_color()
+                        .map(|color| self.palette.resolve(color, colors));
+                    let cell_span = if cell.flags.contains(Flags::WIDE_CHAR) {
+                        2usize
+                    } else {
+                        1usize
+                    };
+                    let deco_color = underline_color.unwrap_or(fg_color);
+
+                    // GPUI can draw a straight or a wavy underline as part of the
+                    // text run; everything else (double / dotted / dashed, or a
+                    // custom colour) is painted as quads.
+                    let mut run_underline = false;
+                    let mut run_wavy = false;
+
+                    if cell.flags.contains(Flags::DOUBLE_UNDERLINE) {
+                        decoration_rects.push(line_rect(
+                            col_idx,
+                            line_idx,
+                            cell_span as f32,
+                            underline_thickness * 3.0 + 1.0,
+                            underline_thickness,
+                            deco_color,
+                        ));
+                        decoration_rects.push(line_rect(
+                            col_idx,
+                            line_idx,
+                            cell_span as f32,
+                            underline_thickness + 1.0,
+                            underline_thickness,
+                            deco_color,
+                        ));
+                    } else if cell.flags.contains(Flags::UNDERCURL) {
+                        if underline_color.is_some() {
+                            decoration_rects.push(line_rect(
+                                col_idx,
+                                line_idx,
+                                cell_span as f32,
+                                underline_thickness + 1.0,
+                                underline_thickness,
+                                deco_color,
+                            ));
+                        } else {
+                            run_underline = true;
+                            run_wavy = true;
+                        }
+                    } else if cell.flags.contains(Flags::DOTTED_UNDERLINE) {
+                        decoration_rects.push(line_rect(
+                            col_idx,
+                            line_idx,
+                            cell_span as f32 * 0.25,
+                            underline_thickness + 1.0,
+                            underline_thickness,
+                            deco_color,
+                        ));
+                        decoration_rects.push(line_rect(
+                            col_idx,
+                            line_idx,
+                            cell_span as f32 * 0.25,
+                            underline_thickness + 1.0,
+                            underline_thickness,
+                            deco_color,
+                        ));
+                    } else if cell.flags.contains(Flags::DASHED_UNDERLINE) {
+                        decoration_rects.push(line_rect(
+                            col_idx,
+                            line_idx,
+                            cell_span as f32 * 0.6,
+                            underline_thickness + 1.0,
+                            underline_thickness,
+                            deco_color,
+                        ));
+                    } else if cell.flags.contains(Flags::UNDERLINE) {
+                        if underline_color.is_some() {
+                            decoration_rects.push(line_rect(
+                                col_idx,
+                                line_idx,
+                                cell_span as f32,
+                                underline_thickness + 1.0,
+                                underline_thickness,
+                                deco_color,
+                            ));
+                        } else {
+                            run_underline = true;
+                        }
+                    }
+
+                    // -- box drawing --------------------------------------------
+                    // Most terminal cells are plain text; avoid the geometry
+                    // rasterizer's range checks and coordinate math for them.
+                    if is_box_or_block(ch)
+                        && rasterize_box_or_block(
+                            ch,
+                            col_idx,
+                            line_idx,
+                            fg_color,
+                            origin,
+                            self.cell_width,
+                            self.cell_height,
+                            block_rects,
+                        )
+                    {
+                        if let Some(run) = current_run.take() {
+                            batched_text_runs.push(run);
+                        }
+                        continue;
+                    }
+
+                    let is_blank = ch == ' '
+                        && bg_color == default_bg
+                        && !run_underline
+                        && !strikethrough
+                        && !cell.flags.contains(Flags::INVERSE);
+
+                    if is_blank {
+                        if let Some(run) = current_run.take() {
+                            batched_text_runs.push(run);
+                        }
+                        continue;
+                    }
+
+                    let is_wide = cell.flags.contains(Flags::WIDE_CHAR);
+                    let has_zerowidth = cell.zerowidth().is_some();
+
+                    if is_wide || has_zerowidth {
+                        if let Some(run) = current_run.take() {
+                            batched_text_runs.push(run);
+                        }
+                        // Wide and zero-width-joiner cells are never merged, so
+                        // their one-off String is only built on this rare path —
+                        // the common single-char path below pushes `ch` directly
+                        // into the running buffer instead of allocating per cell.
+                        let mut cell_text = String::with_capacity(ch.len_utf8() + 8);
+                        cell_text.push(ch);
+                        let mut char_count = 1;
+                        if let Some(zerowidth) = cell.zerowidth() {
+                            for &zc in zerowidth {
+                                cell_text.push(zc);
+                                char_count += 1;
+                            }
+                        }
+                        batched_text_runs.push(BatchedTextRun {
+                            text: cell_text,
+                            char_count,
+                            cell_count: cell_span,
+                            start_col: col_idx,
+                            row: line_idx,
+                            fg_color,
+                            bg_color,
+                            bold,
+                            italic,
+                            underline: run_underline,
+                            strikethrough,
+                            wavy_underline: run_wavy,
+                        });
+                        continue;
+                    }
+
+                    let mergeable = current_run.as_ref().is_some_and(|run| {
+                        run.fg_color == fg_color
+                            && run.bold == bold
+                            && run.italic == italic
+                            && run.underline == run_underline
+                            && run.wavy_underline == run_wavy
+                            && run.strikethrough == strikethrough
+                            && run.start_col + run.cell_count == col_idx
+                    });
+
+                    if mergeable {
+                        if let Some(ref mut run) = current_run {
+                            run.text.push(ch);
+                            run.char_count += 1;
+                            run.cell_count += cell_span;
+                        }
+                    } else {
+                        if let Some(run) = current_run.take() {
+                            batched_text_runs.push(run);
+                        }
+                        // Wide chars took the branch above, so this cell is exactly
+                        // one char in one column.
+                        let mut text = String::with_capacity(16);
+                        text.push(ch);
+                        current_run = Some(BatchedTextRun {
+                            text,
+                            char_count: 1,
+                            cell_count: cell_span,
+                            start_col: col_idx,
+                            row: line_idx,
+                            fg_color,
+                            bg_color,
+                            bold,
+                            italic,
+                            underline: run_underline,
+                            strikethrough,
+                            wavy_underline: run_wavy,
+                        });
                     }
                 }
 
-                let is_link = ctx
-                    .hovered_link
-                    .map(|range| range.contains(&point))
-                    .unwrap_or(false);
-                accumulate_run(&mut link_run, col_idx, is_link, |start, end| {
+                if let Some((start, end)) = selection_run.take() {
+                    selection_rects.push(cell_rect(start, line_idx, end - start, ctx.selection_color));
+                }
+                if let Some((start, end, active)) = match_run.take() {
+                    match_rects.push(cell_rect(
+                        start,
+                        line_idx,
+                        end - start,
+                        if active {
+                            ctx.active_match_color
+                        } else {
+                            ctx.match_color
+                        },
+                    ));
+                }
+                if let Some((start, end)) = link_run.take() {
+                    let color = self
+                        .palette
+                        .resolve(Color::Named(NamedColor::Foreground), colors);
                     decoration_rects.push(line_rect(
                         start,
                         line_idx,
                         (end - start) as f32,
                         underline_thickness + 1.0,
                         underline_thickness,
-                        fg_color,
+                        color,
                     ));
-                });
-
-                // -- background ---------------------------------------------
-                if bg_color != default_bg {
-                    if let Some(ref mut bg) = current_bg {
-                        if bg.color == bg_color && bg.end_col == col_idx {
-                            bg.end_col = col_idx + 1;
-                        } else {
-                            let finished = std::mem::replace(
-                                bg,
-                                BackgroundRect::new(col_idx, col_idx + 1, line_idx, bg_color),
-                            );
-                            row_backgrounds.push(finished);
-                        }
-                    } else {
-                        current_bg = Some(BackgroundRect::new(
-                            col_idx,
-                            col_idx + 1,
-                            line_idx,
-                            bg_color,
-                        ));
-                    }
-                } else if let Some(bg) = current_bg.take() {
+                }
+                if let Some(bg) = current_bg {
                     row_backgrounds.push(bg);
                 }
-
-                // The trailing half of a double-width glyph carries no content.
-                if cell.flags.contains(Flags::WIDE_CHAR_SPACER)
-                    || cell.flags.contains(Flags::LEADING_WIDE_CHAR_SPACER)
-                {
-                    continue;
-                }
-
-                // -- underline / strikethrough decorations -------------------
-                let underline_color = cell
-                    .underline_color()
-                    .map(|color| self.palette.resolve(color, colors));
-                let cell_span = if cell.flags.contains(Flags::WIDE_CHAR) {
-                    2usize
-                } else {
-                    1usize
-                };
-                let deco_color = underline_color.unwrap_or(fg_color);
-
-                // GPUI can draw a straight or a wavy underline as part of the
-                // text run; everything else (double / dotted / dashed, or a
-                // custom colour) is painted as quads.
-                let mut run_underline = false;
-                let mut run_wavy = false;
-
-                if cell.flags.contains(Flags::DOUBLE_UNDERLINE) {
-                    decoration_rects.push(line_rect(
-                        col_idx,
-                        line_idx,
-                        cell_span as f32,
-                        underline_thickness * 3.0 + 1.0,
-                        underline_thickness,
-                        deco_color,
-                    ));
-                    decoration_rects.push(line_rect(
-                        col_idx,
-                        line_idx,
-                        cell_span as f32,
-                        underline_thickness + 1.0,
-                        underline_thickness,
-                        deco_color,
-                    ));
-                } else if cell.flags.contains(Flags::UNDERCURL) {
-                    if underline_color.is_some() {
-                        decoration_rects.push(line_rect(
-                            col_idx,
-                            line_idx,
-                            cell_span as f32,
-                            underline_thickness + 1.0,
-                            underline_thickness,
-                            deco_color,
-                        ));
-                    } else {
-                        run_underline = true;
-                        run_wavy = true;
-                    }
-                } else if cell.flags.contains(Flags::DOTTED_UNDERLINE) {
-                    decoration_rects.push(line_rect(
-                        col_idx,
-                        line_idx,
-                        cell_span as f32 * 0.25,
-                        underline_thickness + 1.0,
-                        underline_thickness,
-                        deco_color,
-                    ));
-                    decoration_rects.push(line_rect(
-                        col_idx,
-                        line_idx,
-                        cell_span as f32 * 0.25,
-                        underline_thickness + 1.0,
-                        underline_thickness,
-                        deco_color,
-                    ));
-                } else if cell.flags.contains(Flags::DASHED_UNDERLINE) {
-                    decoration_rects.push(line_rect(
-                        col_idx,
-                        line_idx,
-                        cell_span as f32 * 0.6,
-                        underline_thickness + 1.0,
-                        underline_thickness,
-                        deco_color,
-                    ));
-                } else if cell.flags.contains(Flags::UNDERLINE) {
-                    if underline_color.is_some() {
-                        decoration_rects.push(line_rect(
-                            col_idx,
-                            line_idx,
-                            cell_span as f32,
-                            underline_thickness + 1.0,
-                            underline_thickness,
-                            deco_color,
-                        ));
-                    } else {
-                        run_underline = true;
-                    }
-                }
-
-                // -- box drawing --------------------------------------------
-                // Most terminal cells are plain text; avoid the geometry
-                // rasterizer's range checks and coordinate math for them.
-                if is_box_or_block(ch) {
-                    if let Some(quads) = rasterize_box_or_block(
-                        ch,
-                        col_idx,
-                        line_idx,
-                        fg_color,
-                        origin,
-                        self.cell_width,
-                        self.cell_height,
-                    ) {
-                        block_rects.extend(quads);
-                        if let Some(run) = current_run.take() {
-                            batched_text_runs.push(run);
-                        }
-                        continue;
-                    }
-                }
-
-                let is_blank = ch == ' '
-                    && bg_color == default_bg
-                    && !run_underline
-                    && !strikethrough
-                    && !cell.flags.contains(Flags::INVERSE);
-
-                if is_blank {
-                    if let Some(run) = current_run.take() {
-                        batched_text_runs.push(run);
-                    }
-                    continue;
-                }
-
-                let is_wide = cell.flags.contains(Flags::WIDE_CHAR);
-                let has_zerowidth = cell.zerowidth().is_some();
-
-                if is_wide || has_zerowidth {
-                    if let Some(run) = current_run.take() {
-                        batched_text_runs.push(run);
-                    }
-                    // Wide and zero-width-joiner cells are never merged, so
-                    // their one-off String is only built on this rare path —
-                    // the common single-char path below pushes `ch` directly
-                    // into the running buffer instead of allocating per cell.
-                    let mut cell_text = String::with_capacity(ch.len_utf8() + 8);
-                    cell_text.push(ch);
-                    let mut char_count = 1;
-                    if let Some(zerowidth) = cell.zerowidth() {
-                        for &zc in zerowidth {
-                            cell_text.push(zc);
-                            char_count += 1;
-                        }
-                    }
-                    batched_text_runs.push(BatchedTextRun {
-                        text: cell_text,
-                        char_count,
-                        cell_count: cell_span,
-                        start_col: col_idx,
-                        row: line_idx,
-                        fg_color,
-                        bg_color,
-                        bold,
-                        italic,
-                        underline: run_underline,
-                        strikethrough,
-                        wavy_underline: run_wavy,
-                    });
-                    continue;
-                }
-
-                let mergeable = current_run.as_ref().is_some_and(|run| {
-                    run.fg_color == fg_color
-                        && run.bold == bold
-                        && run.italic == italic
-                        && run.underline == run_underline
-                        && run.wavy_underline == run_wavy
-                        && run.strikethrough == strikethrough
-                        && run.start_col + run.cell_count == col_idx
-                });
-
-                if mergeable {
-                    if let Some(ref mut run) = current_run {
-                        run.text.push(ch);
-                        run.char_count += 1;
-                        run.cell_count += cell_span;
-                    }
-                } else {
-                    if let Some(run) = current_run.take() {
-                        batched_text_runs.push(run);
-                    }
-                    // Wide chars took the branch above, so this cell is exactly
-                    // one char in one column.
-                    let mut text = String::with_capacity(16);
-                    text.push(ch);
-                    current_run = Some(BatchedTextRun {
-                        text,
-                        char_count: 1,
-                        cell_count: cell_span,
-                        start_col: col_idx,
-                        row: line_idx,
-                        fg_color,
-                        bg_color,
-                        bold,
-                        italic,
-                        underline: run_underline,
-                        strikethrough,
-                        wavy_underline: run_wavy,
-                    });
+                if let Some(run) = current_run {
+                    batched_text_runs.push(run);
                 }
             }
+            Self::merge_backgrounds_2d_in_place(row_backgrounds);
+            clear_for_reuse(prepared_text, batched_text_runs.len());
+            *text_bytes = 0;
+            let font_family = &self.font_family;
+            let font_features = FontFeatures::disable_ligatures();
+            for run in batched_text_runs.drain(..) {
+                let x = origin.x + self.cell_width * (run.start_col as f32);
+                let y = origin.y + self.cell_height * (run.row as f32);
 
-            if let Some((start, end)) = selection_run.take() {
-                selection_rects.push(cell_rect(start, line_idx, end - start, ctx.selection_color));
-            }
-            if let Some((start, end, active)) = match_run.take() {
-                match_rects.push(cell_rect(
-                    start,
-                    line_idx,
-                    end - start,
-                    if active {
-                        ctx.active_match_color
+                let font = Font {
+                    family: font_family.clone(),
+                    features: font_features.clone(),
+                    fallbacks: None,
+                    weight: if run.bold {
+                        FontWeight::BOLD
                     } else {
-                        ctx.match_color
+                        FontWeight::NORMAL
                     },
-                ));
-            }
-            if let Some((start, end)) = link_run.take() {
-                let color = self
-                    .palette
-                    .resolve(Color::Named(NamedColor::Foreground), colors);
-                decoration_rects.push(line_rect(
-                    start,
-                    line_idx,
-                    (end - start) as f32,
-                    underline_thickness + 1.0,
-                    underline_thickness,
-                    color,
-                ));
-            }
-            if let Some(bg) = current_bg {
-                row_backgrounds.push(bg);
-            }
-            if let Some(run) = current_run {
-                batched_text_runs.push(run);
+                    style: if run.italic {
+                        FontStyle::Italic
+                    } else {
+                        FontStyle::Normal
+                    },
+                };
+
+                let char_len = run.text.len();
+                let text_run = TextRun {
+                    len: char_len,
+                    font,
+                    color: run.fg_color,
+                    background_color: None,
+                    underline: if run.underline {
+                        Some(UnderlineStyle {
+                            thickness: px(underline_thickness),
+                            color: Some(run.fg_color),
+                            wavy: run.wavy_underline,
+                        })
+                    } else {
+                        None
+                    },
+                    strikethrough: if run.strikethrough {
+                        Some(StrikethroughStyle {
+                            thickness: px(underline_thickness),
+                            color: Some(run.fg_color),
+                        })
+                    } else {
+                        None
+                    },
+                };
+
+                let force_width = if run.cell_count > 1 || run.char_count != run.cell_count {
+                    None
+                } else {
+                    Some(self.cell_width)
+                };
+                *text_bytes += char_len;
+                prepared_text.push(PreparedTextRun {
+                    text: run.text.into(),
+                    style: text_run,
+                    origin: Point { x, y },
+                    force_width,
+                });
             }
         }
 
         // -- paint order: cell backgrounds, blocks, search, selection, text --
-        Self::merge_backgrounds_2d_in_place(row_backgrounds);
         for bg in row_backgrounds.iter().copied() {
             let x = origin.x + self.cell_width * (bg.start_col as f32);
             let y = origin.y + self.cell_height * (bg.row as f32);
@@ -1338,7 +1467,7 @@ impl TerminalRenderer {
             ));
         }
 
-        for block in block_rects.drain(..) {
+        for block in block_rects.iter() {
             window.paint_quad(quad(
                 block.bounds,
                 px(0.0),
@@ -1349,7 +1478,7 @@ impl TerminalRenderer {
             ));
         }
 
-        for rect in match_rects.drain(..).chain(selection_rects.drain(..)) {
+        for rect in match_rects.iter().chain(selection_rects.iter()) {
             window.paint_quad(quad(
                 rect.bounds,
                 px(0.0),
@@ -1360,68 +1489,16 @@ impl TerminalRenderer {
             ));
         }
 
-        let font_family: SharedString = self.font_family.clone().into();
-        let font_features = FontFeatures::disable_ligatures();
-        for run in batched_text_runs.drain(..) {
-            let x = origin.x + self.cell_width * (run.start_col as f32);
-            let y = origin.y + self.cell_height * (run.row as f32);
-
-            let font = Font {
-                family: font_family.clone(),
-                features: font_features.clone(),
-                fallbacks: None,
-                weight: if run.bold {
-                    FontWeight::BOLD
-                } else {
-                    FontWeight::NORMAL
-                },
-                style: if run.italic {
-                    FontStyle::Italic
-                } else {
-                    FontStyle::Normal
-                },
-            };
-
-            let char_len = run.text.len();
-            let text_run = TextRun {
-                len: char_len,
-                font,
-                color: run.fg_color,
-                background_color: None,
-                underline: if run.underline {
-                    Some(UnderlineStyle {
-                        thickness: px(underline_thickness),
-                        color: Some(run.fg_color),
-                        wavy: run.wavy_underline,
-                    })
-                } else {
-                    None
-                },
-                strikethrough: if run.strikethrough {
-                    Some(StrikethroughStyle {
-                        thickness: px(underline_thickness),
-                        color: Some(run.fg_color),
-                    })
-                } else {
-                    None
-                },
-            };
-
-            let force_width = if run.cell_count > 1 || run.char_count != run.cell_count {
-                None
-            } else {
-                Some(self.cell_width)
-            };
-
+        for run in prepared_text.iter() {
             let shaped_line = window.text_system().shape_line(
-                run.text.into(),
+                run.text.clone(),
                 self.font_size,
-                &[text_run],
-                force_width,
+                std::slice::from_ref(&run.style),
+                run.force_width,
             );
 
             let _ = shaped_line.paint(
-                Point { x, y },
+                run.origin,
                 self.cell_height,
                 gpui::TextAlign::Left,
                 None,
@@ -1430,7 +1507,7 @@ impl TerminalRenderer {
             );
         }
 
-        for rect in decoration_rects.drain(..) {
+        for rect in decoration_rects.iter() {
             window.paint_quad(quad(
                 rect.bounds,
                 px(0.0),
@@ -1769,7 +1846,7 @@ mod tests {
 
     #[test]
     fn idle_renderer_release_preserves_metrics_and_clears_shared_scratch() {
-        let mut renderer =
+        let renderer =
             TerminalRenderer::new("monospace".into(), px(14.0), 1.2, ColorPalette::default());
         let retained = renderer.clone();
         let metrics = (renderer.cell_width, renderer.cell_height);
@@ -1885,23 +1962,23 @@ mod tests {
         let cell_h = px(20.0);
         let color = Hsla::black();
 
-        let full = rasterize_box_or_block('█', 0, 0, color, origin, cell_w, cell_h);
-        assert!(full.is_some());
-        let quads = full.unwrap();
+        let mut quads = Vec::new();
+        assert!(rasterize_box_or_block(
+            '█', 0, 0, color, origin, cell_w, cell_h, &mut quads
+        ));
         assert_eq!(quads.len(), 1);
         assert_eq!(quads[0].bounds.size.width, cell_w);
         assert_eq!(quads[0].bounds.size.height, cell_h);
 
-        let top_half = rasterize_box_or_block('▀', 0, 0, color, origin, cell_w, cell_h);
-        assert!(top_half.is_some());
-        let bottom_half = rasterize_box_or_block('▄', 0, 0, color, origin, cell_w, cell_h);
-        assert!(bottom_half.is_some());
-
-        let h_line = rasterize_box_or_block('─', 0, 0, color, origin, cell_w, cell_h);
-        assert!(h_line.is_some());
-        let v_line = rasterize_box_or_block('│', 0, 0, color, origin, cell_w, cell_h);
-        assert!(v_line.is_some());
-        let corner = rasterize_box_or_block('┌', 0, 0, color, origin, cell_w, cell_h);
-        assert!(corner.is_some());
+        for (glyph, count) in [
+            ('▀', 1), ('▄', 1), ('─', 1), ('│', 1), ('┌', 2), ('╬', 4), ('A', 0),
+        ] {
+            let before = quads.len();
+            assert_eq!(
+                rasterize_box_or_block(glyph, 1, 0, color, origin, cell_w, cell_h, &mut quads),
+                count != 0
+            );
+            assert_eq!(quads.len(), before + count);
+        }
     }
 }

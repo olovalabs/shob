@@ -493,25 +493,25 @@ impl AgentBridge {
     }
 
     pub fn poll(&mut self) -> Vec<AgentEvent> {
-        let mut events = match &mut self.backend {
+        let events = match &mut self.backend {
             Backend::Embedded(bridge) => bridge.poll(),
             Backend::Rpc(bridge) => bridge.poll(),
         };
-        if events
-            .iter()
-            .any(|event| matches!(event, AgentEvent::Closed))
-        {
-            self.set_browser_sender(None);
-        }
-        let Some(first_prompt) = self.first_prompt.take() else {
-            return events;
-        };
+        self.apply_polled_events(events)
+    }
+
+    fn apply_polled_events(&mut self, mut events: Vec<AgentEvent>) -> Vec<AgentEvent> {
         if events
             .iter()
             .any(|event| matches!(event, AgentEvent::Done | AgentEvent::Closed))
         {
+            self.set_browser_sender(None);
+            self.first_prompt = None;
             return events;
         }
+        let Some(first_prompt) = self.first_prompt.take() else {
+            return events;
+        };
         match first_prompt {
             FirstPrompt::Waiting(mut title, prompt) => match title.poll() {
                 std::task::Poll::Pending => {

@@ -458,14 +458,15 @@ struct AppState {
     navigation_position: usize,
     /// O(1) pane lookup by id: pane id -> (project idx, session idx, pane idx).
     pane_index: HashMap<usize, (usize, usize, usize)>,
+    mounted_chat_panes: std::cell::RefCell<Vec<usize>>,
     /// Background-computed working-tree counts, shared by panes in a project.
     project_change_counts: HashMap<PathBuf, Option<project_diff::ChangeSummary>>,
     /// Cached Git workspace snapshots keyed by active directory.
     git_snapshots: HashMap<PathBuf, git_workspace::GitWorkspaceSnapshot>,
     conversation_header_branch: Option<(PathBuf, SharedString)>,
     conversation_header_menu_focus: gpui::FocusHandle,
-    /// Directories currently being inspected off-thread.
-    git_refreshing: HashSet<PathBuf>,
+    git_requests: HashMap<PathBuf, workspace_switcher::GitRequest>,
+    git_request_serial: u64,
     /// Agent panes currently creating a new worktree off-thread.
     git_worktree_creating: HashSet<usize>,
     /// Pane that currently owns keyboard focus, tracked every render frame
@@ -512,6 +513,11 @@ struct AppState {
     persistence_path: Option<PathBuf>,
     save_generation: Arc<AtomicU64>,
     workspace_save_task: Option<gpui::Task<()>>,
+    scrollback_generation: Arc<AtomicU64>,
+    autosave_task: Option<gpui::Task<()>>,
+    pending_session_deletions: HashSet<usize>,
+    workspace_cleared: bool,
+    clear_data_running: bool,
     startup_loaded: bool,
     quit_subscription: Option<gpui::Subscription>,
     /// Whether the OS considers this window focused, mirrored from the render
@@ -572,6 +578,10 @@ struct HistorySearchState {
 struct BranchPickerState {
     input: Entity<InputState>,
     selected: usize,
+    directory: PathBuf,
+    items: Rc<[workspace_switcher::BranchPickerItem]>,
+    sizes: Rc<Vec<gpui::Size<Pixels>>>,
+    scroll: VirtualListScrollHandle,
     _subscription: gpui::Subscription,
 }
 

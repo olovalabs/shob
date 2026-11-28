@@ -20,6 +20,8 @@ impl AppState {
             std::mem::take(&mut pane.chat.terminal_draft)
         };
         pane.chat.active = active;
+        pane.input_browser_mentioned = active && agent_bridge::has_browser_mention(&draft);
+        pane.input_prompt_empty = draft.trim().is_empty();
         pane.chat.worker_view = None;
         pane.completion_menu = None;
         pane.history_index = None;

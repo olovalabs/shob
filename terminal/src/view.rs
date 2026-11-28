@@ -25,7 +25,7 @@ use crate::hyperlink::{HyperlinkMatch, RegexSearches};
 use crate::input::keystroke_to_bytes;
 use crate::pty_writer::{InputStarter, QueuedWriter, WriteCompletion};
 use crate::render::{PaintContext, TerminalRenderer};
-use crate::search::SearchState;
+use crate::search::{SearchSnapshot, SearchState};
 use crate::shell_integration::ShellEvent;
 use crate::terminal::TerminalState;
 use alacritty_terminal::event::WindowSize as PtyWindowSize;
@@ -34,14 +34,16 @@ use alacritty_terminal::index::{
     Column as GridColumn, Direction as GridDirection, Line as GridLine, Point as GridPoint,
     Side as GridSide,
 };
-use alacritty_terminal::selection::{SelectionRange, SelectionType as GridSelectionType};
+use alacritty_terminal::selection::{
+    Selection as GridSelection, SelectionRange, SelectionType as GridSelectionType,
+};
 use alacritty_terminal::term::search::Match as GridMatch;
 use alacritty_terminal::term::{TermMode, viewport_to_point};
 use alacritty_terminal::vi_mode::ViMotion;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{Edges, *};
+use std::collections::VecDeque;
 use std::io::{Read, Write};
-use std::ops::RangeInclusive;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
@@ -148,9 +150,91 @@ pub type ExitCallback = Box<dyn Fn(&mut Window, &mut Context<TerminalView>)>;
 pub type LinkCallback =
     Box<dyn Fn(&mut Window, &mut Context<TerminalView>, &HyperlinkMatch) -> bool>;
 
+const MAX_DEFERRED_WINDOW_EVENTS: usize = 64;
+const MAX_DEFERRED_WINDOW_TEXT_BYTES: usize = 256 * 1024;
+
+#[derive(Default)]
+struct DeferredWindowEvents {
+    events: VecDeque<TerminalEvent>,
+    text_bytes: usize,
+}
+
+impl DeferredWindowEvents {
+    fn text_bytes(event: &TerminalEvent) -> usize {
+        match event {
+            TerminalEvent::Title(text) | TerminalEvent::ClipboardStore(_, text) => text.capacity(),
+            _ => 0,
+        }
+    }
+
+    fn push(&mut self, event: TerminalEvent) {
+        let bytes = Self::text_bytes(&event);
+        if bytes > MAX_DEFERRED_WINDOW_TEXT_BYTES {
+            return;
+        }
+        while self.events.len() == MAX_DEFERRED_WINDOW_EVENTS
+            || self.text_bytes > MAX_DEFERRED_WINDOW_TEXT_BYTES - bytes
+        {
+            // There is at most one Exit, and the background drain has already
+            // observed it. Evict the oldest other event, never that marker.
+            let index = if matches!(self.events.front(), Some(TerminalEvent::Exit)) {
+                1
+            } else {
+                0
+            };
+            let Some(evicted) = self.events.remove(index) else {
+                return;
+            };
+            self.text_bytes -= Self::text_bytes(&evicted);
+        }
+        self.text_bytes += bytes;
+        self.events.push_back(event);
+    }
+
+    fn pop(&mut self) -> Option<TerminalEvent> {
+        let event = self.events.pop_front()?;
+        self.text_bytes -= Self::text_bytes(&event);
+        Some(event)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct HoverRevision {
+    screen: u64,
+    display_offset: usize,
+}
+
+#[derive(PartialEq, Eq)]
+struct HoveredLink {
+    revision: HoverRevision,
+    link: HyperlinkMatch,
+}
+
+fn update_selection_endpoint(selection: &mut GridSelection, point: GridPoint, side: GridSide) -> bool {
+    // Alacritty's endpoints are private; compare the small, allocation-free
+    // value rather than materializing a range (which can scan a wrapped line).
+    let previous = selection.clone();
+    selection.update(point, side);
+    *selection != previous
+}
+
+fn scroll_lines_if_changed(state: &TerminalState, lines: i32) -> bool {
+    if lines == 0 {
+        return false;
+    }
+    state.with_term_mut(|term| {
+        let offset = term.grid().display_offset();
+        if (lines < 0 && offset == 0) || (lines > 0 && offset == term.grid().history_size()) {
+            return false;
+        }
+        term.scroll_display(GridScroll::Delta(lines));
+        term.grid().display_offset() != offset
+    })
+}
+
 pub struct TerminalView {
     state: TerminalState,
-    renderer: TerminalRenderer,
+    renderer: std::rc::Rc<TerminalRenderer>,
     focus_handle: FocusHandle,
     stdin_writer: QueuedWriter,
     /// Independent of stdout: a failed input write must wake a silent terminal.
@@ -166,6 +250,7 @@ pub struct TerminalView {
     start_callback: Option<Box<dyn Fn() + Send + Sync>>,
     started: bool,
     blink_task: Option<Task<()>>,
+    blink_restart_pending: bool,
     drag_scroll_task: Option<Task<()>>,
 
     /// Shared with the event proxy so `CSI 14 t` / `CSI 18 t` can be answered.
@@ -202,7 +287,7 @@ pub struct TerminalView {
 
     search: SearchState,
     regex_searches: Option<RegexSearches>,
-    hovered_link: Option<HyperlinkMatch>,
+    hovered_link: Option<HoveredLink>,
 
     cursor_visible: bool,
     was_focused: bool,
@@ -212,10 +297,7 @@ pub struct TerminalView {
     read_only: bool,
     /// Events a background drain (`drain_background_events`) could not fully
     /// process and is saving for the next foreground render.
-    deferred_events: Vec<TerminalEvent>,
-    /// Scratch buffer reused by `process_events` / `drain_background_events`
-    /// so event draining does not allocate a fresh `Vec` per call.
-    event_scratch: Vec<TerminalEvent>,
+    deferred_events: DeferredWindowEvents,
     /// Last time search matches were recomputed; rescans are throttled while
     /// output is streaming (see `SEARCH_REFRESH_MIN_INTERVAL`).
     search_last_refresh: Option<std::time::Instant>,
@@ -223,6 +305,8 @@ pub struct TerminalView {
     search_refresh_pending: bool,
     /// Wakes the owed trailing rescan even when no further output/frame arrives.
     search_refresh_task: Option<Task<()>>,
+    search_epoch: u64,
+    search_select_first: bool,
     /// Last time this view rendered. Used to tell a visible terminal from a
     /// background one, which does not need live search matches.
     last_render: Option<std::time::Instant>,
@@ -263,15 +347,8 @@ pub struct TerminalViewMemory {
 }
 
 /// Minimum gap between full-scrollback search rescans while output streams in.
-/// Without this, every PTY batch re-scans up to 10k scrollback lines on the UI
-/// thread; with it, matches lag at most this long behind a burst.
-///
-/// Measured cost of one rescan over 10k lines x 120 cols (see the ignored
-/// `search_refresh_cost_over_full_scrollback` test): 8.0 ms average, 9.4 ms
-/// worst case. At this 500 ms cadence a visible search spends ~1.6% of the UI
-/// thread while a firehose runs; the old 150 ms cadence spent ~5.3% and could
-/// drop a frame every 150 ms. Hidden terminals skip the rescan entirely.
 const SEARCH_REFRESH_MIN_INTERVAL: Duration = Duration::from_millis(500);
+const SEARCH_SNAPSHOT_CELLS_PER_SLICE: usize = 8_192;
 
 /// A view that has not rendered for this long is treated as hidden. Background
 /// terminals still parse their output (the grid must stay current), but they do
@@ -286,6 +363,8 @@ const SEARCH_VISIBLE_WINDOW: Duration = Duration::from_secs(1);
 /// batch is ~4 ms, comfortably inside a 60 fps frame. The remainder stays
 /// queued and is picked up by the next loop iteration.
 const MAX_COALESCE_BYTES: usize = 128 * 1024;
+const PTY_READ_BYTES: usize = 32 * 1024;
+const PTY_RECYCLED_BUFFERS: usize = 8;
 
 /// Give a fast producer a moment to queue more before parsing, so a trickle of
 /// small reads becomes a few larger batches instead of tens of thousands of
@@ -308,8 +387,15 @@ async fn yield_to_ui() {
 }
 
 struct OutputChunk {
-    bytes: Vec<u8>,
+    buffer: Vec<u8>,
+    len: usize,
     read_at: Option<std::time::Instant>,
+}
+
+impl OutputChunk {
+    fn bytes(&self) -> &[u8] {
+        &self.buffer[..self.len]
+    }
 }
 
 /// Append PTY bytes to the hibernation backlog, keeping at most
@@ -409,12 +495,12 @@ impl TerminalView {
         state.set_palette(config.colors.clone());
         state.set_shell_token(config.shell_token.clone());
 
-        let renderer = TerminalRenderer::new(
+        let renderer = std::rc::Rc::new(TerminalRenderer::new(
             config.font_family.clone(),
             config.font_size,
             config.line_height_multiplier,
             config.colors.clone(),
-        );
+        ));
 
         let focus_handle = cx.focus_handle();
 
@@ -451,9 +537,10 @@ impl TerminalView {
         // to the reader thread — and through it to the PTY — instead of
         // queueing an unbounded number of byte chunks in memory.
         let (bytes_tx, bytes_rx) = flume::bounded::<OutputChunk>(256);
+        let (recycle_tx, recycle_rx) = flume::bounded(PTY_RECYCLED_BUFFERS);
 
         let start_reader: Box<dyn FnOnce() + Send> = Box::new(move || {
-            thread::spawn(move || Self::read_stdout_blocking(stdout_reader, bytes_tx));
+            thread::spawn(move || Self::read_stdout_blocking(stdout_reader, bytes_tx, recycle_rx));
         });
 
         let hibernated = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -491,19 +578,21 @@ impl TerminalView {
             }
             *notifier_slot.lock() = Some(notifier);
             let mut pending = None;
+            let mut batch = Vec::new();
             loop {
                 let next = match pending.take() {
                     Some(bytes) => Ok(bytes),
                     None => bytes_rx.recv_async().await,
                 };
                 match next {
-                    Ok(OutputChunk { mut bytes, read_at }) => {
+                    Ok(chunk) => {
                         // A hibernated pane has no grid to parse into. Buffer
                         // the newest bounded window for the wake replay and do
                         // not touch the UI: no parse, no notify, no paint.
                         if reader_hibernated.load(Ordering::Acquire) {
-                            let mut backlog = reader_backlog.lock();
-                            append_bounded(&mut backlog, &bytes);
+                            batch = Vec::new();
+                            append_bounded(&mut reader_backlog.lock(), chunk.bytes());
+                            let _ = recycle_tx.try_send(chunk.buffer);
                             continue;
                         }
                         // Coalesce what already arrived so a firehose of output
@@ -517,26 +606,32 @@ impl TerminalView {
                         // so parsing immediately keeps bulk throughput intact;
                         // the pause is only there to batch the trickle a fast
                         // producer writes between wakeups.
-                        if bytes.len() < MAX_COALESCE_BYTES && bytes_rx.is_empty() {
+                        if bytes_rx.is_empty() {
                             cx.background_executor().timer(COALESCE_DELAY).await;
                         }
-                        while bytes.len() < MAX_COALESCE_BYTES {
+                        batch.clear();
+                        while batch.len().max(chunk.len) < MAX_COALESCE_BYTES {
                             let Ok(more) = bytes_rx.try_recv() else {
                                 break;
                             };
-                            if more.bytes.len() > MAX_COALESCE_BYTES - bytes.len() {
-                                // Keep the entire next chunk rather than overshoot
-                                // the parse budget or allocate/copy a split tail.
+                            if more.len > MAX_COALESCE_BYTES - batch.len().max(chunk.len) {
                                 pending = Some(more);
                                 break;
                             }
-                            bytes.extend_from_slice(&more.bytes);
+                            if batch.is_empty() {
+                                batch.reserve(MAX_COALESCE_BYTES);
+                                batch.extend_from_slice(chunk.bytes());
+                            }
+                            batch.extend_from_slice(more.bytes());
+                            let _ = recycle_tx.try_send(more.buffer);
                         }
+                        let bytes = if batch.is_empty() { chunk.bytes() } else { batch.as_slice() };
+                        let read_at = chunk.read_at;
 
                         let result = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
                             crate::diagnostics::output_queued(read_at, bytes_rx.len());
                             let diag_parse = crate::diagnostics::parse_start();
-                            let shell_events = view.state.process_bytes(&bytes);
+                            let shell_events = view.state.process_bytes(bytes);
                             crate::diagnostics::parse_end(diag_parse, bytes.len());
                             crate::diagnostics::output_parsed(&view.pending_output, read_at);
                             for event in shell_events {
@@ -553,6 +648,7 @@ impl TerminalView {
                             }
                             cx.notify();
                         });
+                        let _ = recycle_tx.try_send(chunk.buffer);
                         if result.is_err() {
                             break;
                         }
@@ -587,6 +683,7 @@ impl TerminalView {
             start_callback: None,
             started: false,
             blink_task: None,
+            blink_restart_pending: false,
             drag_scroll_task: None,
             window_size,
             palette_handle,
@@ -616,11 +713,12 @@ impl TerminalView {
             title: None,
             exit_status: None,
             exited: false,
-            deferred_events: Vec::new(),
-            event_scratch: Vec::new(),
+            deferred_events: DeferredWindowEvents::default(),
             search_last_refresh: None,
             search_refresh_pending: false,
             search_refresh_task: None,
+            search_epoch: 0,
+            search_select_first: false,
             last_render: None,
             hibernated,
             hibernated_text: String::new(),
@@ -656,7 +754,8 @@ impl TerminalView {
     /// Discard only resources which a foreground render can reconstruct.
     pub fn release_idle_resources(&mut self) {
         self.blink_task = None;
-        self.search_refresh_task = None;
+        self.search_epoch = self.search_epoch.wrapping_add(1);
+        self.search_select_first = false;
         self.drag_scroll_task = None;
         self.search_refresh_pending = false;
         self.search_last_refresh = None;
@@ -669,7 +768,6 @@ impl TerminalView {
         self.renderer.release_idle_resources();
         self.regex_searches = None;
         self.search.release_idle_resources();
-        self.event_scratch = Vec::new();
     }
 
     /// Hibernate: replace the grid with an empty one and keep only bounded
@@ -738,7 +836,7 @@ impl TerminalView {
         }
         self.state.scroll_to_bottom();
         self.screen_revision.fetch_add(1, Ordering::Relaxed);
-        self.search.clear();
+        self.reset_search();
         self.regex_searches = None;
         true
     }
@@ -833,7 +931,15 @@ impl TerminalView {
     }
 
     pub fn set_read_only(&mut self, read_only: bool) {
-        self.read_only = read_only;
+        if self.read_only != read_only {
+            self.read_only = read_only;
+            if read_only {
+                self.blink_task = None;
+                self.cursor_visible = true;
+            } else {
+                self.blink_restart_pending = true;
+            }
+        }
     }
 
     pub fn is_read_only(&self) -> bool {
@@ -846,16 +952,17 @@ impl TerminalView {
     fn read_stdout_blocking<R: Read + Send + 'static>(
         mut stdout_reader: R,
         bytes_tx: flume::Sender<OutputChunk>,
+        recycle_rx: flume::Receiver<Vec<u8>>,
     ) {
-        let mut buffer = [0u8; 32768];
-
         loop {
+            let mut buffer = recycle_rx.try_recv().unwrap_or_else(|_| vec![0; PTY_READ_BYTES]);
             match stdout_reader.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(n) => {
                     let read_at = crate::diagnostics::output_received();
                     let chunk = OutputChunk {
-                        bytes: buffer[..n].to_vec(),
+                        buffer,
+                        len: n,
                         read_at,
                     };
                     if bytes_tx.send(chunk).is_err() {
@@ -942,7 +1049,11 @@ impl TerminalView {
     /// Convert a mouse position into a grid point plus the side of the cell the
     /// pointer is on, which is what alacritty's selection needs to decide
     /// whether a cell is included.
-    fn grid_point_and_side(&self, position: Point<Pixels>) -> (GridPoint, GridSide) {
+    fn grid_point_and_side(
+        &self,
+        position: Point<Pixels>,
+        display_offset: usize,
+    ) -> (GridPoint, GridSide) {
         let origin = self.content_origin();
         let cell_w = f32::from(self.renderer.cell_width).max(1.0);
         let cell_h = f32::from(self.renderer.cell_height).max(1.0);
@@ -962,7 +1073,6 @@ impl TerminalView {
             GridSide::Left
         };
 
-        let display_offset = self.state.display_offset();
         let point = viewport_to_point(display_offset, GridPoint::new(row, GridColumn(col)));
         (point, side)
     }
@@ -1005,8 +1115,9 @@ impl TerminalView {
     // -----------------------------------------------------------------------
 
     pub fn scroll_lines(&mut self, lines: i32, cx: &mut Context<Self>) {
-        self.state.scroll_lines(lines);
-        cx.notify();
+        if scroll_lines_if_changed(&self.state, lines) {
+            cx.notify();
+        }
     }
 
     pub fn scroll_to_bottom(&mut self, cx: &mut Context<Self>) {
@@ -1054,10 +1165,7 @@ impl TerminalView {
 
         let target_offset = ((1.0 - fraction) * history_size as f32).round() as i32;
         let delta = target_offset - self.state.display_offset() as i32;
-        if delta != 0 {
-            self.state.scroll_lines(delta);
-            cx.notify();
-        }
+        self.scroll_lines(delta, cx);
     }
 
     // -----------------------------------------------------------------------
@@ -1151,36 +1259,45 @@ impl TerminalView {
     // Search
     // -----------------------------------------------------------------------
 
-    /// Set the search query. Pass an empty query to clear.
+    /// Set and validate a query; highlights are published asynchronously.
     pub fn search(&mut self, query: &str, use_regex: bool, cx: &mut Context<Self>) -> bool {
-        self.search_refresh_task = None;
-        self.search_refresh_pending = false;
-        self.search_last_refresh = Some(std::time::Instant::now());
-        let ok = self.search.set_query(query, use_regex, &self.state);
+        self.reset_search();
+        let ok = self.search.prepare_query(query, use_regex);
         if ok && !query.is_empty() {
-            // Focus the first match and scroll it into view.
-            self.search.advance(GridDirection::Right, &self.state);
+            self.search_select_first = true;
+            self.refresh_streaming_search(cx);
         }
         cx.notify();
         ok
     }
 
     pub fn next_match(&mut self, cx: &mut Context<Self>) {
-        self.search.advance(GridDirection::Right, &self.state);
-        cx.notify();
+        if !self.search.matches().is_empty()
+            && self.search.advance(GridDirection::Right, &self.state).is_some()
+        {
+            cx.notify();
+        }
     }
 
     pub fn previous_match(&mut self, cx: &mut Context<Self>) {
-        self.search.advance(GridDirection::Left, &self.state);
-        cx.notify();
+        if !self.search.matches().is_empty()
+            && self.search.advance(GridDirection::Left, &self.state).is_some()
+        {
+            cx.notify();
+        }
     }
 
     pub fn clear_search(&mut self, cx: &mut Context<Self>) {
+        self.reset_search();
+        cx.notify();
+    }
+
+    fn reset_search(&mut self) {
         self.search.clear();
-        self.search_refresh_task = None;
+        self.search_epoch = self.search_epoch.wrapping_add(1);
+        self.search_select_first = false;
         self.search_refresh_pending = false;
         self.search_last_refresh = None;
-        cx.notify();
     }
 
     /// `(current, total)` match counters for a search UI.
@@ -1189,39 +1306,79 @@ impl TerminalView {
     }
 
     fn refresh_streaming_search(&mut self, cx: &mut Context<Self>) {
-        let now = std::time::Instant::now();
-        let remaining = self.search_last_refresh.map_or(Duration::ZERO, |last| {
-            SEARCH_REFRESH_MIN_INTERVAL.saturating_sub(now.duration_since(last))
-        });
-        if remaining.is_zero() {
-            self.search.refresh(&self.state);
-            self.search_last_refresh = Some(now);
-            self.search_refresh_pending = false;
-            self.search_refresh_task = None;
-            return;
-        }
-
         self.search_refresh_pending = true;
         if self.search_refresh_task.is_some() {
             return;
         }
-        self.search_refresh_task = Some(cx.spawn(
-            async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
-                cx.background_executor().timer(remaining).await;
-                let _ = this.update(cx, |view, cx| {
-                    view.search_refresh_task = None;
-                    if view.search_refresh_pending
-                        && view.search.is_active()
-                        && view.visible_recently()
-                    {
-                        view.search.refresh(&view.state);
-                        view.search_last_refresh = Some(std::time::Instant::now());
-                        view.search_refresh_pending = false;
-                        cx.notify();
-                    }
+        let remaining = self.search_last_refresh.map_or(Duration::ZERO, |last| {
+            SEARCH_REFRESH_MIN_INTERVAL.saturating_sub(last.elapsed())
+        });
+        self.search_refresh_task = Some(cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let executor = cx.background_executor().clone();
+            if !remaining.is_zero() {
+                executor.timer(remaining).await;
+            }
+            let Ok(Some((mut regex, epoch, revision, columns, lines, top))) = this.update(cx, |view, _| {
+                if !view.search_refresh_pending || !(view.search_select_first || view.visible_recently()) {
+                    return None;
+                }
+                let regex = view.search.take_regex()?;
+                view.search_refresh_pending = false;
+                view.search_last_refresh = Some(std::time::Instant::now());
+                let (columns, lines, top) = view.state.with_term(|term| {
+                    (term.columns(), term.total_lines(), term.topmost_line().0)
                 });
-            },
-        ));
+                Some((regex, view.search_epoch, view.screen_revision(), columns, lines, top))
+            }) else {
+                let _ = this.update(cx, |view, _| view.search_refresh_task = None);
+                return;
+            };
+            let mut snapshot = executor.spawn(async move { SearchSnapshot::new(columns, lines, top) }).await;
+            let total = columns * lines;
+            let mut complete = true;
+            for start in (0..total).step_by(SEARCH_SNAPSHOT_CELLS_PER_SLICE) {
+                let copied = this.update(cx, |view, _| {
+                    if epoch != view.search_epoch || revision != view.screen_revision() {
+                        return false;
+                    }
+                    view.state.with_term(|term| {
+                        snapshot.copy_cells(term, start, (total - start).min(SEARCH_SNAPSHOT_CELLS_PER_SLICE));
+                    });
+                    true
+                });
+                if !matches!(copied, Ok(true)) {
+                    complete = false;
+                    break;
+                }
+                if total - start > SEARCH_SNAPSHOT_CELLS_PER_SLICE {
+                    yield_to_ui().await;
+                }
+            }
+            let (regex, matches) = executor
+                .spawn(async move {
+                    let matches = complete.then(|| snapshot.matches(&mut regex));
+                    (regex, matches)
+                })
+                .await;
+            let _ = this.update(cx, |view, cx| {
+                view.search_refresh_task = None;
+                if epoch == view.search_epoch {
+                    view.search.finish_scan(regex);
+                    if let Some(matches) = matches.filter(|_| revision == view.screen_revision()) {
+                        view.search.set_matches(matches);
+                        if std::mem::take(&mut view.search_select_first) {
+                            view.search.advance(GridDirection::Right, &view.state);
+                        }
+                        cx.notify();
+                    } else {
+                        view.search_refresh_pending = true;
+                    }
+                }
+                if view.search_refresh_pending && (view.search_select_first || view.visible_recently()) {
+                    view.refresh_streaming_search(cx);
+                }
+            });
+        }));
     }
 
     // -----------------------------------------------------------------------
@@ -1350,6 +1507,13 @@ impl TerminalView {
         }
     }
 
+    fn hover_revision(&self) -> HoverRevision {
+        HoverRevision {
+            screen: self.screen_revision(),
+            display_offset: self.state.display_offset(),
+        }
+    }
+
     fn update_hovered_link(
         &mut self,
         position: Point<Pixels>,
@@ -1363,18 +1527,20 @@ impl TerminalView {
             return;
         }
 
-        let (point, _) = self.grid_point_and_side(position);
-        if let Some(existing) = self.hovered_link.as_ref() {
-            if existing.contains(point) {
-                return;
-            }
+        let revision = self.hover_revision();
+        let (point, _) = self.grid_point_and_side(position, revision.display_offset);
+        if self.hovered_link.as_ref().is_some_and(|hovered| {
+            hovered.revision == revision && hovered.link.contains(point)
+        }) {
+            return;
         }
 
         let detect_paths = self.config.detect_path_links;
         let searches = self.regex_searches.get_or_insert_with(RegexSearches::new);
         let found = self
             .state
-            .with_term(|term| crate::hyperlink::find_at(term, point, searches, detect_paths));
+            .with_term(|term| crate::hyperlink::find_at(term, point, searches, detect_paths))
+            .map(|link| HoveredLink { revision, link });
 
         if found != self.hovered_link {
             self.hovered_link = found;
@@ -1537,7 +1703,11 @@ impl TerminalView {
         if let Some(bytes) = keystroke_to_bytes(keystroke, self.state.mode()) {
             self.scroll_to_bottom_on_input(cx);
             self.write_to_pty(&bytes);
+            let cursor_was_hidden = !self.cursor_visible;
             self.restart_blink(cx);
+            if cursor_was_hidden {
+                cx.notify();
+            }
         }
     }
 
@@ -1565,6 +1735,7 @@ impl TerminalView {
         }
 
         if self.is_over_scrollbar(event.position) {
+            self.drag_scroll_task = None;
             self.scrollbar_dragging = true;
             self.scroll_to_mouse_y(event.position.y, cx);
             return;
@@ -1572,14 +1743,13 @@ impl TerminalView {
 
         self.mouse_down_button = Some(event.button);
 
-        let (point, side) = self.grid_point_and_side(event.position);
         let mode = self.state.mode();
 
         // Modifier-click opens the hyperlink under the pointer.
         if event.button == MouseButton::Left && Self::link_modifier_held(&event.modifiers) {
             self.update_hovered_link(event.position, &event.modifiers, cx);
-            if let Some(link) = self.hovered_link.clone() {
-                self.activate_link(link, window, cx);
+            if let Some(hovered) = &self.hovered_link {
+                self.activate_link(hovered.link.clone(), window, cx);
                 return;
             }
         }
@@ -1608,6 +1778,7 @@ impl TerminalView {
 
         match event.button {
             MouseButton::Left => {
+                let (point, side) = self.grid_point_and_side(event.position, self.state.display_offset());
                 let ty = match event.click_count {
                     0 | 1 => {
                         if event.modifiers.alt {
@@ -1700,6 +1871,7 @@ impl TerminalView {
         let motion_reporting = mode.intersects(TermMode::MOUSE_MOTION | TermMode::MOUSE_DRAG);
 
         if motion_reporting && !event.modifiers.shift {
+            self.drag_scroll_task = None;
             let viewport_point = self.viewport_point(event.position);
             if viewport_point != self.last_reported_cell {
                 let modifiers = crate::mouse::encode_modifiers(
@@ -1718,44 +1890,49 @@ impl TerminalView {
         }
 
         if self.mouse_down_button == Some(MouseButton::Left) {
-            self.extend_selection_to(event.position, cx);
-
-            // Dragging above/below the viewport keeps scrolling, which is what
-            // makes selecting more than one screen of output possible.
-            let lines = self.drag_scroll_lines(event.position);
-            if lines != 0 {
-                self.start_drag_scroll(lines, cx);
-            } else {
-                self.drag_scroll_task = None;
+            if self.extend_selection_to(event.position) {
+                cx.notify();
+            }
+            if self.drag_scroll_lines(event.position) != 0 {
+                self.start_drag_scroll(cx);
+                return;
             }
         }
+        self.drag_scroll_task = None;
     }
 
-    fn extend_selection_to(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let (point, side) = self.grid_point_and_side(position);
-        self.state.update_selection(point, side);
-        cx.notify();
+    fn extend_selection_to(&self, position: Point<Pixels>) -> bool {
+        let (point, side) = self.grid_point_and_side(position, self.state.display_offset());
+        self.state.with_term_mut(|term| {
+            term.selection
+                .as_mut()
+                .is_some_and(|selection| update_selection_endpoint(selection, point, side))
+        })
     }
 
-    fn start_drag_scroll(&mut self, lines: i32, cx: &mut Context<Self>) {
+    fn start_drag_scroll(&mut self, cx: &mut Context<Self>) {
+        if self.drag_scroll_task.is_some() || self.exited {
+            return;
+        }
         self.drag_scroll_task = Some(cx.spawn(
             async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
                 loop {
                     cx.background_executor().timer(DRAG_SCROLL_INTERVAL).await;
-
                     let keep_going = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
-                        if view.mouse_down_button != Some(MouseButton::Left) {
-                            return false;
-                        }
-                        view.state.scroll_lines(lines);
                         let position = view.last_mouse_position;
-                        view.extend_selection_to(position, cx);
-                        true
+                        if view.mouse_down_button == Some(MouseButton::Left)
+                            && scroll_lines_if_changed(&view.state, view.drag_scroll_lines(position))
+                        {
+                            view.extend_selection_to(position);
+                            cx.notify();
+                            true
+                        } else {
+                            view.drag_scroll_task = None;
+                            false
+                        }
                     });
-
-                    match keep_going {
-                        Ok(true) => {}
-                        _ => break,
+                    if !matches!(keep_going, Ok(true)) {
+                        break;
                     }
                 }
             },
@@ -1816,6 +1993,14 @@ impl TerminalView {
         lines = lines.clamp(-max_lines, max_lines);
 
         let mode = self.state.mode();
+        let in_alt_screen = mode.contains(TermMode::ALT_SCREEN);
+        let reporting = self.mouse_reporting_active(mode);
+
+        if !in_alt_screen && !reporting {
+            self.scroll_lines(lines, cx);
+            return;
+        }
+
         let modifiers = crate::mouse::encode_modifiers(
             event.modifiers.shift,
             event.modifiers.alt,
@@ -1824,18 +2009,6 @@ impl TerminalView {
         let cell_point = self
             .viewport_point(event.position)
             .unwrap_or_else(|| GridPoint::new(GridLine(0), GridColumn(0)));
-
-        let in_alt_screen = mode.contains(TermMode::ALT_SCREEN);
-        let reporting = self.mouse_reporting_active(mode);
-
-        // Browsing history wins whenever there *is* history to browse and the
-        // application is not tracking the mouse. In the alternate screen there
-        // is no scrollback, so the event always goes to the application.
-        if !in_alt_screen && !reporting {
-            self.state.scroll_lines(lines);
-            cx.notify();
-            return;
-        }
 
         if reporting {
             if let Some(report) = crate::mouse::scroll_report(lines, cell_point, modifiers, mode) {
@@ -1854,25 +2027,29 @@ impl TerminalView {
             }
         }
 
-        self.state.scroll_lines(lines);
-        cx.notify();
+        self.scroll_lines(lines, cx);
     }
 
     // -----------------------------------------------------------------------
     // Cursor blink & focus
     // -----------------------------------------------------------------------
 
+    fn can_blink(&self) -> bool {
+        !self.read_only
+            && !self.exited
+            && self.config.cursor_blink
+            && self.was_focused
+            && self.state.cursor_blinking()
+    }
+
     fn restart_blink(&mut self, cx: &mut Context<Self>) {
+        self.blink_restart_pending = false;
         self.cursor_visible = true;
 
         // Only animate when the terminal is focused *and* the application
         // actually asked for a blinking cursor — otherwise we would repaint
         // twice a second for nothing.
-        if !self.visible_recently()
-            || !self.config.cursor_blink
-            || !self.was_focused
-            || !self.state.cursor_blinking()
-        {
+        if !self.visible_recently() || !self.can_blink() {
             self.blink_task = None;
             return;
         }
@@ -1888,10 +2065,7 @@ impl TerminalView {
                     // when blinking is wanted again.
                     let mut keep_going = false;
                     let alive = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
-                        if view.was_focused
-                            && view.config.cursor_blink
-                            && view.state.cursor_blinking()
-                        {
+                        if view.can_blink() {
                             view.cursor_visible = !view.cursor_visible;
                             cx.notify();
                             keep_going = true;
@@ -1922,145 +2096,126 @@ impl TerminalView {
     // -----------------------------------------------------------------------
 
     fn process_events(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // Drain into a buffer first so the borrow on `self.event_rx` ends before
-        // we start calling `&mut self` methods. The buffer is a reused scratch
-        // field (its capacity survives across frames) rather than a fresh Vec.
-        let mut events = std::mem::take(&mut self.event_scratch);
-        events.clear();
+        while let Some(event) = self.deferred_events.pop() {
+            self.process_window_event(event, true, window, cx);
+        }
         while let Ok(event) = self.event_rx.try_recv() {
-            events.push(event);
+            self.process_window_event(event, false, window, cx);
         }
-        if !self.deferred_events.is_empty() {
-            events.extend(self.deferred_events.drain(..));
-        }
-
-        // `drain` (not `into_iter`): the events are moved out one by one while
-        // the buffer keeps its allocation for the trip back to the scratch field.
-        for event in events.drain(..) {
-            match event {
-                TerminalEvent::Wakeup | TerminalEvent::MouseCursorDirty => {}
-
-                TerminalEvent::Bell => {
-                    if let Some(callback) = self.bell_callback.take() {
-                        callback(window, cx);
-                        self.bell_callback = Some(callback);
-                    }
-                }
-
-                TerminalEvent::Title(title) => {
-                    if let Some(callback) = self.title_callback.take() {
-                        callback(window, cx, &title);
-                        self.title_callback = Some(callback);
-                    }
-                    self.title = Some(title);
-                }
-
-                TerminalEvent::ResetTitle => {
-                    self.title = None;
-                    if let Some(callback) = self.title_callback.take() {
-                        callback(window, cx, "");
-                        self.title_callback = Some(callback);
-                    }
-                }
-
-                TerminalEvent::ClipboardStore(_, text) => {
-                    if let Some(callback) = self.clipboard_store_callback.take() {
-                        callback(window, cx, &text);
-                        self.clipboard_store_callback = Some(callback);
-                    }
-                    cx.write_to_clipboard(ClipboardItem::new_string(text));
-                }
-
-                TerminalEvent::ClipboardLoad(_, formatter) => {
-                    if self.config.allow_osc52_paste {
-                        let text = cx
-                            .read_from_clipboard()
-                            .and_then(|item| item.text())
-                            .unwrap_or_default();
-                        let payload = formatter(&text);
-                        self.write_to_pty(payload.as_bytes());
-                    }
-                }
-
-                TerminalEvent::CursorBlinkingChange => {
-                    self.restart_blink(cx);
-                }
-
-                TerminalEvent::ChildExit(code) => {
-                    self.exit_status = Some(code);
-                }
-
-                TerminalEvent::Exit => {
-                    if self.exited {
-                        continue;
-                    }
-                    self.exited = true;
-                    self.blink_task = None;
-                    self.drag_scroll_task = None;
-                    if let Some(callback) = self.exit_callback.take() {
-                        callback(window, cx);
-                        self.exit_callback = Some(callback);
-                    }
-                }
-            }
-        }
-
-        // Hand the buffer back so its capacity is reused next frame.
-        self.event_scratch = events;
     }
 
-    /// Consume pending PTY events for a *background* terminal.
-    ///
-    /// Background terminals are not painted, so their `render` never runs and
-    /// `Title` / `ChildExit` events would otherwise queue up until the user
-    /// switches to that tab. A host status poller calls this each tick so
-    /// `title()`, `exit_status()` and `has_exited()` stay current for every
-    /// session at once. Events that genuinely need a window (the `Exit`
-    /// callback, clipboard interactions) are buffered in `deferred_events` and
-    /// replayed by the next foreground `process_events`.
-    pub fn drain_background_events(&mut self, cx: &mut Context<Self>) {
-        let mut events = std::mem::take(&mut self.event_scratch);
-        events.clear();
-        while let Ok(event) = self.event_rx.try_recv() {
-            events.push(event);
+    fn process_window_event(
+        &mut self,
+        event: TerminalEvent,
+        deferred: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            TerminalEvent::Wakeup | TerminalEvent::MouseCursorDirty => {}
+            TerminalEvent::Bell => {
+                if let Some(callback) = self.bell_callback.take() {
+                    callback(window, cx);
+                    self.bell_callback = Some(callback);
+                }
+            }
+            TerminalEvent::Title(title) => {
+                if let Some(callback) = self.title_callback.take() {
+                    callback(window, cx, &title);
+                    self.title_callback = Some(callback);
+                }
+                if !deferred {
+                    self.title = Some(title);
+                }
+            }
+            TerminalEvent::ResetTitle => {
+                if !deferred {
+                    self.title = None;
+                }
+                if let Some(callback) = self.title_callback.take() {
+                    callback(window, cx, "");
+                    self.title_callback = Some(callback);
+                }
+            }
+            TerminalEvent::ClipboardStore(_, text) => {
+                if let Some(callback) = self.clipboard_store_callback.take() {
+                    callback(window, cx, &text);
+                    self.clipboard_store_callback = Some(callback);
+                }
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+            }
+            TerminalEvent::ClipboardLoad(_, formatter) => {
+                if self.config.allow_osc52_paste {
+                    let text = cx
+                        .read_from_clipboard()
+                        .and_then(|item| item.text())
+                        .unwrap_or_default();
+                    let payload = formatter(&text);
+                    self.write_to_pty(payload.as_bytes());
+                }
+            }
+            TerminalEvent::CursorBlinkingChange => self.blink_restart_pending = true,
+            TerminalEvent::ChildExit(code) => self.exit_status = Some(code),
+            TerminalEvent::Exit => {
+                self.mark_exited();
+                // Observation may have been in the background; the callback
+                // is consumed only here, with a window, and cannot run twice.
+                if let Some(callback) = self.exit_callback.take() {
+                    callback(window, cx);
+                }
+            }
         }
+    }
 
-        // `drain` (not `into_iter`): the events are moved out one by one while
-        // the buffer keeps its allocation for the trip back to the scratch field.
-        for event in events.drain(..) {
+    fn mark_exited(&mut self) -> bool {
+        if self.exited {
+            return false;
+        }
+        self.exited = true;
+        self.blink_task = None;
+        self.cursor_visible = true;
+        self.drag_scroll_task = None;
+        true
+    }
+
+    /// Update background-readable state now and replay bounded window effects
+    /// before newly received events on the next render.
+    pub fn drain_background_events(&mut self, cx: &mut Context<Self>) {
+        let mut state_changed = false;
+        while let Ok(event) = self.event_rx.try_recv() {
             match event {
                 TerminalEvent::Title(title) => {
+                    if title.len() <= MAX_DEFERRED_WINDOW_TEXT_BYTES {
+                        self.deferred_events.push(TerminalEvent::Title(title.clone()));
+                    }
                     self.title = Some(title);
-                    cx.notify();
+                    state_changed = true;
                 }
                 TerminalEvent::ResetTitle => {
                     self.title = None;
-                    cx.notify();
+                    self.deferred_events.push(TerminalEvent::ResetTitle);
+                    state_changed = true;
                 }
                 TerminalEvent::ChildExit(code) => {
                     self.exit_status = Some(code);
-                    cx.notify();
+                    state_changed = true;
                 }
-                // State-only: keep the flag, leave the callback for the
-                // foreground render.
                 TerminalEvent::Exit => {
-                    self.exited = true;
-                    self.blink_task = None;
-                    self.drag_scroll_task = None;
-                    self.deferred_events.push(TerminalEvent::Exit);
-                    cx.notify();
+                    if self.mark_exited() {
+                        self.deferred_events.push(TerminalEvent::Exit);
+                        state_changed = true;
+                    }
                 }
-                // No state impact for an unfocused terminal: drop.
-                TerminalEvent::Wakeup
-                | TerminalEvent::MouseCursorDirty
-                | TerminalEvent::Bell
-                | TerminalEvent::CursorBlinkingChange
+                TerminalEvent::CursorBlinkingChange => self.blink_restart_pending = true,
+                event @ (TerminalEvent::Bell
                 | TerminalEvent::ClipboardStore(..)
-                | TerminalEvent::ClipboardLoad(..) => {}
+                | TerminalEvent::ClipboardLoad(..)) => self.deferred_events.push(event),
+                TerminalEvent::Wakeup | TerminalEvent::MouseCursorDirty => {}
             }
         }
-
-        self.event_scratch = events;
+        if state_changed {
+            cx.notify();
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -2185,12 +2340,12 @@ impl TerminalView {
     pub fn clear(&mut self, cx: &mut Context<Self>) {
         self.state.clear_screen_and_scrollback();
         self.screen_revision.fetch_add(1, Ordering::Relaxed);
-        self.search.clear();
+        self.reset_search();
         cx.notify();
     }
 
     pub fn update_config(&mut self, config: TerminalConfig, cx: &mut Context<Self>) {
-        let metrics_changed = self.renderer.font_family != config.font_family
+        let metrics_changed = self.renderer.font_family.as_str() != config.font_family
             || self.renderer.font_size != config.font_size
             || self.renderer.line_height_multiplier != config.line_height_multiplier;
 
@@ -2198,10 +2353,12 @@ impl TerminalView {
             || self.config.semantic_escape_chars != config.semantic_escape_chars
             || self.config.allow_osc52_paste != config.allow_osc52_paste;
 
-        self.renderer.font_family = config.font_family.clone();
-        self.renderer.font_size = config.font_size;
-        self.renderer.line_height_multiplier = config.line_height_multiplier;
-        self.renderer.palette = config.colors.clone();
+        let renderer = std::rc::Rc::make_mut(&mut self.renderer);
+        renderer.font_family = config.font_family.clone().into();
+        renderer.font_size = config.font_size;
+        renderer.line_height_multiplier = config.line_height_multiplier;
+        renderer.palette = config.colors.clone();
+        self.screen_revision.fetch_add(1, Ordering::Relaxed);
         // Applications may query OSC 11 immediately after the palette report.
         *self.palette_handle.lock() = config.colors.clone();
         self.state.set_palette(config.colors.clone());
@@ -2221,6 +2378,10 @@ impl TerminalView {
                 &config.semantic_escape_chars,
                 config.allow_osc52_paste,
             ));
+            if self.search.is_active() {
+                self.search.invalidate_matches();
+                self.refresh_streaming_search(cx);
+            }
         }
 
         self.config = config;
@@ -2265,30 +2426,31 @@ impl Render for TerminalView {
         let grid_size = self.dimensions();
         let grid_changed = grid_size != self.last_grid_size;
         self.last_grid_size = grid_size;
-        let search_due = self.search_refresh_pending
-            && self
-                .search_last_refresh
-                .is_none_or(|last| now.duration_since(last) >= SEARCH_REFRESH_MIN_INTERVAL);
-        if self.search.is_active() && (was_hidden || grid_changed || search_due) {
-            self.search.refresh(&self.state);
-            self.search_last_refresh = Some(now);
-            self.search_refresh_pending = false;
-            self.search_refresh_task = None;
+        if self.search.is_active() && (was_hidden || grid_changed) {
+            self.search.invalidate_matches();
+            self.refresh_streaming_search(cx);
+        }
+        if self
+            .hovered_link
+            .as_ref()
+            .is_some_and(|hovered| hovered.revision != self.hover_revision())
+        {
+            self.hovered_link = None;
         }
 
         if !self.cell_metrics_valid {
-            self.renderer.measure_cell(window);
+            std::rc::Rc::make_mut(&mut self.renderer).measure_cell(window);
             self.cell_metrics_valid = true;
         }
 
         let is_focused = self.focus_handle.is_focused(window);
-        if is_focused != self.was_focused {
+        let focus_changed = is_focused != self.was_focused;
+        if focus_changed {
             self.was_focused = is_focused;
             self.state.set_focused(is_focused);
             self.report_focus_change(is_focused);
-            self.restart_blink(cx);
         }
-        if was_hidden && self.blink_task.is_none() {
+        if focus_changed || self.blink_restart_pending || (was_hidden && self.blink_task.is_none()) {
             self.restart_blink(cx);
         }
 
@@ -2300,12 +2462,12 @@ impl Render for TerminalView {
         let window_size = self.window_size.clone();
         let screen_revision = Arc::clone(&self.screen_revision);
         let pending_output = Arc::clone(&self.pending_output);
+        let entity_id = cx.entity_id();
 
         let selection: Option<SelectionRange> = self.state.selection_range();
         let search_matches: Arc<[GridMatch]> = self.search.matches_arc();
         let active_match_index = self.search.current_index();
-        let hovered_link: Option<RangeInclusive<GridPoint>> =
-            self.hovered_link.as_ref().map(|link| link.range.clone());
+        let hovered_link = self.hovered_link.as_ref().map(|hovered| hovered.link.range.clone());
         let cursor_visible = self.cursor_visible && !self.read_only;
         let show_scrollbar = self.config.show_scrollbar;
         let scrollbar_active = self.scrollbar_dragging || self.scrollbar_hovered;
@@ -2355,9 +2517,11 @@ impl Render for TerminalView {
                         let mut term = state_arc.lock();
                         let current_cols = term.columns();
                         let current_rows = term.screen_lines();
-                        if cols != current_cols || rows != current_rows {
+                        let resized = cols != current_cols || rows != current_rows;
+                        if resized {
                             term.resize(crate::terminal::TermDimensions::new(cols, rows));
                             screen_revision.fetch_add(1, Ordering::Relaxed);
+                            drop(term);
                             *window_size.lock() = PtyWindowSize {
                                 num_lines: rows as u16,
                                 num_cols: cols as u16,
@@ -2367,14 +2531,20 @@ impl Render for TerminalView {
                             if let Some(ref callback) = resize_callback {
                                 callback(cols, rows);
                             }
+                            window.on_next_frame(move |_, cx| cx.notify(entity_id));
+                            term = state_arc.lock();
                         }
 
                         let paint_ctx = PaintContext {
-                            selection,
-                            search_matches: &search_matches,
-                            active_match: active_match_index
-                                .and_then(|index| search_matches.get(index)),
-                            hovered_link: hovered_link.as_ref(),
+                            selection: if resized { None } else { selection },
+                            search_matches: (!resized).then_some(&search_matches),
+                            screen_revision: Some(screen_revision.load(Ordering::Relaxed)),
+                            active_match: if resized {
+                                None
+                            } else {
+                                active_match_index.and_then(|index| search_matches.get(index))
+                            },
+                            hovered_link: if resized { None } else { hovered_link.as_ref() },
                             is_focused,
                             cursor_visible,
                             show_scrollbar,
@@ -2469,5 +2639,69 @@ mod hibernation_tests {
         assert_eq!(tail_lines("a\nb\nc\n", 10), "a\nb\nc\n");
         assert_eq!(tail_lines("a\nb\nc\n", 0), "");
         assert_eq!(tail_lines("no newline", 1), "no newline");
+    }
+}
+
+#[cfg(test)]
+mod terminal_interaction_tests {
+    use super::{
+        DeferredWindowEvents, GpuiEventProxy, GridColumn, GridLine, GridPoint, GridSelection,
+        GridSelectionType, GridSide, MAX_DEFERRED_WINDOW_EVENTS, MAX_DEFERRED_WINDOW_TEXT_BYTES,
+        TerminalEvent, TerminalState, mpsc, scroll_lines_if_changed, update_selection_endpoint,
+    };
+
+    #[test]
+    fn deferred_fifo_evicts_oldest_without_losing_exit() {
+        let mut queue = DeferredWindowEvents::default();
+        queue.push(TerminalEvent::Bell);
+        queue.push(TerminalEvent::Exit);
+        for index in 0..MAX_DEFERRED_WINDOW_EVENTS {
+            queue.push(TerminalEvent::Title(index.to_string()));
+        }
+        assert!(matches!(queue.pop(), Some(TerminalEvent::Exit)));
+        for index in 1..MAX_DEFERRED_WINDOW_EVENTS {
+            assert!(matches!(queue.pop(), Some(TerminalEvent::Title(title)) if title == index.to_string()));
+        }
+        assert!(queue.pop().is_none());
+    }
+
+    #[test]
+    fn deferred_fifo_bounds_text_and_does_not_evict_for_oversized_event() {
+        let mut queue = DeferredWindowEvents::default();
+        queue.push(TerminalEvent::Exit);
+        queue.push(TerminalEvent::Title("x".repeat(MAX_DEFERRED_WINDOW_TEXT_BYTES)));
+        queue.push(TerminalEvent::Title("y".repeat(MAX_DEFERRED_WINDOW_TEXT_BYTES + 1)));
+        assert_eq!(queue.text_bytes, MAX_DEFERRED_WINDOW_TEXT_BYTES);
+        queue.push(TerminalEvent::Title(String::from("latest")));
+        queue.push(TerminalEvent::ResetTitle);
+        assert!(matches!(queue.pop(), Some(TerminalEvent::Exit)));
+        assert!(matches!(queue.pop(), Some(TerminalEvent::Title(title)) if title == "latest"));
+        assert!(matches!(queue.pop(), Some(TerminalEvent::ResetTitle)));
+        assert!(queue.pop().is_none());
+        assert_eq!(queue.text_bytes, 0);
+    }
+
+    #[test]
+    fn same_selection_endpoint_is_unchanged_but_crossing_cell_side_is_not() {
+        let point = GridPoint::new(GridLine(0), GridColumn(0));
+        let mut selection = GridSelection::new(GridSelectionType::Simple, point, GridSide::Left);
+        assert!(!update_selection_endpoint(&mut selection, point, GridSide::Left));
+        assert!(update_selection_endpoint(&mut selection, point, GridSide::Right));
+        assert!(!update_selection_endpoint(&mut selection, point, GridSide::Right));
+    }
+
+    #[test]
+    fn clamped_scroll_does_not_emit_mouse_cursor_dirty() {
+        let (tx, rx) = mpsc::channel();
+        let mut state = TerminalState::new(5, 2, GpuiEventProxy::new(tx));
+        state.feed_raw(b"one\r\ntwo\r\nthree\r\n");
+        assert!(state.history_size() > 0);
+        while rx.try_recv().is_ok() {}
+        assert!(!scroll_lines_if_changed(&state, -1));
+        assert!(matches!(rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        assert!(scroll_lines_if_changed(&state, state.history_size() as i32));
+        assert!(matches!(rx.try_recv(), Ok(TerminalEvent::MouseCursorDirty)));
+        assert!(!scroll_lines_if_changed(&state, 1));
+        assert!(matches!(rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
     }
 }

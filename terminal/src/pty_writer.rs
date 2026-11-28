@@ -1,4 +1,5 @@
 //! Ordered, bounded PTY input. Only the dedicated worker touches the physical writer.
+use std::borrow::Cow;
 use std::io::{self, Write};
 use std::sync::Arc;
 
@@ -271,13 +272,8 @@ impl QueuedWriter {
         io::Error::new(kind, message)
     }
 
-    fn enqueue(&self, bytes: &[u8], acknowledge: bool) -> io::Result<WriteCompletion> {
-        let mut outstanding = self.shared.outstanding.lock();
-        if let Some(message) = &outstanding.failed {
-            return Err(io::Error::new(io::ErrorKind::BrokenPipe, message.clone()));
-        }
+    fn enqueue(&self, bytes: Cow<'_, [u8]>, acknowledge: bool) -> io::Result<WriteCompletion> {
         if bytes.len() > self.max_bytes {
-            drop(outstanding);
             return Err(self.reject(
                 io::ErrorKind::InvalidInput,
                 "PTY input is too large; the entire input was refused (maximum 32 MiB per frame).",
@@ -285,6 +281,12 @@ impl QueuedWriter {
         }
         if bytes.is_empty() {
             return Ok(WriteCompletion { receiver: None });
+        }
+        // Copy borrowed input before taking the FIFO admission lock.
+        let bytes = bytes.into_owned();
+        let mut outstanding = self.shared.outstanding.lock();
+        if let Some(message) = &outstanding.failed {
+            return Err(io::Error::new(io::ErrorKind::BrokenPipe, message.clone()));
         }
         if outstanding.records >= self.max_records
             || outstanding.bytes > self.max_bytes - bytes.len()
@@ -302,7 +304,7 @@ impl QueuedWriter {
         outstanding.bytes += bytes.len();
         outstanding.records += 1;
         let pending = Pending {
-            bytes: bytes.to_vec(),
+            bytes,
             shared: self.shared.clone(),
             completion,
             counted: true,
@@ -327,13 +329,19 @@ impl QueuedWriter {
     }
 
     pub(crate) fn send(&self, bytes: &[u8]) -> Result<(), String> {
-        self.enqueue(bytes, false)
+        self.enqueue(Cow::Borrowed(bytes), false)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn send_owned(&self, bytes: Vec<u8>) -> Result<(), String> {
+        self.enqueue(Cow::Owned(bytes), false)
             .map(|_| ())
             .map_err(|error| error.to_string())
     }
 
     pub(crate) fn send_with_completion(&self, bytes: &[u8]) -> Result<WriteCompletion, String> {
-        self.enqueue(bytes, true).map_err(|error| error.to_string())
+        self.enqueue(Cow::Borrowed(bytes), true).map_err(|error| error.to_string())
     }
 }
 

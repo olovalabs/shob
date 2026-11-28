@@ -729,6 +729,9 @@ impl AppState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.clear_data_running {
+            return;
+        }
         let Some(project) = self.projects.get(project_idx) else {
             return;
         };
@@ -736,6 +739,18 @@ impl AppState {
             return;
         }
         let session = &project.sessions[session_idx];
+        let session_id = session.id;
+        let workspace_path = self
+            .persistence_path
+            .clone()
+            .filter(|_| self.persistence_enabled && !self.workspace_cleared);
+        let Some(workspace_path) = workspace_path else {
+            self.remove_session_from_workspace(project_idx, session_idx, window, cx);
+            return;
+        };
+        if !self.pending_session_deletions.insert(session_id) {
+            return;
+        }
         let live_pane_uids: HashSet<&str> = self
             .projects
             .iter()
@@ -779,15 +794,69 @@ impl AppState {
                 })
                 .collect(),
         };
-        let deletion_path = match workspace_state::record_deletion(&deletion) {
-            Ok(path) => path,
-            Err(error) => {
-                window.push_notification(Notification::new().title("Could not delete session")
-                    .message(format!("Could not record deletion: {error}. Check the data folder permissions and try again."))
-                    .with_type(NotificationType::Error), cx);
-                return;
+        cx.spawn_in(window, async move |this, cx| {
+            let (deletion, result) = cx
+                .background_executor()
+                .spawn(async move {
+                    let result = workspace_state::record_deletion(&deletion);
+                    (deletion, result)
+                })
+                .await;
+            let finish = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(path) => {
+                        if let Some(&(project_idx, session_idx)) = this.session_index.get(&session_id) {
+                            this.remove_session_from_workspace(project_idx, session_idx, window, cx);
+                        }
+                        Some(path)
+                    }
+                    Err(error) => {
+                        this.pending_session_deletions.remove(&session_id);
+                        window.push_notification(
+                            Notification::new()
+                                .title("Could not delete session")
+                                .message(format!("Could not record deletion: {error}. Check the data folder permissions and try again."))
+                                .with_type(NotificationType::Error),
+                            cx,
+                        );
+                        None
+                    }
+                }
+            });
+            if let Ok(Some(path)) = finish {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move {
+                        workspace_state::remove_saved_session(&workspace_path, &deletion.session_uid)?;
+                        workspace_state::finish_deletion(&path, &deletion)
+                    })
+                    .await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.pending_session_deletions.remove(&session_id);
+                    if let Err(error) = result {
+                        window.push_notification(
+                            Notification::new()
+                                .title("Session deletion incomplete")
+                                .message(format!("{error}. Check the data folder permissions; cleanup will retry when Shob restarts."))
+                                .with_type(NotificationType::Error),
+                            cx,
+                        );
+                    }
+                });
             }
-        };
+        })
+        .detach();
+    }
+
+    fn remove_session_from_workspace(
+        &mut self,
+        project_idx: usize,
+        session_idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.save_generation.fetch_add(1, Ordering::SeqCst);
+        self.scrollback_generation.fetch_add(1, Ordering::SeqCst);
         let project = &mut self.projects[project_idx];
         let removed = project.sessions.remove(session_idx);
         let removed_uid = removed.uid.clone();
@@ -819,23 +888,6 @@ impl AppState {
         drop(removed);
         self.sidebar_threads.remove(&removed_uid);
         self.settings.sidebar.inbox_order.retain(|uid| uid != &removed_uid);
-        // Invalidate older debounced snapshots before publishing the deletion.
-        self.save_generation.fetch_add(1, Ordering::SeqCst);
-        let saved = if self.persistence_enabled {
-            match self.persistence_path.as_ref() {
-                Some(path) => workspace_state::save_atomic(path, &self.saved_workspace(cx)),
-                None => Err(std::io::Error::other("workspace path unavailable")),
-            }
-        } else {
-            Ok(())
-        };
-        let result =
-            saved.and_then(|()| workspace_state::finish_deletion(&deletion_path, &deletion));
-        if let Err(error) = result {
-            window.push_notification(Notification::new().title("Session deletion incomplete")
-                .message(format!("{error}. Check the data folder permissions; cleanup will retry when Shob restarts."))
-                .with_type(NotificationType::Error), cx);
-        }
         cx.notify();
         self.schedule_workspace_save(cx);
     }
@@ -844,6 +896,28 @@ impl AppState {
     /// projects (and their sessions) are left exactly as they were.
     fn close_project(&mut self, project_idx: usize, window: &mut Window, cx: &mut Context<Self>) {
         if project_idx >= self.projects.len() {
+            return;
+        }
+        let blocked = self.projects[project_idx]
+            .sessions
+            .iter()
+            .flat_map(|session| &session.panes)
+            .find(|pane| {
+                pane.files_restore.as_ref().is_some_and(files_surface::SavedFiles::has_drafts)
+                    || pane.files_surface.as_ref().is_some_and(|(view, _)| {
+                        !view.update(cx, |view, cx| view.prepare_close(cx))
+                    })
+            })
+            .map(|pane| (pane.id, pane.preview_owner.filter(|_| pane.tool_panel)));
+        if let Some((pane_id, panel_owner)) = blocked {
+            if let Some(pane) = self.pane_mut(pane_id) {
+                pane.files_active = true;
+                pane.display_title = "Files".into();
+            }
+            self.focus_pane(panel_owner.unwrap_or(pane_id), window, cx);
+            if self.settings.agent_layout && let Some(owner) = panel_owner {
+                self.select_tool_panel_tab(owner, pane_id, window, cx);
+            }
             return;
         }
         let project_id = self.projects[project_idx].id;

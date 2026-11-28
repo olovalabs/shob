@@ -125,11 +125,13 @@ fn build_app_state(cx: &mut Context<AppState>) -> AppState {
         navigation_history: Vec::new(),
         navigation_position: 0,
         pane_index: HashMap::from([(1, (0, 0, 0))]),
+        mounted_chat_panes: std::cell::RefCell::new(Vec::new()),
         project_change_counts: HashMap::new(),
         git_snapshots: HashMap::new(),
         conversation_header_branch: None,
         conversation_header_menu_focus: cx.focus_handle(),
-        git_refreshing: HashSet::new(),
+        git_requests: HashMap::new(),
+        git_request_serial: 0,
         git_worktree_creating: HashSet::new(),
         palette,
         focused_pane_id: Some(1),
@@ -169,6 +171,11 @@ fn build_app_state(cx: &mut Context<AppState>) -> AppState {
         persistence_path: None,
         save_generation: Arc::new(AtomicU64::new(0)),
         workspace_save_task: None,
+        scrollback_generation: Arc::new(AtomicU64::new(0)),
+        autosave_task: None,
+        pending_session_deletions: HashSet::new(),
+        workspace_cleared: false,
+        clear_data_running: false,
         startup_loaded: true,
         quit_subscription: None,
         window_active: true,
@@ -200,6 +207,7 @@ fn build_app_state(cx: &mut Context<AppState>) -> AppState {
 
 /// Open the app the way `main` does and return a context that can draw it.
 pub(crate) fn open_app(cx: &mut TestAppContext) -> (VisualTestContext, Entity<AppState>) {
+    load_provider_icons();
     cx.update(|cx| {
         gpui_component::init(cx);
         gpui_kit::component::theme::init(cx);

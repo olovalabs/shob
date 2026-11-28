@@ -860,7 +860,10 @@ impl AppState {
     ) -> Entity<InputState> {
         let (input, subscription) = build_pane_input(pane_id, window, cx);
         if self.pane_ref(pane_id).is_some_and(|pane| pane.chat.active) {
-            input.update(cx, |state, cx| state.clear_highlighter(cx));
+            input.update(cx, |state, cx| {
+                state.clear_highlighter(cx);
+                state.set_placeholder("Message the agent…", window, cx);
+            });
         }
         let restore = self
             .pane_mut(pane_id)

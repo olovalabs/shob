@@ -78,6 +78,7 @@ The terminal widget is implemented in the `terminal` sub-crate:
 - **PTY Management**: Shell preparation and I/O threads start on first render or explicit input. Already-started shells remain live when hidden; idle cache eviction never closes a PTY or discards its grid.
 - **Throughput Protection**: Uncontrolled terminal streams (e.g., fast compiler output or large file dumps) can overwhelm desktop UI threads. Shob employs an adaptive **1 ms stream coalescer** and a **128 KiB parse cap per frame**. This ensures UI responsiveness even at stream rates exceeding 40 MB/s.
 - **Rendering**: Terminal glyphs and styling (bold, italic, 24-bit RGB true color) are painted directly via GPUI primitives using embedded monospace fonts (`Mononoki`).
+- **Scrollback search**: Snapshot the live grid in bounded UI slices, then scan the snapshot off-thread. A search result can only apply to the same viewport and grid revision; keep regex scans off the live-grid lock.
 
 ### 2.2 Status Bus & IPC (`src/status_bus.rs`, `src/status.rs`)
 
@@ -130,7 +131,7 @@ Shob follows Zed's per-platform directory convention (`src/paths.rs`):
 
 - `settings.json` is user-editable and parsed as JSONC (comments allowed). It stores app appearance, window bounds/state, and the `restore` toggles.
 - `workspace.json` is auto-managed and debounced (300 ms) with an atomic temp+rename write and a generation guard. It records project paths, tab titles/logos, the split tree, per-pane cwd, input drafts, command history, and selected agent models/session ids.
-- Scrollback is written separately (on close, quit, and every 30 s while dirty) so the debounced hot path stays small. Restored panes seed the previous buffer; a fresh shell starts in the saved cwd only when shown or sent input.
+- Scrollback is written separately so the debounced hot path stays small. Periodic autosave snapshots one pane at a time and writes off the UI thread. Scrollback and workspace writers reject older snapshots after deletion. Close and quit still flush synchronously. Restored panes seed the previous buffer; a fresh shell starts in the saved cwd only when shown or sent input.
 - Agent transcripts are appended as raw events and replayed through `push_chat_event`, so the restored UI matches the previous session exactly. Embedded sessions reopen their durable session id. Historical OMP sessions restore their transcript.
 - Window geometry is loaded synchronously before `open_window`, validated against the current displays, and saved on close/quit.
 - Legacy v1 `workspace.json` files (including the old `com.Markup.Markup` location) are backed up to `<data>/backups/` and migrated automatically.

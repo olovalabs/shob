@@ -212,21 +212,26 @@ impl AppState {
             let executor = cx.background_executor().clone();
             executor.timer(std::time::Duration::from_millis(300)).await;
             let Ok((workspace, settings)) = this.update(cx, |state, cx| {
-                (state.saved_workspace(cx), state.saved_settings())
+                (
+                    (!state.workspace_cleared).then(|| state.saved_workspace(cx)),
+                    state.saved_settings(),
+                )
             }) else {
                 return;
             };
             executor
                 .spawn(async move {
-                    match workspace_state::save_if_current(
-                        &path,
-                        &workspace,
-                        &generation_counter,
-                        generation,
-                    ) {
-                        Ok(true) => {}
-                        Ok(false) => return,
-                        Err(error) => eprintln!("failed to save workspace state: {error}"),
+                    if let Some(workspace) = workspace {
+                        match workspace_state::save_if_current(
+                            &path,
+                            &workspace,
+                            &generation_counter,
+                            generation,
+                        ) {
+                            Ok(true) => {}
+                            Ok(false) => return,
+                            Err(error) => eprintln!("failed to save workspace state: {error}"),
+                        }
                     }
                     if let Err(error) = settings::save_preserving_theme_if_current(
                         &settings,
@@ -282,50 +287,80 @@ impl AppState {
             self.capture_window_bounds(cx);
         }
 
-        let workspace = self.saved_workspace(cx);
-        let settings = self.saved_settings();
-        if let Some(path) = self.persistence_path.clone()
-            && let Err(error) = workspace_state::save_atomic(&path, &workspace)
+        if !self.workspace_cleared
+            && let Some(path) = &self.persistence_path
+            && let Err(error) = workspace_state::save_atomic(path, &self.saved_workspace(cx))
         {
             eprintln!("failed to save workspace state: {error}");
         }
-        if let Err(error) = settings::save_preserving_theme(&settings) {
+        if let Err(error) = settings::save_preserving_theme(&self.saved_settings()) {
             eprintln!("failed to save settings: {error}");
         }
 
-        if self.settings.restore.scrollback {
+        let generation = self.scrollback_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        self.autosave_task = None;
+        if self.saves_scrollback() {
             let mut written = HashSet::new();
-            for project in &self.projects {
-                for session in &project.sessions {
-                    for pane in &session.panes {
-                        if written.insert(pane.uid.clone())
-                            && let Some(text) = self.pane_scrollback(pane, cx)
-                            && let Err(error) = workspace_state::write_scrollback(&pane.uid, &text)
-                        {
-                            eprintln!("failed to save scrollback: {error}");
-                        }
-                    }
+            for pane in self.projects.iter().flat_map(|project| &project.sessions).flat_map(|session| &session.panes) {
+                if written.insert(pane.uid.as_str())
+                    && let Some(text) = self.pane_scrollback(pane, cx)
+                {
+                    Self::write_pane_scrollback(&pane.uid, &text, &self.scrollback_generation, generation);
                 }
             }
         }
-
-        for project in &mut self.projects {
-            for session in &mut project.sessions {
-                for pane in &mut session.panes {
-                    if let Some(log) = pane.chat.conversation.as_mut() {
-                        log.flush();
-                    }
-                }
-            }
-        }
+        conversations::flush_pending();
         self.dirty = false;
     }
 
+    fn saves_scrollback(&self) -> bool {
+        self.persistence_enabled && !self.workspace_cleared && self.settings.restore.scrollback
+    }
+
+    fn write_pane_scrollback(uid: &str, text: &str, counter: &AtomicU64, generation: u64) {
+        if let Err(error) = workspace_state::write_scrollback_if_current(uid, text, counter, generation) {
+            eprintln!("failed to save scrollback: {error}");
+        }
+    }
+
     fn autosave(&mut self, cx: &mut Context<Self>) {
-        if !self.dirty {
+        if !self.dirty || !self.persistence_enabled || self.autosave_task.is_some() {
             return;
         }
-        self.save_all_sync(None, cx);
+        self.capture_window_bounds(cx);
+        self.schedule_workspace_save(cx);
+        self.dirty = false;
+        let generation = self.scrollback_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let counter = self.scrollback_generation.clone();
+        let mut panes = Vec::new();
+        if self.saves_scrollback() {
+            let mut seen = HashSet::new();
+            panes.extend(self.projects.iter().flat_map(|project| &project.sessions)
+                .flat_map(|session| &session.panes)
+                .filter(|pane| seen.insert(pane.uid.as_str()))
+                .map(|pane| pane.id));
+        }
+        self.autosave_task = Some(cx.spawn(async move |this, cx| {
+            let executor = cx.background_executor().clone();
+            for id in panes {
+                if counter.load(Ordering::SeqCst) != generation {
+                    break;
+                }
+                let snapshot = this.update(cx, |this, cx| {
+                    let pane = this.pane_ref(id)?;
+                    Some((pane.uid.clone(), this.pane_scrollback(pane, cx)?))
+                });
+                let Ok(snapshot) = snapshot else { return };
+                if let Some((uid, text)) = snapshot {
+                    let counter = counter.clone();
+                    executor.spawn(async move {
+                        Self::write_pane_scrollback(&uid, &text, &counter, generation);
+                    }).await;
+                }
+            }
+            executor.spawn(async { conversations::flush_pending() }).await;
+            let _ = this.update(cx, |this, _| this.autosave_task = None);
+        }));
     }
 
     fn apply_saved_workspace(&mut self, restored: RestoreData, cx: &mut Context<Self>) {
@@ -354,7 +389,7 @@ impl AppState {
             transcripts,
             usage,
         } = restored;
-        let max_id = workspace.max_id();
+        self.next_id = self.next_id.max(workspace.max_id().saturating_add(1));
         let active_project_path = workspace.active_project.clone();
         let saved_threads = workspace.threads.clone();
         let mut focus_by_session: HashMap<usize, Option<usize>> = HashMap::new();
@@ -629,13 +664,7 @@ impl AppState {
                 });
             }
 
-            if sessions.is_empty() {
-                continue;
-            }
-            let mut active_session_idx = project.active_session.min(sessions.len() - 1);
-            if active_session_idx >= sessions.len() {
-                active_session_idx = 0;
-            }
+            let active_session_idx = project.active_session.min(sessions.len().saturating_sub(1));
             self.projects.push(Project {
                 id: if project.id == 0 {
                     let id = self.next_id;
@@ -653,7 +682,6 @@ impl AppState {
             });
         }
 
-        self.next_id = self.next_id.max(max_id + 1);
         self.active_project_idx = active_project_path
             .as_ref()
             .and_then(|path| {
@@ -717,15 +745,14 @@ impl AppState {
                 self.active_project_idx = 0;
             }
         } else {
-            let project = &self.projects[self.active_project_idx];
-            let session =
-                &project.sessions[project.active_session_idx.min(project.sessions.len() - 1)];
-            self.focused_pane_id = focus_by_session
-                .get(&session.id)
-                .copied()
-                .flatten()
-                .filter(|id| session.panes.iter().any(|pane| pane.id == *id))
-                .or_else(|| session.panes.first().map(|pane| pane.id));
+            self.focused_pane_id = self.active_session().and_then(|session| {
+                focus_by_session
+                    .get(&session.id)
+                    .copied()
+                    .flatten()
+                    .filter(|id| session.panes.iter().any(|pane| pane.id == *id))
+                    .or_else(|| session.panes.first().map(|pane| pane.id))
+            });
         }
 
         self.rebuild_session_index();

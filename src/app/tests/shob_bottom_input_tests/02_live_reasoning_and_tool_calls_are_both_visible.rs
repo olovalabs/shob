@@ -219,6 +219,7 @@ fn reasoning_preferences_follow_the_selected_model() {
 
 #[test]
 fn first_response_provider_is_recorded_once_from_the_running_model() {
+    load_provider_icons();
     let model = |provider: &str| agent_auth::AgentModel {
         provider: provider.into(),
         id: "model".into(),

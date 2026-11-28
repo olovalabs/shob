@@ -19,9 +19,7 @@ use alacritty_terminal::vte::ansi::Processor;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-/// Upper bound on the number of highlighted matches we will collect for a
-/// single search, mirroring Zed's `MAX_SEARCH_LINES` style guard so a pathological
-/// regex over a 100k-line scrollback cannot stall a frame.
+/// Upper bound on the number of highlighted matches collected for one search.
 pub const MAX_SEARCH_MATCHES: usize = 5_000;
 
 /// Dimensions handed to `Term::new` / `Term::resize`.

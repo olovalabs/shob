@@ -10,11 +10,11 @@ impl AppState {
     ) -> Option<gpui::AnyElement> {
         let branch_label = snapshot
             .and_then(|s| {
-                s.current_branch
-                    .clone()
-                    .or_else(|| s.head_sha.as_ref().map(|sha| format!("HEAD ({sha})")))
+                s.current_branch.as_deref().map(SharedString::from)
+                    .or_else(|| s.head_sha.as_ref().map(|sha| format!("HEAD ({sha})").into()))
             })
-            .or_else(|| git_workspace::detect_git_branch(active_dir))?;
+            .or_else(|| self.pane_git_branch(pane))?;
+        let worktree_root = snapshot.and_then(|snapshot| snapshot.repo_root.as_deref()).unwrap_or(active_dir);
 
         let pane_id = pane.id;
         let toggle_bounds = pane.branch_toggle_bounds.clone();
@@ -111,13 +111,8 @@ impl AppState {
                         ),
                 )
                 .when_some(pane.branch_picker.as_ref(), |container, picker| {
-                    let query = picker.input.read(cx).value().to_string();
-                    let items = filtered_branch_items(snapshot, &query);
-                    let selected_idx = if items.is_empty() {
-                        0
-                    } else {
-                        picker.selected.min(items.len() - 1)
-                    };
+                    let items = picker.items.clone();
+                    let selected_idx = picker.selected;
 
                     let menu = div()
                         .id(("branch-popover", pane_id))
@@ -205,30 +200,22 @@ impl AppState {
                                         ),
                                 ),
                         )
-                        .child(
-                            div()
-                                .id(("branch-picker-list", pane_id))
-                                .max_h(px(220.0))
-                                .overflow_y_scrollbar()
-                                .flex()
-                                .flex_col()
-                                .when(items.is_empty(), |list| {
-                                    list.child(
-                                        div()
-                                            .px(px(8.0))
-                                            .py(px(10.0))
-                                            .text_size(px(11.5))
-                                            .text_color(tokens.text_muted)
-                                            .child("No matching branches"),
-                                    )
-                                })
-                                .children(items.into_iter().enumerate().map(|(idx, item)| {
+                        .child(if items.is_empty() {
+                            div().px(px(8.0)).py(px(10.0)).text_size(px(11.5))
+                                .text_color(tokens.text_muted).child("No matching branches").into_any_element()
+                        } else {
+                            let height = px(BRANCH_ROW_HEIGHT * items.len() as f32).min(px(220.0));
+                            let worktree_root = worktree_root.to_path_buf();
+                            let tokens = *tokens;
+                            v_virtual_list(cx.entity(), ("branch-picker-list", pane_id), picker.sizes.clone(),
+                                move |_, range, _, cx| range.map(|idx| {
+                                    let item = &items[idx];
                                     let is_highlighted = idx == selected_idx;
                                     match item {
                                         BranchPickerItem::Existing(branch) => {
                                             let has_other_worktree =
                                                 branch.worktree_path.as_ref().is_some_and(|p| {
-                                                    !git_workspace::paths_equal(p, active_dir)
+                                                    p != &worktree_root
                                                 });
                                             let badge = if branch.is_current {
                                                 Some("current")
@@ -248,7 +235,7 @@ impl AppState {
                                                 })
                                                 .px(px(8.0))
                                                 .py(px(5.0))
-                                                .min_h(px(28.0))
+                                                .h(px(BRANCH_ROW_HEIGHT))
                                                 .rounded(px(6.0))
                                                 .flex()
                                                 .items_center()
@@ -283,7 +270,7 @@ impl AppState {
                                                         } else {
                                                             tokens.text_primary
                                                         })
-                                                        .child(branch.name),
+                                                        .child(branch.name.clone()),
                                                 )
                                                 .when_some(badge, |row, tag| {
                                                     row.child(
@@ -321,7 +308,7 @@ impl AppState {
                                             .debug_selector(|| "branch-option-create".into())
                                             .px(px(8.0))
                                             .py(px(5.0))
-                                            .min_h(px(28.0))
+                                            .h(px(BRANCH_ROW_HEIGHT))
                                             .rounded(px(6.0))
                                             .flex()
                                             .items_center()
@@ -354,8 +341,9 @@ impl AppState {
                                                 }),
                                             ),
                                     }
-                                })),
-                        );
+                                }).collect())
+                                .h(height).track_scroll(&picker.scroll).into_any_element()
+                        });
 
                     container.child(deferred(
                         gpui::anchored()

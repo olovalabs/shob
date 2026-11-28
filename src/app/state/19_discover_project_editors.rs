@@ -203,13 +203,14 @@ impl AppState {
     ) -> gpui::Stateful<gpui::Div> {
         let tokens = self.tokens(cx);
         let pane_id = pane.id;
-        let active_dir = self.agent_working_directory(pane);
-        let branch = Self::detect_git_branch(&active_dir)
+        let active_dir = self.agent_working_directory_ref(pane);
+        let branch = self.git_snapshots.get(active_dir)
+            .and_then(|snapshot| snapshot.current_branch.as_deref().map(SharedString::from))
             .or_else(|| self.pane_git_branch(pane))
             .unwrap_or_else(|| "Not in a Git repository".into());
         let summary = self
             .project_change_counts
-            .get(&active_dir)
+            .get(active_dir)
             .or_else(|| {
                 self.pane_index
                     .get(&pane_id)

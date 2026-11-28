@@ -324,13 +324,19 @@ impl Log {
         self.error.lock().unwrap_or_else(|e| e.into_inner()).take()
     }
 
-    /// Block until every write queued before this call has reached the file.
-    /// Used by shutdown and by tests that immediately replay the transcript.
-    pub fn flush(&mut self) {
-        let (ack, receiver) = mpsc::channel();
-        if self.writer.sender.send(WriteJob::Flush { ack }).is_ok() {
-            let _ = receiver.recv();
-        }
+    #[cfg(test)]
+    pub fn flush(&self) {
+        flush_pending();
+    }
+}
+
+pub fn flush_pending() {
+    let Some(writer) = LazyLock::get(&WRITER) else {
+        return;
+    };
+    let (ack, receiver) = mpsc::channel();
+    if writer.sender.send(WriteJob::Flush { ack }).is_ok() {
+        let _ = receiver.recv();
     }
 }
 

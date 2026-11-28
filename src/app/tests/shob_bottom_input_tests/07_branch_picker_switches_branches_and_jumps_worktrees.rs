@@ -43,7 +43,7 @@ fn branch_picker_switches_branches_and_jumps_worktrees() {
     cx.run_until_parked();
     cx.draw_frame().unwrap();
     assert_eq!(
-        AppState::detect_git_branch(&repo).as_deref(),
+        git_workspace::detect_git_branch(&repo).as_deref(),
         Some("feat/test")
     );
 

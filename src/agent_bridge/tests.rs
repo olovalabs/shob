@@ -99,6 +99,25 @@ fn only_settled_or_handled_prompts_complete() {
 }
 
 #[test]
+fn a_settled_turn_closes_its_browser_channel_without_closing_the_bridge() {
+    let cwd = tempfile::tempdir().unwrap();
+    let mut bridge = AgentBridge::spawn_model(cwd.path(), None).unwrap();
+    let (first, first_receiver) = smol::channel::bounded(1);
+    bridge.set_browser_sender(Some(first));
+
+    bridge.apply_polled_events(vec![AgentEvent::Text("in progress".into())]);
+    assert!(!first_receiver.is_closed());
+    bridge.apply_polled_events(vec![AgentEvent::Done]);
+    assert!(first_receiver.is_closed());
+    assert!(!bridge.has_browser_sender());
+
+    let (next, next_receiver) = smol::channel::bounded(1);
+    bridge.set_browser_sender(Some(next));
+    assert!(!next_receiver.is_closed());
+    assert!(bridge.has_browser_sender());
+}
+
+#[test]
 fn full_and_delta_message_updates_apply_only_the_increment() {
     // Delta projection (`messageUpdates: "delta"`).
     let delta = json!({

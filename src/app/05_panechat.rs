@@ -661,6 +661,7 @@ pub struct TerminalPane {
     pub uid: String,
     /// Last working directory reported by shell integration (OSC 7 / 7502).
     pub cwd: Option<PathBuf>,
+    path_sample: Option<PanePathSample>,
     pub generation: String,
     pub native_session_id: Option<String>,
     pub native_session_reporter: Option<String>,
@@ -733,6 +734,8 @@ pub struct TerminalPane {
     /// Drops the `InputEvent::Change` subscription that keeps ghost text and
     /// the completion menu in sync with what is typed.
     pub input_subscription: Option<gpui::Subscription>,
+    input_browser_mentioned: bool,
+    input_prompt_empty: bool,
     /// Shell history loaded from disk, shared by every pane.
     pub shell_history: Arc<Vec<String>>,
     /// Commands executed from this pane's input bar, newest last.
@@ -750,6 +753,7 @@ pub struct TerminalPane {
     permission_menu_open: bool,
     permission_toggle_bounds: Rc<std::cell::Cell<Bounds<Pixels>>>,
     workspace_menu_open: bool,
+    workspace_choice: u64,
     workspace_toggle_bounds: Rc<std::cell::Cell<Bounds<Pixels>>>,
     branch_picker: Option<BranchPickerState>,
     branch_toggle_bounds: Rc<std::cell::Cell<Bounds<Pixels>>>,
@@ -849,6 +853,7 @@ impl TerminalPane {
             id,
             uid: paths::uid("p"),
             cwd: None,
+            path_sample: None,
             generation,
             native_session_id: None,
             native_session_reporter: None,
@@ -901,6 +906,8 @@ impl TerminalPane {
             input_state: None,
             restore_draft: None,
             input_subscription: None,
+            input_browser_mentioned: false,
+            input_prompt_empty: true,
             shell_history: shell_history::cached(),
             command_history: Vec::new(),
             history_index: None,
@@ -914,6 +921,7 @@ impl TerminalPane {
             permission_menu_open: false,
             permission_toggle_bounds: Rc::new(std::cell::Cell::new(Bounds::default())),
             workspace_menu_open: false,
+            workspace_choice: 0,
             workspace_toggle_bounds: Rc::new(std::cell::Cell::new(Bounds::default())),
             branch_picker: None,
             branch_toggle_bounds: Rc::new(std::cell::Cell::new(Bounds::default())),

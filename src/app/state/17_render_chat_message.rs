@@ -803,9 +803,8 @@ impl AppState {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        pane.chat
-            .view_visible
-            .set(self.active_view == ActiveView::Workspace);
+        pane.chat.view_visible.set(true);
+        self.mounted_chat_panes.borrow_mut().push(pane.id);
         let mut view = pane.chat.view.borrow_mut();
         let view = view.get_or_insert_with(|| {
             let app = cx.weak_entity();

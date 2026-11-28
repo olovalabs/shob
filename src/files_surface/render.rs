@@ -2,7 +2,10 @@ use super::*;
 
 impl Render for FilesSurface {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = self.owner.upgrade().unwrap().read(cx).tokens(cx);
+        let Some(owner) = self.owner.upgrade() else {
+            return gpui::Empty.into_any_element();
+        };
+        let tokens = owner.read(cx).tokens(cx);
         let weak = cx.entity().downgrade();
         let count = if self.git {
             self.repository.as_ref().map_or(0, |r| r.changes.len())
@@ -14,11 +17,10 @@ impl Render for FilesSurface {
                 return Vec::new();
             };
             let this = entity.read(cx);
-            let tokens = this.owner.upgrade().unwrap().read(cx).tokens(cx);
             range
-                .map(|index| {
+                .filter_map(|index| {
                     let (path, directory, depth, status, staged, unstaged) = if this.git {
-                        let c = &this.repository.as_ref().unwrap().changes[index];
+                        let c = this.repository.as_ref()?.changes.get(index)?;
                         (
                             c.path.clone(),
                             false,
@@ -28,7 +30,7 @@ impl Render for FilesSurface {
                             c.unstaged,
                         )
                     } else {
-                        let e = &this.entries[index];
+                        let e = this.entries.get(index)?;
                         let status = this
                             .repository
                             .as_ref()
@@ -182,7 +184,7 @@ impl Render for FilesSurface {
                                 }),
                         );
                     }
-                    row
+                    Some(row)
                 })
                 .collect()
         })
@@ -372,15 +374,12 @@ impl Render for FilesSurface {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _, window, cx| {
-                            this.selected = Some(path.clone());
-                            this.diff = None;
-                            this.focus_selected(window, cx);
-                            this.changed(cx);
+                            this.select_editor(path.clone(), window, cx);
                         }),
                     ),
             );
         }
-        let input = self.diff.clone().or_else(|| {
+        let input = self.diff.as_ref().map(|diff| diff.input.clone()).or_else(|| {
             self.editors
                 .iter()
                 .find(|e| Some(&e.path) == self.selected.as_ref())
@@ -420,17 +419,7 @@ impl Render for FilesSurface {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, window, cx| {
-                            let path = this
-                                .repository
-                                .as_ref()
-                                .zip(this.diff_path.as_ref())
-                                .and_then(|(repo, path)| {
-                                    repo.root
-                                        .join(path)
-                                        .strip_prefix(&this.root)
-                                        .ok()
-                                        .map(Path::to_path_buf)
-                                });
+                            let path = this.diff.as_ref().and_then(|diff| diff.edit_path.clone());
                             if let Some(path) = path {
                                 this.open(
                                     SavedFile {
@@ -505,11 +494,9 @@ impl Render for FilesSurface {
                                 .text_size(px(11.0))
                                 .text_color(tokens.text_secondary)
                                 .child(
-                                    if self.diff.is_some() {
-                                        self.diff_path.as_ref()
-                                    } else {
-                                        self.selected.as_ref()
-                                    }
+                                    self.diff.as_ref()
+                                        .map(|diff| &diff.repository_path)
+                                        .or(self.selected.as_ref())
                                     .map_or(String::new(), |p| p.to_string_lossy().into_owned()),
                                 )
                                 .child(tools),
@@ -526,5 +513,6 @@ impl Render for FilesSurface {
                     .truncate()
                     .child(self.message.clone()),
             )
+            .into_any_element()
     }
 }

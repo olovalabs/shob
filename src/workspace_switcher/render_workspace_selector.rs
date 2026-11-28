@@ -10,11 +10,7 @@ impl AppState {
     ) -> gpui::AnyElement {
         let pane_id = pane.id;
         let creating = self.git_worktree_creating.contains(&pane_id);
-        let project_path = self
-            .pane_index
-            .get(&pane_id)
-            .and_then(|&(project_idx, _, _)| self.projects.get(project_idx))
-            .map(|project| project.path.clone());
+        let project_path = self.pane_project_path(pane);
 
         let is_in_worktree = snapshot.is_some_and(|s| s.is_worktree)
             || pane
@@ -29,9 +25,10 @@ impl AppState {
                 .workspace_override
                 .as_ref()
                 .is_some_and(|override_path| {
-                    project_path
-                        .as_ref()
-                        .is_none_or(|proj| !git_workspace::paths_equal(proj, override_path))
+                    self.pane_path_sample(pane).map_or_else(
+                        || project_path != Some(override_path.as_path()),
+                        |sample| sample.override_is_distinct,
+                    )
                 });
 
         let (trigger_icon, trigger_label): (&'static str, String) = if creating {
@@ -73,10 +70,8 @@ impl AppState {
         let hover_bg = tokens.pane_header_btn_hover;
 
         let is_git_repo = snapshot.is_some_and(|s| s.is_git_repo)
-            || git_workspace::detect_git_branch(active_dir).is_some();
-        let secondary_worktrees: Vec<git_workspace::WorktreeInfo> = snapshot
-            .map(|s| s.secondary_worktrees().into_iter().cloned().collect())
-            .unwrap_or_default();
+            || self.pane_git_branch(pane).is_some();
+        let worktree_root = snapshot.and_then(|snapshot| snapshot.repo_root.as_deref()).unwrap_or(active_dir);
         let active_dir_display = Self::format_path_display(active_dir);
         let can_mutate = !pane.chat.running && !creating;
         let can_new_worktree = can_mutate && is_git_repo;
@@ -160,6 +155,7 @@ impl AppState {
                     ),
             )
             .when(pane.workspace_menu_open, |container| {
+                let secondary_worktrees = snapshot.map(|s| s.secondary_worktrees()).unwrap_or_default();
                 let menu = div()
                     .id(("workspace-popover", pane_id))
                     .debug_selector(|| "agent-workspace-menu".into())
@@ -312,8 +308,7 @@ impl AppState {
                                     .children(secondary_worktrees.into_iter().enumerate().map(
                                         |(idx, wt)| {
                                             let wt_path = wt.path.clone();
-                                            let is_active =
-                                                git_workspace::paths_equal(&wt_path, active_dir);
+                                            let is_active = wt_path == worktree_root;
                                             let label = wt.branch.clone().unwrap_or_else(|| {
                                                 wt_path
                                                     .file_name()

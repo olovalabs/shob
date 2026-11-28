@@ -94,6 +94,17 @@ impl TerminalNotifier {
         self.write(text.as_bytes());
     }
 
+    fn reply(&self, text: String) {
+        match &self.writer {
+            NotifierWriter::Standalone(writer) => {
+                let _ = writer.lock().write_all(text.as_bytes());
+            }
+            NotifierWriter::Queued(writer) => {
+                let _ = writer.send_owned(text.into_bytes());
+            }
+        }
+    }
+
     pub fn window_size(&self) -> WindowSize {
         *self.window_size.lock()
     }
@@ -174,7 +185,8 @@ impl TerminalNotifierHandle {
     /// Write raw bytes into the installed notifier's FIFO. No-op until the
     /// host installs the PTY notifier via `notifier_slot`.
     pub fn write(&self, bytes: &[u8]) {
-        if let Some(notifier) = self.notifier.lock().as_ref() {
+        let notifier = self.notifier.lock().clone();
+        if let Some(notifier) = notifier {
             notifier.write(bytes);
         }
     }
@@ -215,9 +227,9 @@ impl GpuiEventProxy {
     }
 
     fn with_notifier<F: FnOnce(&TerminalNotifier)>(&self, f: F) {
-        let guard = self.notifier.lock();
-        if let Some(notifier) = guard.as_ref() {
-            f(notifier);
+        let notifier = self.notifier.lock().clone();
+        if let Some(notifier) = notifier {
+            f(&notifier);
         }
     }
 }
@@ -238,14 +250,14 @@ impl EventListener for GpuiEventProxy {
             }
 
             // Answered inline: the requesting program is blocked on stdin.
-            Event::PtyWrite(text) => self.with_notifier(|notifier| notifier.write_str(&text)),
+            Event::PtyWrite(text) => self.with_notifier(|notifier| notifier.reply(text)),
             Event::ColorRequest(index, formatter) => self.with_notifier(|notifier| {
                 let rgb = notifier.color(index);
-                notifier.write_str(&formatter(rgb));
+                notifier.reply(formatter(rgb));
             }),
             Event::TextAreaSizeRequest(formatter) => self.with_notifier(|notifier| {
                 let size = notifier.window_size();
-                notifier.write_str(&formatter(size));
+                notifier.reply(formatter(size));
             }),
 
             Event::CursorBlinkingChange => self.send(TerminalEvent::CursorBlinkingChange),

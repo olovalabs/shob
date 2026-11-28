@@ -22,7 +22,6 @@ use gpui_component::{ActiveTheme as _, Root, Sizable as _};
 use gpui_kit::base::{Scrollbar as KitScrollbar, VirtualListScrollHandle, v_virtual_list};
 #[cfg(not(target_os = "linux"))]
 use gpui_kit::component::TitleBar;
-use parking_lot::Mutex;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal as _;

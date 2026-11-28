@@ -11,9 +11,18 @@ impl AppState {
                 .pane_ref(pane_id)
                 .and_then(|pane| pane.input_state.clone())
             {
-                let value = input.read(cx).value().to_string();
+                let value = input.read(cx).text().to_string();
                 let items = agent_slash_completions(&value);
+                let browser_mentioned = agent_bridge::has_browser_mention(&value);
+                let prompt_empty = value.trim().is_empty();
+                let mut update_root = false;
                 if let Some(pane) = self.pane_mut(pane_id) {
+                    update_root = pane.input_browser_mentioned != browser_mentioned
+                        || (!pane.chat.follow_ups.is_empty() && pane.input_prompt_empty != prompt_empty)
+                        || pane.completion_menu.is_some()
+                        || !items.is_empty();
+                    pane.input_browser_mentioned = browser_mentioned;
+                    pane.input_prompt_empty = prompt_empty;
                     let selected = pane
                         .completion_menu
                         .as_ref()
@@ -31,8 +40,12 @@ impl AppState {
                         })
                     };
                 }
-                input.update(cx, |state, cx| state.clear_inline_completion(cx));
-                cx.notify();
+                if input.read(cx).inline_completion_text().is_some() {
+                    input.update(cx, |state, cx| state.clear_inline_completion(cx));
+                }
+                if update_root {
+                    cx.notify();
+                }
             }
             return;
         }

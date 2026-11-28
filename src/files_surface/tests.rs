@@ -89,10 +89,15 @@ fn git_status_and_operations_preserve_literal_paths_and_worktree_contents() {
 #[test]
 fn files_workspace_restores_drafts_and_renders_both_themes() {
     use crate::resize_tests::{DrawFrame as _, TestAppContext, open_app};
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
     let fixture = tempfile::tempdir().unwrap();
     let captures = tempfile::tempdir().unwrap();
     std::fs::create_dir(fixture.path().join("src")).unwrap();
     std::fs::write(fixture.path().join("src/main.rs"), "fn main() {}\n").unwrap();
+    let other_checkout = tempfile::tempdir().unwrap();
+    std::fs::create_dir(other_checkout.path().join("src")).unwrap();
+    std::fs::write(other_checkout.path().join("src/main.rs"), "fn main() {}\n").unwrap();
     let mut app = TestAppContext::new();
     let (mut cx, state) = open_app(&mut app);
     let root = fixture.path().to_path_buf();
@@ -160,16 +165,31 @@ fn files_workspace_restores_drafts_and_renders_both_themes() {
     });
     cx.run_until_parked();
     cx.update_window_entity(&view, |view, _, cx| assert!(!view.prepare_close(cx)));
+    cx.update_window_entity(&state, |state, window, cx| {
+        state.close_project(0, window, cx);
+        assert_eq!(state.projects.len(), 1, "a dirty Files draft blocks project close");
+    });
     let saved = view.read_with(&cx, |view, cx| view.snapshot(cx));
     assert_eq!(saved.tabs[0].baseline.as_deref(), Some("fn main() {}\n"));
     assert!(saved.tabs[0].draft.as_ref().unwrap().contains("draft"));
-    let saved: SavedFiles = serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
+    let mut saved: SavedFiles = serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
+    saved.selected = Some("missing.rs".into());
+    saved.tabs.insert(0, SavedFile {
+        path: "missing.rs".into(),
+        ..Default::default()
+    });
+    #[cfg(unix)]
+    saved.tabs.insert(0, SavedFile {
+        path: std::ffi::OsString::from_vec(vec![0xff]).into(),
+        ..Default::default()
+    });
     cx.update_window_entity(&state, |state, window, cx| {
         let panel = state.focused_pane_id.unwrap();
-        let files = state.build_files_surface(panel, root.clone(), saved, window, cx);
-        state.pane_mut(panel).unwrap().files_surface = Some(files);
-        state.pane_mut(panel).unwrap().files_active = true;
-        state.pane_mut(panel).unwrap().display_title = "Files".into();
+        state.projects[0].path = other_checkout.path().to_path_buf();
+        let pane = state.pane_mut(panel).unwrap();
+        pane.files_surface = None;
+        pane.files_restore = Some(saved);
+        state.ensure_panes_input_state(window, cx);
     });
     cx.run_until_parked();
     for (preference, name) in [
@@ -211,6 +231,10 @@ fn files_workspace_restores_drafts_and_renders_both_themes() {
         std::fs::read_to_string(root.join("src/main.rs")).unwrap(),
         "fn main() { println!(\"draft\"); }\n"
     );
+    assert_eq!(
+        std::fs::read_to_string(other_checkout.path().join("src/main.rs")).unwrap(),
+        "fn main() {}\n"
+    );
     let restored = state.read_with(&cx, |state, _| {
         state
             .pane_ref(state.focused_pane_id.unwrap())
@@ -238,6 +262,7 @@ fn files_workspace_restores_drafts_and_renders_both_themes() {
             view.diff
                 .as_ref()
                 .unwrap()
+                .input
                 .read(cx)
                 .value()
                 .contains("+fn main()")
@@ -250,5 +275,36 @@ fn files_workspace_restores_drafts_and_renders_both_themes() {
             .unwrap()
             .save(captures.path().join("git.png"))
             .unwrap()
+    });
+
+    cx.update_window_entity(&restored, |view, window, cx| {
+        view.show_diff(
+            Change {
+                path: "nonexistent.txt".into(),
+                status: "??".into(),
+                staged: false,
+                unstaged: true,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    restored.read_with(&cx, |view, cx| {
+        let displayed = view.diff.as_ref().unwrap();
+        assert_eq!(displayed.repository_path, Path::new("src/main.rs"));
+        assert_eq!(displayed.edit_path.as_deref(), Some(Path::new("src/main.rs")));
+        assert!(displayed.input.read(cx).value().contains("+fn main()"));
+    });
+
+    cx.update_window_entity(&restored, |view, window, cx| {
+        let change = view.repository.as_ref().unwrap().changes[0].clone();
+        view.show_diff(change, window, cx);
+        view.select_editor("src/main.rs".into(), window, cx);
+    });
+    cx.run_until_parked();
+    restored.read_with(&cx, |view, _| {
+        assert_eq!(view.selected.as_deref(), Some(Path::new("src/main.rs")));
+        assert!(view.diff.is_none());
     });
 }

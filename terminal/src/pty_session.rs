@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 const CONTROL_INTERVAL: Duration = Duration::from_millis(20);
+const CHILD_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug)]
 pub enum PtyEvent {
@@ -215,7 +216,7 @@ impl PendingPty {
                     smol::future::race(
                         async {
                             if child_running {
-                                smol::Timer::after(CONTROL_INTERVAL).await;
+                                smol::Timer::after(CHILD_POLL_INTERVAL).await;
                             } else {
                                 std::future::pending::<()>().await;
                             }

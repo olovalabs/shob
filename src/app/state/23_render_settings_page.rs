@@ -746,8 +746,12 @@ impl AppState {
                     .child(div().text_size(px(13.0)).font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(tokens.text_primary).child("Clear saved sessions & history"))
                     .child(div().text_size(px(12.0)).text_color(tokens.text_secondary)
-                        .child(if confirm {
-                            "This cannot be undone. Your settings will be kept."
+                        .child(if self.clear_data_running {
+                            "Clearing saved data…"
+                        } else if confirm {
+                            "This cannot be undone. Your settings will be kept. Restart Shob to resume saving the workspace."
+                        } else if self.workspace_cleared {
+                            "Workspace saving is paused until you restart Shob."
                         } else {
                             "Delete saved layouts, scrollback, and Shob-owned agent sessions. Your settings will be kept."
                         }))

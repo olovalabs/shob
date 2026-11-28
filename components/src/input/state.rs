@@ -1732,9 +1732,10 @@ impl InputState {
         self.blink_cursor.update(cx, |cursor, cx| {
             cursor.stop(cx);
         });
-        Root::update(window, cx, |root, _, _| {
-            root.focused_input = None;
-        });
+        let id = cx.entity_id();
+        if Root::read(window, cx).focused_input.as_ref().is_some_and(|input| input.entity_id() == id) {
+            Root::update(window, cx, |root, _, _| root.focused_input = None);
+        }
         cx.emit(InputEvent::Blur);
         cx.notify();
     }

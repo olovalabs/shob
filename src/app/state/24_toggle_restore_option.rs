@@ -1,9 +1,63 @@
+fn clear_saved_workspace_data(
+    path: &Path,
+    mut records: HashMap<String, workspace_state::PendingDeletion>,
+) -> std::io::Result<()> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => {
+            let saved = workspace_state::load_from_text(&text);
+            for session in saved.projects.into_iter().flat_map(|project| project.sessions) {
+                let record = records.entry(session.uid.clone()).or_insert_with(|| {
+                    workspace_state::PendingDeletion {
+                        session_uid: session.uid,
+                        pane_uids: Vec::new(),
+                        shob_session_ids: Vec::new(),
+                    }
+                });
+                for pane in session.panes {
+                    record.pane_uids.push(pane.uid);
+                    record.shob_session_ids.extend(pane.chat.shob_session_id);
+                    record.shob_session_ids.extend(
+                        pane.chat.models.into_iter().filter_map(|model| model.shob_session_id),
+                    );
+                }
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    let mut deletions = Vec::with_capacity(records.len());
+    for mut deletion in records.into_values() {
+        deletion.pane_uids.sort_unstable();
+        deletion.pane_uids.dedup();
+        deletion.shob_session_ids.sort_unstable();
+        deletion.shob_session_ids.dedup();
+        match workspace_state::record_deletion(&deletion) {
+            Ok(path) => deletions.push((path, deletion)),
+            Err(error) => {
+                for (path, _) in deletions {
+                    let _ = std::fs::remove_file(path);
+                }
+                return Err(error);
+            }
+        }
+    }
+    workspace_state::remove_saved_workspace(path, &paths::sessions_dir())?;
+    conversations::clear_all()?;
+    for (path, deletion) in deletions {
+        if let Err(error) = workspace_state::finish_deletion(&path, &deletion) {
+            eprintln!("failed to clear SHOB session; cleanup will retry: {error}");
+        }
+    }
+    Ok(())
+}
+
 impl AppState {
     fn toggle_restore_option(&mut self, id: &'static str, cx: &mut Context<Self>) {
         match id {
             "restore-sessions" => self.settings.restore.sessions = !self.settings.restore.sessions,
             "restore-scrollback" => {
-                self.settings.restore.scrollback = !self.settings.restore.scrollback
+                self.settings.restore.scrollback = !self.settings.restore.scrollback;
+                self.scrollback_generation.fetch_add(1, Ordering::SeqCst);
             }
             "restore-agent-history" => {
                 self.settings.restore.agent_history = !self.settings.restore.agent_history
@@ -27,40 +81,25 @@ impl AppState {
     }
 
     fn clear_saved_data(&mut self, cx: &mut Context<Self>) {
+        if self.clear_data_running || !self.pending_session_deletions.is_empty() {
+            return;
+        }
         if !self.clear_data_confirm {
             self.clear_data_confirm = true;
             cx.notify();
             return;
         }
         self.clear_data_confirm = false;
-        let mut records: HashMap<String, workspace_state::PendingDeletion> = HashMap::new();
-        if let Ok(text) = std::fs::read_to_string(paths::workspace_path()) {
-            let saved = workspace_state::load_from_text(&text);
-            for session in saved
-                .projects
-                .into_iter()
-                .flat_map(|project| project.sessions)
-            {
-                let record = records.entry(session.uid.clone()).or_insert_with(|| {
-                    workspace_state::PendingDeletion {
-                        session_uid: session.uid,
-                        pane_uids: Vec::new(),
-                        shob_session_ids: Vec::new(),
-                    }
-                });
-                for pane in session.panes {
-                    record.pane_uids.push(pane.uid);
-                    record.shob_session_ids.extend(pane.chat.shob_session_id);
-                    record.shob_session_ids.extend(
-                        pane.chat
-                            .models
-                            .into_iter()
-                            .filter_map(|model| model.shob_session_id),
-                    );
-                }
-            }
-        }
-        for session in self.projects.iter().flat_map(|project| &project.sessions) {
+        self.workspace_cleared = true;
+        self.clear_data_running = true;
+        self.save_generation.fetch_add(1, Ordering::SeqCst);
+        self.scrollback_generation.fetch_add(1, Ordering::SeqCst);
+        self.workspace_save_task = None;
+        self.autosave_task = None;
+        self.dirty = false;
+
+        let mut records = HashMap::<String, workspace_state::PendingDeletion>::new();
+        for session in self.projects.iter_mut().flat_map(|project| &mut project.sessions) {
             let record = records.entry(session.uid.clone()).or_insert_with(|| {
                 workspace_state::PendingDeletion {
                     session_uid: session.uid.clone(),
@@ -68,55 +107,31 @@ impl AppState {
                     shob_session_ids: Vec::new(),
                 }
             });
-            for pane in &session.panes {
+            for pane in &mut session.panes {
                 record.pane_uids.push(pane.uid.clone());
-                record
-                    .shob_session_ids
-                    .extend(pane.chat.shob_session_id.clone());
+                record.shob_session_ids.extend(pane.chat.shob_session_id.take());
+                pane.chat.bridge = None;
+                pane.chat.bridge_resume = None;
+                pane.chat.conversation = None;
+                pane.chat.running = false;
+                pane.chat.requests.clear();
             }
         }
-        let mut deletions = Vec::new();
-        for deletion in records.into_values() {
-            match workspace_state::record_deletion(&deletion) {
-                Ok(path) => deletions.push((path, deletion)),
-                Err(error) => {
-                    for (path, _) in &deletions {
-                        let _ = std::fs::remove_file(path);
-                    }
-                    eprintln!("failed to record saved data deletion: {error}");
-                    cx.notify();
-                    return;
-                }
+        let path = self.persistence_path.clone().unwrap_or_else(paths::workspace_path);
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { clear_saved_workspace_data(&path, records) })
+                .await;
+            if let Err(error) = result {
+                eprintln!("failed to clear saved data: {error}");
             }
-        }
-        for pane in self
-            .projects
-            .iter_mut()
-            .flat_map(|project| &mut project.sessions)
-            .flat_map(|session| &mut session.panes)
-        {
-            pane.chat.bridge = None;
-            pane.chat.bridge_resume = None;
-            pane.chat.shob_session_id = None;
-        }
-        if let Err(error) = std::fs::remove_file(paths::workspace_path())
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            eprintln!("failed to remove saved workspace: {error}");
-            cx.notify();
-            return;
-        }
-        let _ = std::fs::remove_dir_all(paths::sessions_dir());
-        let _ = std::fs::create_dir_all(paths::sessions_dir());
-        if let Err(error) = conversations::clear_all() {
-            eprintln!("failed to clear conversations: {error}");
-        }
-        for (path, deletion) in deletions {
-            if let Err(error) = workspace_state::finish_deletion(&path, &deletion) {
-                eprintln!("failed to clear SHOB session; cleanup will retry: {error}");
-            }
-        }
-        self.dirty = false;
+            let _ = this.update(cx, |this, cx| {
+                this.clear_data_running = false;
+                cx.notify();
+            });
+        })
+        .detach();
         cx.notify();
     }
 

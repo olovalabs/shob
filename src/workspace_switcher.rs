@@ -1,10 +1,18 @@
 use super::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum BranchPickerItem {
+pub(super) enum BranchPickerItem {
     Existing(git_workspace::BranchInfo),
     Create(String),
 }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct GitRequest {
+    serial: u64,
+    mutation: bool,
+}
+
+const BRANCH_ROW_HEIGHT: f32 = 28.0;
 
 fn filtered_branch_items(
     snapshot: Option<&git_workspace::GitWorkspaceSnapshot>,
@@ -57,10 +65,28 @@ impl AppState {
         }
     }
 
-    pub(crate) fn schedule_git_refresh(&mut self, dir: PathBuf, cx: &mut Context<Self>) {
-        if !dir.is_dir() || !self.git_refreshing.insert(dir.clone()) {
-            return;
+    fn begin_git_request(&mut self, dir: &Path, mutation: bool) -> Option<GitRequest> {
+        if self.git_requests.get(dir).is_some_and(|request| request.mutation || !mutation) {
+            return None;
         }
+        self.git_request_serial = self.git_request_serial.wrapping_add(1);
+        let request = GitRequest { serial: self.git_request_serial, mutation };
+        self.git_requests.insert(dir.to_path_buf(), request);
+        Some(request)
+    }
+
+    fn finish_git_request(&mut self, dir: &Path, request: GitRequest) -> bool {
+        if self.git_requests.get(dir) != Some(&request) {
+            return false;
+        }
+        self.git_requests.remove(dir);
+        true
+    }
+
+    pub(crate) fn schedule_git_refresh(&mut self, dir: PathBuf, cx: &mut Context<Self>) {
+        let Some(request) = self.begin_git_request(&dir, false) else {
+            return;
+        };
         cx.spawn(async move |this, cx| {
             let inspect_dir = dir.clone();
             let snapshot = cx
@@ -68,8 +94,9 @@ impl AppState {
                 .spawn(async move { git_workspace::inspect(&inspect_dir) })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                this.git_refreshing.remove(&dir);
-                this.apply_git_snapshot(dir, snapshot, cx);
+                if this.finish_git_request(&dir, request) {
+                    this.apply_git_snapshot(dir, snapshot, cx);
+                }
             });
         })
         .detach();
@@ -81,55 +108,20 @@ impl AppState {
         snapshot: git_workspace::GitWorkspaceSnapshot,
         cx: &mut Context<Self>,
     ) -> bool {
-        let previous = self.git_snapshots.get(&dir).cloned();
-        let snapshot_changed = previous.as_ref() != Some(&snapshot);
-        if previous
-            .as_ref()
-            .is_some_and(|prev| prev.current_branch != snapshot.current_branch)
-        {
-            git_workspace::invalidate_branch_cache(&dir);
+        if self.git_snapshots.get(&dir) == Some(&snapshot) {
+            return false;
         }
+        let affected: Vec<_> = self.projects.iter().flat_map(|project| &project.sessions)
+            .flat_map(|session| &session.panes)
+            .filter(|pane| pane.branch_picker.as_ref().is_some_and(|picker| picker.directory == dir))
+            .map(|pane| pane.id)
+            .collect();
         self.git_snapshots.insert(dir, snapshot);
-
-        let mut reconciled = false;
-        let mut reset_panes = Vec::new();
-        for project in &mut self.projects {
-            let project_path = project.path.clone();
-            for session in &mut project.sessions {
-                for pane in &mut session.panes {
-                    if let Some(override_path) = pane.chat.workspace_override.as_ref()
-                        && !override_path.is_dir()
-                        && !pane.chat.running
-                    {
-                        pane.chat.workspace_override = None;
-                        pane.chat.bridge = None;
-                        pane.chat.bridge_model = None;
-                        pane.chat.bridge_resume = None;
-                        pane.chat.shob_session_id = None;
-                        pane.chat.cwd = Some(project_path.clone());
-                        pane.chat.bridge_needs_context = !pane.chat.messages.is_empty();
-                        reset_panes.push(pane.id);
-                        reconciled = true;
-                    }
-                }
-            }
+        for pane_id in affected {
+            self.update_branch_choices(pane_id, false, cx);
         }
-
-        if reconciled {
-            self.schedule_workspace_save(cx);
-        }
-        if !reset_panes.is_empty()
-            && let Some(active_dir) = self
-                .focused_pane_id
-                .and_then(|id| self.pane_ref(id))
-                .map(|pane| self.agent_working_directory(pane))
-        {
-            self.schedule_git_refresh(active_dir, cx);
-        }
-        if snapshot_changed || reconciled {
-            cx.notify();
-        }
-        snapshot_changed || reconciled
+        cx.notify();
+        true
     }
 
     pub(crate) fn apply_workspace_override(
@@ -154,6 +146,7 @@ impl AppState {
         if pane.chat.running {
             return;
         }
+        pane.workspace_choice = pane.workspace_choice.wrapping_add(1);
         let changed = pane.chat.workspace_override != new_override
             || pane.chat.cwd.as_ref() != Some(&target_dir);
         pane.chat.workspace_override = new_override;
@@ -167,7 +160,6 @@ impl AppState {
             pane.chat.shob_session_id = None;
             pane.chat.cwd = Some(target_dir.clone());
             pane.chat.bridge_needs_context = !pane.chat.messages.is_empty();
-            git_workspace::invalidate_branch_cache(&target_dir);
             self.schedule_workspace_save(cx);
         }
         self.schedule_git_refresh(target_dir, cx);
@@ -234,7 +226,7 @@ impl AppState {
         self.apply_workspace_override(pane_id, new_override, cx);
     }
 
-    fn create_and_switch_worktree(
+    pub(super) fn create_and_switch_worktree(
         &mut self,
         pane_id: usize,
         window: &mut Window,
@@ -247,10 +239,12 @@ impl AppState {
             return;
         }
         let source_dir = self.agent_working_directory(pane);
+        let workspace_choice = pane.workspace_choice;
         let base_branch = self
             .git_snapshots
             .get(&source_dir)
             .and_then(|snap| snap.current_branch.clone());
+        let Some(request) = self.begin_git_request(&source_dir, true) else { return };
 
         if let Some(pane) = self.pane_mut(pane_id) {
             pane.workspace_menu_open = false;
@@ -262,27 +256,32 @@ impl AppState {
 
         let worktrees_root = paths::worktrees_dir();
         cx.spawn_in(window, async move |this, cx| {
+            let work_dir = source_dir.clone();
             let result = cx
                 .background_executor()
                 .spawn(async move {
                     let wt = git_workspace::create_worktree(
-                        &source_dir,
+                        &work_dir,
                         &worktrees_root,
                         base_branch.as_deref(),
                     )?;
                     let wt_snapshot = git_workspace::inspect(&wt.path);
-                    let src_snapshot = git_workspace::inspect(&source_dir);
-                    Ok::<_, String>((source_dir, src_snapshot, wt, wt_snapshot))
+                    let src_snapshot = git_workspace::inspect(&work_dir);
+                    Ok::<_, String>((src_snapshot, wt, wt_snapshot))
                 })
                 .await;
 
             let _ = this.update_in(cx, |this, window, cx| {
                 this.git_worktree_creating.remove(&pane_id);
+                this.finish_git_request(&source_dir, request);
+                cx.notify();
                 match result {
-                    Ok((source_dir, src_snapshot, wt, wt_snapshot)) => {
+                    Ok((src_snapshot, wt, wt_snapshot)) => {
                         this.apply_git_snapshot(source_dir, src_snapshot, cx);
                         this.apply_git_snapshot(wt.path.clone(), wt_snapshot, cx);
-                        this.apply_workspace_override(pane_id, Some(wt.path), cx);
+                        if this.pane_ref(pane_id).is_some_and(|pane| pane.workspace_choice == workspace_choice) {
+                            this.apply_workspace_override(pane_id, Some(wt.path), cx);
+                        }
                     }
                     Err(error) => {
                         window.push_notification(
@@ -292,7 +291,6 @@ impl AppState {
                                 .with_type(NotificationType::Error),
                             cx,
                         );
-                        cx.notify();
                     }
                 }
             });
@@ -310,7 +308,7 @@ impl AppState {
         }
 
         let active_dir = self.agent_working_directory(pane);
-        self.schedule_git_refresh(active_dir, cx);
+        self.schedule_git_refresh(active_dir.clone(), cx);
 
         let filter =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search or create branch..."));
@@ -320,12 +318,7 @@ impl AppState {
             window,
             move |this: &mut Self, _input, event: &InputEvent, window, cx| {
                 if matches!(event, InputEvent::Change) {
-                    if let Some(pane) = this.pane_mut(pane_id)
-                        && let Some(picker) = pane.branch_picker.as_mut()
-                    {
-                        picker.selected = 0;
-                        cx.notify();
-                    }
+                    this.update_branch_choices(pane_id, true, cx);
                 } else if let InputEvent::PressEnter { .. } = event {
                     this.confirm_branch_picker_selection(pane_id, window, cx);
                 }
@@ -340,10 +333,36 @@ impl AppState {
             pane.branch_picker = Some(BranchPickerState {
                 input: filter,
                 selected: 0,
+                directory: active_dir,
+                items: Rc::from([]),
+                sizes: Rc::new(Vec::new()),
+                scroll: VirtualListScrollHandle::new(),
                 _subscription: subscription,
             });
-            cx.notify();
+            self.update_branch_choices(pane_id, true, cx);
         }
+    }
+
+    fn update_branch_choices(&mut self, pane_id: usize, reset: bool, cx: &mut Context<Self>) {
+        let Some(picker) = self.pane_ref(pane_id).and_then(|pane| pane.branch_picker.as_ref()) else {
+            return;
+        };
+        let query = picker.input.read(cx).value();
+        let choices = filtered_branch_items(self.git_snapshots.get(&picker.directory), &query);
+        let Some(picker) = self.pane_mut(pane_id).and_then(|pane| pane.branch_picker.as_mut()) else {
+            return;
+        };
+        if reset {
+            picker.selected = 0;
+            picker.scroll.set_offset(gpui::point(px(0.0), px(0.0)));
+        } else {
+            picker.selected = picker.selected.min(choices.len().saturating_sub(1));
+        }
+        if &*picker.items != choices.as_slice() {
+            picker.sizes = Rc::new(vec![size(px(0.0), px(BRANCH_ROW_HEIGHT)); choices.len()]);
+            picker.items = choices.into();
+        }
+        cx.notify();
     }
 
     fn close_branch_picker(&mut self, pane_id: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -371,9 +390,7 @@ impl AppState {
         let Some(picker) = pane.branch_picker.as_ref() else {
             return;
         };
-        let query = picker.input.read(cx).value().to_string();
-        let active_dir = self.agent_working_directory(pane);
-        let items = filtered_branch_items(self.git_snapshots.get(&active_dir), &query);
+        let items = &picker.items;
         if items.is_empty() {
             return;
         }
@@ -383,6 +400,7 @@ impl AppState {
             && let Some(picker) = pane.branch_picker.as_mut()
         {
             picker.selected = next;
+            picker.scroll.scroll_to_item(next, gpui::ScrollStrategy::Top);
             cx.notify();
         }
     }
@@ -426,83 +444,53 @@ impl AppState {
             );
             return;
         }
-        let query = picker.input.read(cx).value().to_string();
-        let active_dir = self.agent_working_directory(pane);
-        let snapshot = self.git_snapshots.get(&active_dir);
-        let items = filtered_branch_items(snapshot, &query);
-        let Some(item) = items.get(index).cloned() else {
+        let Some(item) = picker.items.get(index).cloned() else {
             return;
         };
+        let active_dir = picker.directory.clone();
 
         self.close_branch_picker(pane_id, window, cx);
 
-        match item {
-            BranchPickerItem::Existing(branch) => {
-                if let Some(worktree_path) = branch.worktree_path.as_ref()
-                    && !git_workspace::paths_equal(worktree_path, &active_dir)
-                    && worktree_path.is_dir()
-                {
-                    self.select_existing_worktree(pane_id, worktree_path.clone(), window, cx);
+        if let BranchPickerItem::Existing(branch) = &item
+            && let Some(worktree_path) = branch.worktree_path.as_ref()
+            && !git_workspace::paths_equal(worktree_path, &active_dir)
+            && worktree_path.is_dir()
+        {
+            self.select_existing_worktree(pane_id, worktree_path.clone(), window, cx);
+            return;
+        }
+        let Some(request) = self.begin_git_request(&active_dir, true) else {
+            window.push_notification(Notification::new().title("Git operation in progress")
+                .message("Wait for the current operation before switching branches.")
+                .with_type(NotificationType::Warning), cx);
+            return;
+        };
+        cx.spawn_in(window, async move |this, cx| {
+            let dir = active_dir.clone();
+            let result = cx.background_executor().spawn(async move {
+                match item {
+                    BranchPickerItem::Existing(branch) => {
+                        git_workspace::checkout_branch(&dir, &branch.name, branch.is_remote)?;
+                    }
+                    BranchPickerItem::Create(name) => {
+                        git_workspace::create_and_checkout_branch(&dir, &name)?;
+                    }
+                }
+                Ok::<_, String>(git_workspace::inspect(&dir))
+            }).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if !this.finish_git_request(&active_dir, request) {
                     return;
                 }
-                let branch_name = branch.name;
-                let is_remote = branch.is_remote;
-                cx.spawn_in(window, async move |this, cx| {
-                    let result = cx
-                        .background_executor()
-                        .spawn(async move {
-                            git_workspace::checkout_branch(&active_dir, &branch_name, is_remote)?;
-                            let updated = git_workspace::inspect(&active_dir);
-                            Ok::<_, String>((active_dir, updated))
-                        })
-                        .await;
-                    let _ = this.update_in(cx, |this, window, cx| match result {
-                        Ok((dir, updated)) => {
-                            git_workspace::invalidate_branch_cache(&dir);
-                            this.apply_git_snapshot(dir, updated, cx);
-                        }
-                        Err(error) => {
-                            window.push_notification(
-                                Notification::new()
-                                    .title("Could not switch branch")
-                                    .message(error)
-                                    .with_type(NotificationType::Error),
-                                cx,
-                            );
-                        }
-                    });
-                })
-                .detach();
-            }
-            BranchPickerItem::Create(raw_name) => {
-                cx.spawn_in(window, async move |this, cx| {
-                    let result = cx
-                        .background_executor()
-                        .spawn(async move {
-                            git_workspace::create_and_checkout_branch(&active_dir, &raw_name)?;
-                            let updated = git_workspace::inspect(&active_dir);
-                            Ok::<_, String>((active_dir, updated))
-                        })
-                        .await;
-                    let _ = this.update_in(cx, |this, window, cx| match result {
-                        Ok((dir, updated)) => {
-                            git_workspace::invalidate_branch_cache(&dir);
-                            this.apply_git_snapshot(dir, updated, cx);
-                        }
-                        Err(error) => {
-                            window.push_notification(
-                                Notification::new()
-                                    .title("Could not create branch")
-                                    .message(error)
-                                    .with_type(NotificationType::Error),
-                                cx,
-                            );
-                        }
-                    });
-                })
-                .detach();
-            }
-        }
+                match result {
+                    Ok(snapshot) => { this.apply_git_snapshot(active_dir, snapshot, cx); }
+                    Err(error) => window.push_notification(Notification::new()
+                        .title("Could not switch branch")
+                        .message(error)
+                        .with_type(NotificationType::Error), cx),
+                };
+            });
+        }).detach();
     }
 
     fn switch_agent_project(
@@ -560,16 +548,16 @@ impl AppState {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let pane_id = pane.id;
-        let active_dir = self.agent_working_directory(pane);
-        let snapshot = self.git_snapshots.get(&active_dir);
+        let active_dir = self.agent_working_directory_ref(pane);
+        let snapshot = self.git_snapshots.get(active_dir);
 
         let left_group = div()
             .flex()
             .items_center()
             .gap(px(4.0))
             .min_w_0()
-            .child(self.render_workspace_selector(pane, &active_dir, snapshot, tokens, window, cx))
-            .children(self.render_branch_selector(pane, &active_dir, snapshot, tokens, window, cx));
+            .child(self.render_workspace_selector(pane, active_dir, snapshot, tokens, window, cx))
+            .children(self.render_branch_selector(pane, active_dir, snapshot, tokens, window, cx));
 
         let show_usage = in_pill_footer
             && pane.chat.worker_view.is_none()

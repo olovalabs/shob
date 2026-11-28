@@ -5,8 +5,13 @@
 //! next/previous, which scrolls the viewport to the active match.
 
 use crate::terminal::TerminalState;
-use alacritty_terminal::index::{Direction, Point};
-use alacritty_terminal::term::search::{Match, RegexSearch};
+use crate::terminal::{MAX_SEARCH_MATCHES, TermDimensions};
+use alacritty_terminal::event::VoidListener;
+use alacritty_terminal::grid::{Dimensions, Grid};
+use alacritty_terminal::index::{Column, Direction, Line, Point};
+use alacritty_terminal::term::cell::Cell;
+use alacritty_terminal::term::search::{Match, RegexIter, RegexSearch};
+use alacritty_terminal::term::{Config, Term};
 use std::sync::Arc;
 
 /// Escape a literal string so it can be used as a regex.
@@ -21,6 +26,52 @@ pub fn escape_literal(query: &str) -> String {
     escaped
 }
 
+pub(crate) struct SearchSnapshot {
+    grid: Grid<Cell>,
+    top: i32,
+}
+
+impl SearchSnapshot {
+    pub(crate) fn new(columns: usize, lines: usize, top: i32) -> Self {
+        Self {
+            grid: Grid::new(lines, columns, 0),
+            top,
+        }
+    }
+
+    pub(crate) fn copy_cells<T>(&mut self, term: &Term<T>, start: usize, count: usize) {
+        let columns = self.grid.columns();
+        let mut copied = 0;
+        while copied < count {
+            let index = start + copied;
+            let row = index / columns;
+            let col = index % columns;
+            let to = (col + count - copied).min(columns);
+            let source = &term.grid()[Line(row as i32 + self.top)];
+            let dest = &mut self.grid[Line(row as i32)];
+            for col in col..to {
+                let source = &source[Column(col)];
+                let dest = &mut dest[Column(col)];
+                dest.c = source.c;
+                dest.flags = source.flags;
+            }
+            copied += to - col;
+        }
+    }
+
+    pub(crate) fn matches(self, regex: &mut RegexSearch) -> Arc<[Match]> {
+        let mut term = Term::new(Config::default(), &TermDimensions::new(2, 1), VoidListener);
+        *term.grid_mut() = self.grid;
+        let start = Point::new(Line(0), Column(0));
+        let end = Point::new(term.bottommost_line(), term.last_column());
+        let shift = |point: &Point| Point::new(point.line + self.top, point.column);
+        RegexIter::new(start, end, Direction::Right, &term, regex)
+            .take(MAX_SEARCH_MATCHES)
+            .map(|range| shift(range.start())..=shift(range.end()))
+            .collect()
+    }
+}
+
 pub struct SearchState {
     query: String,
     regex: Option<RegexSearch>,
@@ -32,6 +83,7 @@ pub struct SearchState {
     /// When `false` the query is treated as a literal string.
     use_regex: bool,
     caches_released: bool,
+    scanning: bool,
     released_anchor: Option<Point>,
 }
 
@@ -44,6 +96,7 @@ impl Default for SearchState {
             current: None,
             use_regex: false,
             caches_released: false,
+            scanning: false,
             released_anchor: None,
         }
     }
@@ -59,7 +112,7 @@ impl SearchState {
     }
 
     pub fn is_active(&self) -> bool {
-        self.regex.is_some() || self.caches_released
+        self.regex.is_some() || self.caches_released || self.scanning
     }
 
     pub fn use_regex(&self) -> bool {
@@ -94,6 +147,7 @@ impl SearchState {
         self.matches = Arc::from(Vec::<Match>::new());
         self.current = None;
         self.caches_released = false;
+        self.scanning = false;
         self.released_anchor = None;
     }
 
@@ -103,6 +157,7 @@ impl SearchState {
             .map(|m| *m.start())
             .or(self.released_anchor);
         self.caches_released = self.is_active();
+        self.scanning = false;
         self.regex = None;
         self.matches = Arc::from(Vec::<Match>::new());
         self.current = None;
@@ -112,6 +167,15 @@ impl SearchState {
     ///
     /// Returns `true` when the query compiled successfully.
     pub fn set_query(&mut self, query: &str, use_regex: bool, state: &TerminalState) -> bool {
+        let ok = self.prepare_query(query, use_regex);
+        if let Some(regex) = self.regex.as_mut() {
+            self.matches = state.all_matches(regex).into();
+        }
+        ok
+    }
+
+    pub(crate) fn prepare_query(&mut self, query: &str, use_regex: bool) -> bool {
+        self.scanning = false;
         self.query = query.to_string();
         self.use_regex = use_regex;
         self.current = None;
@@ -130,17 +194,8 @@ impl SearchState {
             escape_literal(query)
         };
 
-        match RegexSearch::new(&pattern) {
-            Ok(mut regex) => {
-                self.matches = state.all_matches(&mut regex).into();
-                self.regex = Some(regex);
-                true
-            }
-            Err(_) => {
-                self.regex = None;
-                false
-            }
-        }
+        self.regex = RegexSearch::new(&pattern).ok();
+        self.regex.is_some()
     }
 
     /// Recompute matches after the grid changed (new output, resize, …).
@@ -148,10 +203,35 @@ impl SearchState {
         if !self.is_active() {
             return;
         }
-        let anchor = self
-            .current_match()
-            .map(|m| *m.start())
-            .or(self.released_anchor.take());
+        self.restore_regex_cache();
+        let Some(regex) = self.regex.as_mut() else {
+            return;
+        };
+        let matches = state.all_matches(regex).into();
+        self.set_matches(matches);
+    }
+
+    pub(crate) fn invalidate_matches(&mut self) {
+        self.released_anchor = self.current_match().map(|m| *m.start()).or(self.released_anchor);
+        self.current = None;
+        if !self.matches.is_empty() {
+            self.matches = Arc::from([]);
+        }
+    }
+
+    pub(crate) fn take_regex(&mut self) -> Option<RegexSearch> {
+        self.restore_regex_cache();
+        let regex = self.regex.take()?;
+        self.scanning = true;
+        Some(regex)
+    }
+
+    pub(crate) fn finish_scan(&mut self, regex: RegexSearch) {
+        self.scanning = false;
+        self.regex = Some(regex);
+    }
+
+    fn restore_regex_cache(&mut self) {
         if self.caches_released {
             let pattern = if self.use_regex {
                 self.query.clone()
@@ -161,10 +241,11 @@ impl SearchState {
             self.regex = RegexSearch::new(&pattern).ok();
             self.caches_released = false;
         }
-        let Some(regex) = self.regex.as_mut() else {
-            return;
-        };
-        self.matches = state.all_matches(regex).into();
+    }
+
+    pub(crate) fn set_matches(&mut self, matches: Arc<[Match]>) {
+        let anchor = self.current_match().map(|m| *m.start()).or(self.released_anchor.take());
+        self.matches = matches;
         self.current =
             anchor.and_then(|point| self.matches.iter().position(|m| *m.start() == point));
     }
@@ -230,6 +311,26 @@ mod tests {
         let mut state = TerminalState::new(40, 8, GpuiEventProxy::new(tx));
         state.process_bytes(content);
         state
+    }
+
+    #[test]
+    fn search_snapshot_keeps_wrapped_matches_and_scrollback_coordinates() {
+        let state = state_with(b"012345678901234567890123456789012345678wrap\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\nhit");
+        let mut regex = RegexSearch::new("wrap|hit").unwrap();
+        let expected = state.all_matches(&mut regex);
+        assert_eq!(expected.len(), 2);
+        assert!(expected[0].start().line.0 < 0);
+        assert_ne!(expected[0].start().line, expected[0].end().line);
+        let snapshot = state.with_term(|term| {
+            let columns = term.columns();
+            let lines = term.total_lines();
+            let mut snapshot = SearchSnapshot::new(columns, lines, term.topmost_line().0);
+            let split = columns + 3;
+            snapshot.copy_cells(term, 0, split);
+            snapshot.copy_cells(term, split, columns * lines - split);
+            snapshot
+        });
+        assert_eq!(&*snapshot.matches(&mut regex), expected);
     }
 
     #[test]

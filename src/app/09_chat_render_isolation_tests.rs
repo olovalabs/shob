@@ -18,9 +18,23 @@ mod chat_render_isolation_tests {
             let mut app = TestAppContext::new();
             let (mut cx, state) = open_app(&mut app);
             cx.update_window_entity(&state, |state, _, cx| {
+                cx.set_reduce_motion(true);
+                // A real shell can publish unrelated PID, title, and cwd updates
+                // while the test is counting transcript/composer invalidations.
+                let terminal = cx.new(|cx| {
+                    TerminalView::new(
+                        std::io::sink(),
+                        std::io::empty(),
+                        TerminalConfig::default(),
+                        cx,
+                    )
+                });
                 state.settings.agent_layout = focused_layout;
                 state.projects[0].sessions[0].status = SessionStatus::Working;
-                let chat = &mut state.pane_mut(1).unwrap().chat;
+                let pane = state.pane_mut(1).unwrap();
+                pane.terminal = terminal;
+                pane.terminal_subscription = None;
+                let chat = &mut pane.chat;
                 chat.active = true;
                 chat.running = true;
                 chat.messages

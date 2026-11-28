@@ -7,10 +7,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyWindowHandle, App, AppContext as _, Bounds, ClipboardItem, Context, CursorStyle, Entity,
-    EventEmitter, FocusHandle, Global, InteractiveElement as _, KeyDownEvent, KeyUpEvent,
-    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    EventEmitter, FocusHandle, Global, InteractiveElement as _, IntoElement as _, KeyDownEvent,
+    KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement as _, Pixels, Point, Render, RenderImage, ScrollEvent, SharedString,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, canvas, div, px,
+    StatefulInteractiveElement as _, StyleRefinement, Styled as _, WeakEntity, Window, canvas, div,
+    px,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputEvent, InputState};
@@ -59,9 +60,16 @@ pub(crate) struct Changed;
 struct EngineRef(Weak<Engine>);
 impl Global for EngineRef {}
 
+#[derive(Clone)]
+struct Route {
+    surface: WeakEntity<BrowserSurface>,
+    viewport: WeakEntity<BrowserViewport>,
+    window: AnyWindowHandle,
+}
+
 struct Engine {
     outbox: smol::channel::Sender<Outbound>,
-    routes: RefCell<HashMap<u64, (WeakEntity<BrowserSurface>, AnyWindowHandle)>>,
+    routes: RefCell<HashMap<u64, Route>>,
     frames: Arc<LatestFrames>,
     stopped: Cell<bool>,
 }
@@ -85,52 +93,80 @@ impl Engine {
         });
         let weak = Rc::downgrade(&engine);
         cx.set_global(EngineRef(weak.clone()));
+        let control_engine = weak.clone();
         cx.spawn(async move |cx| {
             while let Ok(event) = inbox.recv().await {
-                let Some(engine) = weak.upgrade() else { return };
-                let tab_id = match &event {
-                    Event::FrameReady(tab_id) => Some(*tab_id),
-                    Event::Message(value) => value
-                        .get("tab_id")
-                        .or_else(|| value.get("tab").and_then(|tab| tab.get("tab_id")))
-                        .and_then(Value::as_u64),
+                let Some(engine) = control_engine.upgrade() else { return };
+                let mut message = match event {
+                    Event::Message(message) => message,
                     Event::Error(error) => {
-                        cx.update(|cx| engine.fail(error, cx));
+                        cx.update(|cx| engine.fail(&error, cx));
                         return;
                     }
                 };
-                let Some((view, window)) =
-                    tab_id.and_then(|id| engine.routes.borrow().get(&id).cloned())
-                else {
-                    continue;
-                };
-                match event {
-                    Event::FrameReady(tab_id) => {
-                        let frames = engine.frames.clone();
-                        let _ = window.update(cx, |_, window, _| {
-                            window.on_next_frame(move |window, cx| {
-                                if let Some(image) = frames.take(tab_id) {
-                                    let _ = view.update(cx, |view, cx| {
-                                        view.frame(tab_id, image, window, cx);
-                                    });
-                                }
-                            });
+                let tab_id = message
+                    .get("tab_id")
+                    .or_else(|| message.get("tab").and_then(|tab| tab.get("tab_id")))
+                    .and_then(Value::as_u64);
+                let route = tab_id.and_then(|id| engine.routes.borrow().get(&id).cloned());
+                if let Some(route) = route {
+                    let _ = route.window.update(cx, |_, window, cx| {
+                        let _ = route.surface.update(cx, |view, cx| {
+                            if !view.browser_tool_message(&mut message) {
+                                view.receive(&message, window, cx);
+                            }
                         });
-                    }
-                    Event::Message(mut message) => {
-                        let _ = window.update(cx, |_, window, cx| {
-                            let _ = view.update(cx, |view, cx| {
-                                if !view.browser_tool_message(&mut message) {
-                                    view.receive(&message, window, cx);
-                                }
-                            });
-                        });
-                    }
-                    Event::Error(_) => unreachable!(),
+                    });
                 }
             }
-            if let Some(engine) = weak.upgrade() {
+            if let Some(engine) = control_engine.upgrade() {
                 cx.update(|cx| engine.fail("The browser engine stopped.", cx));
+            }
+        })
+        .detach();
+        let frames = engine.frames.clone();
+        cx.spawn(async move |cx| {
+            let mut updates = Vec::new();
+            while frames.wait(&mut updates).await {
+                let Some(engine) = weak.upgrade() else { return };
+                if engine.stopped.get() {
+                    return;
+                }
+                for update in updates.drain(..) {
+                    if !frames.is_current(update.request) {
+                        continue;
+                    }
+                    let tab_id = update.request.tab_id;
+                    let route = engine.routes.borrow().get(&tab_id).cloned();
+                    let active = route.is_some_and(|route| {
+                        route.window.update(cx, |_, window, cx| {
+                            if let Some(image) = update.image {
+                                match image {
+                                    Ok(image) => {
+                                        let _ = route.viewport.update(cx, |viewport, cx| {
+                                            viewport.present(image, window, cx);
+                                        });
+                                    }
+                                    Err(error) => {
+                                        engine.fail(&format!("{error:#}"), cx);
+                                        return;
+                                    }
+                                }
+                            }
+                            if update.schedule {
+                                let frames = frames.clone();
+                                let request = update.request;
+                                window.on_next_frame(move |_, _| frames.request_decode(request));
+                            }
+                        }).is_ok()
+                    });
+                    if !active {
+                        cx.update(|cx| engine.show(Some(tab_id), None, cx));
+                    }
+                    if engine.stopped.get() {
+                        return;
+                    }
+                }
             }
         })
         .detach();
@@ -138,11 +174,13 @@ impl Engine {
     }
 
     fn fail(&self, error: &str, cx: &mut App) {
-        self.stopped.set(true);
+        if self.stopped.replace(true) {
+            return;
+        }
         self.outbox.close();
         self.frames.clear();
-        for (view, _) in self.routes.take().into_values() {
-            let _ = view.update(cx, |view, cx| view.engine_failed(error, cx));
+        for route in self.routes.take().into_values() {
+            let _ = route.surface.update(cx, |view, cx| view.engine_failed(error, cx));
         }
     }
 
@@ -182,6 +220,13 @@ impl Engine {
         self.show(Some(id), None, cx);
         self.routes.borrow_mut().remove(&id);
         self.send(json!({"type": "close_tab", "tab_id": id}), cx);
+    }
+}
+
+impl Drop for Engine {
+    fn drop(&mut self) {
+        // Wake the frame task even when the last surface closes normally.
+        self.frames.clear();
     }
 }
 
@@ -238,9 +283,11 @@ pub(crate) struct BrowserSurface {
     mounted: bool,
     visible: bool,
     bounds: Bounds<Pixels>,
+    view_scale: f32,
     metrics: Option<Viewport>,
     engine: Option<Rc<Engine>>,
-    frame: Option<Arc<RenderImage>>,
+    viewport: Entity<BrowserViewport>,
+    address_baseline: (u64, SharedString),
     address_error: Option<SharedString>,
     pressed: [bool; 3],
     _input_subscription: gpui::Subscription,
@@ -275,17 +322,21 @@ impl BrowserSurface {
             pages.push(Page::new(String::new()));
         }
         let selected = saved.active.min(pages.len() - 1);
+        let address_baseline = (pages[selected].id, SharedString::from(pages[selected].url.clone()));
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search or enter URL"));
         input.update(cx, |input, cx| {
-            input.set_value(pages[selected].url.clone(), window, cx)
+            input.set_value(address_baseline.1.clone(), window, cx)
         });
         let input_subscription =
             cx.subscribe_in(&input, window, |this, _, event, window, cx| match event {
                 InputEvent::Focus => this.reclaim(this.selected, cx),
+                InputEvent::Blur => this.reconcile_address(window, cx),
                 InputEvent::PressEnter { .. } => this.submit(window, cx),
                 _ => {}
             });
         let view = cx.weak_entity();
+        let parent = view.clone();
+        let viewport = cx.new(|_| BrowserViewport { parent, frame: None });
         let window_visibility = window.observe_window_visibility(move |visibility, _, cx| {
             let _ = view.update(cx, |this, cx| {
                 this.update_visibility(visibility.is_visible(), cx)
@@ -293,9 +344,7 @@ impl BrowserSurface {
         });
         let release = cx.on_release(|this, cx| {
             this.automation.cancel("The Browser panel closed.");
-            if let Some(image) = this.frame.take() {
-                cx.defer(move |cx| cx.drop_image(image, None));
-            }
+            this.clear_frame(cx, None);
             if let Some(engine) = this.engine.take() {
                 for page in &this.pages {
                     if page.open {
@@ -315,9 +364,11 @@ impl BrowserSurface {
             mounted: false,
             visible: false,
             bounds: Bounds::default(),
+            view_scale: window.scale_factor(),
             metrics: None,
             engine: None,
-            frame: None,
+            viewport,
+            address_baseline,
             address_error: None,
             pressed: [false; 3],
             _input_subscription: input_subscription,
@@ -355,45 +406,42 @@ impl BrowserSurface {
             self.automation
                 .cancel("The Browser panel is no longer visible.");
         }
+        let previous = self.subscribed_tab();
         self.visible = visible;
-        if self.pages[self.selected].open {
-            let id = self.pages[self.selected].id;
-            if let Some(engine) = &self.engine {
-                if visible {
-                    engine.show(None, Some(id), cx);
-                } else {
-                    engine.show(Some(id), None, cx);
-                }
-            }
-        }
         if !visible {
             self.metrics = None;
             self.pressed = [false; 3];
-            if let Some(image) = self.frame.take() {
-                cx.defer(move |cx| cx.drop_image(image, None));
-            }
+            self.clear_frame(cx, None);
         }
+        self.sync_frames(previous, cx);
         cx.notify();
     }
 
-    fn clear_frame(&mut self, cx: &mut App, window: Option<&mut Window>) {
-        if let Some(image) = self.frame.take() {
-            cx.drop_image(image, window);
+    fn subscribed_tab(&self) -> Option<u64> {
+        let page = &self.pages[self.selected];
+        (self.visible && self.metrics.is_some() && page.open).then_some(page.id)
+    }
+
+    fn sync_frames(&self, previous: Option<u64>, cx: &mut App) {
+        if let Some(engine) = &self.engine {
+            engine.show(previous, self.subscribed_tab(), cx);
         }
     }
 
-    fn frame(
-        &mut self,
-        id: u64,
-        image: Arc<RenderImage>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.visible && self.pages[self.selected].id == id {
-            if let Some(previous) = self.frame.replace(image) {
-                let _ = window.drop_image(previous);
+    fn clear_frame(&self, cx: &mut App, window: Option<&mut Window>) {
+        let image = self.viewport.update(cx, |viewport, cx| {
+            let image = viewport.frame.take();
+            if image.is_some() {
+                cx.notify();
             }
-            cx.notify();
+            image
+        });
+        if let Some(image) = image {
+            if let Some(window) = window {
+                cx.drop_image(image, Some(window));
+            } else {
+                cx.defer(move |cx| cx.drop_image(image, None));
+            }
         }
     }
 
@@ -416,29 +464,36 @@ impl BrowserSurface {
 
     fn viewport(&mut self, bounds: Bounds<Pixels>, window: &Window, cx: &mut Context<Self>) {
         self.bounds = bounds;
-        let w = f64::from(f32::from(bounds.size.width)).floor();
-        let h = f64::from(f32::from(bounds.size.height)).floor();
+        self.view_scale = window.scale_factor();
         if !self.visible {
             return;
         }
-        if w < 1.0 || h < 1.0 {
+        if !has_viewport_area(bounds) {
+            let previous = self.subscribed_tab();
             if self.metrics.take().is_some() {
                 self.automation
                     .cancel("The Browser viewport is no longer available.");
+                self.sync_frames(previous, cx);
+                self.pressed = [false; 3];
+                self.clear_frame(cx, None);
             }
             return;
         }
-        let geometry = browser_viewport(w, h, window.scale_factor());
+        let w = f64::from(f32::from(bounds.size.width)).floor();
+        let h = f64::from(f32::from(bounds.size.height)).floor();
+        let geometry = browser_viewport(w, h, self.view_scale);
         let previous = self.metrics.replace(geometry);
         if previous != Some(geometry) {
             self.automation.wake(self.pages[self.selected].id);
         }
         let page = &self.pages[self.selected];
-        if page.interactive() {
-            if previous != Some(geometry) {
-                self.resize(page.id, geometry, cx);
-            }
-        } else if !page.open && page.error.is_none() {
+        if page.interactive() && previous != Some(geometry) {
+            self.resize(page.id, geometry, cx);
+        }
+        if previous.is_none() {
+            self.sync_frames(None, cx);
+        }
+        if !page.open && page.error.is_none() {
             self.open(cx);
         }
     }
@@ -481,16 +536,20 @@ impl BrowserSurface {
         } else {
             engine.send(msg, cx);
         }
-        engine
-            .routes
-            .borrow_mut()
-            .insert(id, (cx.weak_entity(), self.window));
+        engine.routes.borrow_mut().insert(
+            id,
+            Route {
+                surface: cx.weak_entity(),
+                viewport: self.viewport.downgrade(),
+                window: self.window,
+            },
+        );
         page.open = true;
         page.opening_viewport = Some((width, height, scale));
         page.document = 0;
         page.web_document = false;
         page.loading = true;
-        engine.show(None, Some(id), cx);
+        self.sync_frames(None, cx);
         cx.notify();
         Ok(())
     }
@@ -547,11 +606,28 @@ impl BrowserSurface {
         cx.notify();
     }
 
-    fn sync_address(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let url = &self.pages[self.selected].url;
-        if self.input.read(cx).value().as_str() != url {
-            self.input
-                .update(cx, |input, cx| input.set_value(url.clone(), window, cx));
+    fn sync_address(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let page = &self.pages[self.selected];
+        if self.address_baseline.1.as_str() != page.url {
+            self.address_baseline.1 = page.url.clone().into();
+        }
+        self.address_baseline.0 = page.id;
+        if !self.input.read(cx).text().eq(self.address_baseline.1.as_str()) {
+            let address = self.address_baseline.1.clone();
+            self.input.update(cx, |input, cx| input.set_value(address, window, cx));
+        }
+    }
+
+    fn reconcile_address(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let page = &self.pages[self.selected];
+        let input = self.input.read(cx);
+        if page.id == self.address_baseline.0
+            && page.url != self.address_baseline.1.as_str()
+            && !input.focus_handle().is_focused(window)
+            // Only replace the last committed text, not the user's draft.
+            && input.text().eq(self.address_baseline.1.as_str())
+        {
+            self.sync_address(window, cx);
         }
     }
 
@@ -568,19 +644,22 @@ impl BrowserSurface {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.selected != index {
-            if let Some(engine) = &self.engine {
-                engine.show(Some(self.pages[self.selected].id), None, cx);
-            }
+        let previous = if self.selected != index {
             self.clear_frame(cx, Some(window));
-        }
+            self.subscribed_tab()
+        } else {
+            None
+        };
         self.selected = index;
         if self.pages[index].owner.is_manual() {
             self.saved_active = self.pages[index].id;
         }
         self.pressed = [false; 3];
-        self.address_error = None;
-        self.sync_address(window, cx);
+        if self.address_baseline.0 != self.pages[index].id {
+            self.address_error = None;
+            self.sync_address(window, cx);
+        }
+        self.sync_frames(previous, cx);
         let page = &self.pages[index];
         let focus = focus && !page.owner.is_agent();
         if page.url.is_empty() {
@@ -592,9 +671,6 @@ impl BrowserSurface {
                 self.focus.focus(window, cx);
             }
             if page.open {
-                if let Some(engine) = &self.engine {
-                    engine.show(None, Some(page.id), cx);
-                }
                 if page.interactive() {
                     if let Some(geometry) = self.metrics {
                         self.resize(page.id, geometry, cx);
@@ -736,8 +812,8 @@ impl BrowserSurface {
                     _ => CursorStyle::Arrow,
                 };
                 if url_changed {
-                    if active && !self.input.read(cx).focus_handle().is_focused(window) {
-                        self.sync_address(window, cx);
+                    if active {
+                        self.reconcile_address(window, cx);
                     }
                     cx.emit(Changed);
                 }
@@ -1208,13 +1284,37 @@ fn browser_empty_state(cx: &App) -> impl gpui::IntoElement {
         )
 }
 
-impl Render for BrowserSurface {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+fn has_viewport_area(bounds: Bounds<Pixels>) -> bool {
+    bounds.size.width >= px(1.) && bounds.size.height >= px(1.)
+}
+
+struct BrowserViewport {
+    parent: WeakEntity<BrowserSurface>,
+    frame: Option<Arc<RenderImage>>,
+}
+
+impl BrowserViewport {
+    fn present(&mut self, image: Arc<RenderImage>, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(previous) = self.frame.replace(image) {
+            let _ = window.drop_image(previous);
+        }
+        cx.notify();
+    }
+}
+
+impl Render for BrowserViewport {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+        let Some(surface) = self.parent.upgrade() else {
+            return div().into_any_element();
+        };
         let theme = cx.theme();
-        let (bg, foreground, muted) = (theme.background, theme.foreground, theme.muted_foreground);
-        let page = &self.pages[self.selected];
+        let (bg, muted) = (theme.background, theme.muted_foreground);
+        let browser = surface.read(cx);
+        let page = &browser.pages[browser.selected];
+        let focus = browser.focus.clone();
+        let cursor = page.cursor;
         let empty = page.url.is_empty() && self.frame.is_none();
-        let notice: Option<SharedString> = self
+        let notice: Option<SharedString> = browser
             .address_error
             .clone()
             .or_else(|| page.error.clone())
@@ -1227,30 +1327,38 @@ impl Render for BrowserSurface {
                     Some("Starting Chromium… First use downloads the browser engine.".into())
                 }
             });
-        let weak = cx.weak_entity();
+        let weak = self.parent.clone();
+        let frame = self.frame.clone();
         let mut viewport = div().id("browser-page").debug_selector(|| "browser-page".into())
             .key_context(PAGE_KEYS)
-            .on_action(cx.listener(|this, _: &NextField, _, cx| this.tab_key(false, cx)))
-            .on_action(cx.listener(|this, _: &PreviousField, _, cx| this.tab_key(true, cx)))
-            .relative().flex_1().min_h_0().overflow_hidden().track_focus(&self.focus)
-            .cursor(page.cursor)
+            .on_action(window.listener_for(&surface, |this, _: &NextField, _, cx| this.tab_key(false, cx)))
+            .on_action(window.listener_for(&surface, |this, _: &PreviousField, _, cx| this.tab_key(true, cx)))
+            .relative().size_full().overflow_hidden().track_focus(&focus)
+            .cursor(cursor)
             .child(canvas(move |bounds, window, cx| {
-                weak.update(cx, |view, cx| {
-                    view.viewport(bounds, window, cx);
-                    view.frame.clone()
-                }).ok().flatten()
+                let has_area = has_viewport_area(bounds);
+                if let Some(surface) = weak.upgrade() {
+                    let browser = surface.read(cx);
+                    if browser.bounds != bounds
+                        || (browser.visible && has_area
+                            && (browser.metrics.is_none() || browser.view_scale != window.scale_factor()))
+                    {
+                        surface.update(cx, |browser, cx| browser.viewport(bounds, window, cx));
+                    }
+                }
+                if has_area { frame } else { None }
             }, |bounds, image, window, _| {
                 if let Some(image) = image {
                     let _ = window.paint_image(bounds, bounds, Default::default(), image, 0, false);
                 }
             }).absolute().size_full())
-            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, _| {
+            .on_mouse_move(window.listener_for(&surface, |this, event: &MouseMoveEvent, _, _| {
                 this.mouse_move(event.position, event.modifiers, false);
             }))
-            .on_hover(cx.listener(|this, hovered: &bool, window, _| {
+            .on_hover(window.listener_for(&surface, |this, hovered: &bool, window, _| {
                 if !hovered { this.mouse_move(window.mouse_position(), window.modifiers(), true); }
             }))
-            .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
+            .on_scroll(window.listener_for(&surface, |this, event: &ScrollEvent, _, cx| {
                 this.reclaim(this.selected, cx);
                 if this.send_motion(|id| {
                     let (x, y) = this.coordinates(event.position);
@@ -1261,17 +1369,17 @@ impl Render for BrowserSurface {
                     cx.stop_propagation();
                 }
             }))
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+            .on_key_down(window.listener_for(&surface, |this, event: &KeyDownEvent, window, cx| {
                 this.key(&event.keystroke, true, window, cx);
             }))
-            .on_key_up(cx.listener(|this, event: &KeyUpEvent, window, cx| {
+            .on_key_up(window.listener_for(&surface, |this, event: &KeyUpEvent, window, cx| {
                 this.key(&event.keystroke, false, window, cx);
             }));
         for button in [MouseButton::Left, MouseButton::Right, MouseButton::Middle] {
             viewport = viewport
-                .on_mouse_down(button, cx.listener(Self::mouse_down))
-                .on_mouse_up(button, cx.listener(Self::mouse_up))
-                .on_mouse_up_out(button, cx.listener(Self::mouse_up));
+                .on_mouse_down(button, window.listener_for(&surface, BrowserSurface::mouse_down))
+                .on_mouse_up(button, window.listener_for(&surface, BrowserSurface::mouse_up))
+                .on_mouse_up_out(button, window.listener_for(&surface, BrowserSurface::mouse_up));
         }
         viewport = viewport.when(empty && notice.is_none(), |viewport| {
             viewport.child(browser_empty_state(cx))
@@ -1291,6 +1399,15 @@ impl Render for BrowserSurface {
                 .child(notice)
         }));
 
+        viewport.into_any_element()
+    }
+}
+
+impl Render for BrowserSurface {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+        let theme = cx.theme();
+        let (bg, foreground) = (theme.background, theme.foreground);
+        let page = &self.pages[self.selected];
         let tabs =
             (self.pages.len() > 1 || page.owner.is_agent()).then(|| self.render_page_tabs(cx));
         let toolbar = self.render_toolbar(cx);
@@ -1304,7 +1421,11 @@ impl Render for BrowserSurface {
             .text_color(foreground)
             .children(tabs)
             .child(toolbar)
-            .child(viewport)
+            .child(
+                self.viewport
+                    .clone()
+                    .cached(StyleRefinement::default().flex_1().min_h_0()),
+            )
     }
 }
 
@@ -1458,6 +1579,41 @@ mod tests {
     }
 
     #[test]
+    fn browser_address_reconciles_commits_on_blur_without_replacing_drafts() {
+        use super::*;
+        use crate::resize_tests::TestAppContext;
+        use gpui::VisualContext as _;
+
+        let mut app = TestAppContext::new();
+        let (mut app, root) = crate::resize_tests::open_app(&mut app);
+        app.update_window_entity(&root, |_, window, cx| {
+            let view = cx.new(|cx| BrowserSurface::new(SavedBrowser {
+                tabs: vec!["https://example.com/".into()],
+                active: 0,
+            }, window, cx));
+            view.update(cx, |view, cx| {
+                let id = view.pages[view.selected].id;
+                let update = |url| json!({"type": "tab_update", "tab": {"tab_id": id, "url": url}});
+                view.focus_address(window, cx);
+                view.receive(&update("https://example.com/one"), window, cx);
+                view.receive(&update("https://example.com/two"), window, cx);
+                assert_eq!(view.input.read(cx).value().as_str(), "https://example.com/");
+                window.blur(cx);
+                view.reconcile_address(window, cx);
+                assert_eq!(view.input.read(cx).value().as_str(), "https://example.com/two");
+
+                view.focus_address(window, cx);
+                view.input.update(cx, |input, cx| input.set_value("in progress", window, cx));
+                view.receive(&update("https://example.com/three"), window, cx);
+                window.blur(cx);
+                view.reconcile_address(window, cx);
+                view.receive(&update("https://example.com/four"), window, cx);
+                assert_eq!(view.input.read(cx).value().as_str(), "in progress");
+            });
+        });
+    }
+
+    #[test]
     fn browser_startup_keeps_motion_out_and_sends_latest_size() {
         use super::*;
         use crate::resize_tests::TestAppContext;
@@ -1535,9 +1691,20 @@ mod tests {
                 assert_eq!(queued[queued.len() - 2]["type"], "focus_tab");
                 assert_eq!(queued.last().unwrap()["type"], "mouse_button");
 
+                view.viewport(bounds(0.), window, cx);
+                assert_eq!(recv()["tab_ids"], json!([]));
+                view.viewport(bounds(0.), window, cx);
+                assert!(commands.is_empty());
+                view.viewport(bounds(360.), window, cx);
+                assert_eq!(recv()["width_pt"], 360);
+                assert_eq!(recv()["tab_ids"], json!([open["tab_id"]]));
+
                 view.update_visibility(false, cx);
                 assert_eq!(recv()["tab_ids"], json!([]));
                 view.update_visibility(true, cx);
+                assert!(commands.is_empty());
+                view.viewport(bounds(360.), window, cx);
+                assert_eq!(recv()["width_pt"], 360);
                 assert_eq!(recv()["tab_ids"], json!([open["tab_id"]]));
             });
         });

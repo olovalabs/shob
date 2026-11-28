@@ -335,7 +335,6 @@ impl Render for Notification {
 pub struct NotificationList {
     /// Notifications that will be auto hidden.
     pub(crate) notifications: VecDeque<Entity<Notification>>,
-    expanded: bool,
     _subscriptions: HashMap<NotificationId, Subscription>,
 }
 
@@ -343,7 +342,6 @@ impl NotificationList {
     pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
         Self {
             notifications: VecDeque::new(),
-            expanded: false,
             _subscriptions: HashMap::new(),
         }
     }
@@ -368,6 +366,7 @@ impl NotificationList {
             cx.subscribe(&notification, move |view, _, _: &DismissEvent, cx| {
                 view.notifications.retain(|note| id != note.read(cx).id);
                 view._subscriptions.remove(&id);
+                cx.notify();
             }),
         );
 
@@ -398,11 +397,11 @@ impl NotificationList {
         if let Some(n) = self.notifications.iter().find(|n| n.read(cx).id == id) {
             n.update(cx, |note, cx| note.dismiss(window, cx))
         }
-        cx.notify();
     }
 
     pub fn clear(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         self.notifications.clear();
+        self._subscriptions.clear();
         cx.notify();
     }
 
@@ -415,7 +414,7 @@ impl Render for NotificationList {
     fn render(
         &mut self,
         window: &mut gpui::Window,
-        cx: &mut gpui::Context<Self>,
+        _: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         let size = window.viewport_size();
         let items = self.notifications.iter().rev().take(10).rev().cloned();
@@ -424,12 +423,60 @@ impl Render for NotificationList {
             v_flex()
                 .id("notification-list")
                 .h(size.height - px(8.))
-                .on_hover(cx.listener(|view, hovered, _, cx| {
-                    view.expanded = *hovered;
-                    cx.notify()
-                }))
                 .gap_3()
                 .children(items),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::*;
+
+    #[gpui::test]
+    fn test_notification_list_removal(cx: &mut gpui::TestAppContext) {
+        // Keep the list unmounted: the observer checks its invalidation without
+        // rendering notification content or depending on animation timers.
+        let window = cx.add_window(|_, _| gpui::Empty);
+        let list = window
+            .update(cx, |_, window, cx| cx.new(|cx| NotificationList::new(window, cx)))
+            .unwrap();
+        let changes = Rc::new(Cell::new(0));
+        let observed = changes.clone();
+        let _observer = cx.update(|cx| {
+            cx.observe(&list, move |_, _| observed.set(observed.get() + 1))
+        });
+        let push = |cx: &mut gpui::TestAppContext| {
+            window
+                .update(cx, |_, window, cx| {
+                    list.update(cx, |list, cx| {
+                        list.push(Notification::new().autohide(false), window, cx);
+                        list.notifications.back().unwrap().clone()
+                    })
+                })
+                .unwrap()
+        };
+
+        let dismissing = push(cx);
+        let before = changes.get();
+        dismissing.update(cx, |_, cx| cx.emit(DismissEvent));
+        assert_eq!(changes.get(), before + 1);
+        assert!(cx.read(|cx| list.read(cx).notifications().is_empty()));
+
+        let retained = push(cx);
+        window
+            .update(cx, |_, window, cx| list.update(cx, |list, cx| list.clear(window, cx)))
+            .unwrap();
+        cx.read(|cx| {
+            let list = list.read(cx);
+            assert!(list.notifications().is_empty());
+            assert!(list._subscriptions.is_empty());
+        });
+
+        let before = changes.get();
+        retained.update(cx, |_, cx| cx.emit(DismissEvent));
+        assert_eq!(changes.get(), before);
     }
 }

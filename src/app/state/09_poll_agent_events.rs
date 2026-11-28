@@ -206,9 +206,6 @@ impl AppState {
                                 agent_bridge::AgentEvent::Done
                                 | agent_bridge::AgentEvent::Closed => {
                                     pane.chat.requests.clear();
-                                    if let Some(bridge) = &pane.chat.bridge {
-                                        bridge.set_browser_sender(None);
-                                    }
                                 }
                                 _ => {}
                             }
@@ -385,7 +382,6 @@ impl AppState {
         for pane_id in done_panes {
             if let Some(pane) = self.pane_ref(pane_id) {
                 let dir = self.agent_working_directory(pane);
-                git_workspace::invalidate_branch_cache(&dir);
                 self.schedule_git_refresh(dir, cx);
             }
         }
@@ -471,6 +467,7 @@ impl AppState {
         let policy = self.settings.memory.policy();
         let now = std::time::Instant::now();
         let mut session_changed = false;
+        let persist_scrollback = self.saves_scrollback();
         // A deep scrollback is thousands of small row allocations, and its drop
         // runs on this thread. Hibernating one pane per tick keeps the freed
         // total bounded instead of stalling a restored 50-session workspace.
@@ -521,10 +518,16 @@ impl AppState {
                             pane.chat.view.borrow_mut().take();
                             pane.chat.focused_scrollbar.borrow_mut().take();
                             let rows = std::mem::take(&mut *pane.chat.row_cache.borrow_mut());
-                            let uid = pane.uid.clone();
+                            let persist = persist_scrollback.then(|| {
+                                let counter = self.scrollback_generation.clone();
+                                let generation = counter.load(Ordering::SeqCst);
+                                (pane.uid.clone(), text, counter, generation)
+                            });
                             cx.background_executor()
                                 .spawn(async move {
-                                    Self::persist_hibernated_scrollback(&uid, &text);
+                                    if let Some((uid, text, counter, generation)) = persist {
+                                        Self::write_pane_scrollback(&uid, &text, &counter, generation);
+                                    }
                                     drop(rows);
                                     session_lifecycle::return_free_pages();
                                 })
@@ -574,15 +577,6 @@ impl AppState {
             }
         }
         session_changed
-    }
-
-    /// Persist a hibernated pane's text for crash safety. Failures are reported
-    /// and ignored: the in-memory copy still wakes the pane, and losing a
-    /// scrollback file is not worth failing a save over.
-    fn persist_hibernated_scrollback(uid: &str, text: &str) {
-        if let Err(error) = workspace_state::write_scrollback(uid, text) {
-            eprintln!("failed to persist hibernated scrollback: {error}");
-        }
     }
 
     /// Mirror a pane's conversation name onto its session, so the sidebar names

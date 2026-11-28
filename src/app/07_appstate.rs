@@ -19,23 +19,22 @@ impl AppState {
     fn render_app(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         #[cfg(test)]
         APP_ROOT_RENDERS.with(|count| count.set(count.get() + 1));
-        // The wrapper marks only panes mounted by this root pass. Background
-        // sessions and panes hidden by previews/maximization stay dormant.
+        let mut mounted = std::mem::take(self.mounted_chat_panes.get_mut());
+        for id in mounted.drain(..) {
+            if let Some(pane) = self.pane_ref(id) {
+                pane.chat.view_visible.set(false);
+            }
+        }
+        *self.mounted_chat_panes.get_mut() = mounted;
         let workspace = self.active_view == ActiveView::Workspace;
-        let selected = if workspace { self.active_session().map(|session| session.id) } else { None };
-        let seen_at = std::time::Instant::now();
-        for project in &mut self.projects {
-            for session in &mut project.sessions {
-                for pane in &mut session.panes {
-                    if Some(session.id) == selected {
-                        pane.idle_resources_released = false;
-                        // Rendering is the strongest evidence the person is
-                        // looking at this pane, and it records `last_seen` so a
-                        // pane that was viewed once may later be hibernated.
-                        pane.lifecycle.mark_seen(seen_at);
-                    }
-                    pane.chat.view_visible.set(false);
-                }
+        if workspace
+            && let Some(project) = self.projects.get_mut(self.active_project_idx)
+            && let Some(session) = project.sessions.get_mut(project.active_session_idx)
+        {
+            let seen_at = std::time::Instant::now();
+            for pane in &mut session.panes {
+                pane.idle_resources_released = false;
+                pane.lifecycle.mark_seen(seen_at);
             }
         }
         static FIRST_RENDER: std::sync::Once = std::sync::Once::new();

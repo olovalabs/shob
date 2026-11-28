@@ -18,6 +18,7 @@ use smol::net::unix::UnixStream;
 use std::collections::HashMap;
 use std::fs::{self, DirBuilder, File, OpenOptions, Permissions};
 use std::io::{self, BufReader as FileReader, Read, Write};
+use std::ops::Range;
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
@@ -60,7 +61,6 @@ const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 const STARTUP_POLL: Duration = Duration::from_millis(50);
 
 pub(crate) enum Event {
-    FrameReady(u64),
     Message(Value),
     Error(String),
 }
@@ -92,53 +92,201 @@ impl AgentGuard {
     }
 }
 
+pub(crate) struct LatestFrames {
+    tabs: Mutex<FrameTabs>,
+    wake: Sender<()>,
+    ready: Receiver<()>,
+    decode_wake: Sender<()>,
+    decode_ready: Receiver<()>,
+}
+
 #[derive(Default)]
-// A nonempty slot has one wakeup pending until the window takes its latest paint.
-pub(crate) struct LatestFrames(Mutex<HashMap<u64, Option<Arc<gpui::RenderImage>>>>);
+struct FrameTabs {
+    generation: u64,
+    slots: HashMap<u64, FrameSlot>,
+}
+
+#[derive(Default)]
+struct FrameSlot {
+    generation: u64,
+    pending: Option<RawFrame>,
+    phase: FramePhase,
+    spare: Vec<u8>,
+}
+
+#[derive(Default)]
+enum FramePhase {
+    #[default]
+    Idle,
+    Scheduled,
+    Requested,
+    Decoding,
+    Ready(Result<Arc<gpui::RenderImage>>),
+}
+
+pub(crate) struct FrameUpdate {
+    pub(crate) request: FrameRequest,
+    pub(crate) schedule: bool,
+    pub(crate) image: Option<Result<Arc<gpui::RenderImage>>>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct FrameRequest {
+    pub(crate) tab_id: u64,
+    generation: u64,
+}
+
+impl FrameTabs {
+    fn slot(&mut self, request: FrameRequest) -> Option<&mut FrameSlot> {
+        self.slots
+            .get_mut(&request.tab_id)
+            .filter(|slot| slot.generation == request.generation)
+    }
+}
+
+impl Default for LatestFrames {
+    fn default() -> Self {
+        let (wake, ready) = bounded(1);
+        let (decode_wake, decode_ready) = bounded(1);
+        Self {
+            tabs: Mutex::default(),
+            wake,
+            ready,
+            decode_wake,
+            decode_ready,
+        }
+    }
+}
 
 impl LatestFrames {
     pub(crate) fn show(&self, previous: Option<u64>, next: Option<u64>) -> Option<Vec<u64>> {
         if previous == next {
             return None;
         }
-        let mut tabs = self.0.lock();
-        let removed = previous.and_then(|id| tabs.remove(&id));
-        let inserted = next.is_some_and(|id| {
-            if let std::collections::hash_map::Entry::Vacant(entry) = tabs.entry(id) {
-                entry.insert(None);
-                true
-            } else {
-                false
-            }
-        });
-        let visible = (removed.is_some() || inserted).then(|| tabs.keys().copied().collect());
+        let mut tabs = self.tabs.lock();
+        let removed = previous.and_then(|id| tabs.slots.remove(&id));
+        let inserted = next.filter(|id| !tabs.slots.contains_key(id));
+        if let Some(id) = inserted {
+            tabs.generation = tabs.generation.wrapping_add(1);
+            let generation = tabs.generation;
+            tabs.slots.insert(
+                id,
+                FrameSlot {
+                    generation,
+                    ..Default::default()
+                },
+            );
+        }
+        let visible = (removed.is_some() || inserted.is_some())
+            .then(|| tabs.slots.keys().copied().collect());
         drop(tabs);
         drop(removed);
         visible
     }
 
     pub(crate) fn clear(&self) {
-        let tabs = std::mem::take(&mut *self.0.lock());
-        drop(tabs);
+        let slots = std::mem::take(&mut self.tabs.lock().slots);
+        self.wake.close();
+        self.decode_wake.close();
+        drop(slots);
     }
 
-    fn is_visible(&self, tab_id: u64) -> bool {
-        self.0.lock().contains_key(&tab_id)
-    }
-
-    fn replace(&self, tab_id: u64, frame: Arc<gpui::RenderImage>) -> bool {
-        let previous = {
-            let mut tabs = self.0.lock();
-            let Some(slot) = tabs.get_mut(&tab_id) else {
-                return false;
+    fn replace(&self, tab_id: u64, paint: Result<Paint>, buffer: &mut Vec<u8>) -> Result<()> {
+        let wake = {
+            let mut tabs = self.tabs.lock();
+            let Some(slot) = tabs.slots.get_mut(&tab_id) else {
+                return Ok(());
             };
-            slot.replace(frame)
+            let paint = paint?;
+            let previous = slot.pending.replace(RawFrame {
+                paint,
+                line: std::mem::take(buffer),
+            });
+            let wake = previous.is_none() && matches!(slot.phase, FramePhase::Idle);
+            *buffer = previous.map_or_else(|| std::mem::take(&mut slot.spare), |raw| raw.line);
+            wake
         };
-        previous.is_none()
+        if wake {
+            // A single signal covers every ready viewport; paints never block control reads.
+            let _ = self.wake.try_send(());
+        }
+        Ok(())
     }
 
-    pub(crate) fn take(&self, tab_id: u64) -> Option<Arc<gpui::RenderImage>> {
-        self.0.lock().get_mut(&tab_id)?.take()
+    pub(crate) async fn wait(&self, updates: &mut Vec<FrameUpdate>) -> bool {
+        if self.ready.recv().await.is_err() {
+            return false;
+        }
+        for (&tab_id, slot) in &mut self.tabs.lock().slots {
+            let image = match std::mem::take(&mut slot.phase) {
+                FramePhase::Ready(image) => Some(image),
+                phase => {
+                    slot.phase = phase;
+                    None
+                }
+            };
+            let schedule = slot.pending.is_some() && matches!(slot.phase, FramePhase::Idle);
+            if schedule {
+                slot.phase = FramePhase::Scheduled;
+            }
+            if schedule || image.is_some() {
+                let request = FrameRequest {
+                    tab_id,
+                    generation: slot.generation,
+                };
+                updates.push(FrameUpdate { request, schedule, image });
+            }
+        }
+        true
+    }
+
+    pub(crate) fn is_current(&self, request: FrameRequest) -> bool {
+        self.tabs.lock().slot(request).is_some()
+    }
+
+    pub(crate) fn request_decode(&self, request: FrameRequest) {
+        let mut tabs = self.tabs.lock();
+        let Some(slot) = tabs.slot(request) else {
+            return;
+        };
+        if matches!(slot.phase, FramePhase::Scheduled) {
+            slot.phase = FramePhase::Requested;
+            drop(tabs);
+            let _ = self.decode_wake.try_send(());
+        }
+    }
+
+    fn take(&self) -> Option<(FrameRequest, RawFrame)> {
+        let mut tabs = self.tabs.lock();
+        let (&tab_id, slot) = tabs
+            .slots
+            .iter_mut()
+            .find(|(_, slot)| matches!(slot.phase, FramePhase::Requested))?;
+        let pending = slot.pending.take()?;
+        slot.phase = FramePhase::Decoding;
+        let request = FrameRequest {
+            tab_id,
+            generation: slot.generation,
+        };
+        Some((request, pending))
+    }
+
+    fn finish(&self, request: FrameRequest, buffer: Vec<u8>, image: Result<Arc<gpui::RenderImage>>) {
+        let mut tabs = self.tabs.lock();
+        let Some(slot) = tabs.slot(request) else { return };
+        slot.phase = FramePhase::Ready(image);
+        slot.spare = buffer;
+        drop(tabs);
+        let _ = self.wake.try_send(());
+    }
+
+    async fn decode(&self) {
+        while self.decode_ready.recv().await.is_ok() {
+            while let Some((request, raw)) = self.take() {
+                let image = raw.paint.decode(&raw.line);
+                self.finish(request, raw.line, image);
+            }
+        }
     }
 }
 
@@ -148,6 +296,10 @@ pub(crate) fn start(
 ) -> (Sender<Outbound>, Receiver<Event>) {
     let (commands, incoming) = bounded(INPUT_QUEUE);
     let (outgoing, events) = bounded(EVENT_QUEUE);
+    let decoder = frames.clone();
+    cx.background_executor()
+        .spawn(async move { decoder.decode().await })
+        .detach();
     cx.background_executor()
         .spawn(async move {
             let result = run(&incoming, &outgoing, &frames).await;
@@ -518,8 +670,19 @@ struct Incoming<'a> {
     bgra_b64: Option<&'a str>,
 }
 
+struct Paint {
+    width: u32,
+    height: u32,
+    bgra: Range<usize>,
+}
+
+struct RawFrame {
+    paint: Paint,
+    line: Vec<u8>,
+}
+
 impl Incoming<'_> {
-    fn frame(self) -> Result<Arc<gpui::RenderImage>> {
+    fn paint(self, line: &[u8]) -> Result<Paint> {
         let (Some(width), Some(height), Some(bgra)) = (self.width, self.height, self.bgra_b64)
         else {
             bail!("browser frame is missing a required field");
@@ -538,10 +701,26 @@ impl Incoming<'_> {
             bgra.len() == bytes.div_ceil(3) * 4,
             "incorrect browser frame length"
         );
+        // `bgra` is borrowed from `line` by serde_json, so retain the offset, not a copy.
+        let start = bgra.as_ptr() as usize - line.as_ptr() as usize;
+        Ok(Paint {
+            width,
+            height,
+            bgra: start..start + bgra.len(),
+        })
+    }
+}
+
+impl Paint {
+    fn decode(self, line: &[u8]) -> Result<Arc<gpui::RenderImage>> {
+        let Self { width, height, bgra } = self;
         let pixels = STANDARD
-            .decode_to_vec(bgra)
+            .decode_to_vec(&line[bgra])
             .context("decoding browser frame")?;
-        ensure!(pixels.len() == bytes, "incorrect browser frame length");
+        ensure!(
+            pixels.len() == width as usize * height as usize * 4,
+            "incorrect browser frame length"
+        );
         // RenderImage takes BGRA already. RgbaImage is just the owning four-byte pixel buffer.
         let pixels =
             image::RgbaImage::from_raw(width, height, pixels).context("building browser frame")?;
@@ -576,21 +755,19 @@ async fn read_events(
         {
             continue;
         }
-        let event = if incoming.kind == "cpu_frame" {
-            let id = incoming
-                .tab_id
-                .context("browser frame is missing a tab ID")?;
-            if !frames.is_visible(id) || !frames.replace(id, incoming.frame()?) {
-                continue;
-            }
-            Event::FrameReady(id)
-        } else {
-            ensure!(
-                line.len() <= MAX_MESSAGE,
-                "browser control message is too large"
-            );
-            Event::Message(serde_json::from_slice(line).context("invalid browser control message")?)
-        };
+        if incoming.kind == "cpu_frame" {
+            let id = incoming.tab_id.context("browser frame is missing a tab ID")?;
+            let paint = incoming.paint(line);
+            frames.replace(id, paint, &mut buffer)?;
+            continue;
+        }
+        ensure!(
+            line.len() <= MAX_MESSAGE,
+            "browser control message is too large"
+        );
+        let event = Event::Message(
+            serde_json::from_slice(line).context("invalid browser control message")?,
+        );
         if events.send(event).await.is_err() {
             return Ok(());
         }
@@ -762,12 +939,10 @@ mod tests {
 
     #[test]
     fn decodes_bgra_without_swapping_channels() {
-        let msg: Incoming<'_> = serde_json::from_str(
-            r#"{"type":"cpu_frame","tab_id":5,"frame_id":7,"width":1,"height":1,"bgra_b64":"AQID/w=="}"#,
-        )
-        .unwrap();
+        let line = br#"{"type":"cpu_frame","tab_id":5,"frame_id":7,"width":1,"height":1,"bgra_b64":"AQID/w=="}"#;
+        let msg: Incoming<'_> = serde_json::from_slice(line).unwrap();
         assert_eq!(msg.tab_id, Some(5));
-        let image = msg.frame().unwrap();
+        let image = msg.paint(line).unwrap().decode(line).unwrap();
         assert_eq!(image.as_bytes(0), Some([1, 2, 3, 255].as_slice()));
     }
 
@@ -789,29 +964,66 @@ mod tests {
                 height: Some(height),
                 bgra_b64: Some(bgra_b64),
             };
-            assert!(message.frame().is_err());
+            let line = bgra_b64.as_bytes();
+            assert!(message.paint(line).and_then(|paint| paint.decode(line)).is_err());
         }
     }
 
     #[test]
-    fn coalesces_frames_per_visible_tab_until_presented() {
+    fn coalesces_raw_paints_per_subscription() {
         let frames = LatestFrames::default();
-        let image = || {
-            Arc::new(gpui::RenderImage::new([image::Frame::new(
-                image::RgbaImage::new(1, 1),
-            )]))
+        let publish = |id, payload: &str| {
+            let mut buffer = payload.as_bytes().to_vec();
+            let paint = Paint { width: 1, height: 1, bgra: 0..buffer.len() };
+            frames.replace(id, Ok(paint), &mut buffer).unwrap();
         };
-        let latest = image();
-        assert!(!frames.replace(1, image()));
+        let queued = || {
+            let mut updates = Vec::new();
+            assert_eq!(frames.ready.len(), 1);
+            assert!(smol::block_on(frames.wait(&mut updates)));
+            updates
+        };
+        publish(1, "AQID/w==");
+        assert!(frames.ready.is_empty());
         frames.show(None, Some(1));
         frames.show(None, Some(2));
-        assert!(frames.replace(1, image()));
-        assert!(frames.replace(2, image()));
-        assert!(!frames.replace(1, latest.clone()));
-        assert!(Arc::ptr_eq(&latest, &frames.take(1).unwrap()));
-        assert!(frames.replace(1, image()));
+        publish(1, "invalid!");
+        publish(2, "AQID/w==");
+        let mut updates = queued();
+        assert_eq!(updates.len(), 2);
+        updates.sort_by_key(|update| update.request.tab_id);
+        let first = updates[0].request;
+        let other = updates[1].request;
+        publish(1, "AQID/w==");
+        assert!(frames.ready.is_empty());
+        frames.request_decode(first);
+        let (request, raw) = frames.take().unwrap();
+        assert_eq!(request.tab_id, first.tab_id);
+        let image = raw.paint.decode(&raw.line).unwrap();
+        publish(1, "AAAA/w==");
+        assert!(frames.ready.is_empty());
+        frames.finish(first, raw.line, Ok(image));
+        let update = queued().pop().unwrap();
+        assert!(update.schedule);
+        assert_eq!(
+            update.image.unwrap().unwrap().as_bytes(0),
+            Some([1, 2, 3, 255].as_slice())
+        );
+
+        frames.request_decode(first);
+        let (_, old) = frames.take().unwrap();
         frames.show(Some(1), None);
-        assert!(frames.take(1).is_none());
-        assert!(frames.take(2).is_some());
+        frames.show(None, Some(1));
+        publish(1, "AAAA/w==");
+        let new = queued()[0].request;
+        frames.request_decode(first);
+        assert!(frames.take().is_none());
+        let old_image = old.paint.decode(&old.line);
+        frames.finish(first, old.line, old_image);
+        assert!(frames.ready.is_empty());
+        frames.request_decode(new);
+        assert_eq!(frames.take().unwrap().1.line.as_slice(), b"AAAA/w==");
+        frames.request_decode(other);
+        assert_eq!(frames.take().unwrap().0.tab_id, 2);
     }
 }

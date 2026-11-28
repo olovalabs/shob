@@ -295,31 +295,29 @@ fn update_chat_tool(
     }
 }
 
-fn provider_icon_stems() -> &'static std::collections::HashSet<String> {
-    static STEMS: std::sync::LazyLock<std::collections::HashSet<String>> =
-        std::sync::LazyLock::new(|| {
-            let mut stems = std::collections::HashSet::new();
-            for asset in assets::AppAssets::iter() {
-                if let Some(name) = asset
-                    .strip_prefix("icons/provider/")
-                    .and_then(|name| name.strip_suffix(".svg"))
-                {
-                    stems.insert(name.to_string());
-                }
-            }
-            if let Ok(entries) = std::fs::read_dir("assets/icons/provider") {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().is_some_and(|ext| ext == "svg")
-                        && let Some(stem) = path.file_stem().and_then(|stem| stem.to_str())
-                    {
-                        stems.insert(stem.to_string());
-                    }
-                }
-            }
-            stems
-        });
-    &STEMS
+static PROVIDER_ICONS: std::sync::LazyLock<HashMap<String, SharedString>> =
+    std::sync::LazyLock::new(collect_provider_icons);
+static CUSTOM_PROVIDER_IDS: std::sync::LazyLock<parking_lot::RwLock<HashSet<String>>> =
+    std::sync::LazyLock::new(Default::default);
+
+fn collect_provider_icons() -> HashMap<String, SharedString> {
+        assets::AppAssets::iter()
+            .filter_map(|path| {
+                let stem = path.strip_prefix("icons/provider/")?.strip_suffix(".svg")?;
+                Some((stem.to_owned(), SharedString::from(path.into_owned())))
+            })
+            .collect()
+}
+
+fn load_provider_icons() {
+    std::sync::LazyLock::force(&PROVIDER_ICONS);
+}
+
+fn refresh_custom_provider_ids() {
+    if let Ok(config) = agent_cli::config::load_models_config() {
+        let ids = config.providers.into_keys().collect();
+        *CUSTOM_PROVIDER_IDS.write() = ids;
+    }
 }
 
 fn provider_icon_stem(id: &str) -> &str {
@@ -355,13 +353,10 @@ fn provider_icon_path_for(id: &str, custom: bool) -> SharedString {
     if custom {
         return SharedString::from("logos/openai-compatible.svg");
     }
-    let stem = provider_icon_stem(id);
-    let stem = if provider_icon_stems().contains(stem) {
-        stem
-    } else {
-        "synthetic"
-    };
-    SharedString::from(format!("icons/provider/{stem}.svg"))
+    std::sync::LazyLock::get(&PROVIDER_ICONS)
+        .and_then(|icons| icons.get(provider_icon_stem(id)))
+        .cloned()
+        .unwrap_or_else(|| "icons/provider/synthetic.svg".into())
 }
 
 fn picker_provider_icon(id: &str, custom: bool) -> SharedString {
@@ -382,9 +377,7 @@ fn picker_effort_label(level: &str) -> &str {
 }
 
 fn is_custom_provider(id: &str) -> bool {
-    agent_cli::config::load_models_config()
-        .map(|config| config.providers.contains_key(id))
-        .unwrap_or(false)
+    CUSTOM_PROVIDER_IDS.read().contains(id)
 }
 
 /// Human-readable provider title and optional descriptive subtitle.
@@ -836,6 +829,7 @@ impl AuthModal {
         let (sender, receiver) = std::sync::mpsc::channel();
         let cwd = self.cwd.clone();
         std::thread::spawn(move || {
+            refresh_custom_provider_ids();
             let _ = sender.send(agent_auth::providers(&cwd));
         });
         self.discovery = Some(receiver);

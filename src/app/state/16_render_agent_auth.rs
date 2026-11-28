@@ -43,7 +43,7 @@ impl AppState {
             (
                 !provider.ready,
                 provider_featured_rank(&provider.id),
-                provider.id.clone(),
+                provider.id.as_str(),
             )
         });
         let modal_divider = tokens.border_subtle;
@@ -78,6 +78,7 @@ impl AppState {
             description: String,
             ready: bool,
             selected: bool,
+            icon: SharedString,
         }
 
         let card_items: Vec<ProviderCardItem> = providers
@@ -96,6 +97,7 @@ impl AppState {
                 let description = meta_desc.to_string();
                 let ready = provider.ready;
                 let selected = auth.selected.as_deref() == Some(id.as_str());
+                let icon = provider_icon_path_for(&id, provider.custom);
                 ProviderCardItem {
                     index,
                     id,
@@ -103,6 +105,7 @@ impl AppState {
                     description,
                     ready,
                     selected,
+                    icon,
                 }
             })
             .collect();
@@ -147,7 +150,7 @@ impl AppState {
                                 let described = !description.is_empty();
                                 let ready = item.ready;
                                 let selected = item.selected;
-                                let icon = provider_icon_path(&id);
+                                let icon = item.icon.clone();
 
                                 row_children.push(
                                     div()

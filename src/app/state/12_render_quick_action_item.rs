@@ -1,3 +1,52 @@
+#[derive(PartialEq, Eq)]
+struct PanePathProbe {
+    project: PathBuf,
+    cwd: Option<PathBuf>,
+    workspace_override: Option<PathBuf>,
+    pid: Option<u32>,
+    chat: bool,
+}
+
+#[derive(PartialEq, Eq)]
+struct PanePathSample {
+    source: PanePathProbe,
+    shell_dir: PathBuf,
+    branch: Option<SharedString>,
+    working_dir_exists: bool,
+    override_is_distinct: bool,
+}
+
+impl PanePathProbe {
+    fn matches(&self, pane: &TerminalPane, project: &Path) -> bool {
+        self.project == project
+            && self.cwd == pane.cwd
+            && self.workspace_override == pane.chat.workspace_override
+            && self.pid == pane.pid
+            && self.chat == pane.chat.active
+    }
+
+    fn sample(self) -> PanePathSample {
+        #[cfg(not(target_os = "linux"))]
+        let shell_dir = None;
+        #[cfg(target_os = "linux")]
+        let shell_dir = self.pid
+            .and_then(|pid| std::fs::read_link(format!("/proc/{pid}/cwd")).ok());
+        let shell_dir = shell_dir
+            .or_else(|| self.cwd.as_ref().filter(|path| path.is_dir()).cloned())
+            .unwrap_or_else(|| self.project.clone());
+        let working_dir = if self.chat {
+            self.workspace_override.as_deref().unwrap_or(&shell_dir)
+        } else {
+            &shell_dir
+        };
+        let branch = git_workspace::detect_git_branch(working_dir).map(SharedString::from);
+        let working_dir_exists = working_dir.is_dir();
+        let override_is_distinct = self.workspace_override.as_deref()
+            .is_some_and(|path| !git_workspace::paths_equal(path, &self.project));
+        PanePathSample { source: self, shell_dir, branch, working_dir_exists, override_is_distinct }
+    }
+}
+
 impl AppState {
     fn render_quick_action_item(
         label: &'static str,
@@ -47,81 +96,83 @@ impl AppState {
     }
 
     fn agent_working_directory(&self, pane: &TerminalPane) -> PathBuf {
-        pane.chat
-            .workspace_override
-            .clone()
-            .or_else(|| self.pane_cwd_path(pane))
-            .unwrap_or_else(|| PathBuf::from("."))
+        self.agent_working_directory_ref(pane).to_path_buf()
     }
 
-    fn pane_cwd_path(&self, pane: &TerminalPane) -> Option<std::path::PathBuf> {
-        #[cfg(target_os = "linux")]
-        if let Some(pid) = pane.pid {
-            // The input bar asks for this every frame. `/proc/<pid>/cwd` and the
-            // git lookup below only change when the shell/user moves, so a short
-            // TTL removes the syscalls from the render path.
-            type ProcCwdCache = HashMap<u32, (std::time::Instant, Option<PathBuf>)>;
-            static PROC_CWD_CACHE: std::sync::LazyLock<Mutex<ProcCwdCache>> =
-                std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
-            let now = std::time::Instant::now();
-            let cached = PROC_CWD_CACHE.lock().get(&pid).and_then(|(at, path)| {
-                (now.duration_since(*at) < std::time::Duration::from_secs(1)).then(|| path.clone())
-            });
-            if let Some(path) = cached {
-                if path.is_some() {
-                    return path;
-                }
-            } else {
-                let link = std::fs::read_link(format!("/proc/{pid}/cwd")).ok();
-                PROC_CWD_CACHE.lock().insert(pid, (now, link.clone()));
-                if link.is_some() {
-                    return link;
-                }
+    fn agent_working_directory_ref<'a>(&'a self, pane: &'a TerminalPane) -> &'a Path {
+        pane.chat.workspace_override.as_deref()
+            .or_else(|| self.pane_cwd_ref(pane))
+            .unwrap_or_else(|| Path::new("."))
+    }
+
+    fn pane_project_path(&self, pane: &TerminalPane) -> Option<&Path> {
+        let &(index, _, _) = self.pane_index.get(&pane.id)?;
+        self.projects.get(index).map(|project| project.path.as_path())
+    }
+
+    fn pane_path_sample<'a>(&self, pane: &'a TerminalPane) -> Option<&'a PanePathSample> {
+        let project = self.pane_project_path(pane)?;
+        pane.path_sample.as_ref().filter(|sample| sample.source.matches(pane, project))
+    }
+
+    fn pane_cwd_ref<'a>(&'a self, pane: &'a TerminalPane) -> Option<&'a Path> {
+        self.pane_path_sample(pane).map(|sample| sample.shell_dir.as_path())
+            .or(pane.cwd.as_deref())
+            .or_else(|| self.pane_project_path(pane))
+    }
+
+    fn pane_cwd_path(&self, pane: &TerminalPane) -> Option<PathBuf> {
+        self.pane_cwd_ref(pane).map(Path::to_path_buf)
+    }
+
+    fn pane_git_branch(&self, pane: &TerminalPane) -> Option<SharedString> {
+        self.pane_path_sample(pane)?.branch.clone()
+    }
+
+    fn active_path_requests(&self) -> Vec<(usize, PanePathProbe)> {
+        if self.active_view != ActiveView::Workspace {
+            return Vec::new();
+        }
+        let Some(project) = self.active_project() else { return Vec::new() };
+        self.active_session().into_iter().flat_map(|session| &session.panes)
+            .filter(|pane| !pane.is_browser())
+            .map(|pane| (pane.id, PanePathProbe {
+                project: project.path.clone(),
+                cwd: pane.cwd.clone(),
+                workspace_override: pane.chat.workspace_override.clone(),
+                pid: pane.pid,
+                chat: pane.chat.active,
+            }))
+            .collect()
+    }
+
+    fn apply_path_samples(&mut self, samples: Vec<(usize, PanePathSample)>, cx: &mut Context<Self>) {
+        let mut changed = false;
+        for (id, sample) in samples {
+            let Some(pane) = self.pane_ref(id) else { continue };
+            if !self.pane_project_path(pane).is_some_and(|project| sample.source.matches(pane, project))
+                || pane.path_sample.as_ref() == Some(&sample)
+            {
+                continue;
+            }
+            if sample.source.chat && sample.source.workspace_override.is_some()
+                && !sample.working_dir_exists && !pane.chat.running
+            {
+                self.apply_workspace_override(id, None, cx);
+            } else if let Some(pane) = self.pane_mut(id) {
+                pane.path_sample = Some(sample);
+                changed = true;
             }
         }
-        if let Some(cwd) = pane.cwd.clone().filter(|path| path.is_dir()) {
-            return Some(cwd);
-        }
-        if let Some(project) = self
-            .pane_index
-            .get(&pane.id)
-            .and_then(|&(p_idx, _, _)| self.projects.get(p_idx))
-        {
-            return Some(project.path.clone());
-        }
-        directories::UserDirs::new()
-            .map(|u| u.home_dir().to_path_buf())
-            .or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from))
-    }
-
-    fn pane_git_branch(&self, pane: &TerminalPane) -> Option<String> {
-        let dir = if pane.chat.active {
-            self.agent_working_directory(pane)
-        } else {
-            self.pane_cwd_path(pane)?
-        };
-        Self::detect_git_branch(&dir)
-    }
-
-    fn detect_git_branch(dir: &std::path::Path) -> Option<String> {
-        git_workspace::detect_git_branch(dir)
-    }
-
-    fn pane_cwd_display(&self, pane: &TerminalPane) -> String {
-        if let Some(path) = self.pane_cwd_path(pane) {
-            Self::format_path_display(&path)
-        } else {
-            "~".to_string()
+        if changed {
+            cx.notify();
         }
     }
 
     fn format_path_display(path: &std::path::Path) -> String {
-        // Resolving the home directory walks platform config; it is constant
-        // for the process.
         static HOME_DIR: std::sync::LazyLock<Option<PathBuf>> = std::sync::LazyLock::new(|| {
-            directories::UserDirs::new()
-                .map(|u| u.home_dir().to_path_buf())
-                .or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from))
+            let name = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+            std::env::var_os(name).map(PathBuf::from)
         });
         let home = HOME_DIR.as_ref();
         if let Some(rel) = home.and_then(|h| path.strip_prefix(h).ok()) {

@@ -9,11 +9,12 @@ impl AppState {
         let pane_id = pane.id;
         let focused_composer = pane.chat.active;
         let tokens = self.tokens(cx);
-        let agent_cwd = pane.chat.active.then(|| self.agent_working_directory(pane));
-        let cwd_display = agent_cwd
-            .as_ref()
-            .map(|path| Self::format_path_display(path))
-            .unwrap_or_else(|| self.pane_cwd_display(pane));
+        let cwd = if pane.chat.active {
+            Some(self.agent_working_directory_ref(pane))
+        } else {
+            self.pane_cwd_ref(pane)
+        };
+        let cwd_display = cwd.map_or_else(|| "~".into(), Self::format_path_display);
         let git_branch = if pane.chat.active {
             None
         } else {
@@ -98,8 +99,7 @@ impl AppState {
             rgba(0x236823ff).into()
         };
         let input_element = if let Some(input_state) = &pane.input_state {
-            let browser_mentioned = pane.chat.active
-                && agent_bridge::has_browser_mention(input_state.read(cx).value().as_str());
+            let browser_mentioned = pane.chat.active && pane.input_browser_mentioned;
             div()
                 .id(("shob-input-wrapper", pane_id))
                 .debug_selector(|| "agent-composer-input".to_string())

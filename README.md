@@ -86,6 +86,8 @@ An empty right panel in Agent mode opens a surface picker for Terminal, Files, D
 
 The Files surface restores open files, unsaved drafts, expanded folders, and the commit message. Use Refresh to pick up external changes. Editing supports UTF-8 files up to 1 MiB and eight open tabs; saves refuse to overwrite a file changed on disk. Read-only diff snapshots and scroll positions are transient.
 
+**Clear saved sessions & history** leaves live shells open but pauses workspace and scrollback saves until you restart Shob. Settings are kept.
+
 The Browser address bar opens HTTP and HTTPS URLs directly, including local development servers, and sends keywords to Google Search. The first page downloads and verifies the OpenCode Rune Chromium engine (about 130 MB). Install `bubblewrap` and enable unprivileged user namespaces to run it: Shob isolates that engine from your home directory and desktop session because the upstream Linux bundle disables Chromium's own sandbox. The engine shares host networking for localhost access. Shob caps the browser render resolution at roughly 2 megapixels to limit frame memory and keep large panes responsive. Pages can appear softer in a very large pane. Tabs you open yourself and their site data restore from Shob's workspace and browser profile; back/forward history does not.
 
 Browser audio plays through the local PulseAudio server or PipeWire’s PulseAudio compatibility service. The sandbox can play sound but cannot record from your microphone or system audio.

@@ -74,6 +74,9 @@ impl AppState {
         cwd: PathBuf,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.clear_data_running {
+            return false;
+        }
         let save_history = self.settings.restore.agent_history;
         let uses_browser = agent_bridge::has_browser_mention(&prompt);
         let browser = self
@@ -377,10 +380,16 @@ impl AppState {
                     pane.completion_menu = None;
                 }
                 ShellEvent::CommandFinished { .. } | ShellEvent::PromptStart => {
+                    if !pane.command_running && pane.bottom_input_visible {
+                        return;
+                    }
                     pane.command_running = false;
                     pane.bottom_input_visible = true;
                 }
                 ShellEvent::CwdChanged(path) => {
+                    if pane.cwd.as_deref() == Some(Path::new(path)) {
+                        return;
+                    }
                     pane.cwd = Some(PathBuf::from(path));
                     cwd_changed = true;
                 }
@@ -842,15 +851,15 @@ impl AppState {
     fn ensure_panes_input_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mut files = Vec::new();
         let mut previews = Vec::new();
-        for project in &mut self.projects {
-            for session in &mut project.sessions {
-                for pane in &mut session.panes {
-                    if let Some(path) = pane.tool_panel_file_restore.take() {
-                        previews.push((pane.id, project.path.clone(), path));
-                    }
-                    if let Some(saved) = pane.files_restore.take() {
-                        files.push((pane.id, project.path.clone(), saved));
-                    }
+        if let Some(project) = self.projects.get_mut(self.active_project_idx)
+            && let Some(session) = project.sessions.get_mut(project.active_session_idx)
+        {
+            for pane in &mut session.panes {
+                if let Some(path) = pane.tool_panel_file_restore.take() {
+                    previews.push((pane.id, project.path.clone(), path));
+                }
+                if let Some(saved) = pane.files_restore.take() {
+                    files.push((pane.id, project.path.clone(), saved));
                 }
             }
         }
@@ -872,32 +881,13 @@ impl AppState {
                 self.show_read_only_file(id, root, display_path, window, cx);
             }
         }
-        let mut missing = Vec::new();
-        for project in &mut self.projects {
-            for session in &mut project.sessions {
-                for pane in &mut session.panes {
-                    if pane.is_browser() {
-                        continue;
-                    }
-                    let placeholder = if pane.chat.active {
-                        "Message the agent…"
-                    } else {
-                        "Run commands"
-                    };
-                    if let Some(input) = &pane.input_state {
-                        input.update(cx, |state, cx| {
-                            state.set_placeholder(placeholder, window, cx);
-                            state.set_auto_grow(1, 8);
-                        });
-                        if pane.input_subscription.is_none() && pane.input_state.is_none() {
-                            missing.push(pane.id);
-                        }
-                    } else {
-                        missing.push(pane.id);
-                    }
-                }
-            }
-        }
+        let missing: Vec<_> = self
+            .active_session()
+            .into_iter()
+            .flat_map(|session| &session.panes)
+            .filter(|pane| !pane.is_browser() && pane.input_state.is_none())
+            .map(|pane| pane.id)
+            .collect();
         for pane_id in missing {
             self.create_pane_input(pane_id, window, cx);
         }
